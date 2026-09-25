@@ -4,7 +4,9 @@ import { handleProviderMessage } from "../messages/provider";
 /**
  * The worker only registers listeners added by later tasks and performs no
  * network requests at startup. `chrome` is the lazy-slice house pattern so
- * test stubs work; only `runtime.onMessage` is needed here.
+ * test stubs work; only `runtime.onMessage` is needed here. Of the provider
+ * protocol, only TEST_PROVIDER can produce egress, and only via the
+ * consented gate in `src/net/send.ts` — everything else is storage work.
  */
 declare const chrome: {
   runtime: {

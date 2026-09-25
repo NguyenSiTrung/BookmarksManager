@@ -4,7 +4,9 @@ import {
   revokeTestConsent,
 } from "../consent/records";
 import { db } from "../db/database";
+import { JevConnectionError, testJevConnection } from "../jev/connection";
 import { resolvePreset } from "../net/presets";
+import { NetworkGateError } from "../net/send";
 import { PresetId, ProviderSettings } from "../schemas/provider";
 import { z } from "../schemas/z";
 import { deleteProviderKey, saveProviderKey } from "../security/keys";
@@ -48,10 +50,16 @@ export const ProviderMessage = z.discriminatedUnion("type", [
     deleteKey: z.boolean(),
   }),
   z.object({ type: z.literal("PROVIDER_STATUS"), preset: PresetId }),
+  // The Test-connection action (Phase 3): it carries only the preset — the
+  // model always comes from the stored ProviderSettings, never the message,
+  // so the page cannot pick a per-test model or attach key material.
+  z.object({ type: z.literal("TEST_PROVIDER"), preset: PresetId }),
 ]);
 export type ProviderMessage = z.infer<typeof ProviderMessage>;
 
-/** Machine-readable failure codes for the provider protocol. */
+/** Machine-readable failure codes for the provider protocol. The
+ * `auth`/`incompatible`/`retry_later`/`invalid_response`/`http_error`/`gate`
+ * codes are the `JevConnectionError` surface, relayed verbatim. */
 export const ProviderErrorCode = z.enum([
   "untrusted_sender",
   "malformed_message",
@@ -59,6 +67,13 @@ export const ProviderErrorCode = z.enum([
   "no_permission",
   "enable_failed",
   "revoke_failed",
+  "not_enabled",
+  "auth",
+  "incompatible",
+  "retry_later",
+  "invalid_response",
+  "http_error",
+  "gate",
   "internal_error",
 ]);
 export type ProviderErrorCode = z.infer<typeof ProviderErrorCode>;
@@ -78,9 +93,34 @@ export const ProviderStatus = z.object({
 });
 export type ProviderStatus = z.infer<typeof ProviderStatus>;
 
-/** Every worker response is one of these two shapes. */
-export const ProviderMessageResult = z.discriminatedUnion("ok", [
+/**
+ * What a successful TEST_PROVIDER reports back: the response's versioned
+ * model id, wall-clock `latencyMs` around the gated send, and `cost` only
+ * when the provider's `usage.cost` reported one (OpenRouter). No raw
+ * response body ever crosses into this result.
+ */
+export const ProviderTestResult = z.object({
+  model: z.string().min(1),
+  latencyMs: z.number().nonnegative(),
+  cost: z.number().nonnegative().optional(),
+});
+export type ProviderTestResult = z.infer<typeof ProviderTestResult>;
+
+/**
+ * Every worker response is one of these three shapes. This is a plain union
+ * rather than a `z.discriminatedUnion("ok", ...)` because two success wire
+ * shapes share `ok: true` — status replies carry `status`, test replies
+ * carry `code: "test_ok"` + `result` — and Zod rejects duplicate
+ * discriminator values. Readers narrow with `"status" in data` /
+ * `"result" in data` after `data.ok`.
+ */
+export const ProviderMessageResult = z.union([
   z.object({ ok: z.literal(true), status: ProviderStatus }),
+  z.object({
+    ok: z.literal(true),
+    code: z.literal("test_ok"),
+    result: ProviderTestResult,
+  }),
   z.object({
     ok: z.literal(false),
     code: ProviderErrorCode,
@@ -278,6 +318,48 @@ async function revokeProvider(message: {
 }
 
 /**
+ * Run the synthetic Jev connection test for a fully enabled preset — the
+ * only message variant that can produce network traffic. The not-enabled
+ * refusal happens BEFORE `testJevConnection` is invoked, so a missing
+ * settings row, revoked consent, or a permission removed outside the app
+ * never reaches transport. The tested model is always the stored
+ * `ProviderSettings.model`, not anything the message carries.
+ *
+ * Failure mapping: `JevConnectionError` code/message are relayed verbatim
+ * (already redacted); a `NetworkGateError` that somehow escaped the client's
+ * wrap surfaces as `gate` with its redacted message; anything else —
+ * `ProviderKeyError`, ZodError, non-Error rejections — collapses to a static
+ * `internal_error` so internals never cross the message boundary. The test
+ * is read-only: a failure changes no consent, settings, or key state.
+ */
+async function testProvider(message: {
+  preset: PresetId;
+}): Promise<ProviderMessageResult> {
+  const status = await readStatus(message.preset);
+  if (!status.enabled || status.model === undefined) {
+    return failure(
+      "not_enabled",
+      `Provider "${message.preset}" is not fully enabled — enable it before testing the connection.`,
+    );
+  }
+  try {
+    const result = await testJevConnection(message.preset, status.model);
+    return { ok: true, code: "test_ok", result };
+  } catch (cause) {
+    if (cause instanceof JevConnectionError) {
+      return failure(cause.code, cause.message);
+    }
+    if (cause instanceof NetworkGateError) {
+      return failure("gate", cause.message);
+    }
+    return failure(
+      "internal_error",
+      "The connection test failed unexpectedly; nothing was changed on purpose.",
+    );
+  }
+}
+
+/**
  * Validate and dispatch one provider-protocol message. Exported so the
  * behavior is testable without standing up a service worker; `background.ts`
  * wires it to `chrome.runtime.onMessage` unchanged.
@@ -307,6 +389,8 @@ export async function handleProviderMessage(
         return await enableProvider(parsed.data);
       case "REVOKE_PROVIDER":
         return await revokeProvider(parsed.data);
+      case "TEST_PROVIDER":
+        return await testProvider(parsed.data);
     }
   } catch {
     return failure(

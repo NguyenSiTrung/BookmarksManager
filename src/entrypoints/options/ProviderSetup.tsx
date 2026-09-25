@@ -42,6 +42,16 @@ declare const chrome: {
 
 const PRESET_IDS = PresetId.options;
 
+/**
+ * What the Test connection button last reported: the worker's typed success
+ * (`model`/`latencyMs`/optional `cost`) or its redacted failure code/message.
+ * Rendered verbatim — the worker already guarantees nothing sensitive
+ * crosses the boundary.
+ */
+type TestOutcome =
+  | { ok: true; model: string; latencyMs: number; cost?: number }
+  | { ok: false; code: string; message: string };
+
 export function ProviderSetup() {
   const [presetId, setPresetId] = useState<PresetId>("typesafe");
   const [model, setModel] = useState<string>(PRESET_MODELS.typesafe[0]);
@@ -52,6 +62,8 @@ export function ProviderSetup() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testOutcome, setTestOutcome] = useState<TestOutcome | null>(null);
 
   const disclosure = PROVIDER_DISCLOSURES[presetId];
   const preset = PRESETS[presetId];
@@ -72,7 +84,7 @@ export function ProviderSetup() {
         return;
       }
       const result = ProviderMessageResult.safeParse(raw);
-      if (result.success && result.data.ok) {
+      if (result.success && result.data.ok && "status" in result.data) {
         setStatus(result.data.status);
       } else {
         setStatus({ enabled: false, consentGranted: false });
@@ -106,6 +118,7 @@ export function ProviderSetup() {
     setAgreed(false);
     setError(null);
     setNotice(null);
+    setTestOutcome(null);
   };
 
   // Enable stays disabled until the unchecked agreement box is checked, a key
@@ -125,6 +138,7 @@ export function ProviderSetup() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setTestOutcome(null);
     // This call must stay synchronous inside the click handler — Chrome only
     // accepts permissions.request from a direct user gesture.
     void chrome.permissions
@@ -150,13 +164,18 @@ export function ProviderSetup() {
         if (!result.success) {
           setError("The extension worker returned an unexpected response.");
           void loadStatus(presetId);
-        } else if (result.data.ok) {
+        } else if (!result.data.ok) {
+          setError(result.data.message);
+          void loadStatus(presetId);
+        } else if ("status" in result.data) {
           setStatus(result.data.status);
           setApiKey("");
           setAgreed(false);
           setNotice(`${disclosure.name} is enabled.`);
         } else {
-          setError(result.data.message);
+          // A test_ok reply to an enable call is a protocol mix-up — treat it
+          // like any other unexpected response.
+          setError("The extension worker returned an unexpected response.");
           void loadStatus(presetId);
         }
       })
@@ -177,6 +196,7 @@ export function ProviderSetup() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setTestOutcome(null);
     void chrome.runtime
       .sendMessage(
         ProviderMessage.parse({
@@ -190,15 +210,18 @@ export function ProviderSetup() {
         if (!result.success) {
           setError("The extension worker returned an unexpected response.");
           void loadStatus(presetId);
-        } else if (result.data.ok) {
+        } else if (!result.data.ok) {
+          setError(result.data.message);
+          // A failed revoke may still have removed consent — refresh.
+          void loadStatus(presetId);
+        } else if ("status" in result.data) {
           setStatus(result.data.status);
           setAgreed(false);
           setNotice(
             `${disclosure.name} consent and browser access were removed.`,
           );
         } else {
-          setError(result.data.message);
-          // A failed revoke may still have removed consent — refresh.
+          setError("The extension worker returned an unexpected response.");
           void loadStatus(presetId);
         }
       })
@@ -208,6 +231,65 @@ export function ProviderSetup() {
       .finally(() => {
         inFlight.current = false;
         setBusy(false);
+      });
+  };
+
+  // The only user action that produces network traffic: one TEST_PROVIDER
+  // message per explicit click. The worker re-checks the preset is fully
+  // enabled and tests the stored model — the page never picks a model or
+  // sends key material here. Mount and preset switches never call this.
+  const onTest = () => {
+    if (busy || inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setBusy(true);
+    setTesting(true);
+    setError(null);
+    setNotice(null);
+    setTestOutcome(null);
+    void chrome.runtime
+      .sendMessage(
+        ProviderMessage.parse({ type: "TEST_PROVIDER", preset: presetId }),
+      )
+      .then((raw) => {
+        // A reply for a preset the user has since switched away from is
+        // dropped — the outcome belongs to the panel that requested it.
+        if (presetId !== currentPreset.current) {
+          return;
+        }
+        const result = ProviderMessageResult.safeParse(raw);
+        if (result.success && result.data.ok && "result" in result.data) {
+          setTestOutcome({ ok: true, ...result.data.result });
+        } else if (result.success && !result.data.ok) {
+          // The worker's failure code/message are already redacted — render
+          // them verbatim.
+          setTestOutcome({
+            ok: false,
+            code: result.data.code,
+            message: result.data.message,
+          });
+        } else {
+          setTestOutcome({
+            ok: false,
+            code: "internal_error",
+            message: "The extension worker returned an unexpected response.",
+          });
+        }
+      })
+      .catch(() => {
+        if (presetId === currentPreset.current) {
+          setTestOutcome({
+            ok: false,
+            code: "internal_error",
+            message: "Something went wrong while testing the connection.",
+          });
+        }
+      })
+      .finally(() => {
+        inFlight.current = false;
+        setBusy(false);
+        setTesting(false);
       });
   };
 
@@ -323,6 +405,38 @@ export function ProviderSetup() {
             >
               Revoke {disclosure.name} access
             </button>
+            <div className="mt-4 border-t border-gray-200 pt-3">
+              <button
+                type="button"
+                onClick={onTest}
+                disabled={busy}
+                className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              >
+                {testing ? "Testing…" : "Test connection"}
+              </button>
+              <p className="mt-1 text-xs text-gray-600">
+                Sends the disclosed synthetic request to {disclosure.origin}{" "}
+                — nothing else leaves this device.
+              </p>
+              {testOutcome !== null && testOutcome.ok && (
+                <p role="status" className="mt-2 text-sm text-green-700">
+                  Connection test succeeded — model{" "}
+                  <code className="rounded bg-gray-100 px-1">
+                    {testOutcome.model}
+                  </code>{" "}
+                  answered in {Math.round(testOutcome.latencyMs)} ms
+                  {testOutcome.cost !== undefined &&
+                    `; request cost $${testOutcome.cost}`}
+                  .
+                </p>
+              )}
+              {testOutcome !== null && !testOutcome.ok && (
+                <p role="alert" className="mt-2 text-sm text-red-700">
+                  Connection test failed ({testOutcome.code}):{" "}
+                  {testOutcome.message}
+                </p>
+              )}
+            </div>
           </div>
         ) : (
           <div className="mt-4 space-y-4">

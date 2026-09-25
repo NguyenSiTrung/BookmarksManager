@@ -245,7 +245,7 @@
   - [x] Step 4: Run both test files, typecheck, lint, and build. Check TypeSafe and OpenRouter mock fixtures separately.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(jev): Add synthetic connection test`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Wire Test connection into Options and cover failure states
+- [x] Task: Wire Test connection into Options and cover failure states
   <!-- files: src/messages/provider.ts, src/entrypoints/background.ts, src/entrypoints/options/ProviderSetup.tsx, tests/components/test-connection.test.tsx, tests/unit/connection-message.test.ts -->
   <!-- depends: task1 -->
 
@@ -253,11 +253,11 @@
 
   **Interfaces:** `{ type: "TEST_PROVIDER", preset }` triggers `testJevConnection` only in the worker. A typed result contains returned `model`, `latencyMs`, and optional `cost`; a failure contains a redacted error code/message. No raw response or key enters the UI.
 
-  - [ ] Step 1: Write worker/UI tests: no test button until enabled; pressing Test sends one message and one synthetic request; the UI shows returned model/latency/optional cost; 401/422/429/529 and invalid payload show safe guidance; failed permission/consent blocks before transport.
-  - [ ] Step 2: Run `npm run test -- --run tests/components/test-connection.test.tsx tests/unit/connection-message.test.ts`; observe failures.
-  - [ ] Step 3: Extend the Zod message union with `z.object({ type: z.literal("TEST_PROVIDER"), preset: PresetIdSchema })`; route it in the worker only for a trusted Options sender. Render an explicit Test connection button and a non-sensitive success/error state. Ensure returning to Options never auto-tests.
-  - [ ] Step 4: Run these tests, relevant gate tests, typecheck, lint, build, and the offline browser smoke. Verify the data-sent log shows only `"model"`, `"state"`, and `"questions"` as field names.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(options): Test configured Jev providers`, add a task git note, and close the mapped Beads task.
+  - [x] Step 1: Write worker/UI tests: no test button until enabled; pressing Test sends one message and one synthetic request; the UI shows returned model/latency/optional cost; 401/422/429/529 and invalid payload show safe guidance; failed permission/consent blocks before transport.
+  - [x] Step 2: Run `npm run test -- --run tests/components/test-connection.test.tsx tests/unit/connection-message.test.ts`; observe failures.
+  - [x] Step 3: Extend the Zod message union with `z.object({ type: z.literal("TEST_PROVIDER"), preset: PresetIdSchema })`; route it in the worker only for a trusted Options sender. Render an explicit Test connection button and a non-sensitive success/error state. Ensure returning to Options never auto-tests.
+  - [x] Step 4: Run these tests, relevant gate tests, typecheck, lint, build, and the offline browser smoke. Verify the data-sent log shows only `"model"`, `"state"`, and `"questions"` as field names.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(options): Test configured Jev providers`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Harden CI and browser privacy checks
   <!-- files: scripts/check-manifest.mjs, scripts/check-bundle.mjs, .github/workflows/ci.yml, tests/unit/compliance-scripts.test.ts, tests/e2e/shell.spec.ts -->
