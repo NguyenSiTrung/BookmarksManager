@@ -12,24 +12,26 @@ Bookmarks Manager
 
 ## Short description (draft)
 
-Manage your bookmarks from Chrome's side panel — with an optional AI provider
-connection you control with your own API key.
+Manage your bookmarks from Chrome's side panel. This early foundation
+release ships the extension's surfaces and settings storage; an optional AI
+provider connection test (using your own API key) is being built into it.
 
 ## Full description (draft)
 
-Bookmarks Manager keeps bookmark tools close at hand in Chrome's side panel,
-plus a popup and an options page.
+Bookmarks Manager puts its surfaces in Chrome's side panel, plus a popup and
+an options page.
 
 This early release provides the extension's foundation:
 
 - Popup, side panel, and options surfaces.
-- Local storage of your settings — nothing is sent anywhere by default.
+- Local storage foundations for your settings — nothing is sent anywhere by
+  default, and the build makes no network requests at all.
 - An optional connection test for the Jev AI providers TypeSafe and
-  OpenRouter, using your own API key. The test sends a fixed synthetic
-  payload — never your bookmarks — and runs only when you click it, after a
-  clear disclosure and consent screen.
+  OpenRouter, using your own API key — being built for this release. The
+  test will send a fixed synthetic payload — never your bookmarks — and run
+  only when you click it, after a clear disclosure and consent screen.
 
-AI features are entirely optional and require an API key from a supported
+AI features will be entirely optional and require an API key from a supported
 provider. The extension requests no access to your browsing history, tabs, or
 bookmarks in this release, and makes no network requests on install or on
 page load.

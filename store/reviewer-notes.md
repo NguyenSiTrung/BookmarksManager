@@ -7,14 +7,15 @@
 ## What this release is
 
 A foundation release: the extension's popup, side panel, and options
-surfaces, local settings storage, and an optional, consent-gated Test
-connection for the Jev AI providers TypeSafe and OpenRouter. Bookmark
+surfaces and the local storage schema are in place, and an optional,
+consent-gated Test connection for the Jev AI providers TypeSafe and
+OpenRouter is being built for this release (not yet functional). Bookmark
 management features ship in later releases; the `bookmarks` permission is
 deliberately absent.
 
 ## Testing without an API key
 
-Everything except the provider test works with no account and no key:
+Everything in this build works with no account and no key:
 
 1. Install the extension. It makes **zero network requests** on install or
    page load — verify in DevTools if desired.
@@ -25,16 +26,19 @@ Everything except the provider test works with no account and no key:
 
 ## Testing the provider connection
 
-- The Test connection flow requires your own TypeSafe or OpenRouter API key;
-  no test key is bundled.
-- Enabling a provider shows a disclosure stating exactly what is sent (a
+_The Test connection flow is under construction for this foundation release —
+there is nothing to exercise yet. Once it ships it will work as follows:_
+
+- It will require your own TypeSafe or OpenRouter API key; no test key is
+  bundled.
+- Enabling a provider will show a disclosure stating exactly what is sent (a
   fixed synthetic payload plus the `Authorization` header), to which origin,
-  and asks for affirmative consent — an unchecked checkbox plus an explicit
-  enable action. Chrome's optional host-permission prompt appears from that
-  same click.
-- The request goes only to the chosen provider origin
-  (`https://api.typesafe.ai/*` or `https://openrouter.ai/*`) over HTTPS.
-  Revoking consent or the host permission stops all further requests.
+  and will ask for affirmative consent — an unchecked checkbox plus an
+  explicit enable action — with Chrome's optional host-permission prompt
+  appearing from that same click.
+- The request will go only to the chosen provider origin
+  (`https://api.typesafe.ai/*` or `https://openrouter.ai/*`) over HTTPS, and
+  revoking consent or the host permission will stop all further requests.
 - _A temporary low-credit test key can be supplied at submission time and
   revoked after review — decide at release._
 
@@ -51,6 +55,9 @@ Everything except the provider test works with no account and no key:
 
 ## Notes
 
-- Consent is versioned (`CONSENT_VERSION`): if sent fields or recipients
-  ever change, the disclosure is shown again before the next request.
-- API keys are stored encrypted at rest and never logged or exported.
+- Consent records carry a `consentVersion` field under the `jev_test` scope
+  (`CONSENT_SCOPE`, `src/schemas/provider.ts`); the design increases the
+  version and re-shows the disclosure whenever sent fields or recipients
+  change.
+- API keys are being built to be stored encrypted at rest and will never be
+  logged or exported.

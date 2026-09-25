@@ -8,15 +8,17 @@
 > and actual behavior can suspend all of the publisher's items.
 >
 > This version describes the **current slice only**: the extension foundation
-> plus a consented, synthetic Jev test-connection flow. Bookmark management
-> features are not in this release and are not declared here.
+> plus a consented, synthetic Jev test-connection flow that is being built
+> for this release. Bookmark management features are not in this release and
+> are not declared here.
 
 ## Single purpose
 
 > Manage and review your Chrome bookmarks from the side panel. In this
-> release the extension provides its bookmark-manager surfaces and an
-> optional connection test for an AI provider you configure with your own
-> API key. The test sends only synthetic data — never your bookmarks.
+> release the extension provides its bookmark-manager surfaces, plus an
+> optional connection test — being built for this release — for an AI
+> provider you configure with your own API key. The test will send only
+> synthetic data — never your bookmarks.
 
 ## Permission justifications
 
@@ -31,6 +33,10 @@ Use the justification column of `store/permissions.md` verbatim; CI
 - `https://openrouter.ai/*` (optional) — Jev test connection to OpenRouter,
   started by the user.
 
+(The provider flow that uses these two optional patterns is being built for
+this release; the patterns are declared so the consent-gated request has a
+fixed, narrow target.)
+
 ## Remote code
 
 **No, the extension does not use remote code.** All JavaScript and HTML are
@@ -42,10 +48,12 @@ build on any hit.
 
 Conservative declaration — under-declaring is the risky direction:
 
-- **Authentication information: yes.** The user's own API key is stored
-  encrypted on the device and sent only to the provider that issued it, in
-  the `Authorization` header, when the user runs a Test connection.
-- **Everything else: not collected in this release.** The only other
+- **Authentication information: yes** (once the test flow ships — it is being
+  built for this release). The user's own API key will be stored encrypted on
+  the device and sent only to the provider that issued it, in the
+  `Authorization` header, when the user runs a Test connection. In the
+  current build nothing is transmitted at all.
+- **Everything else: not collected in this release.** The only other planned
   transmission is the test connection's fixed synthetic payload, which
   contains no user data.
 - Not collected: personally identifiable information, health information,
@@ -54,8 +62,8 @@ Conservative declaration — under-declaring is the risky direction:
   no bookmark or page content leaves the device in this release.)
 
 Before any future feature sends bookmark, page, or activity data, update this
-declaration, `store/privacy-policy.md`, and the in-product consent screen in
-the same change.
+declaration, `store/privacy-policy.md`, and the in-product consent screen
+(being built with the provider flow) in the same change.
 
 ## Certifications (Limited Use)
 
