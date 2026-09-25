@@ -139,23 +139,23 @@
 ## Phase 2: Protected Keys, Consent, and Network Gate
 <!-- execution: parallel -->
 
-- [ ] Task: Implement service-worker-only encrypted provider keys
+- [x] Task: Implement service-worker-only encrypted provider keys
   <!-- files: src/security/keys.ts, tests/unit/keys.test.ts -->
 
   **Files:** Create `src/security/keys.ts`, `tests/unit/keys.test.ts`. Use the Phase 1 `keyMaterials` store and masked suffix schema; if they prove insufficient, stop for a plan revision instead of changing a parallel task's files.
 
   **Interfaces:** `saveProviderKey(preset: PresetId, plaintext: string): Promise<void>`, `readProviderKey(preset: PresetId): Promise<string | null>`, and `deleteProviderKey(preset: PresetId): Promise<void>` are worker-only. Options receives only `keySuffix` via a worker response.
 
-  - [ ] Step 1: Write tests for save/read of each preset, distinct random IVs for repeated saves, absent and corrupted ciphertext, orphaned ciphertext after removal of the IndexedDB `CryptoKey`, deletion, and no plaintext in `chrome.storage.local`:
+  - [x] Step 1: Write tests for save/read of each preset, distinct random IVs for repeated saves, absent and corrupted ciphertext, orphaned ciphertext after removal of the IndexedDB `CryptoKey`, deletion, and no plaintext in `chrome.storage.local`:
     ```ts
     await saveProviderKey("typesafe", "secret-example");
     expect(await readProviderKey("typesafe")).toBe("secret-example");
     expect(JSON.stringify(storageWrites)).not.toContain("secret-example");
     ```
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/keys.test.ts` and observe missing functions.
-  - [ ] Step 3: Generate a non-extractable AES-GCM 256-bit `CryptoKey` via `crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])`, persist it in Dexie, and store ciphertext plus a unique 12-byte IV in `chrome.storage.local`. Scope storage keys by preset, expose only the last four key characters as a display hint, and map missing/unusable material to a reconnect error without echoing contents.
-  - [ ] Step 4: Run key tests, typecheck, lint, and build. Inspect `chrome.storage.local` in a local test for ciphertext-only values.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(security): Protect provider keys locally`, add a task git note, and close the mapped Beads task.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/keys.test.ts` and observe missing functions.
+  - [x] Step 3: Generate a non-extractable AES-GCM 256-bit `CryptoKey` via `crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])`, persist it in Dexie, and store ciphertext plus a unique 12-byte IV in `chrome.storage.local`. Scope storage keys by preset, expose only the last four key characters as a display hint, and map missing/unusable material to a reconnect error without echoing contents.
+  - [x] Step 4: Run key tests, typecheck, lint, and build. Inspect `chrome.storage.local` in a local test for ciphertext-only values.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(security): Protect provider keys locally`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Define preset destinations and versioned consent records
   <!-- files: src/consent/records.ts, src/net/presets.ts, tests/unit/consent.test.ts, tests/unit/presets.test.ts -->

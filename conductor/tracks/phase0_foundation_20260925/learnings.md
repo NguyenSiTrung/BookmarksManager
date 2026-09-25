@@ -67,3 +67,13 @@ Patterns, gotchas, and context discovered during implementation.
   - Gotcha: a "canceled" subagent dispatch may still complete — verify git log
     before assuming work was discarded (happened with the P1T3 fix, 4e355eb).
 ---
+
+## [2026-09-25 10:49] - Phase 2 Task 1: Implement service-worker-only encrypted provider keys
+- **Implemented:** `src/security/keys.ts` — worker-only `saveProviderKey`/`readProviderKey`/`deleteProviderKey` plus `ProviderKeyError` (`code: "reconnect"`). Non-extractable AES-GCM 256 `CryptoKey` per preset in Dexie `keyMaterials` under `provider:<preset>`; ciphertext envelope `{v: 1, iv, ct}` (base64, fresh 12-byte IV per save, validated by a jitless `KeyEnvelope` schema) in `chrome.storage.local` under `providerKey:<preset>`. `read` returns `null` only when no ciphertext exists; malformed envelopes, decrypt failures, and missing/unusable CryptoKeys throw `ProviderKeyError` with no key material in messages. `keySuffix` persistence intentionally left to the Options flow task.
+- **Files changed:** `src/security/keys.ts`, `tests/unit/keys.test.ts`, `conductor/tracks/phase0_foundation_20260925/plan.md`, `conductor/tracks/phase0_foundation_20260925/learnings.md`
+- **Learnings:**
+  - `chrome` is not a global value binding: `@types/chrome` declares `namespace chrome`, `Window.chrome`, and `var browser`, but no `var chrome`. WXT's `wxt/browser` just exports `globalThis.chrome` captured at module eval — too early for `vi.stubGlobal` in tests. Declaring a minimal `declare const chrome: { storage: { local: ... } }` inside the module keeps runtime access lazy and stub-friendly.
+  - TS ESNext lib types `Uint8Array` generically: `Uint8Array<ArrayBufferLike>` is not a `BufferSource` for `subtle.decrypt` — annotate `Uint8Array<ArrayBuffer>` on decode helpers.
+  - jsdom's `crypto` has `getRandomValues` but no `subtle`; `vi.stubGlobal("crypto", webcrypto)` in `beforeEach` supplies Node's WebCrypto — works because `keys.ts` touches `crypto` only at call time.
+  - In-memory `chrome.storage.local` stub pattern: keep `store` + `writes` (structured-clone snapshots of every `set`) so `JSON.stringify(writes)` plaintext assertions cover everything ever written.
+---
