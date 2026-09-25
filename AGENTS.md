@@ -13,6 +13,35 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 > source of truth; don't `bd import` during normal operation; don't
 > reach for third-party Dolt hosting before trying the default).
 
+## Git Policy (takes precedence over the managed blocks below)
+
+This project runs Conductor tracks and Superpowers plans. Both commit per task.
+`conductor/workflow.md` §Commits is an explicit repository instruction, and the
+managed Beads blocks state they do not override repository, user, or
+orchestrator instructions — so the rules below win wherever they conflict.
+
+- Commit per task: ALLOWED, no approval needed. `conductor/workflow.md`
+  mandates a commit after each task completes and its tests pass (with a
+  `git notes add -m "..."` task summary). Superpowers
+  subagent-driven-development and executing-plans implementers commit per
+  task too. Do not defer these commits to session end.
+- `git push`: NEVER unless the user explicitly asks. Conductor commits
+  locally and never pushes; the user decides when to push.
+- `git pull` / `git fetch`: NEVER automatically. No auto-rebase, no
+  auto-sync at session end. Run only on explicit user request.
+- `bd dolt push`: NOT per task. Run once when the user asks, normally at
+  session end, alongside `bd close` and note updates.
+- `bd close` / `bd update --notes` for the task just finished: run as normal
+  during the session — task tracking is not gated by this policy.
+- Everything else in the managed Beads blocks stands unchanged.
+
+## External Research & Dependency Investigation
+
+The `firecrawl` CLI is installed globally and queryable keyless for developer index searches:
+- **API contracts, library bugs, and error traces**: Run `firecrawl developer "<query>" [--limit <n>]` (e.g. `firecrawl developer "fastify listen localhost" --limit 5`). It queries GitHub issues, merged PRs, READMEs, and curated docs, returning exact markdown passages. Put all scoping (library name, error text) in the query string.
+- **Full documentation extraction**: Run `firecrawl scrape <url>` when a target doc URL needs complete reading.
+- **Tooling boundary**: Use workspace tools (`read`, `grep`, `glob`, `lsp`) for local code; reserve `firecrawl` strictly for external libraries and dependencies.
+
 ## Quick Reference
 
 ```bash
