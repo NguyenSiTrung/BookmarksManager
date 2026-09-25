@@ -86,7 +86,7 @@
   - [x] Step 4: Configure scripts (`typecheck` runs `wxt prepare && tsc --noEmit`) and a Playwright persistent Chromium extension smoke test; run `npm run test -- --run`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run test:e2e`. Verify the built manifest contains no `bookmarks`, `activeTab`, `scripting`, wildcard hosts, or unused provider patterns.
   - [x] Step 5: Mark this task complete in this plan, record setup/version gotchas in `learnings.md`, stage only this task's files, inspect `git diff --cached --check` and status, commit `chore(setup): Scaffold extension and test harness`, add a specific `git notes add -m "Scaffolded WXT and validated initial test runners" HEAD` task summary, and close its mapped Beads task.
 
-- [ ] Task: Add base Zod schemas and versioned Dexie storage
+- [x] Task: Add base Zod schemas and versioned Dexie storage
   <!-- files: src/schemas/z.ts, src/schemas/bookmark.ts, src/schemas/decision.ts, src/schemas/provider.ts, src/db/database.ts, tests/unit/schemas.test.ts, tests/unit/database.test.ts, tests/fixtures/base-records.ts -->
   <!-- depends: task1 -->
 
@@ -94,22 +94,22 @@
 
   **Interfaces:** Exports `Bookmark`, `Tag`, `Decision`, `ProviderSettings`, and `ConsentRecord` schemas with inferred types. Exports `db` with version 1 tables `metadata`, `decisions`, `consents`, `sentLog`, and `keyMaterials`; no bookmark-tree sync.
 
-  - [ ] Step 1: Write table-driven valid/invalid fixture tests for URL, title length, default health, tag length, confidence range, discriminated decision kinds, `jev_test` consent, and the preset-specific model allowlists. Write a Dexie test with fake-indexeddb that round-trips one consent and rejects duplicate scope/origin keys:
+  - [x] Step 1: Write table-driven valid/invalid fixture tests for URL, title length, default health, tag length, confidence range, discriminated decision kinds, `jev_test` consent, and the preset-specific model allowlists. Write a Dexie test with fake-indexeddb that round-trips one consent and rejects duplicate scope/origin keys:
     ```ts
     expect(Bookmark.safeParse({ ...validBookmark, url: "not a url" }).success).toBe(false);
     expect(Decision.safeParse({ ...validDecision, kind: "move" }).success).toBe(false);
     expect(ConsentRecord.safeParse({ ...validConsent, scope: "bookmark_analysis" }).success).toBe(false);
     ```
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/schemas.test.ts tests/unit/database.test.ts` and observe missing schemas/database.
-  - [ ] Step 3: Implement the §7 Bookmark/Tag/Decision fields and the minimal provider/consent records. Centralize Zod configuration:
+  - [x] Step 2: Run `npm run test -- --run tests/unit/schemas.test.ts tests/unit/database.test.ts` and observe missing schemas/database.
+  - [x] Step 3: Implement the §7 Bookmark/Tag/Decision fields and the minimal provider/consent records. Centralize Zod configuration:
     ```ts
     import { z } from "zod";
     z.config({ jitless: true });
     export { z };
     ```
     Use Dexie version 1 with `consents: "[scope+origin],acceptedAt"` as a compound primary key, auto-incremented `sentLog` entries, and `keyMaterials` indexed by a stable ID; put only metadata in the bookmark table.
-  - [ ] Step 4: Run those two tests, `npm run typecheck`, `npm run lint`, and `npm run build`. Inspect the database schema and test that an IndexedDB `CryptoKey` can be structured-cloned in the browser before relying on it in Phase 2.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(storage): Add validated data foundations`, add a task git note, and close the mapped Beads task.
+  - [x] Step 4: Run those two tests, `npm run typecheck`, `npm run lint`, and `npm run build`. Inspect the database schema and test that an IndexedDB `CryptoKey` can be structured-cloned in the browser before relying on it in Phase 2.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(storage): Add validated data foundations`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Add store skeleton and CI compliance baseline
   <!-- files: store/permissions.md, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, scripts/check-manifest.mjs, scripts/check-bundle.mjs, .github/workflows/ci.yml, tests/unit/compliance-scripts.test.ts -->

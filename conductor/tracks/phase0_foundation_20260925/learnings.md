@@ -31,3 +31,16 @@ Patterns, gotchas, and context discovered during implementation.
   - Tailwind v4 needs no config file: `@tailwindcss/vite` plugin in `wxt.config.ts` `vite()` + `@import "tailwindcss"` in `src/ui/styles.css`.
   - Pinned versions: vitest 5, typescript 6.0.3, zod 4.6.5, dexie 4.4.6, react 19.3, @playwright/test 1.63, jsdom 30, fake-indexeddb 6.2.5.
 ---
+
+## [2026-09-25 16:33] - Phase 1 Task 2: Add base Zod schemas and versioned Dexie storage
+- **Implemented:** `src/schemas/z.ts` centralizes `z.config({ jitless: true })` (MV3 CSP-safe) and re-exports `z`; `bookmark.ts`/`decision.ts` carry the PROJECT_PLAN.md §7 shapes verbatim (discriminated `kind` union of 7 decision kinds, `health` default, `schemaVersion` literal); `provider.ts` adds `PresetId`, `PRESET_MODELS` allowlists, `ProviderSettings` (per-preset model check via `superRefine`, masked `keySuffix`), and `ConsentRecord` (`scope: "jev_test"`, canonical-HTTPS-origin `origin`, positive `consentVersion`). `src/db/database.ts` is a `BookmarksManagerDB` Dexie subclass at version 1 with tables `metadata` (`key`), `decisions` (`id,status,createdAt`), `consents` (`[scope+origin],acceptedAt`), `sentLog` (`++id,sentAt`), `keyMaterials` (`id`), plus row interfaces `MetadataEntry`, `SentLogEntry`, `KeyMaterialEntry`.
+- **Files changed:** `src/schemas/{z,bookmark,decision,provider}.ts`, `src/db/database.ts`, `tests/unit/schemas.test.ts`, `tests/unit/database.test.ts`, `tests/fixtures/base-records.ts`, `conductor/tracks/phase0_foundation_20260925/plan.md`, `conductor/tracks/phase0_foundation_20260925/learnings.md`
+- **Commit:** (this task's commit)
+- **Learnings:**
+  - Zod 4.6.5: `.refine`/`.check` still run after a failed base check on the same schema (unlike Zod 3) — `new URL(value)` inside a refine after `z.url()` threw `TypeError` on bad input; wrap refines in try/catch. `z.config()` with no args returns the live config, so `z.config().jitless === true` is directly assertable.
+  - `jev-latest` exists in both preset allowlists — cross-preset rejection tests must use preset-exclusive models (typesafe-only: `jev-preview`, `jev-1.13.0`; openrouter-only: `jev-1.13`, `typesafe/jev-1.13`).
+  - fake-indexeddb 6.2.5 uses native `structuredClone` on insert/retrieve, and Node 22's `structuredClone` handles `CryptoKey` — a non-extractable AES-GCM key round-trips through Dexie+fake-indexeddb and stays usable (encrypt/decrypt verified, `exportKey` correctly rejects). Phase 2's CryptoKey-in-IndexedDB design is viable.
+  - Dexie `add`/`put` writes a generated inbound key back onto the caller's object — reusing a fixture across `sentLog` adds smuggles in the previous auto-incremented `id` and throws `ConstraintError`. Always add fresh object copies.
+  - `node:crypto`'s `webcrypto.CryptoKey` type is not assignable to DOM `CryptoKey` (Node's `KeyUsage` union is wider, e.g. `"decapsulateBits"`) — cast once in tests; runtime objects clone identically. Keep `KeyMaterialEntry.key` DOM-typed for extension code.
+  - Under `verbatimModuleSyntax` + `noUncheckedIndexedAccess`, typing shared fixtures with `satisfies z.input<typeof Schema>` keeps them honest while letting `.default()` fields stay absent.
+---
