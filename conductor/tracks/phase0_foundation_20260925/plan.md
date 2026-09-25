@@ -272,7 +272,7 @@
   - [x] Step 4: Run `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`; resolve failures and verify no fresh-install traffic.
   - [x] Step 5: Update plan/learnings through the coordinator, review staged files, commit `chore(ci): Guard extension bundle and traffic`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Align store disclosures with the completed test flow
+- [x] Task: Align store disclosures with the completed test flow
   <!-- files: store/permissions.md, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md -->
   <!-- depends: task2, task3 -->
 
@@ -280,11 +280,11 @@
 
   **Interfaces:** The permission table names exactly `storage`, `sidePanel`, and the two narrow optional preset patterns. The policy/practices/listing/reviewer notes describe the implemented synthetic `jev_test` flow rather than future bookmark analysis.
 
-  - [ ] Step 1: Run `npm run check:manifest` as the baseline. Compare the existing privacy-practices and privacy-policy claims to `CONSENT_VERSION`, the Options disclosure, and the actual `["model", "state", "questions"]` payload fields.
-  - [ ] Step 2: Observe the existing draft documents still describe the pre-connection foundation by reading all five and record missing statements about chosen recipient, bearer key, synthetic fields, explicit test trigger, revocation, local key storage, and release prerequisites.
-  - [ ] Step 3: Update drafts with the exact current data flow and deny claims of a finished bookmark manager or published privacy URL. Keep the Limited Use statement in the privacy policy, specify that publisher identity/contact/public website are release prerequisites, and explain that no user bookmark is sent in this track.
-  - [ ] Step 4: Run `npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle`; inspect the generated permission inventory and spot-check the Options copy against the draft privacy policy.
-  - [ ] Step 5: Update plan/learnings through the coordinator, review staged docs, commit `docs(store): Align provider test disclosures`, add a task git note, and close the mapped Beads task.
+  - [x] Step 1: Run `npm run check:manifest` as the baseline. Compare the existing privacy-practices and privacy-policy claims to `CONSENT_VERSION`, the Options disclosure, and the actual `["model", "state", "questions"]` payload fields.
+  - [x] Step 2: Observe the existing draft documents still describe the pre-connection foundation by reading all five and record missing statements about chosen recipient, bearer key, synthetic fields, explicit test trigger, revocation, local key storage, and release prerequisites.
+  - [x] Step 3: Update drafts with the exact current data flow and deny claims of a finished bookmark manager or published privacy URL. Keep the Limited Use statement in the privacy policy, specify that publisher identity/contact/public website are release prerequisites, and explain that no user bookmark is sent in this track.
+  - [x] Step 4: Run `npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle`; inspect the generated permission inventory and spot-check the Options copy against the draft privacy policy.
+  - [x] Step 5: Update plan/learnings through the coordinator, review staged docs, commit `docs(store): Align provider test disclosures`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Automated phase verification 'Synthetic Jev Test and Compliance Checks' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->

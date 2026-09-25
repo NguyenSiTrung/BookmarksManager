@@ -18,22 +18,24 @@ manifest's `host_permissions` / `optional_host_permissions`; plain names map to
 | Permission | Level | Justification |
 |---|---|---|
 | `sidePanel` | required | Show the Bookmarks Manager UI in Chrome's side panel |
-| `storage` | required | Store extension settings and consent records locally on this device |
+| `storage` | required | Store encrypted provider API-key envelopes in chrome.storage.local; plaintext keys are never persisted |
 
 ## Optional host permissions
 
-Runtime-only grants. The flow that requests them is being built for this
-release; when it ships, each request fires only from a direct user action,
-and grants remain removable at any time from Chrome's extension settings.
+Runtime-only grants. The shipped Options provider flow requests each pattern
+from a direct click on the provider's Enable button — after the user checks
+an unchecked consent checkbox — and Chrome shows its permission prompt from
+that same click. Grants remain removable at any time from Chrome's extension
+settings or from the provider's Revoke action in Options.
 
 | Pattern | Level | Used for |
 |---|---|---|
 | `https://api.typesafe.ai/*` | optional | Jev test connection to the TypeSafe provider, started by the user |
 | `https://openrouter.ai/*` | optional | Jev test connection to the OpenRouter provider, started by the user |
 
-_The provider flow that uses these two patterns is under construction in this
-release; the patterns are declared now so the consent-gated request has a
-fixed, narrow target. Any change here must update the manifest in the same
+_These two patterns back the shipped, consent-gated Test connection — the
+only feature that produces network traffic, and only on an explicit Test
+connection click. Any change here must update the manifest in the same
 change._
 
 ## Declared but empty
