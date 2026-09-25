@@ -20,7 +20,7 @@ Patterns, gotchas, and context discovered during implementation.
 ## [2026-09-25 16:06] - Phase 1 Task 1: Scaffold the WXT extension, linting, and test runners
 - **Implemented:** WXT MV3 scaffold (background, popup, sidepanel, options) with React + Tailwind v4, strict TS, ESLint flat config with gated `fetch`/`globalThis.fetch` restrictions (`src/net/**` exception), Vitest unit contract, and a Playwright persistent-context extension smoke test.
 - **Files changed:** `package.json`, `package-lock.json`, `wxt.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `vitest.config.ts`, `playwright.config.ts`, `src/entrypoints/background.ts`, `src/entrypoints/{popup,sidepanel,options}/{index.html,main.tsx}`, `src/ui/styles.css`, `tests/unit/scaffold.test.ts`, `tests/e2e/shell.spec.ts`, `.gitignore`, `conductor/tracks/phase0_foundation_20260925/plan.md`, `conductor/tracks/phase0_foundation_20260925/learnings.md`
-- **Commit:** 8844dce
+- **Commit:** f9950a3
 - **Learnings:**
   - WXT 0.21.4 works with `srcDir: "src"`; `sidepanel/` entrypoint emits `sidepanel.html` + `side_panel` manifest key automatically. Root `tsconfig.json` extends the generated `.wxt/tsconfig.json` but must add `"jsx": "react-jsx"` itself — the react module does not set it.
   - `config.manifest` in `wxt.config.ts` is typed `UserManifest | Promise | Fn`; cast it to a narrow shape in unit tests before asserting fields.
