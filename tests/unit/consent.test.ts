@@ -1,0 +1,159 @@
+import "fake-indexeddb/auto";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  CONSENT_VERSION,
+  grantTestConsent,
+  hasTestConsent,
+  revokeTestConsent,
+} from "../../src/consent/records";
+import { db } from "../../src/db/database";
+import { PRESETS } from "../../src/net/presets";
+import {
+  CONSENT_SCOPE,
+  ConsentRecord,
+  type PresetId,
+} from "../../src/schemas/provider";
+
+beforeEach(async () => {
+  await db.delete();
+  await db.open();
+});
+
+afterAll(() => {
+  db.close();
+});
+
+const PRESET_IDS = ["typesafe", "openrouter"] as const;
+
+/** Build a consents-table row directly, loosening the literal scope type so
+ * tests can seed foreign-scope rows a writer should never produce. */
+function consentRow(
+  overrides: {
+    scope?: string;
+    origin?: string;
+    consentVersion?: number;
+    acceptedAt?: string;
+  } = {},
+): ConsentRecord {
+  return {
+    scope: overrides.scope ?? CONSENT_SCOPE,
+    origin: overrides.origin ?? PRESETS.typesafe.origin,
+    consentVersion: overrides.consentVersion ?? CONSENT_VERSION,
+    acceptedAt: overrides.acceptedAt ?? "2026-09-25T10:00:00.000Z",
+  } as ConsentRecord;
+}
+
+describe("versioned consent records", () => {
+  it("pins CONSENT_VERSION to 1", () => {
+    expect(CONSENT_VERSION).toBe(1);
+  });
+
+  it("reports no consent before any grant", async () => {
+    for (const id of PRESET_IDS) {
+      expect(await hasTestConsent(id)).toBe(false);
+    }
+  });
+
+  it("grant then has round-trips for each preset", async () => {
+    for (const id of PRESET_IDS) {
+      await grantTestConsent(id);
+      expect(await hasTestConsent(id)).toBe(true);
+    }
+    // One row per (scope, origin) pair — two presets, two rows.
+    expect(await db.consents.count()).toBe(2);
+  });
+
+  it("stores only the scoped, versioned grant fields — no keys or bookmark data", async () => {
+    await grantTestConsent("typesafe");
+    const stored = await db.consents.get([
+      CONSENT_SCOPE,
+      PRESETS.typesafe.origin,
+    ]);
+    expect(stored).toBeDefined();
+    expect(Object.keys(stored!).sort()).toEqual([
+      "acceptedAt",
+      "consentVersion",
+      "origin",
+      "scope",
+    ]);
+    expect(() => ConsentRecord.parse(stored)).not.toThrow();
+    expect(stored).toMatchObject({
+      scope: "jev_test",
+      origin: "https://api.typesafe.ai",
+      consentVersion: CONSENT_VERSION,
+    });
+  });
+
+  it("revoke deletes the grant row", async () => {
+    await grantTestConsent("typesafe");
+    await revokeTestConsent("typesafe");
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(
+      await db.consents.get([CONSENT_SCOPE, PRESETS.typesafe.origin]),
+    ).toBeUndefined();
+  });
+
+  it("revoke is safe when no grant exists", async () => {
+    await expect(revokeTestConsent("openrouter")).resolves.toBeUndefined();
+  });
+
+  it("round-trips grant → revoke → grant", async () => {
+    await grantTestConsent("openrouter");
+    expect(await hasTestConsent("openrouter")).toBe(true);
+    await revokeTestConsent("openrouter");
+    expect(await hasTestConsent("openrouter")).toBe(false);
+    await grantTestConsent("openrouter");
+    expect(await hasTestConsent("openrouter")).toBe(true);
+  });
+
+  it("scopes grants per origin — one preset does not imply the other", async () => {
+    await grantTestConsent("typesafe");
+    expect(await hasTestConsent("typesafe")).toBe(true);
+    expect(await hasTestConsent("openrouter")).toBe(false);
+  });
+
+  it("rejects stale consent versions", async () => {
+    await db.consents.put(
+      consentRow({ consentVersion: CONSENT_VERSION + 1 }),
+    );
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    await db.consents.put(consentRow({ consentVersion: 99 }));
+    expect(await hasTestConsent("typesafe")).toBe(false);
+  });
+
+  it("ignores grants recorded for other origins", async () => {
+    await db.consents.put(consentRow({ origin: "https://evil.example.com" }));
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(await hasTestConsent("openrouter")).toBe(false);
+  });
+
+  it("ignores grants recorded under a different scope at the same origin", async () => {
+    await db.consents.put(consentRow({ scope: "bookmark_analysis" }));
+    expect(await hasTestConsent("typesafe")).toBe(false);
+  });
+
+  it("re-granting upserts the row and refreshes acceptedAt", async () => {
+    await db.consents.put(
+      consentRow({ acceptedAt: "2020-01-01T00:00:00.000Z" }),
+    );
+    await grantTestConsent("typesafe");
+    const stored = await db.consents.get([
+      CONSENT_SCOPE,
+      PRESETS.typesafe.origin,
+    ]);
+    expect(stored?.acceptedAt).not.toBe("2020-01-01T00:00:00.000Z");
+    expect(stored?.consentVersion).toBe(CONSENT_VERSION);
+    // Upsert, not a second row.
+    expect(await db.consents.count()).toBe(1);
+    expect(await hasTestConsent("typesafe")).toBe(true);
+  });
+
+  it("rejects unknown preset ids on every entry point", async () => {
+    const bogus = "anthropic" as unknown as PresetId;
+    await expect(grantTestConsent(bogus)).rejects.toThrow();
+    await expect(hasTestConsent(bogus)).rejects.toThrow();
+    await expect(revokeTestConsent(bogus)).rejects.toThrow();
+    // A failed grant must not leave a row behind.
+    expect(await db.consents.count()).toBe(0);
+  });
+});

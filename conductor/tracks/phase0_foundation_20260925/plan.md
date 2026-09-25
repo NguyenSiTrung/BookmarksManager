@@ -157,18 +157,18 @@
   - [x] Step 4: Run key tests, typecheck, lint, and build. Inspect `chrome.storage.local` in a local test for ciphertext-only values.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(security): Protect provider keys locally`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Define preset destinations and versioned consent records
+- [x] Task: Define preset destinations and versioned consent records
   <!-- files: src/consent/records.ts, src/net/presets.ts, tests/unit/consent.test.ts, tests/unit/presets.test.ts -->
 
   **Files:** Create `src/consent/records.ts`, `src/net/presets.ts`, `tests/unit/consent.test.ts`, `tests/unit/presets.test.ts`. Reuse Phase 1's `ConsentRecord` schema and Dexie `consents` table.
 
   **Interfaces:** `CONSENT_VERSION = 1`; `grantTestConsent(preset: PresetId): Promise<void>`, `revokeTestConsent(preset: PresetId): Promise<void>`, and `hasTestConsent(preset: PresetId): Promise<boolean>`. `PRESETS[preset]` supplies a fixed origin, System One URL, Chrome permission pattern, and allowed model choices.
 
-  - [ ] Step 1: Add tests for current and stale consent versions, origin/scope mismatches, grant/revoke round-trips, exactly the TypeSafe/OpenRouter URLs and models listed in §8.1, and rejection of an unknown preset or a non-HTTPS URL.
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/consent.test.ts tests/unit/presets.test.ts` and observe missing records/presets.
-  - [ ] Step 3: Implement the fixed registry and Dexie helpers. Construct consent records with `{ scope: "jev_test", origin: PRESETS[preset].origin, consentVersion: CONSENT_VERSION, acceptedAt: new Date().toISOString() }`; compare all three fields during every `hasTestConsent` call. Limit the two preset URLs to `https://api.typesafe.ai/v1/systemone` and `https://openrouter.ai/api/v1/systemone`, with no caller-supplied origin/path.
-  - [ ] Step 4: Run consent/preset tests, typecheck, lint, and build. Inspect records for no key or bookmark content.
-  - [ ] Step 5: Have the coordinator serialize plan/learnings updates; review owned files, commit `feat(consent): Define preset grants`, add a task git note, and close the mapped Beads task.
+  - [x] Step 1: Add tests for current and stale consent versions, origin/scope mismatches, grant/revoke round-trips, exactly the TypeSafe/OpenRouter URLs and models listed in §8.1, and rejection of an unknown preset or a non-HTTPS URL.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/consent.test.ts tests/unit/presets.test.ts` and observe missing records/presets.
+  - [x] Step 3: Implement the fixed registry and Dexie helpers. Construct consent records with `{ scope: "jev_test", origin: PRESETS[preset].origin, consentVersion: CONSENT_VERSION, acceptedAt: new Date().toISOString() }`; compare all three fields during every `hasTestConsent` call. Limit the two preset URLs to `https://api.typesafe.ai/v1/systemone` and `https://openrouter.ai/api/v1/systemone`, with no caller-supplied origin/path.
+  - [x] Step 4: Run consent/preset tests, typecheck, lint, and build. Inspect records for no key or bookmark content.
+  - [x] Step 5: Have the coordinator serialize plan/learnings updates; review owned files, commit `feat(consent): Define preset grants`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Enforce versioned consent and permission in the network gate
   <!-- files: src/net/send.ts, tests/unit/network-gate.test.ts -->
