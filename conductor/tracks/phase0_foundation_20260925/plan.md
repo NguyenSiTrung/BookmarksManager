@@ -170,7 +170,7 @@
   - [x] Step 4: Run consent/preset tests, typecheck, lint, and build. Inspect records for no key or bookmark content.
   - [x] Step 5: Have the coordinator serialize plan/learnings updates; review owned files, commit `feat(consent): Define preset grants`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Enforce versioned consent and permission in the network gate
+- [x] Task: Enforce versioned consent and permission in the network gate
   <!-- files: src/net/send.ts, tests/unit/network-gate.test.ts -->
   <!-- depends: task1, task2 -->
 
@@ -178,15 +178,15 @@
 
   **Interfaces:** `sendConsentedTest(preset: PresetId, model: string): Promise<Response>` is the only app call to `fetch`; it constructs a fixed synthetic state/question internally. Fixed preset URLs/permission patterns come from `PRESETS`.
 
-  - [ ] Step 1: Write gate tests with mocked `chrome.permissions.contains`, `readProviderKey`, and `fetch`. Assert **no fetch** for missing/stale consent, missing permission, missing key, non-HTTPS URL, unlisted origin, and revoked consent; assert cookies omitted and redirects rejected on success. Assert no caller-supplied state or questions can enter the request because the function takes only a preset and model. Assert sent-log entries contain only time, origin, feature `"jev_test"`, and top-level payload field names:
+  - [x] Step 1: Write gate tests with mocked `chrome.permissions.contains`, `readProviderKey`, and `fetch`. Assert **no fetch** for missing/stale consent, missing permission, missing key, non-HTTPS URL, unlisted origin, and revoked consent; assert cookies omitted and redirects rejected on success. Assert no caller-supplied state or questions can enter the request because the function takes only a preset and model. Assert sent-log entries contain only time, origin, feature `"jev_test"`, and top-level payload field names:
     ```ts
     await expect(sendConsentedTest("typesafe", "jev-latest")).rejects.toThrow();
     expect(fetchSpy).not.toHaveBeenCalled();
     ```
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/network-gate.test.ts`; observe failures before implementation.
-  - [ ] Step 3: Implement the immutable preset registry and `jev_test` consent checks. Derive the URL from `PRESETS`, not caller input. Check `new URL(url).protocol === "https:"`, exact origin, current scoped grant, and `chrome.permissions.contains({ origins: [pattern] })` before reading the key and invoking `fetch(url, { method: "POST", credentials: "omit", redirect: "error", ... })`. Build the body internally with the fixed `test` Noul question and literal synthetic state in the example in Phase 3; only `model` varies. Record only `["model", "state", "questions"]` when an outbound request is attempted; map transport failures to redacted errors. No arbitrary body, headers, endpoint, or redirect override.
-  - [ ] Step 4: Run network-gate and consent tests, typecheck, lint, and build. Check `rg 'fetch\\(' src` and document the sole approved app call in `src/net/`.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(net): Gate provider requests on consent`, add a task git note, and close the mapped Beads task.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/network-gate.test.ts`; observe failures before implementation.
+  - [x] Step 3: Implement the immutable preset registry and `jev_test` consent checks. Derive the URL from `PRESETS`, not caller input. Check `new URL(url).protocol === "https:"`, exact origin, current scoped grant, and `chrome.permissions.contains({ origins: [pattern] })` before reading the key and invoking `fetch(url, { method: "POST", credentials: "omit", redirect: "error", ... })`. Build the body internally with the fixed `test` Noul question and literal synthetic state in the example in Phase 3; only `model` varies. Record only `["model", "state", "questions"]` when an outbound request is attempted; map transport failures to redacted errors. No arbitrary body, headers, endpoint, or redirect override.
+  - [x] Step 4: Run network-gate and consent tests, typecheck, lint, and build. Check `rg 'fetch\\(' src` and document the sole approved app call in `src/net/`.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(net): Gate provider requests on consent`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Build the Options consent, permission, and revocation flow
   <!-- files: src/consent/disclosure.ts, src/messages/provider.ts, src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/PrivacyDraft.tsx, src/entrypoints/options/main.tsx, src/entrypoints/background.ts, store/privacy-policy.md, tests/components/provider-setup.test.tsx, tests/unit/provider-messages.test.ts -->
