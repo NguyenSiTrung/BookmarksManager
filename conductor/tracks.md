@@ -1,7 +1,8 @@
 # Project Tracks
 
-This file tracks major development tracks. No track has been created yet; the initial track was deferred at the user's request.
+This file tracks major development tracks.
 
 ---
 
-Use `/conductor-newtrack` when ready to define the first track.
+## [ ] Track: Phase 0 foundation and TypeSafe/OpenRouter provider connection
+*Link: [./tracks/phase0_foundation_20260925/](./tracks/phase0_foundation_20260925/)*
