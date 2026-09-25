@@ -94,6 +94,21 @@ export interface ProviderMessageSender {
   url?: string;
 }
 
+/**
+ * Trailing characters of the API key exposed as the masked display hint.
+ * A key this short or shorter would be revealed in full by `slice`, so the
+ * worker stores a fixed placeholder instead — a persisted `keySuffix` must
+ * never contain the raw key itself (`ProviderSettings` contract).
+ */
+const KEY_SUFFIX_LENGTH = 4;
+const MASKED_KEY_SUFFIX = "****";
+
+function keyDisplaySuffix(key: string): string {
+  return key.length > KEY_SUFFIX_LENGTH
+    ? key.slice(-KEY_SUFFIX_LENGTH)
+    : MASKED_KEY_SUFFIX;
+}
+
 function failure(
   code: ProviderErrorCode,
   message: string,
@@ -188,7 +203,7 @@ async function enableProvider(message: {
   const settings = ProviderSettings.parse({
     preset: message.preset,
     model: message.model,
-    keySuffix: message.key.slice(-4),
+    keySuffix: keyDisplaySuffix(message.key),
   });
   try {
     await db.metadata.put({ key: message.preset, value: settings });

@@ -171,6 +171,44 @@ describe("ENABLE_PROVIDER", () => {
     });
   });
 
+  it.each(["x9q", "zz42"])(
+    "never persists a short key as its own suffix — %s stores a masked placeholder",
+    async (shortKey) => {
+      const result = await handleProviderMessage(
+        enableMessage({ key: shortKey }),
+        optionsSender,
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        status: { enabled: true, keySuffix: "****" },
+      });
+      // The raw key must not appear in the metadata row or any response.
+      const settings = await storedSettings("typesafe");
+      expect(settings?.keySuffix).toBe("****");
+      expect(JSON.stringify(settings)).not.toContain(shortKey);
+      const status = await handleProviderMessage(
+        { type: "PROVIDER_STATUS", preset: "typesafe" },
+        optionsSender,
+      );
+      expect(JSON.stringify(status)).not.toContain(shortKey);
+      expect(JSON.stringify(result)).not.toContain(shortKey);
+    },
+  );
+
+  it("still stores the last four characters for a five-character key", async () => {
+    const result = await handleProviderMessage(
+      enableMessage({ key: "abcde" }),
+      optionsSender,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: { enabled: true, keySuffix: "bcde" },
+    });
+    expect(await storedSettings("typesafe")).toMatchObject({
+      keySuffix: "bcde",
+    });
+  });
+
   it("fails without writes when the host permission was not granted", async () => {
     containsSpy.mockResolvedValue(false);
     const result = await enableProvider();
