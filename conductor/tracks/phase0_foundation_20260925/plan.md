@@ -222,16 +222,16 @@
 ## Phase 3: Synthetic Jev Test and Compliance Checks
 <!-- execution: parallel -->
 
-- [ ] Task: Validate Jev wire data and implement the synthetic connection test
+- [x] Task: Validate Jev wire data and implement the synthetic connection test
   <!-- files: src/jev/wire.ts, src/jev/connection.ts, src/net/send.ts, tests/unit/jev-wire.test.ts, tests/unit/jev-connection.test.ts, tests/fixtures/jev-responses.ts -->
 
   **Files:** Create `src/jev/wire.ts`, `src/jev/connection.ts`, `tests/unit/jev-wire.test.ts`, `tests/unit/jev-connection.test.ts`, `tests/fixtures/jev-responses.ts`. Modify `src/net/send.ts` only if tests identify a missing transport boundary.
 
   **Interfaces:** `testJevConnection(preset: PresetId, model: string): Promise<{ model: string; latencyMs: number; cost?: number }>` validates the fixed synthetic `SystemOneRequest` built by the gate, calls `sendConsentedTest(preset, model)`, parses `SystemOneResponse`, and verifies its `test` answer is type `noul`. The gate retains ownership of keys/auth/transport.
 
-  - [ ] Step 1: Add tests for Noul/Choice/Score request/response shapes, 2–255 Choice options, 2–10 Score levels, missing or mismatched `test` answer, TypeSafe response and OpenRouter extra `id`, `provider`, and `usage.cost`, plus 401/422/429/529 and malformed JSON. Assert synthetic state and question are constant and do not contain bookmark fields.
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/jev-wire.test.ts tests/unit/jev-connection.test.ts`; observe missing schemas/client.
-  - [ ] Step 3: Implement the §8.2 discriminated wire schemas. Export `makeSyntheticRequest(model: string): SystemOneRequest` from `src/jev/wire.ts`, move the gate's fixed body construction to this factory, and have the gate parse it before sending. Parse responses on return. The factory returns:
+  - [x] Step 1: Add tests for Noul/Choice/Score request/response shapes, 2–255 Choice options, 2–10 Score levels, missing or mismatched `test` answer, TypeSafe response and OpenRouter extra `id`, `provider`, and `usage.cost`, plus 401/422/429/529 and malformed JSON. Assert synthetic state and question are constant and do not contain bookmark fields.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/jev-wire.test.ts tests/unit/jev-connection.test.ts`; observe missing schemas/client.
+  - [x] Step 3: Implement the §8.2 discriminated wire schemas. Export `makeSyntheticRequest(model: string): SystemOneRequest` from `src/jev/wire.ts`, move the gate's fixed body construction to this factory, and have the gate parse it before sending. Parse responses on return. The factory returns:
     ```ts
     const request = {
       model,
@@ -242,8 +242,8 @@
     } as const;
     ```
     Map 401 to key error, 422 to incompatibility, and 429/529 to retry-later guidance without including response bodies or credentials. Measure elapsed time and show the returned versioned model/cost if valid. No bulk jobs, retry loop, or real-key automated test.
-  - [ ] Step 4: Run both test files, typecheck, lint, and build. Check TypeSafe and OpenRouter mock fixtures separately.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(jev): Add synthetic connection test`, add a task git note, and close the mapped Beads task.
+  - [x] Step 4: Run both test files, typecheck, lint, and build. Check TypeSafe and OpenRouter mock fixtures separately.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(jev): Add synthetic connection test`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Wire Test connection into Options and cover failure states
   <!-- files: src/messages/provider.ts, src/entrypoints/background.ts, src/entrypoints/options/ProviderSetup.tsx, tests/components/test-connection.test.tsx, tests/unit/connection-message.test.ts -->

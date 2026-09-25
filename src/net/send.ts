@@ -1,5 +1,6 @@
 import { hasTestConsent } from "../consent/records";
 import { db } from "../db/database";
+import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
 import type { PresetId } from "../schemas/provider";
 import { readProviderKey } from "../security/keys";
 import { resolvePreset, type PresetDestination } from "./presets";
@@ -50,25 +51,6 @@ export class NetworkGateError extends Error {
     this.name = "NetworkGateError";
     this.code = code;
   }
-}
-
-/**
- * The fixed `jev_test` payload (Phase 3 will move this into
- * `makeSyntheticRequest` in `src/jev/wire.ts`). Only `model` varies; the
- * function signature admits no caller-supplied state or questions, so no
- * bookmark content can enter the request.
- */
-function buildSyntheticRequest(model: string) {
-  return {
-    model,
-    state: "This is a synthetic connection test with no bookmark content.",
-    questions: {
-      test: {
-        type: "noul",
-        instructions: "Is this a synthetic connection test?",
-      },
-    },
-  } as const;
 }
 
 /**
@@ -166,7 +148,9 @@ export async function sendConsentedTest(
     );
   }
 
-  const request = buildSyntheticRequest(model);
+  // The synthetic body lives in the Jev wire layer; parse it through the
+  // §8.2 schema so a malformed request fails before egress, never after.
+  const request = SystemOneRequest.parse(makeSyntheticRequest(model));
   let response: Response;
   try {
     response = await fetch(destination.url, {
