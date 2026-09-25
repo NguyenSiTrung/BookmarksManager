@@ -56,3 +56,14 @@ Patterns, gotchas, and context discovered during implementation.
   - Headed Playwright extension tests (`headless: false` for MV3 persistent context) need `xvfb-run -a` in CI; `xvfb` via `apt-get install -y xvfb` after `npx playwright install --with-deps chromium` covers both system deps and the display.
   - Store docs for an unfinished slice: state the release scope explicitly ("current slice only"), mark publisher identity, contact email, hosted privacy-policy URL, icons, and screenshots as release prerequisites rather than inventing values, and keep the Limited Use statement verbatim in the policy draft.
 ---
+
+## [2026-09-25 10:25] - Phase 1 Task 4: Manual verification (user-approved) + Revision 1
+- **Implemented:** Phase 1 verified by user; P1T3 review fix verified and closed; spec/plan revised to waive remaining manual gates — no code changes.
+- **Files changed:** plan.md, spec.md, revisions.md (new, Revision 1), implement_state.json, handoff_20260925_100900.md (addendum)
+- **Learnings:**
+  - Context: User approved Phase 1 ("manual ok") and waived manual
+    verification gates for the rest of the track — phase-end tasks are now
+    automated evidence checkpoints (Revision 1, see `revisions.md`).
+  - Gotcha: a "canceled" subagent dispatch may still complete — verify git log
+    before assuming work was discarded (happened with the P1T3 fix, 4e355eb).
+---

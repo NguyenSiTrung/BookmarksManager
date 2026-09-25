@@ -1,5 +1,7 @@
 # Phase 0 Foundation and Provider Connection Implementation Plan
 
+> **Last Revised: 2026-09-25** — Revision 1: manual phase-verification gates waived for the rest of this track; see `revisions.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a runnable MV3 extension foundation and a consented, testable TypeSafe/OpenRouter connection flow without sending bookmark data.
@@ -20,7 +22,7 @@
 - Validate external responses and extension messages with Zod. Configure `z.config({ jitless: true })` before defining schemas.
 - Add only permissions used by this slice; documentation and the generated manifest must agree. Keep `.beads/issues.jsonl` and other existing user work untouched.
 - For each implementation task: first observe a failing behavior test (or verify a missing scaffolding artifact), implement, run the narrowest relevant checks, update this plan and `learnings.md`, commit only intended files locally, add a `git notes` task summary, then close its mapped Beads task. During parallel execution, each worker owns only its annotated implementation files in an isolated worktree; the coordinator serializes edits to shared `plan.md`, `learnings.md`, Beads task status, and commits/notes after each worker reports passing checks. Never push, pull, fetch, or sync Dolt automatically.
-- The last task of each phase is manual verification per `conductor/workflow.md`. Do not mark it done until the user verifies that phase.
+- ~~The last task of each phase is manual verification per `conductor/workflow.md`. Do not mark it done until the user verifies that phase.~~ *(Revised 2026-09-25, see `revisions.md`)* Phase-end tasks are **automated evidence checkpoints**: run the full local gate (lint, typecheck, tests, build, e2e, `check:manifest`, `check:bundle`), record evidence in `learnings.md`, and mark complete on green — no user-approval gate. Phase 1 was manually verified by the user on 2026-09-25.
 
 ## File and Interface Map
 
@@ -125,14 +127,14 @@
   - [x] Step 4: Run compliance fixture tests and `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`. Correct any mismatches between WXT's generated manifest and the inventory.
   - [x] Step 5: Update plan/learnings, review staged files, commit `chore(ci): Add store and compliance baseline`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Conductor - User Manual Verification 'Runnable Extension and Data Baseline' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Runnable Extension and Data Baseline' (Protocol in workflow.md)
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
   <!-- depends: task2, task3 -->
 
   **Files:** Update this plan and `learnings.md` after approval. **Evidence:** clean extension load; popup, side panel, and Options render; unit tests, lint, typecheck, build, E2E smoke; generated permissions and CI/compliance scripts.
 
-  - [ ] Step 1: Summarize phase results and limitations to the user; request manual verification of the extension shells.
-  - [ ] Step 2: Record approval/feedback and useful reusable patterns in `conductor/patterns.md`; mark verification complete only after approval, then commit the documentation checkpoint with a task note and close its mapped Beads task.
+  - [x] Step 1: Summarize phase results and limitations to the user; request manual verification of the extension shells.
+  - [x] Step 2: Record approval/feedback and useful reusable patterns in `conductor/patterns.md`; mark verification complete only after approval, then commit the documentation checkpoint with a task note and close its mapped Beads task. *(User approved Phase 1 on 2026-09-25.)*
 
 ## Phase 2: Protected Keys, Consent, and Network Gate
 <!-- execution: parallel -->
@@ -208,14 +210,14 @@
   - [ ] Step 4: Run component/worker tests, typecheck, lint, build, and browser smoke; check cancel, denied permission, and revoke in Options manually. Do not call the provider from this phase.
   - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(consent): Add provider permission flow`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Conductor - User Manual Verification 'Protected Keys, Consent, and Network Gate' (Protocol in workflow.md)
+- [ ] Task: Automated phase verification 'Protected Keys, Consent, and Network Gate' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
   <!-- depends: task4 -->
 
-  **Files:** Update this plan, `learnings.md`, and reusable `patterns.md` after approval. **Evidence:** key, gate, message, and component tests; permission deny/revoke behavior; zero requests without consent.
+  **Files:** Update this plan, `learnings.md`, and reusable `patterns.md`. **Evidence:** key, gate, message, and component tests; permission deny/revoke behavior; zero requests without consent.
 
-  - [ ] Step 1: Report tests, manual checks, and known limitations; ask the user to review disclosure, consent, permission prompt, and revocation.
-  - [ ] Step 2: Record approval/feedback before marking this task done; checkpoint documentation locally with a git note and close the mapped Beads task.
+  - [ ] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record the evidence and known limitations in `learnings.md`.
+  - [ ] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); commit the documentation checkpoint locally with a git note and close the mapped Beads task.
 
 ## Phase 3: Synthetic Jev Test and Compliance Checks
 <!-- execution: parallel -->
@@ -284,17 +286,17 @@
   - [ ] Step 4: Run `npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle`; inspect the generated permission inventory and spot-check the Options copy against the draft privacy policy.
   - [ ] Step 5: Update plan/learnings through the coordinator, review staged docs, commit `docs(store): Align provider test disclosures`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Conductor - User Manual Verification 'Synthetic Jev Test and Compliance Checks' (Protocol in workflow.md)
+- [ ] Task: Automated phase verification 'Synthetic Jev Test and Compliance Checks' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
   <!-- depends: task4 -->
 
-  **Files:** Update this plan, `learnings.md`, and reusable `patterns.md` after approval. **Evidence:** full local/CI-equivalent checks; fresh-install no-traffic smoke; a mock TypeSafe/OpenRouter test; current-slice store inventory.
+  **Files:** Update this plan, `learnings.md`, and reusable `patterns.md`. **Evidence:** full local/CI-equivalent checks; fresh-install no-traffic smoke; a mock TypeSafe/OpenRouter test; current-slice store inventory.
 
-  - [ ] Step 1: Present checks and ask the user to confirm the Options flow, the absence of default network requests, and the draft disclosures. A real API key is optional and must not be requested for automated tests.
-  - [ ] Step 2: Record feedback and approval before marking verification complete, checkpoint documentation locally with a git note, and close the mapped Beads task. Leave any unfinished implementation tasks open until actually completed.
+  - [ ] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record evidence and known limitations in `learnings.md`. A real API key is optional and must not be requested for automated tests.
+  - [ ] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); checkpoint documentation locally with a git note and close the mapped Beads task. Leave any unfinished implementation tasks open until actually completed.
 
 ## Dependency and Execution Analysis
 
 - Phases are sequential: Phase 1 establishes entrypoints, scripts, schemas, and Dexie; Phase 2 depends on them for consent and key storage; Phase 3 depends on the gate and Options workflow for the Jev test and truthful store documents. Unannotated phase order yields Phase 2 depending on Phase 1 and Phase 3 depending on Phase 2.
 - Within Phase 1, Tasks 2 (schemas/DB) and 3 (store/CI) can run together after Task 1 (scaffold); Task 4 waits for both. Within Phase 2, Tasks 1 (keys) and 2 (preset/consent records) can run together; Task 3 (gate) waits for both, Task 4 (UI) for the gate, and Task 5 for the UI. Within Phase 3, Tasks 1 (wire/client) and 3 (CI/browser checks) can run together; Task 2 (Options) waits for the wire/client, Task 4 (docs) waits for the Options and checks, and Task 5 waits for the docs. All tasks have exclusive implementation file ownership within their phase; coordinator-owned plan/learnings updates are serialized.
-- Each manual-verification task blocks the next phase until the user approves the phase. After this track, future tracks can implement bookmark management and the rest of Jev Phase 3 without reusing `jev_test` consent for new data.
+- ~~Each manual-verification task blocks the next phase until the user approves the phase.~~ *(Revised 2026-09-25)* Phase-end checkpoints are automated evidence tasks and do not block the next phase. After this track, future tracks can implement bookmark management and the rest of Jev Phase 3 without reusing `jev_test` consent for new data.

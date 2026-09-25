@@ -112,6 +112,10 @@ data. Provider setup does not send a real bookmark.
 - Use accessible controls, clear failure/retry states, and plain language.
 - Follow `conductor/workflow.md`: test-first for behaviors, verify scaffolding
   and documents, and use local per-task commits with notes during implementation.
+- Per-phase manual-verification gates are waived for this track per user
+  direction (2026-09-25, Revision 1): phases complete on automated evidence —
+  tests, lint, typecheck, build, E2E, and compliance checks. Phase-end tasks
+  become evidence-summary checkpoints that do not block the next phase.
 
 ## Acceptance Criteria
 
