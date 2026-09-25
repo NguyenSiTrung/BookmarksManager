@@ -210,14 +210,14 @@
   - [x] Step 4: Run component/worker tests, typecheck, lint, build, and browser smoke; check cancel, denied permission, and revoke in Options manually. Do not call the provider from this phase.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(consent): Add provider permission flow`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Automated phase verification 'Protected Keys, Consent, and Network Gate' *(manual gate waived — Revision 1)*
+- [x] Task: Automated phase verification 'Protected Keys, Consent, and Network Gate' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
   <!-- depends: task4 -->
 
   **Files:** Update this plan, `learnings.md`, and reusable `patterns.md`. **Evidence:** key, gate, message, and component tests; permission deny/revoke behavior; zero requests without consent.
 
-  - [ ] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record the evidence and known limitations in `learnings.md`.
-  - [ ] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); commit the documentation checkpoint locally with a git note and close the mapped Beads task.
+  - [x] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record the evidence and known limitations in `learnings.md`.
+  - [x] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); commit the documentation checkpoint locally with a git note and close the mapped Beads task.
 
 ## Phase 3: Synthetic Jev Test and Compliance Checks
 <!-- execution: parallel -->

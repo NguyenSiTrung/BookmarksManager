@@ -114,3 +114,22 @@ Patterns, gotchas, and context discovered during implementation.
   - To force a real Dexie write failure mid-flow without mocking consent helpers, `vi.spyOn(db.consents, "put").mockRejectedValueOnce(...)` works — `mockRestore` afterwards keeps the rest of the suite on the real table.
   - `import "*.md?raw"` from an entrypoint resolves repo-root files outside `srcDir` fine (Vite `vite/client` types + WXT bundling); the emitted options chunk contains the text and no `fetch`.
 ---
+
+## [2026-09-25 12:30] - Phase 2 Task 5: Automated phase verification 'Protected Keys, Consent, and Network Gate' *(manual gate waived — Revision 1)*
+- **Implemented:** Automated evidence checkpoint — no code changes. Full local
+  gate run on the completed Phase 2 tree.
+- **Evidence:**
+  - `npm run lint` — clean (eslint flat config, fetch-restriction rules intact).
+  - `npm run typecheck` — `wxt prepare && tsc --noEmit` clean.
+  - `npm run test -- --run` — **194/194** unit+component tests pass (schemas, database, keys, consent, presets, network-gate, provider-messages, provider-setup components, compliance scripts, scaffold).
+  - `npm run build` — WXT build clean; manifest permissions `["storage","sidePanel"]`, optional hosts exactly the two Jev origins.
+  - `npm run check:manifest` — OK, generated manifest matches `store/permissions.md`.
+  - `npm run check:bundle` — OK, no `eval(`/`new Function`/remote `<script src>` in the bundle.
+  - `xvfb-run -a npm run test:e2e` — 1/1 headed Chromium extension-load smoke passes.
+  - `rg 'fetch\(' src` — sole call is `src/net/send.ts:172`.
+- **Files changed:** plan.md, learnings.md, implement_state.json (checkpoint only).
+- **Learnings:**
+  - Context: Phase 2 delivered worker-only AES-GCM key storage (keys.ts), the frozen preset registry + versioned consent records, the single egress gate (send.ts), and the Options enable/revoke flow with a total worker message handler. Per-task subagent reviews ran; one Important fix (short-key keySuffix leak) landed and was re-verified.
+  - Environment gotcha: `npm ci` does not install Playwright browsers — a fresh env needs `npx playwright install chromium` before `test:e2e` works.
+  - Pattern worth elevating: lazy module-scoped `declare const chrome: {<slice>}` keeps `vi.stubGlobal("chrome", ...)` working and gives each module exactly the API surface it needs (keys.ts used it for storage.local, send.ts for permissions, provider.ts for permissions+runtime).
+---
