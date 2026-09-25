@@ -40,14 +40,14 @@
 ## Phase 1: Runnable Extension and Data Baseline
 <!-- execution: parallel -->
 
-- [ ] Task: Scaffold the WXT extension, linting, and test runners
+- [x] Task: Scaffold the WXT extension, linting, and test runners
   <!-- files: package.json, package-lock.json, wxt.config.ts, tsconfig.json, eslint.config.mjs, vitest.config.ts, playwright.config.ts, src/entrypoints/background.ts, src/entrypoints/popup/index.html, src/entrypoints/popup/main.tsx, src/entrypoints/sidepanel/index.html, src/entrypoints/sidepanel/main.tsx, src/entrypoints/options/index.html, src/entrypoints/options/main.tsx, src/ui/styles.css, tests/unit/scaffold.test.ts, tests/e2e/shell.spec.ts -->
 
   **Files:** Create `package.json`, `package-lock.json`, `wxt.config.ts`, `tsconfig.json`, `eslint.config.mjs`, `vitest.config.ts`, `playwright.config.ts`, `src/entrypoints/background.ts`, popup/sidepanel/options HTML and React entry files, `src/ui/styles.css`, `tests/unit/scaffold.test.ts`, `tests/e2e/shell.spec.ts`. Install all Phase 1 dependencies now, including Zod v4, Dexie, and fake-indexeddb, to avoid package/lockfile edits in concurrent tasks.
 
   **Interfaces:** Produces `npm run lint`, `typecheck`, `test`, `test:e2e`, `build`, `check:manifest`, and `check:bundle` scripts; the last two are invoked only after the scripts are authored in Task 3. WXT uses `srcDir: "src"`. The manifest initially has required `storage` and `sidePanel` and optional TypeSafe/OpenRouter origins only.
 
-  - [ ] Step 1: Add a Vitest scaffold contract that expects popup, side-panel, options, and background entrypoints and the narrow manifest patterns. For example:
+  - [x] Step 1: Add a Vitest scaffold contract that expects popup, side-panel, options, and background entrypoints and the narrow manifest patterns. For example:
     ```ts
     import { existsSync } from "node:fs";
     import { describe, expect, it } from "vitest";
@@ -65,8 +65,8 @@
       });
     });
     ```
-  - [ ] Step 2: Run `test -f package.json && test -f src/entrypoints/options/index.html`; observe a failing scaffold precondition because no project files exist yet. The Vitest contract runs after the runner is installed in Step 3.
-  - [ ] Step 3: Install compatible WXT/React/Tailwind/TS/Vitest/Testing Library/Playwright/ESLint/Zod v4/Dexie/fake-indexeddb dependencies with npm (do not replace existing repository files). Run the Vitest contract while `wxt.config.ts`/entrypoints are missing and observe a failure; then create the manifest config and extension shells:
+  - [x] Step 2: Run `test -f package.json && test -f src/entrypoints/options/index.html`; observe a failing scaffold precondition because no project files exist yet. The Vitest contract runs after the runner is installed in Step 3.
+  - [x] Step 3: Install compatible WXT/React/Tailwind/TS/Vitest/Testing Library/Playwright/ESLint/Zod v4/Dexie/fake-indexeddb dependencies with npm (do not replace existing repository files). Run the Vitest contract while `wxt.config.ts`/entrypoints are missing and observe a failure; then create the manifest config and extension shells:
     ```ts
     import { defineConfig } from "wxt";
     export default defineConfig({
@@ -83,8 +83,8 @@
     });
     ```
     Use `@wxt-dev/module-react` and Tailwind's local build plugin; do not use CDN styles/scripts. Add the ESLint `no-restricted-globals` rule for `fetch` in app code, scoped exception for `src/net/`, and a rule preventing `globalThis.fetch` elsewhere. Add `check:manifest` and `check:bundle` npm scripts pointing to `scripts/check-manifest.mjs` and `scripts/check-bundle.mjs`, but do not invoke them before Task 3 creates those files. Add a WXT `background.ts` with no startup requests and accessible shell content on all three pages.
-  - [ ] Step 4: Configure scripts (`typecheck` runs `wxt prepare && tsc --noEmit`) and a Playwright persistent Chromium extension smoke test; run `npm run test -- --run`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run test:e2e`. Verify the built manifest contains no `bookmarks`, `activeTab`, `scripting`, wildcard hosts, or unused provider patterns.
-  - [ ] Step 5: Mark this task complete in this plan, record setup/version gotchas in `learnings.md`, stage only this task's files, inspect `git diff --cached --check` and status, commit `chore(setup): Scaffold extension and test harness`, add a specific `git notes add -m "Scaffolded WXT and validated initial test runners" HEAD` task summary, and close its mapped Beads task.
+  - [x] Step 4: Configure scripts (`typecheck` runs `wxt prepare && tsc --noEmit`) and a Playwright persistent Chromium extension smoke test; run `npm run test -- --run`, `npm run lint`, `npm run typecheck`, `npm run build`, and `npm run test:e2e`. Verify the built manifest contains no `bookmarks`, `activeTab`, `scripting`, wildcard hosts, or unused provider patterns.
+  - [x] Step 5: Mark this task complete in this plan, record setup/version gotchas in `learnings.md`, stage only this task's files, inspect `git diff --cached --check` and status, commit `chore(setup): Scaffold extension and test harness`, add a specific `git notes add -m "Scaffolded WXT and validated initial test runners" HEAD` task summary, and close its mapped Beads task.
 
 - [ ] Task: Add base Zod schemas and versioned Dexie storage
   <!-- files: src/schemas/z.ts, src/schemas/bookmark.ts, src/schemas/decision.ts, src/schemas/provider.ts, src/db/database.ts, tests/unit/schemas.test.ts, tests/unit/database.test.ts, tests/fixtures/base-records.ts -->
