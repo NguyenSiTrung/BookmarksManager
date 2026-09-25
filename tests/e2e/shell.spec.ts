@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, test } from "@playwright/test";
@@ -7,15 +8,39 @@ const extensionDir = path.resolve(
   "../../.output/chrome-mv3",
 );
 
-test("extension loads and renders all three surfaces", async () => {
+if (!existsSync(extensionDir)) {
+  throw new Error(
+    `Built extension not found at ${extensionDir} — run \`npm run build\` before the e2e smoke.`,
+  );
+}
+
+// Headed is the default because MV3 extension loading historically needs a
+// real window (CI supplies one via xvfb-run). E2E_HEADLESS=1 opts into
+// headless for environments whose Chromium supports it.
+const headless = process.env.E2E_HEADLESS === "1";
+
+test("extension loads, renders all three surfaces, and sends no requests", async () => {
+  // Fresh-install privacy assertion: nothing is consented yet, so the
+  // extension may not emit a single http(s) request — not even at service-
+  // worker startup. Playwright reports page- and service-worker-issued
+  // requests on the context; chrome-extension://, chrome:, about:, data:,
+  // and blob: URLs are internal noise and are filtered out.
+  const outboundUrls: string[] = [];
+  const recordRequest = (url: string): void => {
+    if (/^https?:\/\//.test(url)) {
+      outboundUrls.push(url);
+    }
+  };
+
   const context = await chromium.launchPersistentContext("", {
     channel: "chromium",
-    headless: false,
+    headless,
     args: [
       `--disable-extensions-except=${extensionDir}`,
       `--load-extension=${extensionDir}`,
     ],
   });
+  context.on("request", (request) => recordRequest(request.url()));
   try {
     let [serviceWorker] = context.serviceWorkers();
     if (!serviceWorker) {
@@ -45,7 +70,17 @@ test("extension loads and renders all three surfaces", async () => {
       options.getByRole("heading", { name: "Bookmarks Manager Options" }),
     ).toBeVisible();
     await expect(options.getByLabel("Provider")).toBeVisible();
+
+    // Give any deferred startup work (timers, microtasks in the worker or
+    // pages) a quiet window in which it would fire a request.
+    await options.waitForLoadState("networkidle");
   } finally {
+    // Closing the context is part of the observation window: any teardown- or
+    // unload-time traffic is still recorded before the assertion below.
     await context.close();
   }
+  expect(
+    outboundUrls,
+    "fresh install must not send http(s) requests",
+  ).toEqual([]);
 });

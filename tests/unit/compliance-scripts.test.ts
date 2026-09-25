@@ -25,6 +25,14 @@ const PERMISSIONS_MD = [
   "| `https://api.typesafe.ai/*` | optional | Jev test |",
   "| `https://openrouter.ai/*` | optional | Jev test |",
   "",
+  "## Not requested in this slice",
+  "",
+  "| Permission | Level | Reason |",
+  "|---|---|---|",
+  "| `bookmarks` | not requested | reserved for the bookmark feature |",
+  "",
+  "`activeTab`, `scripting`, and `<all_urls>` are also unrequested.",
+  "",
 ].join("\n");
 
 const BASE_MANIFEST = {
@@ -113,6 +121,28 @@ describe("check-manifest.mjs", () => {
     expect(res.stderr + res.stdout).toContain("https://openrouter.ai/*");
   });
 
+  it("fails and names the TypeSafe pattern when the manifest drops its optional host row", () => {
+    const manifest = {
+      ...BASE_MANIFEST,
+      optional_host_permissions: ["https://openrouter.ai/*"],
+    };
+    const res = runManifestCheck(manifest);
+    expect(res.status).toBe(1);
+    expect(res.stderr + res.stdout).toContain("https://api.typesafe.ai/*");
+  });
+
+  it("fails and names a required permission the doc only lists as not-requested", () => {
+    // `bookmarks` appears in the inventory's "Not requested" section (as a
+    // table row and as prose) — it must not count as a documented row.
+    const manifest = {
+      ...BASE_MANIFEST,
+      permissions: [...BASE_MANIFEST.permissions, "bookmarks"],
+    };
+    const res = runManifestCheck(manifest);
+    expect(res.status).toBe(1);
+    expect(res.stderr + res.stdout).toContain("bookmarks");
+  });
+
   it("fails on a host_permission the doc does not list", () => {
     const manifest = {
       ...BASE_MANIFEST,
@@ -156,6 +186,40 @@ describe("check-bundle.mjs", () => {
     });
     expect(res.status).toBe(1);
     expect(res.stderr + res.stdout).toContain("popup.html");
+  });
+
+  it("fails and names the html file with an unlisted remote script whose tag spans lines", () => {
+    const res = runBundleCheck({
+      "page.html": [
+        "<html><head>",
+        '<script type="text/javascript"',
+        '  src="https://unlisted.example.net/tracker.js">',
+        "</script>",
+        "</head></html>",
+        "",
+      ].join("\n"),
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr + res.stdout).toContain("page.html");
+    expect(res.stderr + res.stdout).toContain("unlisted.example.net");
+  });
+
+  it("fails and names the js file where an eval call is split across lines", () => {
+    const res = runBundleCheck({
+      "chunks/sneaky.js": "const answer = eval\n  (\"1 + 1\");\n",
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr + res.stdout).toContain("sneaky.js");
+    expect(res.stderr + res.stdout).toContain("eval");
+  });
+
+  it("fails and names the js file where new Function is split across lines", () => {
+    const res = runBundleCheck({
+      "chunks/wrapped.js": "const fn = new\n  Function(\"return 1\");\n",
+    });
+    expect(res.status).toBe(1);
+    expect(res.stderr + res.stdout).toContain("wrapped.js");
+    expect(res.stderr + res.stdout).toContain("new Function");
   });
 
   it("passes a clean bundle with local script tags", () => {

@@ -259,18 +259,18 @@
   - [x] Step 4: Run these tests, relevant gate tests, typecheck, lint, build, and the offline browser smoke. Verify the data-sent log shows only `"model"`, `"state"`, and `"questions"` as field names.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(options): Test configured Jev providers`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Harden CI and browser privacy checks
+- [x] Task: Harden CI and browser privacy checks
   <!-- files: scripts/check-manifest.mjs, scripts/check-bundle.mjs, .github/workflows/ci.yml, tests/unit/compliance-scripts.test.ts, tests/e2e/shell.spec.ts -->
 
   **Files:** Modify `scripts/check-manifest.mjs`, `scripts/check-bundle.mjs`, `.github/workflows/ci.yml`, `tests/unit/compliance-scripts.test.ts`, and `tests/e2e/shell.spec.ts`. Do not edit `store/` docs or package scripts while the provider flow is built in parallel.
 
   **Interfaces:** `npm run check:manifest` parses a permissions table in `store/permissions.md` and compares sets with `.output/chrome-mv3/manifest.json`; `npm run check:bundle` scans emitted JS/HTML for `eval(`, `new Function`, and remote `<script src>`. CI runs both after `npm run build`.
 
-  - [ ] Step 1: Extend compliance fixture tests with a missing TypeSafe permission row, an unexpected required permission, an unlisted external script, and fresh-install browser network observation; expect the first three to fail their checks and zero requests in the last.
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/compliance-scripts.test.ts` and `npm run test:e2e` to observe the new cases fail before finalizing docs/checks.
-  - [ ] Step 3: Strengthen the existing manifest/bundle scanners to reject every new negative fixture and make the E2E smoke assert no outbound traffic on a fresh install. Ensure CI runs npm clean install, lint, typecheck, Vitest, Chrome/Playwright smoke, build, manifest check, and bundle check. Keep the docs and permission table owned by the next task.
-  - [ ] Step 4: Run `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`; resolve failures and verify no fresh-install traffic.
-  - [ ] Step 5: Update plan/learnings through the coordinator, review staged files, commit `chore(ci): Guard extension bundle and traffic`, add a task git note, and close the mapped Beads task.
+  - [x] Step 1: Extend compliance fixture tests with a missing TypeSafe permission row, an unexpected required permission, an unlisted external script, and fresh-install browser network observation; expect the first three to fail their checks and zero requests in the last.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/compliance-scripts.test.ts` and `npm run test:e2e` to observe the new cases fail before finalizing docs/checks.
+  - [x] Step 3: Strengthen the existing manifest/bundle scanners to reject every new negative fixture and make the E2E smoke assert no outbound traffic on a fresh install. Ensure CI runs npm clean install, lint, typecheck, Vitest, Chrome/Playwright smoke, build, manifest check, and bundle check. Keep the docs and permission table owned by the next task.
+  - [x] Step 4: Run `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`; resolve failures and verify no fresh-install traffic.
+  - [x] Step 5: Update plan/learnings through the coordinator, review staged files, commit `chore(ci): Guard extension bundle and traffic`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Align store disclosures with the completed test flow
   <!-- files: store/permissions.md, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md -->

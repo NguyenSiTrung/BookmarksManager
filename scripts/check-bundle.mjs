@@ -8,12 +8,17 @@
  *     (local relative/absolute-extension paths such as "./app.js" or
  *     "/assets/app.js" are fine — only remote URLs are violations)
  *
+ * Files are matched as whole text (not line-by-line), so a construct is still
+ * caught when it is split across lines — e.g. `eval\n(...)`, `new\nFunction()`,
+ * or a `<script ... src="https://...">` tag wrapped over several lines.
+ *
  * Usage:
  *   node scripts/check-bundle.mjs [outputDir]
  *   CHECK_BUNDLE_DIR env var works as a fallback.
  *
- * Exit 0: no violations. Exit 1: violations (each reported as file:line) or a
- * missing/unreadable output directory.
+ * Exit 0: no violations. Exit 1: violations (each reported as file:line, with
+ * the matched span flattened to one line) or a missing/unreadable output
+ * directory.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -23,23 +28,44 @@ import { fileURLToPath } from "node:url";
 const DEFAULT_OUTPUT_DIR = ".output/chrome-mv3";
 const SCANNED_EXTENSIONS = new Set([".js", ".html"]);
 
+// Patterns carry /g so String#matchAll iterates every occurrence in the file;
+// \s in each pattern spans newlines, so constructs wrapped over lines match.
 const RULES = [
   {
     label: "eval() call",
-    pattern: /\beval\s*\(/,
+    pattern: /\beval\s*\(/g,
   },
   {
     label: "new Function() constructor",
-    pattern: /\bnew\s+Function\s*\(/,
+    pattern: /\bnew\s+Function\s*\(/g,
   },
   {
     label: "remote <script src>",
-    pattern: /<script\b[^>]*\bsrc\s*=\s*["']?\s*(?:[a-z][a-z0-9+.-]*:)?\/\//i,
+    pattern: /<script\b[^>]*\bsrc\s*=\s*["']?\s*(?:[a-z][a-z0-9+.-]*:)?\/\//gi,
   },
 ];
 
 /**
- * Scan one file's source text.
+ * 0-based index of the line containing a character offset.
+ * @param {number[]} lineStarts char offsets of each line's first character
+ * @param {number} index char offset in the same source
+ */
+function lineIndexAt(lineStarts, index) {
+  let lo = 0;
+  let hi = lineStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (lineStarts[mid] <= index) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * Scan one file's source text. The whole file is matched at once so banned
+ * constructs split across lines are still caught; each violation is reported
+ * at the line where its match begins, with the full matched span (all the
+ * lines it covers) flattened into the snippet so remote URLs stay visible.
  * @param {string} fileName name used in reports (usually the relative path)
  * @param {string} source
  * @returns {{file: string, line: number, rule: string, snippet: string}[]}
@@ -47,18 +73,31 @@ const RULES = [
 export function scanSource(fileName, source) {
   const violations = [];
   const lines = source.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i++) {
-    for (const rule of RULES) {
-      if (rule.pattern.test(lines[i])) {
-        violations.push({
-          file: fileName,
-          line: i + 1,
-          rule: rule.label,
-          snippet: lines[i].trim().slice(0, 160),
-        });
-      }
+  const lineStarts = [0];
+  for (let i = source.indexOf("\n"); i !== -1; i = source.indexOf("\n", i + 1)) {
+    lineStarts.push(i + 1);
+  }
+  const seen = new Set();
+  for (const rule of RULES) {
+    for (const match of source.matchAll(rule.pattern)) {
+      const start = lineIndexAt(lineStarts, match.index);
+      const end = lineIndexAt(lineStarts, match.index + match[0].length);
+      const key = `${rule.label}:${start}`;
+      if (seen.has(key)) continue; // one report per rule per line, as before
+      seen.add(key);
+      violations.push({
+        file: fileName,
+        line: start + 1,
+        rule: rule.label,
+        snippet: lines
+          .slice(start, end + 1)
+          .map((line) => line.trim())
+          .join(" ")
+          .slice(0, 160),
+      });
     }
   }
+  violations.sort((a, b) => a.line - b.line);
   return violations;
 }
 

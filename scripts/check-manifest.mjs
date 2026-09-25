@@ -8,8 +8,12 @@
  *   | `https://api.typesafe.ai/*`  | optional | Jev test       |
  *
  * A row counts when its second cell is exactly "required" or "optional" and
- * its first cell is a backtick-quoted name. Names containing "://" (or the
- * literal `<all_urls>`) are host patterns; anything else is a permission name.
+ * its first cell is a backtick-quoted name. Rows with any other level — e.g.
+ * "not requested", "none", "—" — are informational and never count as
+ * documented permissions, so permissions listed only in "Not requested"
+ * sections still fail the check if they appear in the manifest. Names
+ * containing "://" (or the literal `<all_urls>`) are host patterns; anything
+ * else is a permission name.
  *
  * Compared fields (sorted equality, each difference reported by name):
  *   required permission rows    <-> manifest.permissions
