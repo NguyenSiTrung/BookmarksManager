@@ -188,7 +188,7 @@
   - [x] Step 4: Run network-gate and consent tests, typecheck, lint, and build. Check `rg 'fetch\\(' src` and document the sole approved app call in `src/net/`.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(net): Gate provider requests on consent`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Build the Options consent, permission, and revocation flow
+- [x] Task: Build the Options consent, permission, and revocation flow
   <!-- files: src/consent/disclosure.ts, src/messages/provider.ts, src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/PrivacyDraft.tsx, src/entrypoints/options/main.tsx, src/entrypoints/background.ts, store/privacy-policy.md, tests/components/provider-setup.test.tsx, tests/unit/provider-messages.test.ts -->
   <!-- depends: task3 -->
 
@@ -196,9 +196,9 @@
 
   **Interfaces:** The Options page sends schema-validated `{ type: "ENABLE_PROVIDER", preset, model, key }` after a direct-click `chrome.permissions.request`; the worker confirms trusted extension Options sender and permission, then saves `ProviderSettings` in Dexie, calls `saveProviderKey` and `grantTestConsent`. `{ type: "REVOKE_PROVIDER", preset, deleteKey }` revokes consent; the permission is removed, and the key is deleted when selected. `PrivacyDraft` displays a bundled copy of `store/privacy-policy.md` without a network request.
 
-  - [ ] Step 1: Add component/worker tests: unchecked box disables Enable; permission denial causes no key/consent write; approval triggers exactly one permission request for the selected preset; an unlisted model, content-script, or malformed message is rejected; selected model and masked suffix persist across Options reload; a failed consent write leaves no enabled provider; revoke removes consent and permission and lets the user keep/delete the encrypted key; the screen names recipient, origin, synthetic fields, authorization header, reason, trigger, and privacy links.
-  - [ ] Step 2: Run `npm run test -- --run tests/components/provider-setup.test.tsx tests/unit/provider-messages.test.ts` and observe failures.
-  - [ ] Step 3: Render the provider choices and disclosure. Invoke `chrome.permissions.request({ origins: [PRESETS[preset].permissionPattern] })` synchronously in the Enable click handler once the unchecked checkbox becomes checked; only after it resolves true send the enable message to the worker. Define messages as a Zod discriminated union:
+  - [x] Step 1: Add component/worker tests: unchecked box disables Enable; permission denial causes no key/consent write; approval triggers exactly one permission request for the selected preset; an unlisted model, content-script, or malformed message is rejected; selected model and masked suffix persist across Options reload; a failed consent write leaves no enabled provider; revoke removes consent and permission and lets the user keep/delete the encrypted key; the screen names recipient, origin, synthetic fields, authorization header, reason, trigger, and privacy links.
+  - [x] Step 2: Run `npm run test -- --run tests/components/provider-setup.test.tsx tests/unit/provider-messages.test.ts` and observe failures.
+  - [x] Step 3: Render the provider choices and disclosure. Invoke `chrome.permissions.request({ origins: [PRESETS[preset].permissionPattern] })` synchronously in the Enable click handler once the unchecked checkbox becomes checked; only after it resolves true send the enable message to the worker. Define messages as a Zod discriminated union:
     ```ts
     export const ProviderMessage = z.discriminatedUnion("type", [
       z.object({ type: z.literal("ENABLE_PROVIDER"), preset: PresetIdSchema, model: z.string().min(1), key: z.string().min(1) }),
@@ -207,8 +207,8 @@
     ]);
     ```
     Reject worker messages unless `sender.url` equals the built Options page URL from `chrome.runtime.getURL("options.html")`; confirm the actual WXT output path in Phase 1. Re-check permission and preset/model pairing in the worker; save settings in Dexie. If storing consent fails, revoke the partial grant and clear the saved key/settings so no provider is enabled. Show the key suffix only, link provider policies, and render the locally bundled draft with no external fetch. On revoke, first remove consent so any permission-removal failure still blocks traffic.
-  - [ ] Step 4: Run component/worker tests, typecheck, lint, build, and browser smoke; check cancel, denied permission, and revoke in Options manually. Do not call the provider from this phase.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `feat(consent): Add provider permission flow`, add a task git note, and close the mapped Beads task.
+  - [x] Step 4: Run component/worker tests, typecheck, lint, build, and browser smoke; check cancel, denied permission, and revoke in Options manually. Do not call the provider from this phase.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `feat(consent): Add provider permission flow`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Automated phase verification 'Protected Keys, Consent, and Network Gate' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->

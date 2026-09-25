@@ -24,16 +24,16 @@ developer dashboard._
 The developer does not collect, receive, or store any of your data. There are
 no analytics, no crash reporting, and no developer-operated servers.
 Everything stays in your browser unless you explicitly start a feature that
-sends data to a provider you chose (no such feature exists yet — the first,
-an optional provider test connection, is being built for this release).
+sends data to a provider you chose. The provider setup flow — consent, host
+permission, and encrypted key storage — exists in this build; the optional
+Test connection that would use it is still being built, so this build sends
+nothing to any provider.
 
 ## Data stored locally (never sent to the developer)
 
-- Extension settings and preferences, in `chrome.storage.local` (the storage
-  schema exists; the settings writers are part of the flow under
-  construction).
-- Provider records, being built for this release (their schemas already exist
-  in `src/db/` and `src/schemas/`); they stay on the device only:
+- Extension settings and preferences, in `chrome.storage.local` and IndexedDB.
+- Provider records, written by the Options setup flow; they stay on the
+  device only:
   - Consent records: which provider connections you enabled and when.
   - Provider settings: the provider preset, chosen model name, and the last
     four characters of your API key as a display hint — never the full key.
@@ -54,16 +54,20 @@ Its documented design:
   `bookmarks` permission yet.
 - **To whom:** exactly one provider origin that you picked —
   `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
-  The corresponding optional host permission will be requested only from a
-  direct click to enable the provider, and is revocable at any time.
-- **When:** only on an explicit Test connection click, after an in-product
-  disclosure screen and an affirmative, unchecked consent (the screen and the
-  consent gate are part of the flow under construction). Nothing is sent on
-  install, on page load, or in the background.
+  The corresponding optional host permission is requested only from a direct
+  click on the provider's Enable button in Options, and is revocable at any
+  time.
+- **When:** only on an explicit Test connection click, after the in-product
+  disclosure screen and an affirmative, unchecked consent that the Options
+  page already shows today (the Test connection button itself is the part
+  still being built). Nothing is sent on install, on page load, or in the
+  background — including when you enable a provider.
 
 Requests to a provider are governed by that provider's own privacy policy and
-retention terms: _provider policy links to be verified and inserted before
-submission._
+retention terms. The in-product disclosure links to
+`https://typesafe.ai/privacy` (TypeSafe) and `https://openrouter.ai/privacy`
+(OpenRouter); both must be verified against the providers' real policies
+before submission.
 
 ## API keys
 
@@ -71,24 +75,26 @@ Your API key is yours. Per the design above, it will be transmitted only to
 the provider that issued it, inside the `Authorization` header, over HTTPS,
 with cookies and credentials omitted. It is encrypted at rest on your device
 (AES-GCM via WebCrypto; the encryption key is stored non-extractably in
-IndexedDB — this protection is being built and verified as part of this
-release) and is never logged, exported, or shown in full.
+IndexedDB) and is never logged, exported, or shown in full — only its last
+four characters appear in Options as a reminder.
 
 ## Your choices and deletion
 
-- When the provider flow ships you will be able to revoke a provider's
-  consent or host permission at any time, and the consent gate is designed to
-  refuse contact with that provider afterwards.
+- You can revoke a provider's consent and host permission at any time from
+  Options, and choose whether the stored key is deleted too; the consent gate
+  refuses contact with that provider afterwards.
 - Uninstalling the extension removes all locally stored data.
 - This release has no accounts and nothing to delete on the developer's side —
   the developer holds no data.
 
 ## Security
 
-All remote requests are being built to use HTTPS, pass through a single
-audited network module, require a matching stored consent record, and stay
-limited to the provider origins listed above. The current build makes no
-remote requests at all.
+All remote requests must use HTTPS, pass through a single audited network
+module, require a matching stored consent record and a live Chrome host
+permission, and stay limited to the provider origins listed above. The
+consent gate and encrypted key storage are in place, but the Test connection
+send is not built yet — the current build still makes no remote requests at
+all.
 
 ## Limited Use statement
 
