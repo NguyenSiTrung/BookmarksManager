@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "BookmarksManager",
+  "project_id": "f8dd6e1e-062d-4274-9f9e-447bee4804fa"
+}
