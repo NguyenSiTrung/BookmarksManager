@@ -112,11 +112,13 @@ export async function testJevConnection(
   let parsed: SystemOneResponse;
   try {
     parsed = SystemOneResponse.parse(await response.json());
-  } catch (cause) {
+  } catch {
+    // No `cause` here: a SyntaxError embeds a body snippet and a ZodError's
+    // issues carry response `input` values — either would leak provider
+    // content into any logger that walks the cause chain.
     throw new JevConnectionError(
       "invalid_response",
       "The provider returned a body that is not a valid System One response.",
-      { cause },
     );
   }
 

@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JevConnectionError, testJevConnection } from "../../src/jev/connection";
 import { NetworkGateError, sendConsentedTest } from "../../src/net/send";
@@ -106,19 +107,31 @@ describe("testJevConnection", () => {
     expect(error.message).not.toContain("stack trace");
   });
 
-  it("maps malformed JSON bodies to invalid_response", async () => {
-    await expectConnectionFailure(
-      new Response("this is not json {", { status: 200 }),
+  it("maps malformed JSON bodies to invalid_response without leaking body fragments", async () => {
+    // A V8 SyntaxError embeds a body snippet in its message — the error must
+    // carry no `cause` (and nothing serializable) derived from the response.
+    const marker = "provider-body-fragment-9x2";
+    const error = await expectConnectionFailure(
+      new Response(`this is not json ${marker} {`, { status: 200 }),
       "invalid_response",
     );
+    expect(error.cause).toBeUndefined();
+    expect(error.message).not.toContain(marker);
+    expect(JSON.stringify(error)).not.toContain(marker);
+    // util.inspect walks the cause chain, like console.error/devtools.
+    expect(inspect(error, { depth: null })).not.toContain(marker);
   });
 
   it("maps schema-invalid bodies to invalid_response without echoing them", async () => {
+    // A ZodError's issues embed response `input` values — the same rule.
     const error = await expectConnectionFailure(
       jsonResponse(responseMissingUsage),
       "invalid_response",
     );
+    expect(error.cause).toBeUndefined();
     expect(error.message).not.toContain("jev-1.13.0");
+    expect(JSON.stringify(error)).not.toContain("jev-1.13.0");
+    expect(inspect(error, { depth: null })).not.toContain("jev-1.13.0");
   });
 
   it("fails invalid_response when the test answer is missing entirely", async () => {
