@@ -111,7 +111,7 @@
   - [x] Step 4: Run those two tests, `npm run typecheck`, `npm run lint`, and `npm run build`. Inspect the database schema and test that an IndexedDB `CryptoKey` can be structured-cloned in the browser before relying on it in Phase 2.
   - [x] Step 5: Update plan/learnings, review staged files, commit `feat(storage): Add validated data foundations`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Add store skeleton and CI compliance baseline
+- [x] Task: Add store skeleton and CI compliance baseline
   <!-- files: store/permissions.md, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, scripts/check-manifest.mjs, scripts/check-bundle.mjs, .github/workflows/ci.yml, tests/unit/compliance-scripts.test.ts -->
   <!-- depends: task1 -->
 
@@ -119,11 +119,11 @@
 
   **Interfaces:** `npm run check:manifest` checks `.output/chrome-mv3/manifest.json` against permission rows in `store/permissions.md`; `npm run check:bundle` scans emitted JS/HTML for `eval(`, `new Function`, and external script tags. CI runs both after build, plus lint, typecheck, tests, and Chromium E2E smoke.
 
-  - [ ] Step 1: Write tests that create a fake manifest with an extra required permission, one with a missing optional host, and a matching one. Feed the bundle scanner one `eval(`, one `new Function`, one remote `<script src>`, and a clean bundle; assert the first three fail and the clean bundle passes.
-  - [ ] Step 2: Run `npm run test -- --run tests/unit/compliance-scripts.test.ts` and observe missing scanner modules.
-  - [ ] Step 3: Create truthful draft `store/` files for the *current foundation*: `storage`/`sidePanel`, two optional Jev origins, no provider traffic yet, and publication details as release prerequisites. Write permission table rows shaped like `| \`storage\` | required | local settings |` and `| \`https://api.typesafe.ai/*\` | optional | Jev test |`. Parse these rows in `check-manifest.mjs`; compare sorted required permissions, optional hosts, and host permissions from the generated manifest, failing with the differing name. Scan emitted JS/HTML with `check-bundle.mjs`, report the offending file, and reject dynamic evaluation and remote scripts. Add CI `npm ci`, lint, typecheck, tests, build, both checks, and Chrome/Playwright smoke using Task 1's scripts.
-  - [ ] Step 4: Run compliance fixture tests and `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`. Correct any mismatches between WXT's generated manifest and the inventory.
-  - [ ] Step 5: Update plan/learnings, review staged files, commit `chore(ci): Add store and compliance baseline`, add a task git note, and close the mapped Beads task.
+  - [x] Step 1: Write tests that create a fake manifest with an extra required permission, one with a missing optional host, and a matching one. Feed the bundle scanner one `eval(`, one `new Function`, one remote `<script src>`, and a clean bundle; assert the first three fail and the clean bundle passes.
+  - [x] Step 2: Run `npm run test -- --run tests/unit/compliance-scripts.test.ts` and observe missing scanner modules.
+  - [x] Step 3: Create truthful draft `store/` files for the *current foundation*: `storage`/`sidePanel`, two optional Jev origins, no provider traffic yet, and publication details as release prerequisites. Write permission table rows shaped like `| \`storage\` | required | local settings |` and `| \`https://api.typesafe.ai/*\` | optional | Jev test |`. Parse these rows in `check-manifest.mjs`; compare sorted required permissions, optional hosts, and host permissions from the generated manifest, failing with the differing name. Scan emitted JS/HTML with `check-bundle.mjs`, report the offending file, and reject dynamic evaluation and remote scripts. Add CI `npm ci`, lint, typecheck, tests, build, both checks, and Chrome/Playwright smoke using Task 1's scripts.
+  - [x] Step 4: Run compliance fixture tests and `npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`. Correct any mismatches between WXT's generated manifest and the inventory.
+  - [x] Step 5: Update plan/learnings, review staged files, commit `chore(ci): Add store and compliance baseline`, add a task git note, and close the mapped Beads task.
 
 - [ ] Task: Conductor - User Manual Verification 'Runnable Extension and Data Baseline' (Protocol in workflow.md)
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
