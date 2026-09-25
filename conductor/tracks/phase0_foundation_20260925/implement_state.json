@@ -17,7 +17,6 @@
   ],
   "status": "handed_off",
   "open_items": [
-    "P1T3 has ONE open Important review finding: store/ docs describe the consent-gated test flow in present tense though it is not implemented yet (references src/net/ and CONSENT_VERSION which do not exist). Fix round 1 was dispatched and canceled by user. See ledger .superpowers/sdd/plan/progress.md and review report for details.",
-    "P1T4 manual verification is a user gate — do not mark complete without user approval."
+    "P1T4 manual verification is a user gate — do not mark complete without user approval. Phase 1 implementation tasks (T1-T3) are all complete and review-clean."
   ]
 }
