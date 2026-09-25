@@ -15,7 +15,10 @@ export function PrivacyDraft() {
         Bundled with the extension — reading it here needs no network
         connection.
       </p>
-      <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded border border-gray-300 p-3 text-xs">
+      <pre
+        tabIndex={0}
+        className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded border border-gray-300 p-3 text-xs"
+      >
         {policy}
       </pre>
     </section>

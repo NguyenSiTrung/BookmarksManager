@@ -240,6 +240,22 @@ describe("TEST_PROVIDER success", () => {
     });
     expect(ProviderMessageResult.parse(result)).toEqual(result);
   });
+
+  it("accepts an empty model id — the wire schema allows `model: \"\"`", async () => {
+    await enableProvider();
+    testConnection.mockResolvedValue({ model: "", latencyMs: 5 });
+
+    const result = await handleProviderMessage(testMessage(), optionsSender);
+
+    // The SystemOneResponse contract is `z.string()` with no minimum, so the
+    // result re-validation must not turn it into a generic failure.
+    expect(result).toMatchObject({
+      ok: true,
+      code: "test_ok",
+      result: { model: "", latencyMs: 5 },
+    });
+    expect(ProviderMessageResult.parse(result)).toEqual(result);
+  });
 });
 
 describe("TEST_PROVIDER failure mapping", () => {
@@ -249,7 +265,13 @@ describe("TEST_PROVIDER failure mapping", () => {
     "retry_later",
     "invalid_response",
     "http_error",
-    "gate",
+    "unlisted_model",
+    "https_only",
+    "unlisted_origin",
+    "no_consent",
+    "no_permission",
+    "no_key",
+    "transport",
   ] as const satisfies readonly JevConnectionErrorCode[])(
     "maps JevConnectionError code %s with its redacted message verbatim",
     async (code) => {
@@ -264,28 +286,48 @@ describe("TEST_PROVIDER failure mapping", () => {
     },
   );
 
-  it("maps a propagated NetworkGateError to the gate code, message preserved", async () => {
+  it.each(["no_consent", "no_permission", "no_key"] as const)(
+    "relays a propagated NetworkGateError's %s code and message verbatim",
+    async (code) => {
+      await enableProvider();
+      const gateError = new NetworkGateError(
+        code,
+        `redacted gate refusal: ${code}`,
+      );
+      testConnection.mockRejectedValue(gateError);
+
+      const result = await handleProviderMessage(testMessage(), optionsSender);
+
+      expect(result).toEqual({
+        ok: false,
+        code,
+        message: gateError.message,
+      });
+      expect(ProviderMessageResult.parse(result)).toEqual(result);
+    },
+  );
+
+  it("maps a ProviderKeyError to reconnect with its re-enter-the-key guidance", async () => {
     await enableProvider();
-    const gateError = new NetworkGateError(
-      "no_permission",
-      'Missing host permission for preset "typesafe".',
+    const keyError = new ProviderKeyError(
+      'Stored provider key for preset "typesafe" is malformed; reconnect to re-enter it.',
     );
-    testConnection.mockRejectedValue(gateError);
+    testConnection.mockRejectedValue(keyError);
 
     const result = await handleProviderMessage(testMessage(), optionsSender);
 
+    // The one error whose message instructs the fix — it must reach the user
+    // instead of collapsing to internal_error.
     expect(result).toEqual({
       ok: false,
-      code: "gate",
-      message: gateError.message,
+      code: "reconnect",
+      message: keyError.message,
     });
+    expect(ProviderMessageResult.parse(result)).toEqual(result);
   });
 
   it.each([
-    [
-      "a ProviderKeyError storage failure",
-      new ProviderKeyError("crypto subsystem unavailable"),
-    ],
+    ["a plain Error rejection", new Error("crypto subsystem unavailable")],
     ["a non-Error rejection", "kaboom-secret-material"],
   ])(
     "maps %s to internal_error without echoing internals",

@@ -20,6 +20,10 @@ if (!existsSync(extensionDir)) {
 const headless = process.env.E2E_HEADLESS === "1";
 
 test("extension loads, renders all three surfaces, and sends no requests", async () => {
+  // A cold Chromium profile can take well over the 30s default to register
+  // the MV3 service worker — give this spec a larger budget without raising
+  // the suite-wide timeout in playwright.config.ts.
+  test.setTimeout(90_000);
   // Fresh-install privacy assertion: nothing is consented yet, so the
   // extension may not emit a single http(s) request — not even at service-
   // worker startup. Playwright reports page- and service-worker-issued

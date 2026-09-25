@@ -2,6 +2,7 @@ import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JevConnectionError, testJevConnection } from "../../src/jev/connection";
 import { NetworkGateError, sendConsentedTest } from "../../src/net/send";
+import { ProviderKeyError } from "../../src/security/keys";
 import {
   responseMissingTestAnswer,
   responseMissingUsage,
@@ -13,8 +14,8 @@ import {
 /**
  * `sendConsentedTest` is mocked so the connection test never touches consent,
  * keys, permissions, or fetch — the gate keeps sole ownership of transport.
- * `NetworkGateError` stays real so `gate`-code propagation is asserted against
- * the genuine class (same pattern as network-gate.test.ts).
+ * `NetworkGateError` stays real so gate-code relay is asserted against the
+ * genuine class (same pattern as network-gate.test.ts).
  */
 vi.mock("../../src/net/send", async (importOriginal) => {
   const actual =
@@ -148,20 +149,36 @@ describe("testJevConnection", () => {
     );
   });
 
-  it("wraps a thrown NetworkGateError as code gate, preserving its redacted message", async () => {
-    const gateError = new NetworkGateError(
-      "no_consent",
-      'No current jev_test consent grant for preset "typesafe".',
+  it.each(["no_consent", "no_permission", "no_key"] as const)(
+    "wraps a thrown NetworkGateError keeping its %s code and redacted message",
+    async (code) => {
+      const gateError = new NetworkGateError(
+        code,
+        `redacted gate refusal: ${code}`,
+      );
+      send.mockRejectedValue(gateError);
+
+      const error = await testJevConnection("typesafe", "jev-latest").catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(JevConnectionError);
+      expect((error as JevConnectionError).code).toBe(code);
+      expect((error as JevConnectionError).message).toBe(gateError.message);
+    },
+  );
+
+  it("propagates ProviderKeyError from the send layer unwrapped", async () => {
+    const keyError = new ProviderKeyError(
+      'Stored provider key for preset "typesafe" is malformed; reconnect to re-enter it.',
     );
-    send.mockRejectedValue(gateError);
+    send.mockRejectedValue(keyError);
 
     const error = await testJevConnection("typesafe", "jev-latest").catch(
       (caught: unknown) => caught,
     );
 
-    expect(error).toBeInstanceOf(JevConnectionError);
-    expect((error as JevConnectionError).code).toBe("gate");
-    expect((error as JevConnectionError).message).toBe(gateError.message);
+    expect(error).toBe(keyError);
   });
 
   it("propagates non-gate errors from the send layer unwrapped", async () => {

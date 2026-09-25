@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -249,6 +250,64 @@ describe("enable flow", () => {
     );
   });
 
+  it("unwedges and surfaces an error when the permission request throws synchronously", async () => {
+    // A synchronous throw is not a promise rejection — without a guard it
+    // would leave inFlight/busy stuck and disable every button until reload.
+    requestSpy.mockImplementation(() => {
+      throw new Error("permissions API unavailable");
+    });
+    render(<ProviderSetup />);
+    await fillAndAgree();
+    fireEvent.click(enableButton());
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/went wrong/i);
+    // No enable message was sent, and the guards reset so the form works.
+    expect(nonStatusCalls()).toEqual([]);
+    await waitFor(() => expect(enableButton().disabled).toBe(false));
+  });
+
+  it("drops an enable result that lands after the provider was switched", async () => {
+    let resolveEnable: ((r: ProviderMessageResult) => void) | undefined;
+    sendMessageSpy.mockImplementation((message: unknown) => {
+      const msg = message as { type: string };
+      if (msg.type === "ENABLE_PROVIDER") {
+        return new Promise<ProviderMessageResult>((resolve) => {
+          resolveEnable = resolve;
+        });
+      }
+      return workerReply(message);
+    });
+    render(<ProviderSetup />);
+    await fillAndAgree();
+    fireEvent.click(enableButton());
+    await waitFor(() =>
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ENABLE_PROVIDER" }),
+      ),
+    );
+    // Switch provider while the enable request is in flight, then let the
+    // stale reply land.
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    await act(async () => {
+      resolveEnable?.({
+        ok: true,
+        status: {
+          enabled: true,
+          consentGranted: true,
+          model: "jev-latest",
+          keySuffix: "cdef",
+        },
+      });
+    });
+    // TypeSafe's outcome must not render on the OpenRouter panel: no enabled
+    // panel, no "is enabled" notice — OpenRouter shows its own disabled form.
+    expect(
+      screen.queryByRole("group", { name: /enabled provider/i }),
+    ).toBeNull();
+    expect(screen.queryByText(/is enabled\./i)).toBeNull();
+    expect(screen.getByRole("button", { name: /enable/i })).toBeTruthy();
+  });
+
   it("never requests permission while the box stays unchecked, even with a key", async () => {
     render(<ProviderSetup />);
     fireEvent.change(await screen.findByLabelText(/api key/i), {
@@ -332,5 +391,46 @@ describe("persisted state and revocation", () => {
         { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: false },
       ]),
     );
+  });
+
+  it("drops a revoke result that lands after the provider was switched", async () => {
+    statusByPreset.typesafe = {
+      enabled: true,
+      consentGranted: true,
+      model: "jev-latest",
+      keySuffix: "cdef",
+    };
+    let resolveRevoke: ((r: ProviderMessageResult) => void) | undefined;
+    sendMessageSpy.mockImplementation((message: unknown) => {
+      const msg = message as { type: string };
+      if (msg.type === "REVOKE_PROVIDER") {
+        return new Promise<ProviderMessageResult>((resolve) => {
+          resolveRevoke = resolve;
+        });
+      }
+      return workerReply(message);
+    });
+    render(<ProviderSetup />);
+    fireEvent.click(await screen.findByRole("button", { name: /revoke/i }));
+    await waitFor(() =>
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "REVOKE_PROVIDER" }),
+      ),
+    );
+    // Switch provider while the revoke request is in flight, then let the
+    // stale reply land.
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    await act(async () => {
+      resolveRevoke?.({
+        ok: true,
+        status: { ...DISABLED },
+      });
+    });
+    // TypeSafe's removal notice must not render on the OpenRouter panel,
+    // which shows its own disabled form once its status load settles.
+    expect(
+      screen.queryByText(/consent and browser access were removed/i),
+    ).toBeNull();
+    expect(screen.getByRole("button", { name: /enable/i })).toBeTruthy();
   });
 });

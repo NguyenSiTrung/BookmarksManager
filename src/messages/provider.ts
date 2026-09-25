@@ -9,7 +9,11 @@ import { resolvePreset } from "../net/presets";
 import { NetworkGateError } from "../net/send";
 import { PresetId, ProviderSettings } from "../schemas/provider";
 import { z } from "../schemas/z";
-import { deleteProviderKey, saveProviderKey } from "../security/keys";
+import {
+  deleteProviderKey,
+  ProviderKeyError,
+  saveProviderKey,
+} from "../security/keys";
 
 /**
  * The worker side of the Options provider-consent flow (plan Phase 2 Task 4).
@@ -57,9 +61,11 @@ export const ProviderMessage = z.discriminatedUnion("type", [
 ]);
 export type ProviderMessage = z.infer<typeof ProviderMessage>;
 
-/** Machine-readable failure codes for the provider protocol. The
- * `auth`/`incompatible`/`retry_later`/`invalid_response`/`http_error`/`gate`
- * codes are the `JevConnectionError` surface, relayed verbatim. */
+/** Machine-readable failure codes for the provider protocol. The `JevConnectionError`
+ * surface — `auth`/`incompatible`/`retry_later`/`invalid_response`/`http_error`
+ * plus the `NetworkGateError` codes it relays (`https_only`, `unlisted_origin`,
+ * `no_consent`, `no_permission`, `no_key`, `transport`, `unlisted_model`) — and
+ * `ProviderKeyError`'s `reconnect` reach the page verbatim. */
 export const ProviderErrorCode = z.enum([
   "untrusted_sender",
   "malformed_message",
@@ -73,7 +79,12 @@ export const ProviderErrorCode = z.enum([
   "retry_later",
   "invalid_response",
   "http_error",
-  "gate",
+  "https_only",
+  "unlisted_origin",
+  "no_consent",
+  "no_key",
+  "transport",
+  "reconnect",
   "internal_error",
 ]);
 export type ProviderErrorCode = z.infer<typeof ProviderErrorCode>;
@@ -100,7 +111,10 @@ export type ProviderStatus = z.infer<typeof ProviderStatus>;
  * response body ever crosses into this result.
  */
 export const ProviderTestResult = z.object({
-  model: z.string().min(1),
+  // `model` matches the SystemOneResponse wire contract — `z.string()`, no
+  // minimum — so a provider's empty id still validates instead of surfacing
+  // as a generic "unexpected response".
+  model: z.string(),
   latencyMs: z.number().nonnegative(),
   cost: z.number().nonnegative().optional(),
 });
@@ -326,9 +340,11 @@ async function revokeProvider(message: {
  * `ProviderSettings.model`, not anything the message carries.
  *
  * Failure mapping: `JevConnectionError` code/message are relayed verbatim
- * (already redacted); a `NetworkGateError` that somehow escaped the client's
- * wrap surfaces as `gate` with its redacted message; anything else —
- * `ProviderKeyError`, ZodError, non-Error rejections — collapses to a static
+ * (already redacted — including the `NetworkGateError` codes the client
+ * relays unflattened); a `NetworkGateError` or `ProviderKeyError` that
+ * somehow escaped the client's wrap surfaces with its own redacted code —
+ * `reconnect` tells the user to re-enter the key — and message; anything
+ * else — ZodError, non-Error rejections — collapses to a static
  * `internal_error` so internals never cross the message boundary. The test
  * is read-only: a failure changes no consent, settings, or key state.
  */
@@ -350,7 +366,10 @@ async function testProvider(message: {
       return failure(cause.code, cause.message);
     }
     if (cause instanceof NetworkGateError) {
-      return failure("gate", cause.message);
+      return failure(cause.code, cause.message);
+    }
+    if (cause instanceof ProviderKeyError) {
+      return failure(cause.code, cause.message);
     }
     return failure(
       "internal_error",

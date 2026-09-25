@@ -71,8 +71,8 @@ How it works:
 - **When:** only on an explicit Test connection click, after the in-product
   disclosure screen and an affirmative, unchecked consent checkbox — never
   on install, on page load, in the background, or when enabling a provider.
-  Enabling only stores consent and the encrypted key locally; nothing leaves
-  the device until you click Test connection.
+  Enabling only stores consent, the saved settings, and the encrypted key
+  locally; nothing leaves the device until you click Test connection.
 
 Requests to a provider are governed by that provider's own privacy policy and
 retention terms. The in-product disclosure links to

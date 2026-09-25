@@ -23,8 +23,8 @@ Everything in this build works with no account and no key:
 3. Permissions at install are only `storage` and `sidePanel` — no host
    access, no bookmarks access.
 4. Until a provider is fully enabled, no request can be made: the Test
-   connection button only appears once consent, host permission, settings,
-   and a stored key are all in place.
+   connection button only appears once consent, host permission, and
+   settings are all in place.
 
 ## Testing the provider connection
 
@@ -48,8 +48,10 @@ needs a real provider key:
   `Authorization: Bearer <key>` — cookies omitted, redirects refused.
   Success shows the returned model id and latency (plus the reported cost
   for OpenRouter); failures show a redacted code (`auth`, `incompatible`,
-  `retry_later`, `invalid_response`, `http_error`, `gate`, `not_enabled`,
-  `internal_error`) — never keys or response bodies.
+  `retry_later`, `invalid_response`, `http_error`, the consent gate's own
+  refusal codes such as `no_key`/`no_consent`/`no_permission`, `reconnect`
+  for an unreadable stored key, `not_enabled`, `internal_error`) — never
+  keys or response bodies.
 - Revoking removes consent and the host permission (with an option to delete
   the stored key) and stops all further requests — the gate re-checks
   consent and permission before every send.

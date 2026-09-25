@@ -140,10 +140,28 @@ export function ProviderSetup() {
     setNotice(null);
     setTestOutcome(null);
     // This call must stay synchronous inside the click handler — Chrome only
-    // accepts permissions.request from a direct user gesture.
-    void chrome.permissions
-      .request({ origins: [preset.permissionPattern] })
+    // accepts permissions.request from a direct user gesture. A synchronous
+    // throw (not a rejection) would skip the .catch/.finally below and leave
+    // inFlight/busy stuck, wedging every button until reload — reset the
+    // guards and surface the same notice a rejection would.
+    let permissionRequest: Promise<boolean>;
+    try {
+      permissionRequest = chrome.permissions.request({
+        origins: [preset.permissionPattern],
+      });
+    } catch {
+      inFlight.current = false;
+      setBusy(false);
+      setError("Something went wrong while enabling the provider.");
+      return;
+    }
+    void permissionRequest
       .then(async (granted) => {
+        // A reply for a preset the user has since switched away from is
+        // dropped — the outcome belongs to the panel that requested it.
+        if (presetId !== currentPreset.current) {
+          return;
+        }
         if (!granted) {
           // Cancellation or denial leaves the provider disabled and sends
           // nothing — no worker message is sent at all.
@@ -160,6 +178,11 @@ export function ProviderSetup() {
             key: apiKey,
           }),
         );
+        // The same drop after the worker's reply — a switch during the
+        // request must not render this preset's status on the new panel.
+        if (presetId !== currentPreset.current) {
+          return;
+        }
         const result = ProviderMessageResult.safeParse(raw);
         if (!result.success) {
           setError("The extension worker returned an unexpected response.");
@@ -180,7 +203,9 @@ export function ProviderSetup() {
         }
       })
       .catch(() => {
-        setError("Something went wrong while enabling the provider.");
+        if (presetId === currentPreset.current) {
+          setError("Something went wrong while enabling the provider.");
+        }
       })
       .finally(() => {
         inFlight.current = false;
@@ -206,6 +231,11 @@ export function ProviderSetup() {
         }),
       )
       .then((raw) => {
+        // A reply for a preset the user has since switched away from is
+        // dropped — the outcome belongs to the panel that requested it.
+        if (presetId !== currentPreset.current) {
+          return;
+        }
         const result = ProviderMessageResult.safeParse(raw);
         if (!result.success) {
           setError("The extension worker returned an unexpected response.");
@@ -226,7 +256,9 @@ export function ProviderSetup() {
         }
       })
       .catch(() => {
-        setError("Something went wrong while revoking the provider.");
+        if (presetId === currentPreset.current) {
+          setError("Something went wrong while revoking the provider.");
+        }
       })
       .finally(() => {
         inFlight.current = false;

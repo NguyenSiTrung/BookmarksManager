@@ -1,4 +1,8 @@
-import { NetworkGateError, sendConsentedTest } from "../net/send";
+import {
+  NetworkGateError,
+  type NetworkGateErrorCode,
+  sendConsentedTest,
+} from "../net/send";
 import type { PresetId } from "../schemas/provider";
 import { SystemOneResponse } from "./wire";
 
@@ -11,14 +15,20 @@ import { SystemOneResponse } from "./wire";
  * mismatched answer is an error, like Pydantic AI's `UnexpectedModelBehavior`).
  */
 
-/** Machine-readable failure categories for the connection test. */
+/**
+ * Machine-readable failure categories for the connection test: the HTTP
+ * categories this client maps itself plus every `NetworkGateErrorCode` —
+ * gate refusals are relayed with their own code (`no_key`, `no_consent`, …)
+ * instead of collapsing to a single "gate" so the UI can show actionable
+ * guidance.
+ */
 export type JevConnectionErrorCode =
   | "auth"
   | "incompatible"
   | "retry_later"
   | "invalid_response"
   | "http_error"
-  | "gate";
+  | NetworkGateErrorCode;
 
 /**
  * Every way the connection test can fail. Messages are deliberately redacted:
@@ -82,7 +92,8 @@ function httpStatusError(status: number): JevConnectionError {
 
 /**
  * Send one synthetic System One request via the consented gate and validate
- * the answer. Throws `JevConnectionError` for every expected failure mode;
+ * the answer. Throws `JevConnectionError` for every expected failure mode —
+ * a `NetworkGateError` is re-thrown carrying the gate's own code — while
  * non-gate errors thrown inside the gate (e.g. `ProviderKeyError`, already
  * redacted) propagate unwrapped.
  */
@@ -96,8 +107,9 @@ export async function testJevConnection(
     response = await sendConsentedTest(preset, model);
   } catch (cause) {
     if (cause instanceof NetworkGateError) {
-      // Gate messages are already redacted — preserve them verbatim.
-      throw new JevConnectionError("gate", cause.message, { cause });
+      // Gate codes and messages are already redacted — preserve both
+      // verbatim so a refusal like `no_key` reaches the user as itself.
+      throw new JevConnectionError(cause.code, cause.message, { cause });
     }
     throw cause;
   }
