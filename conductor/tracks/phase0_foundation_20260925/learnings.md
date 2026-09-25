@@ -180,3 +180,23 @@ Patterns, gotchas, and context discovered during implementation.
   - Spot-check contract for docs-vs-disclosure agreement: recipient names (TypeSafe/OpenRouter), literal origins (`https://api.typesafe.ai`, `https://openrouter.ai`), fields (`model`, `state`, `questions`), `Authorization` header, and trigger ("only when you click Test connection — never on install, page load, background, or enable") must match `src/consent/disclosure.ts` constants nearly verbatim.
   - Keep hedges only where behavior is genuinely unreal: provider privacy-policy URLs unverified (flagged), publisher identity/contact/hosted policy URL (release prerequisites — never invented). Everything else must describe shipped behavior.
 ---
+
+## [2026-09-25 15:25] - Phase 3 Task 5: Automated phase verification 'Synthetic Jev Test and Compliance Checks' *(manual gate waived — Revision 1)*
+- **Implemented:** Automated evidence checkpoint — no code changes. Full local
+  gate run on the completed Phase 3 tree (track's final phase).
+- **Evidence:**
+  - `npm run lint` — clean.
+  - `npm run typecheck` — `wxt prepare && tsc --noEmit` clean.
+  - `npm run test -- --run` — **289/289** unit+component tests pass (14 files).
+  - `npm run build` — clean; manifest still `["storage","sidePanel"]` + the two optional Jev origins.
+  - `npm run check:manifest` — OK, matches `store/permissions.md`.
+  - `npm run check:bundle` — OK, whole-file scan: no `eval(`/`new Function`/remote `<script src>`.
+  - `xvfb-run -a npm run test:e2e` — headed Chromium smoke passes AND asserts zero http(s) requests on a fresh install (3/4 runs green; one 30s timeout was a cold-profile service-worker start flake).
+  - `rg 'fetch\(' src` — sole call remains `src/net/send.ts`.
+  - Mock TypeSafe/OpenRouter test coverage exists via `tests/unit/jev-wire.test.ts`, `jev-connection.test.ts`, and `tests/fixtures/jev-responses.ts` — no real-key automated test (spec-compliant).
+- **Files changed:** plan.md, learnings.md, implement_state.json (checkpoint only).
+- **Learnings:**
+  - Context: Phase 3 delivered §8.2 wire schemas + `makeSyntheticRequest`, `testJevConnection` with coded redacted errors, `TEST_PROVIDER` wiring to a click-only Options button, hardened line-split-proof bundle scanning, and truthful store disclosures.
+  - Gotcha: the e2e zero-request assertion can flake once on a cold profile (service-worker start >30s); subsequent runs settle ~2s. If it recurs in CI, consider `test.setTimeout` for that spec — deferred to final review triage.
+  - Pattern worth elevating: total handler returning `{ok:true,...}|{ok:false,code,message}` over a Zod union beats thrown-error protocols for `runtime.onMessage` — every failure is typed and testable.
+---

@@ -286,14 +286,14 @@
   - [x] Step 4: Run `npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle`; inspect the generated permission inventory and spot-check the Options copy against the draft privacy policy.
   - [x] Step 5: Update plan/learnings through the coordinator, review staged docs, commit `docs(store): Align provider test disclosures`, add a task git note, and close the mapped Beads task.
 
-- [ ] Task: Automated phase verification 'Synthetic Jev Test and Compliance Checks' *(manual gate waived — Revision 1)*
+- [x] Task: Automated phase verification 'Synthetic Jev Test and Compliance Checks' *(manual gate waived — Revision 1)*
   <!-- files: conductor/tracks/phase0_foundation_20260925/plan.md, conductor/tracks/phase0_foundation_20260925/learnings.md, conductor/patterns.md -->
   <!-- depends: task4 -->
 
   **Files:** Update this plan, `learnings.md`, and reusable `patterns.md`. **Evidence:** full local/CI-equivalent checks; fresh-install no-traffic smoke; a mock TypeSafe/OpenRouter test; current-slice store inventory.
 
-  - [ ] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record evidence and known limitations in `learnings.md`. A real API key is optional and must not be requested for automated tests.
-  - [ ] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); checkpoint documentation locally with a git note and close the mapped Beads task. Leave any unfinished implementation tasks open until actually completed.
+  - [x] Step 1: Run the full local gate (`npm run lint && npm run typecheck && npm run test -- --run && npm run build && npm run check:manifest && npm run check:bundle && npm run test:e2e`); record evidence and known limitations in `learnings.md`. A real API key is optional and must not be requested for automated tests.
+  - [x] Step 2: On green, mark this task done — no user approval required (manual gate waived per Revision 1); checkpoint documentation locally with a git note and close the mapped Beads task. Leave any unfinished implementation tasks open until actually completed.
 
 ## Dependency and Execution Analysis
 
