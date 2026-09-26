@@ -13,8 +13,9 @@ import { errorMessage, useToast } from "./UndoToast";
  *
  *  - {@link folderDestinations} flattens the tree into pickable destinations
  *    (every folder except the synthetic root "0"; the fixed roots "1"–"3"
- *    are LISTED but DISABLED — like `FolderActions`, a built-in root never
- *    receives user moves).
+ *    ARE valid destinations — Chrome treats them as ordinary parents, and
+ *    "move to the Bookmarks bar" is a primary workflow. A root is never a
+ *    MOVE SUBJECT: `FolderActions`/dnd disable acting on a root itself).
  *  - {@link moveDeniedIds} pre-computes the deny list: a folder being moved
  *    and its own subtree can never be a destination (the mutation service
  *    rejects it too, but the picker disables those rows up front).
@@ -243,14 +244,12 @@ function MoveToForm({
       >
         {destinations.map((dest) => {
           const blockedBySubtree = denied.has(dest.id);
-          const disabled = blockedBySubtree || dest.isManaged || dest.isRoot;
+          const disabled = blockedBySubtree || dest.isManaged;
           const reason = blockedBySubtree
             ? "Can't move a folder into itself or its own subtree."
             : dest.isManaged
               ? "Managed folders can't receive items."
-              : dest.isRoot
-                ? "Chrome's built-in folders can't receive items."
-                : undefined;
+              : undefined;
           return (
             <li key={dest.id}>
               <button

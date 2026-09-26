@@ -178,25 +178,27 @@ describe("resolveDrop", () => {
     if (!result.ok) expect(result.reason).toMatch(/root/i);
   });
 
-  it("rejects a fixed root \"1\"–\"3\" row as a target", () => {
+  it("accepts a fixed root \"1\"–\"3\" row as a destination", () => {
+    // Chrome treats the built-in roots as ordinary parents and "move to the
+    // Bookmarks bar" is a primary workflow; a root is never a MOVE SUBJECT
+    // (the drag handle is disabled on root rows) but it IS a destination.
     for (const rootId of ["1", "2", "3"]) {
       const result = resolveDrop(
         pureTree,
         payload(["b1"], "bookmark"),
         intoFolder(rootId),
       );
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toMatch(/built-in/i);
+      expect(result.ok).toBe(true);
     }
   });
 
-  it("rejects a fixed root as a folder-into target too", () => {
+  it("accepts a fixed root as a folder-into destination too", () => {
     const result = resolveDrop(
       pureTree,
       payload(["f11"], "folder"),
       intoFolder("1"),
     );
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 
   it("rejects a managed folder as a target", () => {
@@ -608,18 +610,20 @@ describe("drag and drop (keyboard sensor)", () => {
     expect(screen.queryByTestId("dnd-overlay")).toBeNull();
   });
 
-  it("rejects a drop onto a fixed-root row (invalid, nothing dispatched)", async () => {
+  it("moves a bookmark into a fixed root and offers undo", async () => {
     await renderApp();
-    // "1" (Bookmarks bar) is a built-in root — never a user drop target.
+    // "1" (Bookmarks bar) is a built-in root: a root is never a MOVE SUBJECT
+    // (its drag handle is disabled) but it is a valid drop destination.
     await keyboardDragTo(handle("Alpha"), "folder:1");
 
-    expect((await fake.get("b1"))[0]?.parentId).toBe("10");
-    expect(await db.undo.count()).toBe(0);
-    // No toast for a rejected drop.
-    expect(screen.queryByTestId("undo-toast")).toBeNull();
+    await waitFor(async () => {
+      expect((await fake.get("b1"))[0]?.parentId).toBe("1");
+    });
+    expect(await db.undo.count()).toBe(1);
+    expect(screen.getByTestId("undo-toast")).toBeDefined();
   });
 
-  it("marks a fixed-root row's drop zone invalid while hovered", async () => {
+  it("marks a fixed-root row's drop zone valid while hovered", async () => {
     await renderApp();
     const from = handle("Alpha");
     from.focus();
@@ -635,7 +639,7 @@ describe("drag and drop (keyboard sensor)", () => {
     await flush();
 
     const zone = document.querySelector('[data-dnd-drop="folder:2"]');
-    expect(zone?.getAttribute("data-drop-invalid")).toBe("true");
+    expect(zone?.getAttribute("data-drop-invalid")).not.toBe("true");
 
     fireEvent.keyDown(from, { code: "Escape" });
     await flush();

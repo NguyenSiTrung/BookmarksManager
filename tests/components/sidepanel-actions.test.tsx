@@ -389,15 +389,15 @@ describe("BulkBar", () => {
     );
 
     const dialog = await screen.findByRole("dialog");
-    // Fixed roots are no longer valid destinations (matching FolderActions);
-    // a nested folder is.
+    // Fixed roots ARE valid destinations (Chrome parents them normally and
+    // "move to the Bookmarks bar" is a primary workflow).
     expect(
       (
         within(dialog).getByRole("button", {
           name: "Other bookmarks",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
+    ).toBe(false);
     fireEvent.click(
       within(dialog).getByRole("button", {
         name: "Bookmarks bar / Dev / Nested",
@@ -598,21 +598,22 @@ describe("FolderActions", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
-    // Fixed roots are never destinations either.
+    // Fixed roots are valid destinations; only the moved subtree and
+    // managed folders are denied.
     expect(
       (
         within(dialog).getByRole("button", {
           name: "Other bookmarks",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
+    ).toBe(false);
     expect(
       (
         within(dialog).getByRole("button", {
           name: "Bookmarks bar",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(true);
+    ).toBe(false);
 
     fireEvent.click(
       within(dialog).getByRole("button", {

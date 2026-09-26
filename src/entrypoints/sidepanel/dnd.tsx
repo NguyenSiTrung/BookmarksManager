@@ -115,11 +115,13 @@ function allFolders(tree: FlattenedTree, ids: readonly string[]): boolean {
 /**
  * Resolve a drop. Rejections (never dispatched):
  *  - the synthetic root "0" (it is never a rendered target anyway),
- *  - a fixed root "1"–"3" (a built-in folder is never a user drop target —
- *    no drop INTO it, and no reorder relative to it),
  *  - a managed folder (policy wall),
  *  - a folder's own subtree — itself included (self/descendant),
  *  - a leaf bookmark used as a folder target.
+ *
+ * Fixed roots "1"–"3" ARE valid destinations: Chrome parents them normally
+ * and "move to the Bookmarks bar" is a primary workflow. A root is never a
+ * MOVE SUBJECT — its drag handle is disabled (see {@link DragHandle}).
  *
  * A folder dropped onto a folder in the SAME parent reorders among siblings;
  * a drop onto any other folder moves INTO it (appended). Bookmarks always
@@ -139,9 +141,6 @@ export function resolveDrop(
     const folder = tree.folders.get(target.folderId);
     if (folder === undefined) {
       return { ok: false, reason: "That item is a bookmark, not a folder." };
-    }
-    if (folder.isRoot) {
-      return { ok: false, reason: "Built-in folders can't receive drops." };
     }
     if (folder.isManaged) {
       return { ok: false, reason: "Managed folders can't receive items." };
