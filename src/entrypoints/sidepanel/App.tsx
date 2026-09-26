@@ -13,6 +13,7 @@ import {
   useBookmarkSelection,
 } from "./BookmarkList";
 import { FolderTree } from "./FolderTree";
+import { TagManager } from "./TagManager";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
 
@@ -87,6 +88,7 @@ export function App() {
     EMPTY_TAG_DEFS;
 
   const [view, setView] = useState<SidePanelView>({ kind: "all" });
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const items = useMemo(
     () => resolveView(view, tree, metas),
     [view, tree, metas],
@@ -146,6 +148,15 @@ export function App() {
                   </li>
                 ))}
               </ul>
+              <section aria-label="Tag management">
+                <button
+                  type="button"
+                  onClick={() => setTagManagerOpen(true)}
+                  className={navButtonClass}
+                >
+                  Manage tags…
+                </button>
+              </section>
               {tagDefs.length > 0 && (
                 <section aria-label="Tags">
                   <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
@@ -247,6 +258,7 @@ export function App() {
             )}
           </section>
         </div>
+        <TagManager open={tagManagerOpen} onOpenChange={setTagManagerOpen} />
       </div>
     </SelectionContext.Provider>
   );
