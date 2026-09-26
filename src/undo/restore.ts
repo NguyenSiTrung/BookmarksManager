@@ -35,14 +35,15 @@ import { peekLatest } from "./snapshot";
  * - **Pop on success.** The `undo` row is deleted only AFTER the restore
  *   completes. A failed restore leaves the row in place — it reports
  *   `{ok:false}` and can be retried (a transient API failure heals on the
- *   next call), explicitly dropped via {@link discardLatest}, or inspected.
- *   Restores are not atomic across `chrome.bookmarks`: a mid-restore
- *   failure can leave a partial result, which the kept row and the next
- *   undo attempt converge on.
- * - **Serialized.** `undoLatest`/`discardLatest` calls queue on a
- *   module-level promise chain, so peek→replay→pop can never interleave
- *   with a second call — two concurrent undos cannot both replay the same
- *   row.
+ *   next call), explicitly dropped via {@link discardLatest} (head) or
+ *   {@link discardById} (a specific row), or inspected. Restores are not
+ *   atomic across `chrome.bookmarks`: a mid-restore failure can leave a
+ *   partial result, which the kept row and the next undo attempt converge
+ *   on.
+ * - **Serialized.** `undoLatest`/`discardLatest`/`discardById` calls queue
+ *   on a module-level promise chain, so peek→replay→pop can never
+ *   interleave with a second call — two concurrent undos cannot both
+ *   replay the same row.
  * - **Idempotent, resumable replay.** Two mechanisms make a re-run safe:
  *   (a) a top-level snapshot node whose ORIGINAL id still resolves is
  *   skipped outright — Chrome never reuses ids, so a live original means
@@ -473,6 +474,31 @@ export function discardLatest(): Promise<DiscardResult> {
       }
       await db.undo.delete(snapshot.id);
       return { ok: true, discardedId: snapshot.id };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  });
+}
+
+/**
+ * Drop the SPECIFIC snapshot row `id` WITHOUT replaying it — the targeted
+ * counterpart of {@link discardLatest} for flows that push a snapshot and
+ * only later learn the mutation was a no-op. Discarding by the row id
+ * `pushSnapshot` returned keeps one flow's cleanup from dropping an
+ * UNRELATED snapshot a concurrent flow pushed on top: `pushSnapshot` is not
+ * part of the serialized stack queue, so a flow's `discardLatest()` can
+ * otherwise pop another flow's head. Serialized with `undoLatest`/
+ * `discardLatest`; a missing row reports `empty` and never throws.
+ */
+export function discardById(id: number): Promise<DiscardResult> {
+  return serialize(async (): Promise<DiscardResult> => {
+    try {
+      const row = await db.undo.get(id);
+      if (row === undefined) {
+        return { ok: false, code: "empty", message: "Nothing to discard." };
+      }
+      await db.undo.delete(id);
+      return { ok: true, discardedId: id };
     } catch (cause) {
       return toFailure(cause);
     }

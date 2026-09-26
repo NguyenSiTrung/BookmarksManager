@@ -17,7 +17,6 @@ import {
   parseNetscape,
 } from "../../io/netscape";
 import type { TagDef } from "../../schemas/meta";
-import { MutationError, removeTree } from "../../sync/mutations";
 import type { FlattenedTree } from "../../sync/tree";
 import { Checkbox } from "../../ui/components/checkbox";
 import {
@@ -28,7 +27,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/components/dialog";
+import { deleteNodesWithUndo } from "./BulkBar";
 import { unflattenTree } from "./ExportDialog";
+import { useToast } from "./UndoToast";
 
 /**
  * Import dialog — spec §5 "Import from Netscape HTML, JSON, or CSV".
@@ -44,7 +45,10 @@ import { unflattenTree } from "./ExportDialog";
  *  - `importing`: `writeImport` runs — always into a NEW
  *    `Imported <YYYY-MM-DD HH:mm>` folder under Other bookmarks.
  *  - `summary`: created/skipped/failed counts, per-item failure list, and a
- *    "Delete import folder" undo button (`removeTree(importRootId)`).
+ *    "Delete import folder" button that routes through the shared
+ *    `deleteNodesWithUndo` helper — the folder + contents are snapshotted
+ *    BEFORE removal, typed failures surface inline, and the toast offers
+ *    Undo.
  *
  * Everything runs locally: `file.text()` + pure parsers, no `fetch`.
  */
@@ -223,6 +227,7 @@ export function ImportDialog({
   const [deleting, setDeleting] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const toast = useToast();
 
   /** Normalized URLs already in the library — the dupe-detection domain. */
   const existingUrls = useMemo(
@@ -321,19 +326,17 @@ export function ImportDialog({
     if (summary === null || deleting || deleted) return;
     setDeleting(true);
     setDeleteError(null);
-    try {
-      await removeTree(summary.importRootId);
-      setDeleted(true);
-    } catch (cause) {
-      // MutationError carries a typed code (root/managed/not_found/…).
-      const prefix =
-        cause instanceof MutationError ? `${cause.code}: ` : "";
-      setDeleteError(
-        `${prefix}${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    } finally {
-      setDeleting(false);
+    // Snapshot-before-delete: the shared helper captures the folder + its
+    // whole subtree (and meta rows), removes it through the guarded service,
+    // and reports a typed failure instead of throwing.
+    const result = await deleteNodesWithUndo([summary.importRootId]);
+    setDeleting(false);
+    if (result.deleted === 0) {
+      setDeleteError(result.error ?? "Delete failed.");
+      return;
     }
+    setDeleted(true);
+    toast.showToast({ message: "Import folder deleted.", undoable: true });
   };
 
   const busy = stage === "importing";

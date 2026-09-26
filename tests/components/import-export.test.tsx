@@ -17,6 +17,7 @@ import {
 } from "vitest";
 import { db } from "../../src/db/database";
 import { getMeta, getTag } from "../../src/db/meta";
+import { undoLatest } from "../../src/undo/restore";
 import { ExportDialog } from "../../src/entrypoints/sidepanel/ExportDialog";
 import { ImportDialog } from "../../src/entrypoints/sidepanel/ImportDialog";
 import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
@@ -97,6 +98,7 @@ beforeEach(async () => {
   tree = flattenTree(await fake.getTree());
   await db.bookmarkMeta.clear();
   await db.tags.clear();
+  await db.undo.clear();
 
   clickedAnchor = undefined;
   exportedBlobs = [];
@@ -378,6 +380,32 @@ describe("ImportDialog — confirm writes and summary", () => {
     expect(await importRoot()).toBeUndefined();
     const children = await fake.getChildren(OTHER_BOOKMARKS_ID);
     expect(children.map((c) => c.title)).toEqual(["Existing", "Keep"]);
+  });
+
+  it('"Delete import folder" snapshots first so Undo restores the folder + contents', async () => {
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    upload("bookmarks.csv", CSV_TEXT);
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+    clickAndFlush(/confirm import/i);
+    expect(await screen.findByText(/import complete/i)).toBeTruthy();
+    expect(await importRoot()).toBeDefined();
+
+    clickAndFlush(/delete import folder/i);
+    expect(await screen.findByText(/import folder deleted/i)).toBeTruthy();
+    expect(await importRoot()).toBeUndefined();
+    // The delete path routes through deleteNodesWithUndo: ONE snapshot pushed.
+    expect(await db.undo.count()).toBe(1);
+
+    const result = await undoLatest();
+    expect(result.ok).toBe(true);
+
+    const restored = await importRoot();
+    expect(restored).toBeDefined();
+    if (restored === undefined) return;
+    const written = await subtree(restored.id);
+    // The folder AND its contents came back.
+    expect(findByTitle(written, "Work")).toBeDefined();
+    expect(findByTitle(written, "A")).toBeDefined();
   });
 
   it("csv confirm preserves folder_path nesting and meta", async () => {

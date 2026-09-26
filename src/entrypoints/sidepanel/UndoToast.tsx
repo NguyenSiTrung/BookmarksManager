@@ -17,7 +17,8 @@ import { undoLatest } from "../../undo/restore";
  *  - {@link useUndoToastController} owns the toast state: `showToast` puts a
  *    message up and arms an ~8s auto-hide timer (a new toast re-arms it),
  *    `dismiss` hides immediately, and `undo` pops the newest snapshot via
- *    `undoLatest()`.
+ *    `undoLatest()`. `undo` is re-entry-guarded: a second call while one is
+ *    outstanding is ignored, so a double-click cannot pop two snapshots.
  *  - Every undoable action (delete, bulk move) shows its confirmation with
  *    `undoable: true` — the toast then offers an "Undo" button. Tag/category
  *    confirmations report the affected count without an Undo affordance.
@@ -84,6 +85,11 @@ export function useUndoToastController(
 ): UndoToastController {
   const [toast, setToast] = useState<ToastState | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // In-flight gate: `undoLatest` is serialized internally, but a double-click
+  // (or a click landing while a slow restore is outstanding) would still
+  // queue a SECOND undo and pop two snapshots. While one call is pending the
+  // extra invocation is ignored — the toast updates once it settles.
+  const pendingRef = useRef(false);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -110,22 +116,28 @@ export function useUndoToastController(
   );
 
   const undo = useCallback(async () => {
-    const result = await undoLatest();
-    if (result.ok) {
+    if (pendingRef.current) return; // a call is already outstanding
+    pendingRef.current = true;
+    try {
+      const result = await undoLatest();
+      if (result.ok) {
+        showToast({
+          message: result.fellBackToOther
+            ? "Undone — restored into Other bookmarks."
+            : "Undone.",
+        });
+        return;
+      }
+      // Typed failure; Undo stays on the toast because the failed snapshot is
+      // still on the stack (restore pops on success only) and is retryable.
       showToast({
-        message: result.fellBackToOther
-          ? "Undone — restored into Other bookmarks."
-          : "Undone.",
+        message: `Undo failed: ${result.message}`,
+        error: true,
+        undoable: true,
       });
-      return;
+    } finally {
+      pendingRef.current = false;
     }
-    // Typed failure; Undo stays on the toast because the failed snapshot is
-    // still on the stack (restore pops on success only) and is retryable.
-    showToast({
-      message: `Undo failed: ${result.message}`,
-      error: true,
-      undoable: true,
-    });
   }, [showToast]);
 
   useEffect(

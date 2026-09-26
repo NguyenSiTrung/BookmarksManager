@@ -3,13 +3,14 @@ import { deleteMetaByIds } from "../../db/meta";
 import { Category } from "../../schemas/bookmark";
 import type { UndoMeta, UndoNode } from "../../schemas/undo";
 import { removeTree } from "../../sync/mutations";
+import type { FlattenedTree } from "../../sync/tree";
 import {
   bulkAddTag,
   bulkRemoveTag,
   bulkSetCategory,
 } from "../../sync/tag-ops";
 import { captureSubtree, pushSnapshot } from "../../undo/snapshot";
-import { discardLatest } from "../../undo/restore";
+import { discardById } from "../../undo/restore";
 import {
   Dialog,
   DialogContent,
@@ -43,7 +44,9 @@ import { errorMessage, useToast } from "./UndoToast";
  *  - Bar actions run the corresponding mutation/tag-op over the selected
  *    ids and report the `{affected}` count in the toast: Move to… (dialog
  *    owned by the shell), Delete, Add tag, Remove tag, Set category, Clear
- *    selection.
+ *    selection. Delete and Move are greyed out when NO selected row is
+ *    mutable (every selected id is managed, per the optional `tree` prop) —
+ *    the policy wall the mutation service would reject anyway.
  *  - Selection policy (documented): Delete and Move CLEAR the selection —
  *    deleted ids leave every view, and a move may leave the current view
  *    too; tag/category ops PRESERVE it so the user can chain edits. "Clear
@@ -91,7 +94,7 @@ export async function deleteNodesWithUndo(
         error: "Nothing to delete — the items may already be gone.",
       };
     }
-    await pushSnapshot({ kind: "delete", nodes, meta });
+    const snapshotId = await pushSnapshot({ kind: "delete", nodes, meta });
 
     const removedIds: string[] = [];
     let deleted = 0;
@@ -113,9 +116,10 @@ export async function deleteNodesWithUndo(
       }
     }
     if (deleted === 0) {
-      // Nothing left the tree — drop the snapshot instead of wedging the
-      // stack head with an unreplayable no-op.
-      await discardLatest();
+      // Nothing left the tree — drop THIS snapshot by id instead of wedging
+      // the stack head with an unreplayable no-op. By-id keeps the discard
+      // from popping an unrelated snapshot a concurrent flow pushed on top.
+      await discardById(snapshotId);
       return {
         deleted: 0,
         failed: ids.length,
@@ -144,14 +148,21 @@ export function deleteResultMessage(result: DeleteNodesResult): string {
 export interface BulkBarProps {
   /** Opens the shell's "Move to…" dialog for the current selection. */
   onMoveRequest?: (ids: readonly string[]) => void;
+  /**
+   * The live flattened tree — used to grey out Delete/Move when every
+   * selected row is managed (no selected row is mutable). Optional so the
+   * bar stays renderable in isolation; without it the actions stay enabled.
+   */
+  tree?: FlattenedTree;
 }
 
 const barButtonClass =
   "rounded-sm px-2 py-1 text-xs outline-hidden " +
   "hover:bg-accent hover:text-accent-foreground " +
-  "focus-visible:ring-2 focus-visible:ring-ring";
+  "focus-visible:ring-2 focus-visible:ring-ring " +
+  "disabled:pointer-events-none disabled:opacity-50";
 
-export function BulkBar({ onMoveRequest }: BulkBarProps) {
+export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
   const selection = useSelection();
   const toast = useToast();
   const [tagPrompt, setTagPrompt] = useState<"add" | "remove" | null>(null);
@@ -161,6 +172,17 @@ export function BulkBar({ onMoveRequest }: BulkBarProps) {
   const ids = [...selection.selectedIds];
 
   if (count === 0) return null;
+
+  // At least one selected row must be mutable for Delete/Move to do
+  // anything — a managed selection is a policy wall (the service rejects it
+  // too), so the buttons are greyed out rather than firing a doomed call.
+  const anyMutable =
+    tree === undefined ||
+    ids.some((id) => {
+      const node = tree.bookmarks.get(id) ?? tree.folders.get(id);
+      return node !== undefined && !node.isManaged;
+    });
+  const moveDeleteDisabled = busy || !anyMutable;
 
   const handleDelete = async (): Promise<void> => {
     setBusy(true);
@@ -204,7 +226,7 @@ export function BulkBar({ onMoveRequest }: BulkBarProps) {
       <span className="mr-auto text-xs font-medium">{count} selected</span>
       <button
         type="button"
-        disabled={busy}
+        disabled={moveDeleteDisabled}
         onClick={() => onMoveRequest?.(ids)}
         className={barButtonClass}
       >
@@ -212,7 +234,7 @@ export function BulkBar({ onMoveRequest }: BulkBarProps) {
       </button>
       <button
         type="button"
-        disabled={busy}
+        disabled={moveDeleteDisabled}
         onClick={() => void handleDelete()}
         className={barButtonClass}
       >

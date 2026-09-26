@@ -4,7 +4,7 @@ import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import { moveNode } from "../../sync/mutations";
 import type { FlattenedTree } from "../../sync/tree";
 import { captureNodes, pushSnapshot } from "../../undo/snapshot";
-import { discardLatest } from "../../undo/restore";
+import { discardById } from "../../undo/restore";
 import { errorMessage, useToast } from "./UndoToast";
 
 /**
@@ -13,7 +13,8 @@ import { errorMessage, useToast } from "./UndoToast";
  *
  *  - {@link folderDestinations} flattens the tree into pickable destinations
  *    (every folder except the synthetic root "0"; the fixed roots "1"–"3"
- *    ARE valid destinations — Chrome allows creating/moving under them).
+ *    are LISTED but DISABLED — like `FolderActions`, a built-in root never
+ *    receives user moves).
  *  - {@link moveDeniedIds} pre-computes the deny list: a folder being moved
  *    and its own subtree can never be a destination (the mutation service
  *    rejects it too, but the picker disables those rows up front).
@@ -25,9 +26,9 @@ import { errorMessage, useToast } from "./UndoToast";
  *    thrown: per-node failures surface in the result.
  *
  * The dialog is a controlled Radix Dialog: a flat, depth-indented folder
- * list with disabled rows for managed folders and deny-listed subtrees, a
- * "Move" confirm that is inert until a destination is picked, and an inline
- * error when the whole move was rejected.
+ * list with disabled rows for managed folders, deny-listed subtrees and the
+ * fixed roots "1"–"3", a "Move" confirm that is inert until a destination is
+ * picked, and an inline error when the whole move was rejected.
  */
 
 /** One pickable folder destination. */
@@ -118,7 +119,7 @@ export async function moveNodesWithUndo(
         error: "Nothing to move — the items may already be gone.",
       };
     }
-    await pushSnapshot({
+    const snapshotId = await pushSnapshot({
       kind: "bulk_move",
       nodes: capture.nodes,
       meta: capture.meta,
@@ -134,9 +135,10 @@ export async function moveNodesWithUndo(
       }
     }
     if (moved === 0) {
-      // The snapshot describes a move that never happened — drop it instead
-      // of leaving a no-op row at the head of the stack.
-      await discardLatest();
+      // The snapshot describes a move that never happened — drop it BY ID
+      // instead of leaving a no-op row at the head of the stack (by-id keeps
+      // a concurrent flow's snapshot from being popped instead).
+      await discardById(snapshotId);
       return {
         moved: 0,
         failed: ids.length,
@@ -241,12 +243,14 @@ function MoveToForm({
       >
         {destinations.map((dest) => {
           const blockedBySubtree = denied.has(dest.id);
-          const disabled = blockedBySubtree || dest.isManaged;
+          const disabled = blockedBySubtree || dest.isManaged || dest.isRoot;
           const reason = blockedBySubtree
             ? "Can't move a folder into itself or its own subtree."
             : dest.isManaged
               ? "Managed folders can't receive items."
-              : undefined;
+              : dest.isRoot
+                ? "Chrome's built-in folders can't receive items."
+                : undefined;
           return (
             <li key={dest.id}>
               <button

@@ -104,7 +104,10 @@ beforeEach(async () => {
         children: [{ id: "mb1", title: "Hosted", url: "https://m.example/" }],
       },
     ],
-    otherBookmarks: [{ id: "b4", title: "Delta", url: "https://d.example/" }],
+    otherBookmarks: [
+      { id: "b4", title: "Delta", url: "https://d.example/" },
+      { id: "f20", title: "Archive", children: [] },
+    ],
   });
   vi.stubGlobal("chrome", {
     bookmarks: fake,
@@ -313,6 +316,37 @@ describe("BulkBar", () => {
     ).toBeNull();
   });
 
+  it("disables Delete and Move when every selected row is managed", async () => {
+    await renderApp();
+    fireEvent.click(option(/Hosted/));
+    const bar = selectionBar();
+    expect(bar.textContent).toContain("1 selected");
+    expect(
+      (
+        within(bar).getByRole("button", {
+          name: "Delete",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        within(bar).getByRole("button", {
+          name: "Move to…",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+
+    // Adding a mutable row re-enables both.
+    fireEvent.click(option(/Alpha/), { ctrlKey: true });
+    expect(
+      (
+        within(selectionBar()).getByRole("button", {
+          name: "Delete",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
   it("bulk deletes with a snapshot and restores everything on Undo", async () => {
     await putMeta("b1", { tags: ["dev"], notes: "keep me" });
     await createTag("Dev");
@@ -355,15 +389,26 @@ describe("BulkBar", () => {
     );
 
     const dialog = await screen.findByRole("dialog");
+    // Fixed roots are no longer valid destinations (matching FolderActions);
+    // a nested folder is.
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Other bookmarks",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Other bookmarks" }),
+      within(dialog).getByRole("button", {
+        name: "Bookmarks bar / Dev / Nested",
+      }),
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Move" }));
 
     await waitFor(async () => {
-      expect((await fake.get("b1"))[0]?.parentId).toBe("2");
+      expect((await fake.get("b1"))[0]?.parentId).toBe("f10");
     });
-    expect((await fake.get("b3"))[0]?.parentId).toBe("2");
+    expect((await fake.get("b3"))[0]?.parentId).toBe("f10");
     await waitFor(() =>
       expect(toast().textContent).toContain("Moved 2 items"),
     );
@@ -553,13 +598,30 @@ describe("FolderActions", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+    // Fixed roots are never destinations either.
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Other bookmarks",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      (
+        within(dialog).getByRole("button", {
+          name: "Bookmarks bar",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
 
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Other bookmarks" }),
+      within(dialog).getByRole("button", {
+        name: "Other bookmarks / Archive",
+      }),
     );
     fireEvent.click(within(dialog).getByRole("button", { name: "Move" }));
     await waitFor(async () => {
-      expect((await fake.get("10"))[0]?.parentId).toBe("2");
+      expect((await fake.get("10"))[0]?.parentId).toBe("f20");
     });
     // The subtree travelled with the folder.
     expect((await fake.get("f10"))[0]?.parentId).toBe("10");

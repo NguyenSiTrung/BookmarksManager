@@ -443,12 +443,16 @@ export function App() {
                     tagNameByKey={tagNameByKey}
                     onActivateItem={openItem}
                     onDeleteSelection={(ids) => void handleDeleteIds(ids)}
+                    reorderable={view.kind === "all" || view.kind === "folder"}
                     renderItemActions={renderItemActions}
                     renderItemContextMenu={renderItemContextMenu}
                     className="flex-1"
                   />
                 )}
-                <BulkBar onMoveRequest={(ids) => setMoveIds(ids)} />
+                <BulkBar
+                  tree={tree}
+                  onMoveRequest={(ids) => setMoveIds(ids)}
+                />
               </section>
             </div>
           </DndProvider>

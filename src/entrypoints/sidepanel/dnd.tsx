@@ -20,7 +20,7 @@ import type { ReactNode } from "react";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import { moveNode } from "../../sync/mutations";
 import type { FolderNode, FlattenedTree } from "../../sync/tree";
-import { discardLatest } from "../../undo/restore";
+import { discardById } from "../../undo/restore";
 import { captureNodes, pushSnapshot } from "../../undo/snapshot";
 import { cn } from "../../ui/lib/cn";
 import type { BookmarkSelection } from "./BookmarkList";
@@ -115,6 +115,8 @@ function allFolders(tree: FlattenedTree, ids: readonly string[]): boolean {
 /**
  * Resolve a drop. Rejections (never dispatched):
  *  - the synthetic root "0" (it is never a rendered target anyway),
+ *  - a fixed root "1"–"3" (a built-in folder is never a user drop target —
+ *    no drop INTO it, and no reorder relative to it),
  *  - a managed folder (policy wall),
  *  - a folder's own subtree — itself included (self/descendant),
  *  - a leaf bookmark used as a folder target.
@@ -137,6 +139,9 @@ export function resolveDrop(
     const folder = tree.folders.get(target.folderId);
     if (folder === undefined) {
       return { ok: false, reason: "That item is a bookmark, not a folder." };
+    }
+    if (folder.isRoot) {
+      return { ok: false, reason: "Built-in folders can't receive drops." };
     }
     if (folder.isManaged) {
       return { ok: false, reason: "Managed folders can't receive items." };
@@ -199,8 +204,9 @@ export function resolveDrop(
 /**
  * Move `ids` to `parentId` at `index`, undoably — the reorder counterpart of
  * T3's {@link moveNodesWithUndo}. Same contract: the `bulk_move` snapshot is
- * pushed BEFORE the first `moveNode`, a fully rejected move discards it
- * again, and the result is counted rather than thrown.
+ * pushed BEFORE the first `moveNode`, a fully rejected move discards that
+ * specific row again (`discardById`, so a concurrent flow's snapshot is
+ * never popped instead), and the result is counted rather than thrown.
  */
 export async function moveNodesToIndexWithUndo(
   ids: readonly string[],
@@ -216,7 +222,7 @@ export async function moveNodesToIndexWithUndo(
         error: "Nothing to move — the items may already be gone.",
       };
     }
-    await pushSnapshot({
+    const snapshotId = await pushSnapshot({
       kind: "bulk_move",
       nodes: capture.nodes,
       meta: capture.meta,
@@ -234,7 +240,7 @@ export async function moveNodesToIndexWithUndo(
       }
     }
     if (moved === 0) {
-      await discardLatest();
+      await discardById(snapshotId);
       return {
         moved: 0,
         failed: ids.length,
@@ -377,7 +383,14 @@ export function DndProvider({ tree, selection, children }: DndProviderProps) {
       over.data.current as DropTargetData | undefined,
     );
     if (!resolution.ok) return; // friendly layer refuses; nothing dispatched
-    void performDrop(payload, resolution, tree, toast.showToast);
+    void performDrop(
+      payload,
+      resolution,
+      tree,
+      toast.showToast,
+      // Same policy as delete/move: a successful drop clears the selection.
+      () => selection.clear(),
+    );
   };
 
   const handleDragCancel = (): void => {
@@ -428,6 +441,7 @@ async function performDrop(
   resolution: Extract<DropResolution, { ok: true }>,
   tree: FlattenedTree,
   showToast: (toast: { message: string; undoable?: boolean; error?: boolean }) => void,
+  clearSelection: () => void,
 ): Promise<void> {
   const result =
     resolution.index === undefined
@@ -442,6 +456,9 @@ async function performDrop(
     showToast({ message: result.error ?? "Move failed.", error: true });
     return;
   }
+  // A successful drop clears the selection — the same policy delete and the
+  // Move-to dialog follow, so a dragged selection does not linger.
+  clearSelection();
   const dest = tree.folders.get(resolution.parentId)?.title ?? "";
   const destLabel = dest === "" ? "folder" : `“${dest}”`;
   const noun = result.moved === 1 ? "item" : "items";
@@ -468,7 +485,7 @@ export interface DragHandleProps {
   label: string;
   parentId?: string;
   index?: number;
-  /** Managed nodes can't be moved — the handle is inert. */
+  /** Managed or fixed-root nodes can't be moved — the handle is inert. */
   disabled?: boolean;
   className?: string;
 }
@@ -579,7 +596,7 @@ export function FolderRowDnd({ node }: FolderRowDndProps) {
         label={label}
         parentId={node.parentId}
         index={node.index}
-        disabled={node.isManaged}
+        disabled={node.isManaged || node.isRoot}
       />
       <span
         ref={dropRef}

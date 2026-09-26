@@ -16,7 +16,8 @@ import { cn } from "../lib/cn";
  * `chrome` follows the house lazy-slice pattern (see
  * `src/sync/chrome-bookmarks.ts`): only `runtime.getURL` is declared, and it
  * is resolved at render time — not at module load — so `vi.stubGlobal`
- * works in tests.
+ * works in tests. When `chrome` (or `chrome.runtime`) is absent the
+ * component renders the placeholder instead of throwing during render.
  */
 declare const chrome: {
   runtime: {
@@ -77,10 +78,17 @@ function FaviconPlaceholder({
 }
 
 export function Favicon({ pageUrl, size = 32, className }: FaviconProps) {
-  const src = faviconUrl(pageUrl, size);
   // Keyed by src: a new pageUrl/size automatically retries the <img>.
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
+  // Outside an extension context (a bare render, a non-extension preview)
+  // there is no `chrome.runtime.getURL` to build the renderer URL with —
+  // fall back to the placeholder rather than throwing during render.
+  if (typeof chrome === "undefined" || chrome.runtime === undefined) {
+    return <FaviconPlaceholder size={size} className={className} />;
+  }
+
+  const src = faviconUrl(pageUrl, size);
   if (failedSrc === src) {
     return <FaviconPlaceholder size={size} className={className} />;
   }

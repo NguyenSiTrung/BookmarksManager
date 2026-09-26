@@ -79,6 +79,15 @@ describe("Favicon fallback", () => {
     expect(document.querySelector("img")).toBeNull();
   });
 
+  it("renders the placeholder without throwing when chrome is absent", () => {
+    vi.stubGlobal("chrome", undefined);
+    expect(() =>
+      render(<Favicon pageUrl="https://example.com" />),
+    ).not.toThrow();
+    expect(screen.getByRole("img", { name: /favicon/i })).toBeTruthy();
+    expect(document.querySelector("img")).toBeNull();
+  });
+
   it("retries the img when pageUrl changes after an error", () => {
     const { container, rerender } = render(
       <Favicon pageUrl="https://example.com" />,

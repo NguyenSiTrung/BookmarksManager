@@ -210,7 +210,11 @@ export function FolderTree({
     event: ReactKeyboardEvent<HTMLElement>,
     index: number,
   ): void => {
-    if (dragging) return;
+    // A key dnd-kit already handled (the Space/arrows/Esc that drive a drag)
+    // must not ALSO move roving focus or expand/collapse rows. `dragging` is
+    // stale during the render the lifting key arrives in, so the
+    // defaultPrevented flag is the reliable signal.
+    if (event.defaultPrevented || dragging) return;
     const entry = visible[index];
     if (entry === undefined) return;
 

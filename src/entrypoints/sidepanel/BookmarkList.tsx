@@ -27,6 +27,8 @@ import { DragHandle, useDndState, useDropZone } from "./dnd";
  *  - Layout toggle: "list" rows vs "grid" cards (two columns — the side
  *    panel is narrow). Rows are virtualized with @tanstack/react-virtual
  *    (fixed-height estimates; no runtime measuring) so 10k+ items stay fast.
+ *    Grid is a BROWSE-ONLY layout for drag SOURCES: drag handles render in
+ *    the list layout only, so a drag can never start from a grid card.
  *  - Semantics: `role="listbox"` + `aria-multiselectable`, rows are
  *    `role="option"` with `aria-selected`/`aria-posinset`/`aria-setsize`.
  *  - Selection: `useBookmarkSelection` manages `selectedIds` over the
@@ -240,6 +242,13 @@ interface OptionProps {
   layout: "list" | "grid";
   selected: boolean;
   active: boolean;
+  /**
+   * True when this row's "insert before" drop slot is active — only
+   * tree-ordered views (all/folder) expose reorder drop targets; a view that
+   * re-sorts the list (tag/category/untagged/recent/duplicates) does not,
+   * because "before row X" there has no tree position.
+   */
+  reorderable: boolean;
   meta?: BookmarkMeta;
   tagNameByKey?: ReadonlyMap<string, string>;
   registerRef: (id: string, el: HTMLElement | null) => void;
@@ -263,6 +272,7 @@ function Option({
   layout,
   selected,
   active,
+  reorderable,
   meta,
   tagNameByKey,
   registerRef,
@@ -275,7 +285,11 @@ function Option({
   const actions = renderItemActions?.(item);
   const menuContent = renderItemContextMenu?.(item);
   // P4.T4: the row doubles as a reorder drop slot ("insert before this row").
-  // A bookmark has no children, so it is never a folder target.
+  // A bookmark has no children, so it is never a folder target. The slot is
+  // DISABLED outside tree-ordered views (and for unpositioned rows), so a
+  // drop there can never be dispatched.
+  const slotDisabled =
+    !reorderable || item.parentId === undefined || item.index === undefined;
   const { dropRef, invalid } = useDropZone(
     `slot:${item.id}`,
     {
@@ -283,7 +297,7 @@ function Option({
       ...(item.parentId === undefined ? {} : { parentId: item.parentId }),
       ...(item.index === undefined ? {} : { index: item.index }),
     },
-    item.parentId === undefined || item.index === undefined,
+    slotDisabled,
   );
   const row = (
     <div
@@ -293,7 +307,7 @@ function Option({
       aria-setsize={setSize}
       tabIndex={active ? 0 : -1}
       data-bookmark-id={item.id}
-      data-dnd-drop={`slot:${item.id}`}
+      data-dnd-drop={slotDisabled ? undefined : `slot:${item.id}`}
       data-drop-invalid={invalid ? "true" : undefined}
       ref={(el) => {
         registerRef(item.id, el);
@@ -402,6 +416,14 @@ export interface BookmarkListProps {
   onActivateItem?: (item: BookmarkItem) => void;
   /** Fired when Delete is pressed over the listbox with a live selection. */
   onDeleteSelection?: (ids: readonly string[]) => void;
+  /**
+   * Whether rows expose reorder drop slots. Only tree-ordered views
+   * (`all`/`folder`) are reorderable; a view that re-sorts the list (tag,
+   * category, untagged, recent, duplicates) must not offer "insert before
+   * row X" because that has no tree position there. Defaults to true so the
+   * list stays drop-capable when rendered standalone.
+   */
+  reorderable?: boolean;
   /** Trailing per-row action control (kebab menu); P4.T3, optional. */
   renderItemActions?: (item: BookmarkItem) => ReactNode;
   /** Right-click menu entries per row; P4.T3, optional. */
@@ -427,6 +449,7 @@ export function BookmarkList({
   selection: selectionProp,
   onActivateItem,
   onDeleteSelection,
+  reorderable = true,
   renderItemActions,
   renderItemContextMenu,
   className,
@@ -461,6 +484,13 @@ export function BookmarkList({
   });
 
   useApplyFocusRequest(focusRequestRef, items, optionEls);
+
+  // Clamp the roving-focus index when the item list changes (a view switch
+  // can shrink it): without this the old index points past the end and NO
+  // row carries `tabIndex=0`, leaving the listbox unreachable by keyboard.
+  useEffect(() => {
+    setActiveIndex((prev) => Math.min(prev, Math.max(items.length - 1, 0)));
+  }, [items]);
 
   const registerOption = (id: string, el: HTMLElement | null): void => {
     if (el === null) {
@@ -505,7 +535,11 @@ export function BookmarkList({
   const handleListKeyDown = (
     event: ReactKeyboardEvent<HTMLElement>,
   ): void => {
-    if (dragging) return;
+    // A key dnd-kit already handled (the Space/arrows/Esc that drive a drag)
+    // must not ALSO move roving focus or toggle the selection. `dragging` is
+    // stale during the render the lifting key arrives in, so the
+    // defaultPrevented flag is the reliable signal.
+    if (event.defaultPrevented || dragging) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       selection.selectAll();
@@ -653,6 +687,7 @@ export function BookmarkList({
                           layout="grid"
                           selected={selection.isSelected(item.id)}
                           active={index === activeIndex}
+                          reorderable={reorderable}
                           meta={metaById?.get(item.id)}
                           tagNameByKey={tagNameByKey}
                           registerRef={registerOption}
@@ -673,6 +708,7 @@ export function BookmarkList({
                       layout="list"
                       selected={selection.isSelected(first.id)}
                       active={virtualRow.index === activeIndex}
+                      reorderable={reorderable}
                       meta={metaById?.get(first.id)}
                       tagNameByKey={tagNameByKey}
                       registerRef={registerOption}
