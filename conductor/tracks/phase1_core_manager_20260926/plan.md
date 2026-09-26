@@ -149,50 +149,50 @@
 <!-- execution: parallel -->
 <!-- depends: phase2, phase3 -->
 
-- [ ] Task 1: UI dependencies, shadcn/ui primitives, favicon component; add `favicon` permission
+- [x] Task 1: UI dependencies, shadcn/ui primitives, favicon component; add `favicon` permission — `1a3996a`
   <!-- files: package.json, package-lock.json, src/ui/components/dialog.tsx, src/ui/components/dropdown-menu.tsx, src/ui/components/popover.tsx, src/ui/components/checkbox.tsx, src/ui/components/favicon.tsx, src/ui/lib/cn.ts, wxt.config.ts, store/permissions.md, tests/components/favicon.test.tsx -->
-  - [ ] Install `radix-ui`, `@dnd-kit/core`, `@dnd-kit/sortable`, `@tanstack/react-virtual`, `dexie-react-hooks` (verify current versions and React 19 peers at install)
-  - [ ] Copy only Dialog, DropdownMenu, Popover, Checkbox from shadcn/ui; `check:bundle` stays green
-  - [ ] Failing test: Favicon renders `chrome-extension://<id>/_favicon/?pageUrl=…&size=…` and a placeholder on error
-  - [ ] Add `favicon` to `wxt.config.ts` and `store/permissions.md`
+  - [x] Install `radix-ui`, `@dnd-kit/core`, `@dnd-kit/sortable`, `@tanstack/react-virtual`, `dexie-react-hooks` (verify current versions and React 19 peers at install)
+  - [x] Copy only Dialog, DropdownMenu, Popover, Checkbox from shadcn/ui; `check:bundle` stays green
+  - [x] Failing test: Favicon renders `chrome-extension://<id>/_favicon/?pageUrl=…&size=…` and a placeholder on error
+  - [x] Add `favicon` to `wxt.config.ts` and `store/permissions.md`
 
-- [ ] Task 2: Layout — folder tree, virtualized list/grid, views
+- [x] Task 2: Layout — folder tree, virtualized list/grid, views — `d897f21`
   <!-- files: src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/views.ts, tests/components/sidepanel-layout.test.tsx -->
   <!-- depends: task1 -->
-  - [ ] Failing tests: ARIA tree keyboard navigation (arrows, Home/End, expand/collapse), list/grid toggle, virtualization with 10k items, views All / folder / tag / category / Untagged / Duplicates / Recently saved
-  - [ ] Implement
+  - [x] Failing tests: ARIA tree keyboard navigation (arrows, Home/End, expand/collapse), list/grid toggle, virtualization with 10k items, views All / folder / tag / category / Untagged / Duplicates / Recently saved
+  - [x] Implement
 
-- [ ] Task 3: Item and folder actions
+- [x] Task 3: Item and folder actions — `14b489c`
   <!-- files: src/entrypoints/sidepanel/EditDialog.tsx, src/entrypoints/sidepanel/BulkBar.tsx, src/entrypoints/sidepanel/MoveToDialog.tsx, src/entrypoints/sidepanel/FolderActions.tsx, src/entrypoints/sidepanel/UndoToast.tsx, tests/components/sidepanel-actions.test.tsx -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: edit title/URL/folder/tags/category/notes; multi-select + bulk move/delete/tag/category; Move to…; folder create/rename/delete with count; undo toast; disabled actions on root/managed nodes
-  - [ ] Implement
+  - [x] Failing tests: edit title/URL/folder/tags/category/notes; multi-select + bulk move/delete/tag/category; Move to…; folder create/rename/delete with count; undo toast; disabled actions on root/managed nodes
+  - [x] Implement
 
-- [ ] Task 4: Drag and drop
+- [x] Task 4: Drag and drop — `e0df9fa` (+ review fix `0403e31`, roots-as-destinations revert `eaf3577`)
   <!-- files: src/entrypoints/sidepanel/dnd.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, tests/components/sidepanel-dnd.test.tsx -->
   <!-- depends: task3 -->
-  - [ ] Failing tests: keyboard-sensor drag moves and reorders bookmarks and folders, multi-select drag, drops onto root/managed nodes or into own descendants rejected, bulk move undoable
-  - [ ] Implement with dnd-kit
+  - [x] Failing tests: keyboard-sensor drag moves and reorders bookmarks and folders, multi-select drag, drops onto root/managed nodes or into own descendants rejected, bulk move undoable
+  - [x] Implement with dnd-kit
 
-- [ ] Task 5: Tag manager and category UI
+- [x] Task 5: Tag manager and category UI — `b06ed71` (+ wiring `4403882`)
   <!-- files: src/entrypoints/sidepanel/TagManager.tsx, src/ui/components/tag-chip.tsx, src/ui/components/category-select.tsx, tests/components/tag-manager.test.tsx -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: create/rename/recolor/delete with counts, description length limit, chips on items, category select
-  - [ ] Implement
+  - [x] Failing tests: create/rename/recolor/delete with counts, description length limit, chips on items, category select
+  - [x] Implement
 
-- [ ] Task 6: Duplicates view with merge
+- [x] Task 6: Duplicates view with merge — `8a9e45b` (+ wiring `50125b5`)
   <!-- files: src/entrypoints/sidepanel/DuplicatesView.tsx, tests/components/duplicates-view.test.tsx -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: groups with exact/normalized labels, badges, "Keep this one" merge, undo
-  - [ ] Implement
+  - [x] Failing tests: groups with exact/normalized labels, badges, "Keep this one" merge, undo
+  - [x] Implement
 
-- [ ] Task 7: Import/export UI
+- [x] Task 7: Import/export UI — `300675e` (+ wiring `c72995d`)
   <!-- files: src/entrypoints/sidepanel/ImportDialog.tsx, src/entrypoints/sidepanel/ExportDialog.tsx, tests/components/import-export.test.tsx -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: file picker, preview counts, "Import duplicates anyway", Confirm writes, summary with "Delete import folder", export chooser (format + scope) downloads via Blob + anchor (no `downloads` permission)
-  - [ ] Implement
+  - [x] Failing tests: file picker, preview counts, "Import duplicates anyway", Confirm writes, summary with "Delete import folder", export chooser (format + scope) downloads via Blob + anchor (no `downloads` permission)
+  - [x] Implement
 
-- [ ] Task 8: Checkpoint — automated gate for Phase 4 (evidence in `learnings.md`)
+- [x] Task 8: Checkpoint — automated gate for Phase 4 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4, task5, task6, task7 -->
 
 ---
