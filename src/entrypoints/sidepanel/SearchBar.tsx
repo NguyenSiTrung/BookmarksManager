@@ -1,5 +1,7 @@
 import type { Ref } from "react";
 import { parseQuery } from "../../search/query";
+import type { SuggestionSources } from "../../search/suggest";
+import { QueryInput } from "../../ui/components/query-input";
 
 /**
  * Side-panel search bar (spec §4): the input above the bookmark list.
@@ -20,27 +22,29 @@ export interface SearchBarProps {
   onChange(value: string): void;
   /** `null` while the search index is still building. */
   resultCount: number | null;
+  /** Tag/folder vocabularies for query autocomplete. */
+  sources: SuggestionSources;
   ref?: Ref<HTMLInputElement>;
 }
 
-export function SearchBar({ value, onChange, resultCount, ref }: SearchBarProps) {
+export function SearchBar({
+  value,
+  onChange,
+  resultCount,
+  sources,
+  ref,
+}: SearchBarProps) {
   const warnings = value === "" ? [] : parseQuery(value).warnings;
   return (
     <div className="shrink-0 border-b border-border px-3 py-2">
-      <input
+      <QueryInput
         ref={ref}
-        type="search"
         aria-label="Search bookmarks"
         placeholder="Search — / to focus, Esc to clear"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            onChange("");
-          }
-        }}
-        className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        onChange={onChange}
+        sources={sources}
+        onEscape={() => onChange("")}
       />
       {value !== "" && (
         <p

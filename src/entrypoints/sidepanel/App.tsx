@@ -175,6 +175,17 @@ export function App() {
     () => new Map(tagDefs.map((tag) => [tag.nameKey, tag.name])),
     [tagDefs],
   );
+  // Autocomplete vocabularies for the search bar: tag display names plus
+  // folder titles (the synthetic root has no title and never completes).
+  const suggestionSources = useMemo(
+    () => ({
+      tags: tagDefs.map((tag) => tag.name),
+      folders: [...tree.folders.values()]
+        .filter((folder) => !folder.isRoot)
+        .map((folder) => folder.title),
+    }),
+    [tagDefs, tree.folders],
+  );
   const title = viewTitle(activeView, tree, tagDefs);
 
   // P4.T3 action surface: the toast controller owns notifications and the
@@ -549,6 +560,7 @@ export function App() {
                         ? null
                         : items.length
                   }
+                  sources={suggestionSources}
                 />
                 <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
                   <h2 className="text-sm font-medium">{title}</h2>

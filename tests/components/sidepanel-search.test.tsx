@@ -137,8 +137,18 @@ function restoreElementRects(): void {
   savedRectDescriptors = [];
 }
 
+/** Options under the result list — suggestion popups also render
+ * `role="option"`, so always scope to the `Bookmarks` listbox. */
+function results(): HTMLElement[] {
+  const list = screen.queryByRole("listbox", { name: "Bookmarks" });
+  return list === null
+    ? []
+    : within(list).queryAllByRole("option");
+}
+
 function option(name: string | RegExp): HTMLElement {
-  return screen.getByRole("option", { name });
+  const list = screen.getByRole("listbox", { name: "Bookmarks" });
+  return within(list).getByRole("option", { name });
 }
 
 function treeitem(name: string | RegExp): HTMLElement {
@@ -146,13 +156,14 @@ function treeitem(name: string | RegExp): HTMLElement {
 }
 
 function searchbox(): HTMLElement {
-  return screen.getByRole("searchbox", { name: "Search bookmarks" });
+  // QueryInput renders the combobox role on top of type="search".
+  return screen.getByRole("combobox", { name: "Search bookmarks" });
 }
 
 async function renderApp(): Promise<void> {
   render(<App />);
   await waitFor(() =>
-    expect(screen.getAllByRole("option").length).toBeGreaterThan(0),
+    expect(results().length).toBeGreaterThan(0),
   );
   // The search index builds in an effect after mount — wait for it so
   // typing yields results synchronously in each test.
@@ -168,12 +179,12 @@ function typeQuery(text: string): void {
 describe("side-panel search", () => {
   it("filters the whole library as a query is typed", async () => {
     await renderApp();
-    expect(screen.getAllByRole("option").length).toBe(4);
+    expect(results().length).toBe(4);
 
     typeQuery("alpha");
 
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Alpha")],
       ),
     );
@@ -190,7 +201,7 @@ describe("side-panel search", () => {
     fireEvent.click(treeitem(/Dev/));
     await waitFor(() =>
       expect(
-        screen.getAllByRole("option").map((el) => el.textContent),
+        results().map((el) => el.textContent),
       ).toEqual([
         expect.stringContaining("Alpha"),
         expect.stringContaining("Beta"),
@@ -200,7 +211,7 @@ describe("side-panel search", () => {
     // Search covers the WHOLE library — Delta lives under Other bookmarks.
     typeQuery("delta");
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Delta")],
       ),
     );
@@ -209,7 +220,7 @@ describe("side-panel search", () => {
     typeQuery("");
     await waitFor(() =>
       expect(
-        screen.getAllByRole("option").map((el) => el.textContent),
+        results().map((el) => el.textContent),
       ).toEqual([
         expect.stringContaining("Alpha"),
         expect.stringContaining("Beta"),
@@ -235,7 +246,7 @@ describe("side-panel search", () => {
 
     fireEvent.keyDown(searchbox(), { key: "Escape" });
     await waitFor(() => expect((searchbox() as HTMLInputElement).value).toBe(""));
-    expect(screen.getAllByRole("option").length).toBe(4);
+    expect(results().length).toBe(4);
   });
 
   it("does not steal / when focus is already in a text field", async () => {
@@ -289,7 +300,7 @@ describe("side-panel search", () => {
 
     typeQuery("example"); // every fixture URL sits on *.example — 4 hits
     await waitFor(() =>
-      expect(screen.getAllByRole("option").length).toBe(4),
+      expect(results().length).toBe(4),
     );
 
     // Results are not tree-ordered: no row exposes a reorder drop slot.
@@ -310,9 +321,7 @@ describe("side-panel search", () => {
     );
     // The deleted rows leave the (still filtered) result list.
     await waitFor(() => {
-      const texts = screen
-        .getAllByRole("option")
-        .map((el) => el.textContent ?? "");
+      const texts = results().map((el) => el.textContent ?? "");
       expect(texts.length).toBe(2);
       expect(texts).toEqual(
         expect.arrayContaining([
@@ -331,7 +340,7 @@ describe("side-panel search", () => {
     // Tag filter — display-name lookup through tagDefs.
     typeQuery("tag:typescript");
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Alpha")],
       ),
     );
@@ -339,7 +348,7 @@ describe("side-panel search", () => {
     // Notes are indexed.
     typeQuery("loop");
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Alpha")],
       ),
     );
@@ -347,7 +356,7 @@ describe("side-panel search", () => {
     // Folder subtree filter.
     typeQuery("folder:dev/nested");
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Beta")],
       ),
     );
@@ -373,7 +382,7 @@ describe("side-panel search", () => {
     });
 
     await waitFor(() =>
-      expect(screen.getAllByRole("option").map((el) => el.textContent)).toEqual(
+      expect(results().map((el) => el.textContent)).toEqual(
         [expect.stringContaining("Quill")],
       ),
     );
