@@ -43,6 +43,12 @@ interface TreeEntryBase {
   isManaged: boolean;
   /** Distance below the supplied forest's top level (0-based). */
   depth: number;
+  /**
+   * Milliseconds since the epoch when the node was added, carried verbatim
+   * from the source node. Absent when the node itself didn't carry one —
+   * Chrome always sets it on real trees; hand-built trees may omit it.
+   */
+  dateAdded?: number;
 }
 
 /** A folder entry: children are referenced by id in Chrome `index` order. */
@@ -105,6 +111,7 @@ export function flattenTree(tree: BookmarksTreeNode[]): FlattenedTree {
       isRoot: isFixedRoot(node.id),
       isManaged,
       depth,
+      ...(node.dateAdded === undefined ? {} : { dateAdded: node.dateAdded }),
     };
 
     const children = orderedChildren(node);
