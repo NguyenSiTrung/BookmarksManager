@@ -37,33 +37,33 @@
 <!-- execution: parallel -->
 <!-- depends: -->
 
-- [ ] Task 1: Typed `chrome.bookmarks` slice and in-memory fake
+- [x] Task 1: Typed `chrome.bookmarks` slice and in-memory fake — `6dc73ce`
   <!-- files: src/sync/chrome-bookmarks.ts, tests/fakes/chrome-bookmarks.ts, tests/unit/chrome-bookmarks-fake.test.ts -->
-  - [ ] Write failing tests for the fake: getTree/getSubTree/get, create/update/move/remove/removeTree, index semantics, event emission (`onCreated`, `onChanged`, `onMoved`, `onChildrenReordered`, `onRemoved` with removed `node` incl. children), fixed roots `0/1/2/3`, a managed `unmodifiable` subtree that rejects writes
-  - [ ] Implement the typed slice (`declare const chrome` pattern) and the fake
+  - [x] Write failing tests for the fake: getTree/getSubTree/get, create/update/move/remove/removeTree, index semantics, event emission (`onCreated`, `onChanged`, `onMoved`, `onChildrenReordered`, `onRemoved` with removed `node` incl. children), fixed roots `0/1/2/3`, a managed `unmodifiable` subtree that rejects writes
+  - [x] Implement the typed slice (`declare const chrome` pattern) and the fake
 
-- [ ] Task 2: Schemas — BookmarkMeta, TagDef, UndoSnapshot, ExportEnvelope v1
+- [x] Task 2: Schemas — BookmarkMeta, TagDef, UndoSnapshot, ExportEnvelope v1 — `ae4c4ff`
   <!-- files: src/schemas/meta.ts, src/schemas/undo.ts, src/schemas/export.ts, tests/fixtures/meta.ts, tests/fixtures/undo.ts, tests/fixtures/export.ts, tests/unit/schemas-phase1.test.ts -->
-  - [ ] Valid and invalid fixtures (`satisfies z.input<…>`): tag name 1–64 and case-insensitive `nameKey`, description ≤300, notes ≤10,000, Category enum, snapshot node shapes, envelope `version: 1` with no secret-bearing fields allowed (strict objects)
-  - [ ] Implement schemas importing `z` from `src/schemas/z.ts`
+  - [x] Valid and invalid fixtures (`satisfies z.input<…>`): tag name 1–64 and case-insensitive `nameKey`, description ≤300, notes ≤10,000, Category enum, snapshot node shapes, envelope `version: 1` with no secret-bearing fields allowed (strict objects)
+  - [x] Implement schemas importing `z` from `src/schemas/z.ts`
 
-- [ ] Task 3: Dexie v2 tables and migration
+- [x] Task 3: Dexie v2 tables and migration — `015711f`
   <!-- files: src/db/database.ts, tests/unit/database-v2.test.ts -->
   <!-- depends: task2 -->
-  - [ ] Failing test with fake-indexeddb: open a v1 database with Phase 0 rows, upgrade to v2, assert rows preserved and new tables `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), `undo` (`++id,createdAt`) exist
-  - [ ] Implement `version(2).stores(...)`
+  - [x] Failing test with fake-indexeddb: open a v1 database with Phase 0 rows, upgrade to v2, assert rows preserved and new tables `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), `undo` (`++id,createdAt`) exist
+  - [x] Implement `version(2).stores(...)`
 
-- [ ] Task 4: URL normalization and duplicate grouping
+- [x] Task 4: URL normalization and duplicate grouping — `726e1b6`
   <!-- files: src/duplicates/normalize.ts, src/duplicates/group.ts, tests/unit/duplicates-normalize.test.ts, tests/unit/duplicates-group.test.ts -->
-  - [ ] Table-driven failing tests: scheme/host case, default ports, fragment, `www.`, http≡https, trailing slash, query sort, tracking params (`utm_*`, `fbclid`, `gclid`, `mc_eid`), non-HTTP URLs left exact-only, invalid URLs
-  - [ ] Grouping tests: "exact" vs "normalized" labels, singletons excluded, stable ordering
-  - [ ] Implement pure functions (no DOM, no chrome)
+  - [x] Table-driven failing tests: scheme/host case, default ports, fragment, `www.`, http≡https, trailing slash, query sort, tracking params (`utm_*`, `fbclid`, `gclid`, `mc_eid`), non-HTTP URLs left exact-only, invalid URLs
+  - [x] Grouping tests: "exact" vs "normalized" labels, singletons excluded, stable ordering
+  - [x] Implement pure functions (no DOM, no chrome)
 
-- [ ] Task 5: Metadata repository
+- [x] Task 5: Metadata repository — `a0e4d17`
   <!-- files: src/db/meta.ts, tests/unit/meta-repo.test.ts -->
   <!-- depends: task3 -->
-  - [ ] Failing tests: lazy rows (empty meta ⇒ row deleted), get/put/patch, bulk delete by IDs, tag definition CRUD with case-insensitive uniqueness, tag rename/delete propagating through the `*tags` index, fresh-object writes (Dexie key write-back gotcha)
-  - [ ] Implement with Zod validation on read
+  - [x] Failing tests: lazy rows (empty meta ⇒ row deleted), get/put/patch, bulk delete by IDs, tag definition CRUD with case-insensitive uniqueness, tag rename/delete propagating through the `*tags` index, fresh-object writes (Dexie key write-back gotcha)
+  - [x] Implement with Zod validation on read
 
 - [ ] Task 6: Worker sync — cascade delete, startup reconcile, change broadcast; add `bookmarks` permission
   <!-- files: src/sync/listeners.ts, src/sync/reconcile.ts, src/entrypoints/background.ts, wxt.config.ts, store/permissions.md, tests/unit/sync-listeners.test.ts, tests/unit/sync-reconcile.test.ts -->
@@ -72,11 +72,11 @@
   - [ ] Register listeners at worker startup; broadcast a typed `bookmarks-changed` message
   - [ ] Add `bookmarks` to `wxt.config.ts` and a justified row to `store/permissions.md`; `check:manifest` green
 
-- [ ] Task 7: Tree read model and live hook
+- [x] Task 7: Tree read model and live hook — `130b790`
   <!-- files: src/sync/tree.ts, src/ui/hooks/useBookmarkTree.ts, tests/unit/sync-tree.test.ts, tests/components/useBookmarkTree.test.tsx -->
   <!-- depends: task1 -->
-  - [ ] Failing tests: flatten to folders/bookmarks maps, folder paths, `isRoot`/`isManaged` flags, children order; hook re-renders on fake events and unsubscribes on unmount
-  - [ ] Implement
+  - [x] Failing tests: flatten to folders/bookmarks maps, folder paths, `isRoot`/`isManaged` flags, children order; hook re-renders on fake events and unsubscribes on unmount
+  - [x] Implement
 
 - [ ] Task 8: Checkpoint — automated gate for Phase 1 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4, task5, task6, task7 -->
