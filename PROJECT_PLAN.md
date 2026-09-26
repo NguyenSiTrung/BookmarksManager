@@ -17,6 +17,36 @@ A Chrome extension (Manifest V3) that replaces the built-in bookmark manager wit
   - Explicit in-product consent before any data is sent.
   - No developer servers, no analytics, and no remote code.
 
+### 1.1 Implementation status (as of 2026-09-26)
+
+**Delivered: Phase 0 of section 15, extended with the TypeSafe/OpenRouter connection slice** (archived track `conductor/archive/phase0_foundation_20260925/`). Statuses below are per plan area; "Partial" means one real path exists and is tested, not that the area is finished.
+
+**Gate at this revision** (run 2026-09-26): `npm run lint`, `npm run typecheck`, `npm run test -- --run` (14 files, 305 tests), `npm run build`, `npm run check:manifest`, `npm run check:bundle`, and `E2E_HEADLESS=1 npm run test:e2e` (1 Playwright spec) all pass. The e2e spec defaults to a headed browser for MV3 fidelity, so a display-less environment needs `E2E_HEADLESS=1` or `xvfb-run`, which is what CI does.
+
+| Plan area | Status | Implemented today | Still missing |
+|---|---|---|---|
+| §5.1 Core manager | Not started | Popup and side panel are accessible placeholder shells (`src/entrypoints/popup/`, `sidepanel/`) | Sync, save, folders, tags, categories, drag and drop, import/export, duplicate detection, `_favicon` icons, delete-all-data |
+| §5.2 Jev decisions | Not started | — | Every question set (categorize, tags, placement, health, duplicates, rerank), confidence policy, review queue |
+| §5.3 LLM features | Not started | — | LLM client, escalation, explanations, restructure proposals, summaries |
+| §5.4 v2 features | Not started | — | `alarms` scheduling, smart collections, tuning UI, hierarchical classification, per-task routing |
+| §6.1 Components | Partial | Service worker, Options page, consented egress in `src/net/`, Dexie plus `chrome.storage.local` | Bookmark sync, search index, job queue, LLM client, confidence router, link checker, content script |
+| §6.2 Decision pipeline | Not started | — | Deterministic checks on real bookmarks, question building, routing, audit/undo |
+| §6.3 Tech stack | Partial | WXT 0.21.4, React 19.3, Tailwind 4, strict TypeScript 6, Zod 4.6.5 (jitless), Dexie 4.4.6, Vitest 5, Testing Library, Playwright 1.63, ESLint 9 flat, GitHub Actions | MiniSearch, `@mozilla/readability`, shadcn/ui, Zustand, TanStack Query are not installed |
+| §6.4 Directory layout | Partial | `src/{entrypoints,jev,net,consent,security,schemas,db,ui}`, `tests/{unit,components,fixtures,e2e}`, `store/`, `scripts/`, `.github/workflows/` | `src/{llm,decisions,sync,search,jobs}`, `tests/mock-servers/`, `tests/fixtures/labeled/` |
+| §7 Data model | Partial | `Bookmark`, `Tag`, `Decision` (all seven kinds), `ProviderSettings`, `ConsentRecord` schemas with valid/invalid fixtures; Dexie v1 tables `metadata`, `decisions`, `consents`, `sentLog`, `keyMaterials` | Bookmark persistence and sync; any settings schema beyond provider settings |
+| §8.1 Provider presets | Partial | TypeSafe and OpenRouter with fixed endpoints and per-preset model allowlists (`src/net/presets.ts`) | Custom base URLs and the OpenRouter alpha Decisions preset (deferred to 1.1) |
+| §8.2 Wire schemas | Done | `src/jev/wire.ts`: SystemOne request/response, Noul/Choice/Score questions, answer-key and answer-type cross-check, synthetic test request | — |
+| §8.3 Client behavior | Partial | HTTPS-only, origin allowlist, consent plus host-permission plus key re-checked on every call, 10 s timeout, `credentials: "omit"`, `redirect: "error"`, redacted error messages, 401/422/429/529 mapping (`src/net/send.ts`, `src/jev/connection.ts`) | Backoff and `retry-after`, token estimation with 32k/64k guards, 255-option and 10-level guards, per-job cost accounting, concurrency control |
+| §8.4 Typed question-set builder | Not started | — | Goal/field/option builder and typed results with per-field confidence |
+| §8.5 Options setup flow | Partial | Preset choice, key entry with masked suffix, recipient disclosure, unchecked agreement, Enable requesting the origin permission from the click, Test connection showing model/latency/cost, local draft privacy policy, revocation removing consent and permission and offering key deletion (`src/entrypoints/options/`) | Custom base URL and path, pinned-model warnings, provider data notes and policy links |
+| §9, §10, §11 | Not started | — | Question design, confidence policy, LLM layer |
+| §12 Security and privacy | Partial | AES-GCM 256 with a non-extractable `CryptoKey` in IndexedDB and ciphertext in `chrome.storage.local`, worker-only key access, masked keys, single `fetch` module, metadata-only sent log | Passphrase mode, sensitive-site blocklist, URL cleaning, "Delete all extension data", notes and page-text rules (no such features exist yet) |
+| §13 Store readiness | Partial | Draft `store/` documents describing only shipped behavior; `check:manifest` and `check:bundle` CI guards; the generated manifest declares `storage` and `sidePanel` plus the two narrow optional origins | Public privacy-policy URL, icon/screenshots/promo assets, dashboard answers, 2-Step Verification and trader declaration, every item of section 13.13 |
+| §14 Testing strategy | Partial | 305 Vitest unit/component tests, one Playwright shell/e2e smoke spec, manifest and bundle compliance tests, CI running the full gate | Mock Jev/OpenAI HTTP servers, live smoke script, labeled fixtures, quality evals, provider-setup/save/review/undo e2e |
+| §15 Phases | Phase 0 done; Phases 1–6 open | See the status column in section 15 | — |
+
+Eight Phase 0 follow-ups are tracked as open Beads issues labeled `followup phase0` (P3) rather than in this plan: `src/messages/provider.ts` split, per-preset key-store serialization, egress lint breadth, e2e positive control, background protocol note, keys IV-branch test, bundle-script hardening, and a sent-log retention cap.
+
 ---
 
 ## 2. Jev: What It Is and How It Works
@@ -722,6 +752,8 @@ Sources: [Program Policies](https://developer.chrome.com/docs/webstore/program-p
 }
 ```
 
+**Implemented today (2026-09-26):** the generated manifest declares only `storage` and `sidePanel`, plus the narrow optional origins `https://api.typesafe.ai/*` and `https://openrouter.ai/*`. Each remaining permission above is added with the feature that needs it, so no "future-proofing" appears in a shipped manifest (section 1.1, `store/permissions.md`).
+
 **Staged release (recommended).** Broad patterns such as `https://*/*` make reviews take longer. Also, the minimum-permission policy applies to optional permissions as well:
 - **1.0** ships the core plus the TypeSafe, OpenRouter, and LLM presets, with narrow host patterns only.
 - **1.1** adds custom base URLs and the link checker, together with `https://*/*` and `http://*/*`.
@@ -900,18 +932,20 @@ The link checker contacts third-party sites on the user's behalf, so it has extr
 
 Estimates assume one developer working full time.
 
-| Phase | Scope | Estimate |
-|---|---|---|
-| **0. Setup** | WXT, TypeScript strict, lint (including the `fetch` ban outside `src/net/`), Vitest, Playwright, CI (manifest snapshot and bundle scan), base Zod schemas (jitless), Dexie, `store/` skeleton | 4 days |
-| **1. Core manager** | Sync, side panel, popup save, tags, categories, drag and drop, import/export (no secrets), local duplicate detection, `_favicon` icons, "Delete all data" | 2 weeks |
-| **2. Search** | MiniSearch index, query syntax, command palette | 1 week |
-| **3. Jev provider layer** | Wire schemas, `src/net/` gate, fetch client, presets (TypeSafe, OpenRouter, alpha Decisions), consent screens and records, runtime host permissions, encrypted keys, test connection, token and option guards, mock Jev server, typed builder | 2 weeks |
-| **4. Jev decisions** | Categorize, tags, folder pre-select, near-duplicates, misfiled scan, search re-rank, confidence policy, review queue, audit log, undo, cost tracking, "Data sent" log | 2.5 weeks |
-| **5. LLM layer** | OpenAI-compatible client, per-provider consent, structured outputs, escalation, explanations, restructure proposals, summaries with Jev verification | 1.5 weeks |
-| **6. Store readiness and 1.0 release** | Labeled fixtures, evals, thresholds pinned to `jev-1.13.0`, accessibility, privacy policy website, listing text and assets, dashboard privacy answers, reviewer notes, 13.13 checklist, trusted-tester release | 1.5 weeks |
-| **Store review** | Calendar time, not work: usually days, up to a few weeks for a new developer | buffer |
-| **7. Release 1.1** | Custom base URLs and the link checker (with soft-404) with broad optional host permissions, updated disclosures, `CONSENT_VERSION` increase | 1 week |
-| **8. v2** | Scheduled maintenance (adds `alarms`), smart collections, threshold tuning UI, hierarchical classification, per-task routing | 2 to 3 weeks |
+| Phase | Status (2026-09-26) | Scope | Estimate |
+|---|---|---|---|
+| **0. Setup** | **Done** — extended with the provider-connection slice (see 1.1) | WXT, TypeScript strict, lint (including the `fetch` ban outside `src/net/`), Vitest, Playwright, CI (manifest snapshot and bundle scan), base Zod schemas (jitless), Dexie, `store/` skeleton | 4 days |
+| **1. Core manager** | Not started | Sync, side panel, popup save, tags, categories, drag and drop, import/export (no secrets), local duplicate detection, `_favicon` icons, "Delete all data" | 2 weeks |
+| **2. Search** | Not started | MiniSearch index, query syntax, command palette | 1 week |
+| **3. Jev provider layer** | Partial — wire schemas, gate, presets, consent, encrypted keys, and test connection shipped; client hardening, mock server, and typed builder open | Wire schemas, `src/net/` gate, fetch client, presets (TypeSafe, OpenRouter, alpha Decisions), consent screens and records, runtime host permissions, encrypted keys, test connection, token and option guards, mock Jev server, typed builder | 2 weeks |
+| **4. Jev decisions** | Not started | Categorize, tags, folder pre-select, near-duplicates, misfiled scan, search re-rank, confidence policy, review queue, audit log, undo, cost tracking, "Data sent" log | 2.5 weeks |
+| **5. LLM layer** | Not started | OpenAI-compatible client, per-provider consent, structured outputs, escalation, explanations, restructure proposals, summaries with Jev verification | 1.5 weeks |
+| **6. Store readiness and 1.0 release** | Not started | Labeled fixtures, evals, thresholds pinned to `jev-1.13.0`, accessibility, privacy policy website, listing text and assets, dashboard privacy answers, reviewer notes, 13.13 checklist, trusted-tester release | 1.5 weeks |
+| **Store review** | Not started | Calendar time, not work: usually days, up to a few weeks for a new developer | buffer |
+| **7. Release 1.1** | Not started | Custom base URLs and the link checker (with soft-404) with broad optional host permissions, updated disclosures, `CONSENT_VERSION` increase | 1 week |
+| **8. v2** | Not started | Scheduled maintenance (adds `alarms`), smart collections, threshold tuning UI, hierarchical classification, per-task routing | 2 to 3 weeks |
+
+**Status note (2026-09-26):** Phase 0 is complete and ran past its 4-day scope by including the consented TypeSafe/OpenRouter connection slice. Phase 3's provider layer is roughly half delivered (section 1.1); Phases 1, 2, 4, 5, and 6 have not started. The estimates above remain unchanged, so the remaining work to 1.0 is about 9 to 10 weeks.
 
 **Total**: about 11 weeks of work to a public 1.0 (Phases 0 to 6), plus store review time. Release 1.1 follows about a week later; v2 takes another 2 to 3 weeks.
 
@@ -949,7 +983,7 @@ Estimates assume one developer working full time.
 
 1. **Page text**: the plan keeps metadata-only as the default, which is required for a clean privacy story. Should page text be offered at all in 1.0, or deferred to 1.1?
 2. **Auto-apply defaults**: should tag and category auto-apply be on or off at first run? The current plan is off.
-3. **UI framework**: React (assumed) or Svelte/Vue?
+3. **UI framework**: React (assumed) or Svelte/Vue? — **Resolved (2026-09-25):** React 19 is the shipped choice; the Options page, popup, and side panel are React bundled by WXT.
 4. **Metadata sync across devices** (tags, notes, decisions): is Chrome's native bookmark sync enough? Any cloud sync would add a new recipient and new disclosures.
 5. **Project website and publisher identity**: where will the homepage and privacy policy live (GitHub Pages recommended)? Will you publish as an individual or an organization, and as a trader or non-trader in the EU?
 6. **Staged release**: is it acceptable to ship custom base URLs and the link checker in 1.1 instead of 1.0, to keep the first review simple?
@@ -958,13 +992,15 @@ Estimates assume one developer working full time.
 
 ## 18. Immediate Next Steps
 
-1. Scaffold the WXT project (TypeScript, React, Tailwind, Vitest, Playwright), with the `fetch` lint ban, the manifest snapshot test, and the `store/` folder from day one.
-2. Build `src/net/` (HTTPS, allowlist, consent gate, "Data sent" log) before any feature that sends data.
-3. Write `src/jev/wire.ts` and fixture tests from the documented TypeSafe and OpenRouter response examples.
-4. Build the mock Jev server (`POST /v1/systemone`) and the fetch client against it.
-5. Add the provider setup, consent screen, and "Test connection" flow, then verify it live with one TypeSafe key and one OpenRouter key.
-6. Build the categorize question set end to end (save, analyze, review queue), then add the other question sets.
-7. Draft `store/privacy-policy.md` and `store/permissions.md` early, and update them with every change that affects data flow.
+Progress as of 2026-09-26 (see section 1.1):
+
+1. **Done.** Scaffold the WXT project (TypeScript, React, Tailwind, Vitest, Playwright), with the `fetch` lint ban, the manifest snapshot test, and the `store/` folder from day one.
+2. **Done.** Build `src/net/` (HTTPS, allowlist, consent gate, "Data sent" log) before any feature that sends data.
+3. **Done.** Write `src/jev/wire.ts` and fixture tests from the documented TypeSafe and OpenRouter response examples.
+4. **Partial.** Build the mock Jev server (`POST /v1/systemone`) and the fetch client against it. Response fixtures and a synthetic connection test exist; the HTTP mock server and the full client (retries, guards, accounting) do not.
+5. **Partial.** Add the provider setup, consent screen, and "Test connection" flow, then verify it live with one TypeSafe key and one OpenRouter key. The flow shipped and is covered against mocks; the live two-key check has not been run (Phase 0 excluded live credentials).
+6. **Not started.** Build the categorize question set end to end (save, analyze, review queue), then add the other question sets.
+7. **Done (drafts).** Draft `store/privacy-policy.md` and `store/permissions.md` early, and update them with every change that affects data flow. Both exist, describe only shipped behavior, and are guarded by CI; publication details and the public URL remain release prerequisites.
 
 ---
 
