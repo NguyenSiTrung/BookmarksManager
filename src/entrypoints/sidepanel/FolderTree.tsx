@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { ContextMenu } from "radix-ui";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { FlattenedTree, FolderNode } from "../../sync/tree";
 import { cn } from "../../ui/lib/cn";
@@ -28,6 +29,12 @@ import { cn } from "../../ui/lib/cn";
  * fixed roots default to expanded, every other folder to collapsed. An
  * override-based map (rather than a Set of ids) means the defaults still
  * apply after the tree loads asynchronously.
+ *
+ * P4.T3 hooks (optional, additive): `renderFolderActions` renders a trailing
+ * per-row control (the shell's kebab menu) and `renderFolderContextMenu`
+ * wraps the row in a Radix ContextMenu whose entries the caller supplies.
+ * Action clicks/keys stop at their wrapper so they never select the row or
+ * move the roving focus.
  */
 export interface FolderTreeProps {
   tree: FlattenedTree;
@@ -35,9 +42,18 @@ export interface FolderTreeProps {
   selectedFolderId?: string;
   /** Fired when the user activates a folder (Enter/Space/click). */
   onSelectFolder?: (folderId: string) => void;
+  /** Trailing per-row action control (kebab menu); P4.T3, optional. */
+  renderFolderActions?: (node: FolderNode) => ReactNode;
+  /** Right-click menu entries per row; P4.T3, optional. */
+  renderFolderContextMenu?: (node: FolderNode) => ReactNode;
   className?: string;
   "aria-label"?: string;
 }
+
+/** Raw Radix context-menu content styling (mirrors DropdownMenuContent's). */
+const CONTEXT_MENU_CONTENT_CLASS =
+  "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 " +
+  "text-popover-foreground shadow-md";
 
 interface VisibleFolder {
   node: FolderNode;
@@ -129,6 +145,8 @@ export function FolderTree({
   tree,
   selectedFolderId,
   onSelectFolder,
+  renderFolderActions,
+  renderFolderContextMenu,
   className,
   "aria-label": ariaLabel,
 }: FolderTreeProps) {
@@ -247,10 +265,15 @@ export function FolderTree({
       {visible.map((entry, index) => {
         const { node } = entry;
         const selected = node.id === selectedFolderId;
-        return (
+        const actions = renderFolderActions?.(node);
+        const menuContent = renderFolderContextMenu?.(node);
+        const item = (
           <li
-            key={node.id}
             role="treeitem"
+            // Explicit name: the row may carry trailing action controls
+            // (P4.T3's kebab) whose labels must not join the tree item's
+            // accessible name.
+            aria-label={node.title === "" ? "Untitled folder" : node.title}
             aria-expanded={entry.expandable ? entry.expanded : undefined}
             aria-selected={selected}
             aria-level={entry.level}
@@ -287,7 +310,31 @@ export function FolderTree({
             <span className="truncate">
               {node.title === "" ? "Untitled folder" : node.title}
             </span>
+            {actions !== undefined && (
+              // Row-action control: clicks/keys stop here so they never
+              // select the row or reach the tree's roving-focus handler.
+              <span
+                className="ml-auto flex shrink-0 items-center"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                {actions}
+              </span>
+            )}
           </li>
+        );
+        if (menuContent === undefined) {
+          return <Fragment key={node.id}>{item}</Fragment>;
+        }
+        return (
+          <ContextMenu.Root key={node.id}>
+            <ContextMenu.Trigger asChild>{item}</ContextMenu.Trigger>
+            <ContextMenu.Portal>
+              <ContextMenu.Content className={CONTEXT_MENU_CONTENT_CLASS}>
+                {menuContent}
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          </ContextMenu.Root>
         );
       })}
     </ul>

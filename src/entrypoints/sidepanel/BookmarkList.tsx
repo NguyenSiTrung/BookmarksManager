@@ -13,6 +13,7 @@ import type {
   RefObject,
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ContextMenu } from "radix-ui";
 import type { BookmarkMeta } from "../../schemas/meta";
 import type { BookmarkItem } from "../../sync/tree";
 import { Favicon } from "../../ui/components/favicon";
@@ -34,13 +35,24 @@ import { cn } from "../../ui/lib/cn";
  *    makes the same object reachable deeper in the tree for T3+.
  *  - Keyboard on the listbox: arrows move a roving focus across rows
  *    (scrolling to off-screen rows via `scrollToIndex`), Enter activates
- *    (`onActivateItem`), Space toggles the focused row.
+ *    (`onActivateItem`), Space toggles the focused row, and Delete fires
+ *    `onDeleteSelection` with the current selection.
+ *  - P4.T3 hooks (all optional, all additive): `renderItemActions` renders a
+ *    trailing per-row control (the shell's kebab menu), and
+ *    `renderItemContextMenu` wraps the row in a Radix ContextMenu whose
+ *    entries the caller supplies. Both render props are invoked per row;
+ *    action clicks stop propagation so they never change the selection.
  */
 
 export const LIST_ROW_HEIGHT = 40;
 export const GRID_ROW_HEIGHT = 120;
 export const GRID_COLUMNS = 2;
 const OVERSCAN = 6;
+
+/** Raw Radix context-menu content styling (mirrors DropdownMenuContent's). */
+const CONTEXT_MENU_CONTENT_CLASS =
+  "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 " +
+  "text-popover-foreground shadow-md";
 
 // ---------------------------------------------------------------------------
 // Selection model
@@ -236,6 +248,10 @@ interface OptionProps {
     index: number,
   ) => void;
   onActivate: (item: BookmarkItem) => void;
+  /** Trailing per-row action control (kebab menu); P4.T3, optional. */
+  renderItemActions?: (item: BookmarkItem) => ReactNode;
+  /** Right-click menu entries for this row; P4.T3, optional. */
+  renderItemContextMenu?: (item: BookmarkItem) => ReactNode;
 }
 
 /** One `role="option"` row (list layout) or card (grid layout). */
@@ -251,9 +267,13 @@ function Option({
   registerRef,
   onSelect,
   onActivate,
+  renderItemActions,
+  renderItemContextMenu,
 }: OptionProps) {
   const title = item.title === "" ? item.url : item.title;
-  return (
+  const actions = renderItemActions?.(item);
+  const menuContent = renderItemContextMenu?.(item);
+  const row = (
     <div
       role="option"
       aria-selected={selected}
@@ -307,7 +327,30 @@ function Option({
           )}
         </span>
       )}
+      {actions !== undefined && (
+        // Row-action control: its clicks/keys must never select or activate
+        // the row underneath, so every event stops at this wrapper.
+        <span
+          className="flex shrink-0 items-center"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {actions}
+        </span>
+      )}
     </div>
+  );
+  if (menuContent === undefined) return row;
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>{row}</ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className={CONTEXT_MENU_CONTENT_CLASS}>
+          {menuContent}
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
@@ -326,6 +369,12 @@ export interface BookmarkListProps {
   selection?: BookmarkSelection;
   /** Fired on Enter/double-click — the "open" affordance. */
   onActivateItem?: (item: BookmarkItem) => void;
+  /** Fired when Delete is pressed over the listbox with a live selection. */
+  onDeleteSelection?: (ids: readonly string[]) => void;
+  /** Trailing per-row action control (kebab menu); P4.T3, optional. */
+  renderItemActions?: (item: BookmarkItem) => ReactNode;
+  /** Right-click menu entries per row; P4.T3, optional. */
+  renderItemContextMenu?: (item: BookmarkItem) => ReactNode;
   className?: string;
 }
 
@@ -346,6 +395,9 @@ export function BookmarkList({
   tagNameByKey,
   selection: selectionProp,
   onActivateItem,
+  onDeleteSelection,
+  renderItemActions,
+  renderItemContextMenu,
   className,
 }: BookmarkListProps) {
   const contextSelection = useSelection();
@@ -473,6 +525,14 @@ export function BookmarkList({
         }
         break;
       }
+      case "Delete": {
+        // Bulk delete of the current selection (the shell snapshots first).
+        if (selection.selectedIds.size > 0 && onDeleteSelection !== undefined) {
+          event.preventDefault();
+          onDeleteSelection([...selection.selectedIds]);
+        }
+        break;
+      }
     }
   };
 
@@ -563,6 +623,8 @@ export function BookmarkList({
                           registerRef={registerOption}
                           onSelect={handleRowClick}
                           onActivate={handleActivate}
+                          renderItemActions={renderItemActions}
+                          renderItemContextMenu={renderItemContextMenu}
                         />
                       );
                     })}
@@ -581,6 +643,8 @@ export function BookmarkList({
                       registerRef={registerOption}
                       onSelect={handleRowClick}
                       onActivate={handleActivate}
+                      renderItemActions={renderItemActions}
+                      renderItemContextMenu={renderItemContextMenu}
                     />
                   )
                 )}

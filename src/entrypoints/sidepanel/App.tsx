@@ -2,20 +2,40 @@ import { useMemo, useState } from "react";
 import type { DuplicateGroup } from "../../duplicates/group";
 import { DuplicatesView } from "./DuplicatesView";
 import { useLiveQuery } from "dexie-react-hooks";
+import { ContextMenu } from "radix-ui";
 import { listMeta, listTags } from "../../db/meta";
 import { Category } from "../../schemas/bookmark";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
-import type { BookmarkItem } from "../../sync/tree";
+import type { BookmarkItem, FolderNode, TreeEntry } from "../../sync/tree";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../ui/components/dropdown-menu";
 import { useBookmarkTree } from "../../ui/hooks/useBookmarkTree";
 import {
   BookmarkList,
   SelectionContext,
   useBookmarkSelection,
 } from "./BookmarkList";
+import { BulkBar, deleteNodesWithUndo, deleteResultMessage } from "./BulkBar";
+import { EditDialog } from "./EditDialog";
+import {
+  FolderActionDialog,
+  FolderActions,
+  FolderActionsContextItems,
+} from "./FolderActions";
+import type {
+  FolderActionKind,
+  FolderActionRequest,
+} from "./FolderActions";
 import { FolderTree } from "./FolderTree";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
+import { MoveToDialog } from "./MoveToDialog";
 import { TagManager } from "./TagManager";
+import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
 
@@ -61,6 +81,23 @@ const navButtonClass =
   "focus-visible:ring-2 focus-visible:ring-ring " +
   "aria-pressed:bg-accent aria-pressed:text-accent-foreground " +
   "aria-pressed:font-medium";
+
+/** Per-row action control (kebab) on bookmark rows. */
+const ITEM_KEBAB_CLASS =
+  "shrink-0 rounded-sm px-1 text-xs text-muted-foreground outline-hidden " +
+  "hover:bg-accent hover:text-accent-foreground " +
+  "focus-visible:ring-2 focus-visible:ring-ring";
+
+/** Raw Radix context-menu item styling (mirrors DropdownMenuItem's). */
+const CONTEXT_ITEM_CLASS =
+  "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 " +
+  "text-sm outline-hidden select-none focus:bg-accent " +
+  "focus:text-accent-foreground data-[disabled]:pointer-events-none " +
+  "data-[disabled]:opacity-50";
+
+/** Tooltip shown on disabled row actions for managed bookmarks. */
+const MANAGED_ITEM_TITLE =
+  "This bookmark is managed by policy — it can't be changed.";
 
 function makeView(kind: SidePanelView["kind"]): SidePanelView {
   switch (kind) {
@@ -114,169 +151,339 @@ export function App() {
   );
   const title = viewTitle(view, tree, tagDefs);
 
+  // P4.T3 action surface: the toast controller owns notifications and the
+  // Undo affordance; dialog targets are plain state so every row menu, the
+  // bulk bar, and the keyboard all funnel into the same flows.
+  const toastCtl = useUndoToastController();
+  const [editTarget, setEditTarget] = useState<TreeEntry | null>(null);
+  const [moveIds, setMoveIds] = useState<readonly string[] | null>(null);
+  const [folderRequest, setFolderRequest] = useState<FolderActionRequest | null>(
+    null,
+  );
+
   const openItem = (item: BookmarkItem): void => {
     window.open(item.url, "_blank", "noopener,noreferrer");
   };
 
+  /**
+   * Delete path shared by the bulk bar, row menus and the Delete key: the
+   * helper snapshots first, then removes. Deleted ids drop out of every view
+   * on the next refetch, so no explicit selection clear is needed.
+   */
+  const handleDeleteIds = async (ids: readonly string[]): Promise<void> => {
+    const result = await deleteNodesWithUndo(ids);
+    toastCtl.showToast({
+      message: deleteResultMessage(result),
+      undoable: result.deleted > 0,
+      error: result.deleted === 0,
+    });
+  };
+
+  /** Folder menus route moves to the shared dialog, the rest to a prompt. */
+  const handleFolderAction = (
+    kind: FolderActionKind,
+    node: FolderNode,
+  ): void => {
+    if (kind === "move") {
+      setMoveIds([node.id]);
+      return;
+    }
+    setFolderRequest({ kind, node });
+  };
+
+  const itemActionEntries = (
+    item: BookmarkItem,
+  ): {
+    key: string;
+    label: string;
+    disabled: boolean;
+    destructive?: boolean;
+    onSelect: () => void;
+  }[] => [
+    { key: "open", label: "Open", disabled: false, onSelect: () => openItem(item) },
+    {
+      key: "edit",
+      label: "Edit…",
+      disabled: item.isManaged,
+      onSelect: () => setEditTarget(item),
+    },
+    {
+      key: "move",
+      label: "Move to…",
+      disabled: item.isManaged,
+      onSelect: () => setMoveIds([item.id]),
+    },
+    {
+      key: "delete",
+      label: "Delete",
+      disabled: item.isManaged,
+      destructive: true,
+      onSelect: () => void handleDeleteIds([item.id]),
+    },
+  ];
+
+  const itemLabel = (item: BookmarkItem): string =>
+    item.title === "" ? item.url : item.title;
+
+  /** Kebab dropdown appended to every bookmark row. */
+  const renderItemActions = (item: BookmarkItem) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Actions for ${itemLabel(item)}`}
+          className={ITEM_KEBAB_CLASS}
+          onClick={(event) => event.stopPropagation()}
+        >
+          ⋯
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {itemActionEntries(item).map((entry) => (
+          <DropdownMenuItem
+            key={entry.key}
+            disabled={entry.disabled}
+            title={entry.disabled ? MANAGED_ITEM_TITLE : undefined}
+            variant={entry.destructive === true ? "destructive" : "default"}
+            onSelect={entry.onSelect}
+          >
+            {entry.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  /** The same entries as right-click context-menu items. */
+  const renderItemContextMenu = (item: BookmarkItem) => (
+    <>
+      {itemActionEntries(item).map((entry) => (
+        <ContextMenu.Item
+          key={entry.key}
+          className={CONTEXT_ITEM_CLASS}
+          disabled={entry.disabled}
+          title={entry.disabled ? MANAGED_ITEM_TITLE : undefined}
+          onSelect={entry.onSelect}
+        >
+          {entry.label}
+        </ContextMenu.Item>
+      ))}
+    </>
+  );
+
   return (
     <SelectionContext.Provider value={selection}>
-      <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
-        <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-          <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            className={navButtonClass + " ml-auto"}
-          >
-            Import…
-          </button>
-          <button
-            type="button"
-            onClick={() => setExportOpen(true)}
-            className={navButtonClass}
-          >
-            Export…
-          </button>
-          <button
-            type="button"
-            disabled
-            title="The review queue arrives in a later phase"
-            className="rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground"
-          >
-            Review suggestions
-          </button>
-        </header>
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-44 shrink-0 flex-col border-r border-border">
-            <nav
-              aria-label="Views"
-              className="shrink-0 space-y-3 overflow-y-auto p-2"
+      <ToastProvider controller={toastCtl}>
+        <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
+          <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+            <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className={navButtonClass + " ml-auto"}
             >
-              <ul className="space-y-0.5">
-                {FIXED_VIEWS.map(({ kind, label }) => (
-                  <li key={kind}>
-                    <button
-                      type="button"
-                      aria-pressed={view.kind === kind}
-                      onClick={() => setView(makeView(kind))}
-                      className={navButtonClass}
-                    >
-                      {label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <section aria-label="Tag management">
-                <button
-                  type="button"
-                  onClick={() => setTagManagerOpen(true)}
-                  className={navButtonClass}
-                >
-                  Manage tags…
-                </button>
-              </section>
-              {tagDefs.length > 0 && (
-                <section aria-label="Tags">
+              Import…
+            </button>
+            <button
+              type="button"
+              onClick={() => setExportOpen(true)}
+              className={navButtonClass}
+            >
+              Export…
+            </button>
+            <button
+              type="button"
+              disabled
+              title="The review queue arrives in a later phase"
+              className="rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground"
+            >
+              Review suggestions
+            </button>
+          </header>
+          <div className="flex min-h-0 flex-1">
+            <aside className="flex w-44 shrink-0 flex-col border-r border-border">
+              <nav
+                aria-label="Views"
+                className="shrink-0 space-y-3 overflow-y-auto p-2"
+              >
+                <ul className="space-y-0.5">
+                  {FIXED_VIEWS.map(({ kind, label }) => (
+                    <li key={kind}>
+                      <button
+                        type="button"
+                        aria-pressed={view.kind === kind}
+                        onClick={() => setView(makeView(kind))}
+                        className={navButtonClass}
+                      >
+                        {label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <section aria-label="Tag management">
+                  <button
+                    type="button"
+                    onClick={() => setTagManagerOpen(true)}
+                    className={navButtonClass}
+                  >
+                    Manage tags…
+                  </button>
+                </section>
+                {tagDefs.length > 0 && (
+                  <section aria-label="Tags">
+                    <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                      Tags
+                    </h2>
+                    <ul className="space-y-0.5">
+                      {tagDefs.map((tag) => (
+                        <li key={tag.nameKey}>
+                          <button
+                            type="button"
+                            aria-pressed={
+                              view.kind === "tag" &&
+                              view.nameKey === tag.nameKey
+                            }
+                            onClick={() =>
+                              setView({ kind: "tag", nameKey: tag.nameKey })
+                            }
+                            className={navButtonClass}
+                          >
+                            <span aria-hidden="true">#</span>
+                            {tag.name}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+                <section aria-label="Categories">
                   <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                    Tags
+                    Categories
                   </h2>
                   <ul className="space-y-0.5">
-                    {tagDefs.map((tag) => (
-                      <li key={tag.nameKey}>
+                    {Category.options.map((category) => (
+                      <li key={category}>
                         <button
                           type="button"
                           aria-pressed={
-                            view.kind === "tag" &&
-                            view.nameKey === tag.nameKey
+                            view.kind === "category" &&
+                            view.category === category
                           }
                           onClick={() =>
-                            setView({ kind: "tag", nameKey: tag.nameKey })
+                            setView({ kind: "category", category })
                           }
                           className={navButtonClass}
                         >
-                          <span aria-hidden="true">#</span>
-                          {tag.name}
+                          {category.charAt(0).toUpperCase() +
+                            category.slice(1)}
                         </button>
                       </li>
                     ))}
                   </ul>
                 </section>
-              )}
-              <section aria-label="Categories">
+              </nav>
+              <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-2">
                 <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                  Categories
+                  Folders
                 </h2>
-                <ul className="space-y-0.5">
-                  {Category.options.map((category) => (
-                    <li key={category}>
-                      <button
-                        type="button"
-                        aria-pressed={
-                          view.kind === "category" &&
-                          view.category === category
-                        }
-                        onClick={() =>
-                          setView({ kind: "category", category })
-                        }
-                        className={navButtonClass}
-                      >
-                        {category.charAt(0).toUpperCase() +
-                          category.slice(1)}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            </nav>
-            <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-2">
-              <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                Folders
-              </h2>
-              {tree.folders.size === 0 ? (
-                <p className="px-2 text-xs text-muted-foreground">
-                  Loading…
-                </p>
+                {tree.folders.size === 0 ? (
+                  <p className="px-2 text-xs text-muted-foreground">
+                    Loading…
+                  </p>
+                ) : (
+                  <FolderTree
+                    tree={tree}
+                    selectedFolderId={
+                      view.kind === "folder" ? view.folderId : undefined
+                    }
+                    onSelectFolder={(folderId) =>
+                      setView({ kind: "folder", folderId })
+                    }
+                    renderFolderActions={(node) => (
+                      <FolderActions node={node} onAction={handleFolderAction} />
+                    )}
+                    renderFolderContextMenu={(node) => (
+                      <FolderActionsContextItems
+                        node={node}
+                        onAction={handleFolderAction}
+                      />
+                    )}
+                  />
+                )}
+              </div>
+            </aside>
+            <section
+              aria-label={title}
+              className="flex min-w-0 flex-1 flex-col"
+            >
+              <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
+                <h2 className="text-sm font-medium">{title}</h2>
+              </header>
+              {view.kind === "duplicates" ? (
+                <DuplicatesView
+                  groups={duplicateGroups}
+                  metaById={metaById}
+                  tagNameByKey={tagNameByKey}
+                  loading={tree.folders.size === 0}
+                  onActivateItem={openItem}
+                  onRequestUndo={() =>
+                    toastCtl.showToast({
+                      message: "Duplicates merged.",
+                      undoable: true,
+                    })
+                  }
+                  className="flex-1"
+                />
               ) : (
-                <FolderTree
-                  tree={tree}
-                  selectedFolderId={
-                    view.kind === "folder" ? view.folderId : undefined
-                  }
-                  onSelectFolder={(folderId) =>
-                    setView({ kind: "folder", folderId })
-                  }
+                <BookmarkList
+                  items={items}
+                  metaById={metaById}
+                  tagNameByKey={tagNameByKey}
+                  onActivateItem={openItem}
+                  onDeleteSelection={(ids) => void handleDeleteIds(ids)}
+                  renderItemActions={renderItemActions}
+                  renderItemContextMenu={renderItemContextMenu}
+                  className="flex-1"
                 />
               )}
-            </div>
-          </aside>
-          <section
-            aria-label={title}
-            className="flex min-w-0 flex-1 flex-col"
-          >
-            <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
-              <h2 className="text-sm font-medium">{title}</h2>
-            </header>
-            {view.kind === "duplicates" ? (
-              <DuplicatesView
-                groups={duplicateGroups}
-                metaById={metaById}
-                tagNameByKey={tagNameByKey}
-                loading={tree.folders.size === 0}
-                onActivateItem={openItem}
-                className="flex-1"
-              />
-            ) : (
-              <BookmarkList
-                items={items}
-                metaById={metaById}
-                tagNameByKey={tagNameByKey}
-                onActivateItem={openItem}
-                className="flex-1"
-              />
-            )}
-          </section>
+              <BulkBar onMoveRequest={(ids) => setMoveIds(ids)} />
+            </section>
+          </div>
         </div>
-        <TagManager open={tagManagerOpen} onOpenChange={setTagManagerOpen} />
+        <EditDialog
+          target={editTarget}
+          open={editTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setEditTarget(null);
+          }}
+          tree={tree}
+          meta={editTarget === null ? undefined : metaById.get(editTarget.id)}
+          tagNameByKey={tagNameByKey}
+        />
+        <MoveToDialog
+          open={moveIds !== null}
+          onOpenChange={(open) => {
+            if (!open) setMoveIds(null);
+          }}
+          tree={tree}
+          ids={moveIds ?? []}
+          onMoved={() => selection.clear()}
+        />
+        <FolderActionDialog
+          request={folderRequest}
+          tree={tree}
+          onClose={() => setFolderRequest(null)}
+        />
+        <TagManager
+          open={tagManagerOpen}
+          onOpenChange={setTagManagerOpen}
+          onRequestUndo={(info) =>
+            toastCtl.showToast({
+              message: `Deleted tag "${info.tag.name}" from ${info.affected} bookmark(s).`,
+              undoable: true,
+            })
+          }
+        />
         <ImportDialog
           open={importOpen}
           onOpenChange={setImportOpen}
@@ -290,7 +497,12 @@ export function App() {
           tagDefs={tagDefs}
           currentFolderId={view.kind === "folder" ? view.folderId : undefined}
         />
-      </div>
+        <UndoToast
+          toast={toastCtl.toast}
+          onUndo={() => void toastCtl.undo()}
+          onDismiss={toastCtl.dismiss}
+        />
+      </ToastProvider>
     </SelectionContext.Provider>
   );
 }
