@@ -90,3 +90,15 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Context: `tabs.update` modeled only in no-tabId form (active tab of current window) — right target for popup/omnibox "current" opens; no `tabs` permission needed.
   - API for downstream: `import { isOpenableUrl } from "../search/openable"`, `import { openBookmarkUrl } from "../sync/tabs"` (`OpenUrlDisposition = "current"|"foreground"|"background"`).
 ---
+
+## [2026-09-26 16:20] - Phase 2 Task 2: Search view and search bar
+- **Implemented:** `{kind:"search"; query}` in `SidePanelView`; `resolveView(view, tree, metas, search?)` calls `runQuery(search.index, query, search.ctx)` and maps hit IDs back to live `BookmarkItem`s ([] while index null or query blank). `SearchBar` is a controlled input: Esc clears (stopPropagation so list-level Esc handlers don't fire), parser warnings render inline, result count in `role="status"`. App derives `activeView = query==="" ? view : {kind:"search"}` (memoized) — previous view is never overwritten, so clearing restores it for free. `/` keydown on `document` focuses the input, guarded by `defaultPrevented` + input/textarea/select/contenteditable checks. `reorderable` now gated on `all|folder` only.
+- **Files changed:** src/entrypoints/sidepanel/views.ts, src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/App.tsx, src/search/run.ts (SearchIndexHandle), src/ui/hooks/useSearchIndex.ts (re-export), tests/components/sidepanel-search.test.tsx
+- **Commit:** b0a1406
+- **Learnings:**
+  - Pattern: `SearchIndexHandle` lives in pure `run.ts` (not the hook) so `views.ts` keeps zero React imports — UI-layer types the pure layer needs get declared in the pure layer and re-exported from the hook.
+  - Gotcha: `[data-dnd-drop]` matches BOTH reorder slots (`slot:*` on rows) and sidebar folder move targets (`folder:*` on the tree) — asserting "no drop slots" must prefix-match `slot:`; folder targets correctly stay live during search.
+  - Gotcha: fuzzy 0.2 makes short queries collide ("zeta" hits "Beta"); test queries asserting 0 results need ≥2 edit distance from every indexed token.
+  - Gotcha: single-letter terms only prefix-match tokens starting with them — `a` ≠ substring match.
+  - Pattern: no jest-dom in this repo — use `toBeNull()`/`toBeTruthy()`/`textContent`/`.value`, never `toBeInTheDocument`/`toHaveTextContent`.
+---
