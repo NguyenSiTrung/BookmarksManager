@@ -3,7 +3,7 @@ import type { ExportEnvelope, ExportTreeNode } from "../schemas/export";
 import type { BookmarkMeta } from "../schemas/meta";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import { normalizeUrl } from "../duplicates/normalize";
-import { BLOCKED_URL_SCHEMES } from "./netscape";
+import { isBlockedScheme } from "./netscape";
 import type { CsvBookmarkRow } from "./csv";
 import type { NetscapeNode } from "./netscape";
 
@@ -47,8 +47,9 @@ import type { NetscapeNode } from "./netscape";
  *
  * - duplicates (into `duplicatesSkipped`), unless `importDuplicates` is set;
  * - bookmarks with a blocked URL scheme — `javascript:`/`data:`/`vbscript:`
- *   per {@link BLOCKED_URL_SCHEMES}, the same blocklist the Netscape parser
- *   applies — and bookmarks with an empty/whitespace URL. Both go into
+ *   per `isBlockedScheme` in `src/io/netscape.ts`, the one shared blocklist
+ *   check the Netscape parser, this planner, and the import writer all
+ *   apply — and bookmarks with an empty/whitespace URL. Both go into
  *   `invalid`, together with the caller-supplied count of rows the file
  *   parser already rejected (pass `stats.invalid + stats.skipped` for
  *   Netscape, `invalid.length` for CSV).
@@ -142,23 +143,6 @@ export interface ImportPlan {
   items: PlannedItem[];
 }
 
-const SCHEME_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
-
-/**
- * Mirror of the Netscape parser's scheme check: ASCII whitespace and control
- * characters are removed before reading the scheme, because that is how
- * browsers resolve an href — `java\tscript:` still executes. Kept in sync
- * with `isBlockedScheme` in `src/io/netscape.ts` (the function is private
- * there; the blocklist is shared via {@link BLOCKED_URL_SCHEMES}).
- */
-function isBlockedImportUrl(url: string): boolean {
-  // The control-char range is intentional — see isBlockedScheme in netscape.ts.
-  // eslint-disable-next-line no-control-regex
-  const compact = url.replace(/[\x00-\x20]/g, "");
-  const scheme = SCHEME_PATTERN.exec(compact)?.[1];
-  return scheme !== undefined && BLOCKED_URL_SCHEMES.has(scheme.toLowerCase());
-}
-
 /**
  * Filter one level of the forest into the plan. Folders are always kept and
  * recurse (with fresh objects — the caller's tree is never mutated);
@@ -180,7 +164,7 @@ function planItems(
       });
       continue;
     }
-    if (item.url.trim() === "" || isBlockedImportUrl(item.url)) {
+    if (item.url.trim() === "" || isBlockedScheme(item.url)) {
       plan.invalid += 1;
       continue;
     }

@@ -562,6 +562,52 @@ describe("writeImport — destination and structure", () => {
     const root = await subtree(res.summary.importRootId);
     expect(root.children).toHaveLength(2);
   });
+
+  it("refuses blocked-scheme and empty URLs even in a raw items array", async () => {
+    // Raw input bypasses planImport's pruning — the writer re-checks at the
+    // write boundary so a scriptable/empty URL can never reach createBookmark.
+    const createSpy = vi.spyOn(fake, "create");
+    const res = await writeImport(
+      [
+        bm("ok", "https://ok.example/"),
+        bm("evil", "javascript:alert(1)"),
+        bm("evil2", "java\tscript:alert(1)"), // control-char obfuscation
+        bm("data", "data:text/html,<p>x</p>"),
+        bm("blank", "   "),
+      ],
+      { now: IMPORT_NOW },
+    );
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.summary.bookmarksCreated).toBe(1);
+    expect(res.summary.failures).toEqual([
+      {
+        kind: "bookmark",
+        title: "evil",
+        message: expect.stringContaining("blocked"),
+      },
+      {
+        kind: "bookmark",
+        title: "evil2",
+        message: expect.stringContaining("blocked"),
+      },
+      {
+        kind: "bookmark",
+        title: "data",
+        message: expect.stringContaining("blocked"),
+      },
+      {
+        kind: "bookmark",
+        title: "blank",
+        message: expect.stringContaining("empty"),
+      },
+    ]);
+    // Only the import root folder + the one safe bookmark reached chrome —
+    // the four unsafe rows were refused before createBookmark ran.
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    const root = await subtree(res.summary.importRootId);
+    expect(root.children?.map((c) => c.title)).toEqual(["ok"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

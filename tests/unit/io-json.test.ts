@@ -5,10 +5,12 @@ import type { BookmarksTreeNode } from "../../src/sync/chrome-bookmarks";
 import {
   buildExport,
   buildExportTree,
-  ExportError,
+  MAX_TREE_DEPTH,
   parseExport,
   serializeExport,
+  type BuildExportOptions,
 } from "../../src/io/export-json";
+import { MAX_FILE_BYTES } from "../../src/io/netscape";
 import { minimalTagDef, validTagDef } from "../fixtures/meta";
 import {
   invalidExportEnvelopes,
@@ -154,15 +156,22 @@ const TAG_DEFS: TagDef[] = [
   },
 ];
 
-/** Run `fn`, return the ExportError it threw (failing the test otherwise). */
-function catchExportError(fn: () => unknown): ExportError {
-  try {
-    fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(ExportError);
-    return error as ExportError;
+/** Unwrap a build result — the "happy path" most tests exercise. */
+function mustBuild(options: BuildExportOptions): ExportEnvelope {
+  const result = buildExport(options);
+  if (!result.ok) {
+    throw new Error(`expected ok build, got ${result.code}: ${result.message}`);
   }
-  throw new Error("expected ExportError, but nothing was thrown");
+  return result.data;
+}
+
+/** Unwrap a serialize result — the "happy path" most tests exercise. */
+function mustSerialize(envelope: ExportEnvelope): string {
+  const result = serializeExport(envelope);
+  if (!result.ok) {
+    throw new Error(`expected ok serialize, got ${result.code}: ${result.message}`);
+  }
+  return result.data;
 }
 
 describe("buildExportTree", () => {
@@ -232,7 +241,7 @@ describe("buildExportTree", () => {
 
 describe("buildExport — whole library", () => {
   it("unwraps the synthetic root and exports the fixed roots as top level", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -247,7 +256,7 @@ describe("buildExport — whole library", () => {
   });
 
   it("keeps meta rows for exported node ids only, in input order", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -259,7 +268,7 @@ describe("buildExport — whole library", () => {
   });
 
   it("exports the tag library wholesale, including unused defs", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -273,7 +282,7 @@ describe("buildExport — whole library", () => {
   });
 
   it("produces output that satisfies ExportEnvelope with exactly the five keys", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -290,7 +299,7 @@ describe("buildExport — whole library", () => {
       { id: "s-1", title: "Slice", children: [] },
       { id: "s-2", title: "Leaf", url: "https://leaf/" },
     ];
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: forest,
       meta: [],
       tags: [],
@@ -300,21 +309,24 @@ describe("buildExport — whole library", () => {
   });
 
   it("stamps a default exportedAt that parses as an ISO datetime", () => {
-    const envelope = buildExport({ tree: chromeTree(), meta: [], tags: [] });
+    const envelope = mustBuild({ tree: chromeTree(), meta: [], tags: [] });
     expect(Number.isNaN(Date.parse(envelope.exportedAt))).toBe(false);
   });
 
-  it("throws ExportError(invalid_envelope) on an invalid exportedAt", () => {
-    const error = catchExportError(() =>
-      buildExport({ tree: chromeTree(), meta: [], tags: [], exportedAt: "noon" }),
-    );
-    expect(error.code).toBe("invalid_envelope");
+  it("fails with invalid_envelope on an invalid exportedAt", () => {
+    const result = buildExport({
+      tree: chromeTree(),
+      meta: [],
+      tags: [],
+      exportedAt: "noon",
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
   });
 });
 
 describe("buildExport — folder scope", () => {
   it("exports the folder itself as the single top-level node", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -334,7 +346,7 @@ describe("buildExport — folder scope", () => {
   });
 
   it("scopes meta to the subtree (folder row plus descendants)", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -346,7 +358,7 @@ describe("buildExport — folder scope", () => {
   });
 
   it("still exports the tag library wholesale under folder scope", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -361,7 +373,7 @@ describe("buildExport — folder scope", () => {
     const subtree = chromeTree()[0]?.children?.[1];
     expect(subtree).toBeDefined();
     if (subtree === undefined) return;
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: [subtree],
       meta: META_ROWS,
       tags: TAG_DEFS,
@@ -372,23 +384,26 @@ describe("buildExport — folder scope", () => {
     expect(envelope.meta.map((row) => row.id)).toEqual(["20"]);
   });
 
-  it("throws ExportError(scope_not_found) when folderId is absent from the tree", () => {
-    const error = catchExportError(() =>
-      buildExport({ tree: chromeTree(), meta: [], tags: [], folderId: "nope" }),
-    );
-    expect(error.code).toBe("scope_not_found");
+  it("fails with scope_not_found when folderId is absent from the tree", () => {
+    const result = buildExport({
+      tree: chromeTree(),
+      meta: [],
+      tags: [],
+      folderId: "nope",
+    });
+    expect(result).toMatchObject({ ok: false, code: "scope_not_found" });
   });
 });
 
 describe("serializeExport", () => {
   it("pretty-prints with two-space indent and a trailing newline", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
       exportedAt: EXPORTED_AT,
     });
-    const json = serializeExport(envelope);
+    const json = mustSerialize(envelope);
     expect(json).toBe(`${JSON.stringify(envelope, null, 2)}\n`);
     expect(json.startsWith('{\n  "version": 1,')).toBe(true);
   });
@@ -398,8 +413,8 @@ describe("serializeExport", () => {
       ...validExportEnvelope,
       keys: ["sk-live-000"],
     } as unknown as ExportEnvelope;
-    const error = catchExportError(() => serializeExport(dirty));
-    expect(error.code).toBe("invalid_envelope");
+    const result = serializeExport(dirty);
+    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
   });
 });
 
@@ -490,17 +505,44 @@ describe("parseExport", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("invalid_envelope");
   });
+
+  it("rejects string input above MAX_FILE_BYTES before parsing (too_large)", () => {
+    // The cap fires before JSON.parse — the body needs no envelope shape.
+    const result = parseExport(" ".repeat(MAX_FILE_BYTES + 1));
+    expect(result).toMatchObject({ ok: false, code: "too_large" });
+  });
+
+  it("rejects a tree nested deeper than MAX_TREE_DEPTH (invalid_envelope)", () => {
+    let node: unknown = { id: "leaf", title: "Leaf", url: "https://leaf/" };
+    for (let i = 0; i < MAX_TREE_DEPTH + 10; i++) {
+      node = { id: `f${i}`, title: `f${i}`, children: [node] };
+    }
+    const result = parseExport(
+      JSON.stringify({ ...minimalExportEnvelope, tree: [node] }),
+    );
+    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
+    if (!result.ok) expect(result.message).toContain("depth");
+  });
+
+  it("accepts a tree nested exactly at the MAX_TREE_DEPTH boundary", () => {
+    let node: unknown = { id: "leaf", title: "Leaf", url: "https://leaf/" };
+    for (let i = 0; i < MAX_TREE_DEPTH; i++) {
+      node = { id: `f${i}`, title: `f${i}`, children: [node] };
+    }
+    const result = parseExport({ ...minimalExportEnvelope, tree: [node] });
+    expect(result.ok).toBe(true);
+  });
 });
 
 describe("round trip", () => {
   it("restores folders, bookmarks, tags, categories, notes and tag defs", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
       exportedAt: EXPORTED_AT,
     });
-    const result = parseExport(serializeExport(envelope));
+    const result = parseExport(mustSerialize(envelope));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data).toEqual(envelope);
@@ -516,14 +558,14 @@ describe("round trip", () => {
   });
 
   it("round-trips a folder-scoped export", () => {
-    const envelope = buildExport({
+    const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
       tags: TAG_DEFS,
       folderId: "10",
       exportedAt: EXPORTED_AT,
     });
-    const result = parseExport(serializeExport(envelope));
+    const result = parseExport(mustSerialize(envelope));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data).toEqual(envelope);
   });
@@ -531,8 +573,8 @@ describe("round trip", () => {
 
 describe("secret-bearing fields never reach the output", () => {
   it("serialized output contains none of the forbidden field names", () => {
-    const json = serializeExport(
-      buildExport({
+    const json = mustSerialize(
+      mustBuild({
         tree: chromeTree(),
         meta: META_ROWS,
         tags: TAG_DEFS,
@@ -544,16 +586,25 @@ describe("secret-bearing fields never reach the output", () => {
     }
   });
 
-  it("buildExport throws rather than silently emit a meta row with extra fields", () => {
+  it("buildExport fails rather than silently emit a meta row with extra fields", () => {
     const dirty = { ...META_ROWS[0], apiKey: "sk-live-000" } as BookmarkMeta;
-    const error = catchExportError(() =>
-      buildExport({
-        tree: chromeTree(),
-        meta: [dirty],
-        tags: TAG_DEFS,
-        exportedAt: EXPORTED_AT,
-      }),
-    );
-    expect(error.code).toBe("invalid_envelope");
+    const result = buildExport({
+      tree: chromeTree(),
+      meta: [dirty],
+      tags: TAG_DEFS,
+      exportedAt: EXPORTED_AT,
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
+  });
+});
+
+describe("buildExport — depth cap", () => {
+  it("fails with invalid_envelope when the input tree exceeds MAX_TREE_DEPTH", () => {
+    let node: BookmarksTreeNode = { id: "leaf", title: "Leaf", url: "https://l/" };
+    for (let i = 0; i < MAX_TREE_DEPTH + 10; i++) {
+      node = { id: `f${i}`, title: `f${i}`, children: [node] };
+    }
+    const result = buildExport({ tree: [node], meta: [], tags: [] });
+    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
   });
 });

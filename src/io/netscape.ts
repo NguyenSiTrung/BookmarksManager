@@ -15,7 +15,9 @@
  * folder's children may sit inside the folder's `<DT>` (no `</DT>` written),
  * inside an unclosed `<H3>`, or as the `<DT>`'s next sibling (explicit
  * `</DT>` style); orphan `<DL>`/`<DT>`/`<A>` elements are merged at the level
- * they appear rather than dropped.
+ * they appear rather than dropped — including rows living entirely outside
+ * any `<DL>` (a file that lost its root `<DL>` still parses; see the orphan
+ * pass in {@link parseNetscape}).
  */
 
 /**
@@ -260,8 +262,12 @@ const SCHEME_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
  * executes in an href), so obfuscated spellings cannot slip a blocked scheme
  * through. Schemeless URLs pass — they are odd but not dangerous, and the
  * import writer decides whether to keep them.
+ *
+ * Exported as THE shared blocklist check — `src/io/import-plan.ts` applies it
+ * at planning time and `src/io/import-write.ts` re-applies it at write time,
+ * so a blocked URL can never be recreated no matter the input format.
  */
-function isBlockedScheme(url: string): boolean {
+export function isBlockedScheme(url: string): boolean {
   // Browser-style scheme detection strips ASCII control chars (\x00-\x1f)
   // and spaces too — the control-char range below is intentional.
   // eslint-disable-next-line no-control-regex
@@ -322,12 +328,13 @@ function consumeSiblingDl(
   i: number,
   folder: NetscapeFolder,
   stats: NetscapeParseStats,
+  walkedDl: Set<Element>,
 ): number {
   let j = i + 1;
   while (j < siblings.length) {
     const tag = siblings[j]?.tagName;
     if (tag === "DL") {
-      walkContainer(siblings[j] as Element, folder.children, stats);
+      walkDl(siblings[j] as Element, folder.children, stats, walkedDl);
       return j;
     }
     if (tag === "DT") {
@@ -336,6 +343,24 @@ function consumeSiblingDl(
     j += 1;
   }
   return i;
+}
+
+/**
+ * Walk a `<DL>` element, deduped through `walkedDl`: malformed markup can make
+ * one element reachable from two walks (e.g. a `<DL>` inside an orphan `<DT>`
+ * is also a top-level `<DL>` candidate), and the set guarantees its rows are
+ * collected exactly once. Marks BEFORE recursing so a nested `<DL>` inside it
+ * is handled by the inner walk, never re-entered here.
+ */
+function walkDl(
+  dl: Element,
+  out: NetscapeNode[],
+  stats: NetscapeParseStats,
+  walkedDl: Set<Element>,
+): void {
+  if (walkedDl.has(dl)) return;
+  walkedDl.add(dl);
+  walkContainer(dl, out, stats, walkedDl);
 }
 
 /**
@@ -349,6 +374,7 @@ function processDt(
   dt: Element,
   out: NetscapeNode[],
   stats: NetscapeParseStats,
+  walkedDl: Set<Element>,
 ): DtOutcome {
   const kids = Array.from(dt.children);
   const h3 = kids.find((k) => k.tagName === "H3");
@@ -381,7 +407,7 @@ function processDt(
     );
     // Walk the DT itself as a container: H3/DD are transparent passthroughs
     // there, so swallowed children are reached wherever they landed.
-    walkContainer(dt, folder.children, stats);
+    walkContainer(dt, folder.children, stats, walkedDl);
     return { folder, hasOwnDl };
   }
 
@@ -390,13 +416,13 @@ function processDt(
     // Stray rows riding inside a bookmark DT (or inside the A itself) merge
     // at the same level — dropping them would silently lose bookmarks from
     // malformed files. The anchor itself is skipped so it isn't pushed twice.
-    walkContainer(dt, out, stats, anchor);
-    walkContainer(anchor, out, stats);
+    walkContainer(dt, out, stats, walkedDl, anchor);
+    walkContainer(anchor, out, stats, walkedDl);
     return { folder: null, hasOwnDl: false };
   }
 
   // Neither heading nor anchor — merge stray content, ignore the rest.
-  walkContainer(dt, out, stats);
+  walkContainer(dt, out, stats, walkedDl);
   return { folder: null, hasOwnDl: false };
 }
 
@@ -414,6 +440,7 @@ function walkContainer(
   container: Element,
   out: NetscapeNode[],
   stats: NetscapeParseStats,
+  walkedDl: Set<Element>,
   skip?: Element,
 ): void {
   const kids = Array.from(container.children);
@@ -423,16 +450,16 @@ function walkContainer(
       continue;
     }
     if (el.tagName === "DT") {
-      const outcome = processDt(el, out, stats);
+      const outcome = processDt(el, out, stats, walkedDl);
       if (outcome.folder !== null && !outcome.hasOwnDl) {
-        i = consumeSiblingDl(kids, i, outcome.folder, stats);
+        i = consumeSiblingDl(kids, i, outcome.folder, stats, walkedDl);
       }
     } else if (el.tagName === "DL") {
-      walkContainer(el, out, stats);
+      walkDl(el, out, stats, walkedDl);
     } else if (el.tagName === "A") {
       pushAnchor(el, out, stats);
     } else if (TRANSPARENT_PATTERN.test(el.tagName)) {
-      walkContainer(el, out, stats);
+      walkContainer(el, out, stats, walkedDl);
     }
   }
 }
@@ -478,14 +505,54 @@ export function parseNetscape(html: string): NetscapeParseResult {
     invalid: 0,
   };
   const tree: NetscapeNode[] = [];
+  // `<DL>` elements already walked, so a `<DL>` reachable from two candidate
+  // roots (e.g. nested inside an orphan `<DT>` while also being a top-level
+  // `<DL>` by the ancestry rule) contributes its rows exactly once.
+  const walkedDl = new Set<Element>();
 
-  // Only top-level DLs start the walk — nested ones are reached through
-  // their owning folder DTs (or merged by the DL branch when orphaned).
-  for (const dl of doc.querySelectorAll("dl")) {
-    if (dl.parentElement?.closest("dl") !== null) {
+  // Rows that live entirely outside any <DL> — a file that dropped its root
+  // <DL> still parses. An element qualifies only when NO structural ancestor
+  // (dl/dt/dd) contains it: anything inside one is reached by that container's
+  // own walk, so the ancestor check is also what prevents double counting
+  // (an <A> inside an orphan <DT> is pushed by processDt, not again here).
+  // This pass runs BEFORE the <DL> loop so a <DL> nested inside an orphan
+  // <DT> folds into the folder (marked walked) instead of re-walking at top
+  // level. A folder <DT> that lacks an internal <DL> also consumes a
+  // FOLLOWING sibling <DL> — the same sibling-consumption rule as inside a
+  // <DL> container — so the explicit `</DT><DL>` style still nests.
+  for (const el of doc.querySelectorAll("dt, a, dd")) {
+    if (el.parentElement?.closest("dl, dt, dd")) {
       continue;
     }
-    walkContainer(dl, tree, stats);
+    if (el.tagName === "DT") {
+      const outcome = processDt(el, tree, stats, walkedDl);
+      if (
+        outcome.folder !== null &&
+        !outcome.hasOwnDl &&
+        el.parentElement !== null
+      ) {
+        const siblings = Array.from(el.parentElement.children);
+        const idx = siblings.indexOf(el);
+        if (idx !== -1) {
+          consumeSiblingDl(siblings, idx, outcome.folder, stats, walkedDl);
+        }
+      }
+    } else if (el.tagName === "A") {
+      pushAnchor(el, tree, stats);
+    } else {
+      // DD — transparent container, descend.
+      walkContainer(el, tree, stats, walkedDl);
+    }
+  }
+
+  // Only top-level DLs start the main walk — nested ones are reached through
+  // their owning folder DTs (or merged by the DL branch when orphaned), and
+  // ones already consumed by the orphan pass above are skipped.
+  for (const dl of doc.querySelectorAll("dl")) {
+    if (walkedDl.has(dl) || dl.parentElement?.closest("dl") !== null) {
+      continue;
+    }
+    walkDl(dl, tree, stats, walkedDl);
   }
   return { ok: true, tree, stats };
 }

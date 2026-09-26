@@ -26,28 +26,33 @@ import { ExportEnvelope, type ExportTreeNode } from "../schemas/export";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import { ROOT_NODE_ID } from "../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
+import { MAX_FILE_BYTES } from "./netscape";
 
-/** Why a build/serialize call failed. */
+/**
+ * Deepest `children` nesting tolerated — bounds every recursive walk
+ * (schema validation, tree conversion, meta collection) so a pathologically
+ * deep hand-rolled envelope or a `buildExport` caller's tree is rejected
+ * instead of overflowing the stack. 64 levels of folders is far beyond any
+ * real library while still small enough to validate quickly.
+ */
+export const MAX_TREE_DEPTH = 64;
+
+/** Why a build/serialize call failed — reported as a result, not thrown. */
 export type ExportErrorCode =
   /** `folderId` does not match any node in the supplied tree. */
   | "scope_not_found"
   /** Caller-supplied data could not produce a schema-valid envelope. */
   | "invalid_envelope";
 
-/** Thrown by {@link buildExport}/{@link serializeExport} — see codes above. */
-export class ExportError extends Error {
-  readonly code: ExportErrorCode;
+/** Total result of {@link buildExport}: never throws. */
+export type BuildExportResult =
+  | { ok: true; data: ExportEnvelope }
+  | { ok: false; code: ExportErrorCode; message: string };
 
-  constructor(
-    code: ExportErrorCode,
-    message: string,
-    options?: { cause?: unknown },
-  ) {
-    super(message, options);
-    this.name = "ExportError";
-    this.code = code;
-  }
-}
+/** Total result of {@link serializeExport}: never throws. */
+export type SerializeExportResult =
+  | { ok: true; data: string }
+  | { ok: false; code: ExportErrorCode; message: string };
 
 /** Inputs to {@link buildExport}; every field is caller-supplied data. */
 export interface BuildExportOptions {
@@ -77,7 +82,7 @@ export interface BuildExportOptions {
    * Single-folder scope: export only this node (it becomes the single
    * top-level `ExportTreeNode`, so the folder's own title is preserved) and
    * only meta rows within its subtree. Any node id works — a bookmark id
-   * yields a one-bookmark export. Throws `ExportError("scope_not_found")`
+   * yields a one-bookmark export. Yields `{ok:false, "scope_not_found"}`
    * when the id is not in `tree`.
    */
   folderId?: string;
@@ -90,6 +95,8 @@ export interface BuildExportOptions {
 
 /** Why a parse call failed. */
 export type ParseExportErrorCode =
+  /** Input exceeds the {@link MAX_FILE_BYTES} cap shared by all import parsers. */
+  | "too_large"
   /** Input was a string that `JSON.parse` rejected. */
   | "invalid_json"
   /**
@@ -125,11 +132,22 @@ export function buildExportTree(
  * Build a v1 envelope from caller-supplied data. The result is run through
  * `ExportEnvelope` before it is returned, so a returned envelope is always
  * schema-valid; a violation means the caller handed in malformed rows and
- * the call throws `ExportError("invalid_envelope")` (with the first schema
+ * the call returns `{ok:false,"invalid_envelope"}` (with the first schema
  * issues in the message) rather than emitting a bad file.
  */
-export function buildExport(options: BuildExportOptions): ExportEnvelope {
-  const tree = buildExportTree(scopeForest(options));
+export function buildExport(options: BuildExportOptions): BuildExportResult {
+  if (exceedsMaxDepth(options.tree)) {
+    return {
+      ok: false,
+      code: "invalid_envelope",
+      message: `tree exceeds the maximum nesting depth of ${MAX_TREE_DEPTH}`,
+    };
+  }
+  const scope = scopeForest(options);
+  if (!scope.ok) {
+    return { ok: false, code: "scope_not_found", message: scope.message };
+  }
+  const tree = buildExportTree(scope.nodes);
   const exportedIds = new Set<string>();
   collectIds(tree, exportedIds);
   const envelope = {
@@ -141,7 +159,15 @@ export function buildExport(options: BuildExportOptions): ExportEnvelope {
   } satisfies ExportEnvelopeInput;
   // Schema pass: validates (strict — rejects rows smuggling extra keys) and
   // returns a fresh object graph decoupled from the caller's arrays.
-  return parseOrThrow(envelope);
+  const validated = validateEnvelope(envelope);
+  if (!validated.ok) {
+    return {
+      ok: false,
+      code: "invalid_envelope",
+      message: `envelope failed schema validation: ${validated.message}`,
+    };
+  }
+  return { ok: true, data: validated.data };
 }
 
 /** Internal pre-validation shape — `version`/`exportedAt` may be invalid. */
@@ -156,22 +182,39 @@ interface ExportEnvelopeInput {
 /**
  * Serialize an envelope to the on-disk file text: pretty-printed with a
  * two-space indent and a trailing newline. The envelope is validated first
- * (strict), so a hand-built object carrying extra keys throws
- * `ExportError("invalid_envelope")` instead of writing secrets to disk.
+ * (strict), so a hand-built object carrying extra keys yields
+ * `{ok:false,"invalid_envelope"}` instead of writing secrets to disk.
  */
-export function serializeExport(envelope: ExportEnvelope): string {
-  return `${JSON.stringify(parseOrThrow(envelope), null, 2)}\n`;
+export function serializeExport(envelope: ExportEnvelope): SerializeExportResult {
+  const validated = validateEnvelope(envelope);
+  if (!validated.ok) {
+    return {
+      ok: false,
+      code: "invalid_envelope",
+      message: `envelope failed schema validation: ${validated.message}`,
+    };
+  }
+  return { ok: true, data: `${JSON.stringify(validated.data, null, 2)}\n` };
 }
 
 /**
  * Parse a JSON export — either raw file text or an already-decoded value —
  * into a validated `ExportEnvelope`. Total: every failure is a result, not
  * an exception. Strict schema validation rejects wrong `version` literals,
- * malformed envelopes, and any smuggled extra key at any level.
+ * malformed envelopes, and any smuggled extra key at any level; string input
+ * is also capped at {@link MAX_FILE_BYTES} like the other import parsers.
  */
 export function parseExport(json: string | unknown): ParseExportResult {
   let value: unknown = json;
   if (typeof json === "string") {
+    const bytes = new TextEncoder().encode(json).byteLength;
+    if (bytes > MAX_FILE_BYTES) {
+      return {
+        ok: false,
+        code: "too_large",
+        message: `File is ${bytes} bytes; JSON imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
+      };
+    }
     try {
       value = JSON.parse(json);
     } catch {
@@ -196,15 +239,15 @@ export function parseExport(json: string | unknown): ParseExportResult {
       )} (expected 1)`,
     };
   }
-  const parsed = ExportEnvelope.safeParse(value);
-  if (!parsed.success) {
+  const validated = validateEnvelope(value);
+  if (!validated.ok) {
     return {
       ok: false,
       code: "invalid_envelope",
-      message: `not a valid v1 export: ${describeIssues(parsed.error)}`,
+      message: `not a valid v1 export: ${validated.message}`,
     };
   }
-  return { ok: true, data: parsed.data };
+  return { ok: true, data: validated.data };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,16 +270,61 @@ function describeIssues(error: {
   return parts + rest || "schema validation failed";
 }
 
-/** Validate a candidate envelope or throw `ExportError("invalid_envelope")`. */
-function parseOrThrow(envelope: ExportEnvelopeInput): ExportEnvelope {
-  const parsed = ExportEnvelope.safeParse(envelope);
-  if (!parsed.success) {
-    throw new ExportError(
-      "invalid_envelope",
-      `envelope failed schema validation: ${describeIssues(parsed.error)}`,
-    );
+/**
+ * Depth-first bound check on nested `children` arrays. Runs BEFORE schema
+ * validation: `ExportEnvelope` resolves recursively, so an uncapped
+ * `safeParse` on a hostile hand-rolled envelope overflows the stack
+ * (RangeError) — this bounds it at {@link MAX_TREE_DEPTH} first. Arrays do
+ * not themselves consume depth — only `children` hops count, matching the
+ * schema's recursion.
+ */
+function exceedsMaxDepth(value: unknown, depth = 0): boolean {
+  if (depth > MAX_TREE_DEPTH) {
+    return true;
   }
-  return parsed.data;
+  if (Array.isArray(value)) {
+    return value.some((item) => exceedsMaxDepth(item, depth));
+  }
+  if (typeof value === "object" && value !== null && "children" in value) {
+    return exceedsMaxDepth((value as { children: unknown }).children, depth + 1);
+  }
+  return false;
+}
+
+/** Schema-check a candidate envelope — total: every failure is a result. */
+function validateEnvelope(
+  envelope: unknown,
+): { ok: true; data: ExportEnvelope } | { ok: false; message: string } {
+  // Depth pre-check keeps even a cyclic hand-built object from reaching the
+  // recursive resolver (a JSON.parse result cannot cycle anyway, but
+  // parseExport/buildExport also accept decoded values). Only `tree` is
+  // checked — it is the sole recursively-shaped field.
+  const tree =
+    typeof envelope === "object" && envelope !== null && "tree" in envelope
+      ? (envelope as { tree: unknown }).tree
+      : undefined;
+  if (tree !== undefined && exceedsMaxDepth(tree)) {
+    return {
+      ok: false,
+      message: `tree exceeds the maximum nesting depth of ${MAX_TREE_DEPTH}`,
+    };
+  }
+  try {
+    const parsed = ExportEnvelope.safeParse(envelope);
+    if (!parsed.success) {
+      return { ok: false, message: describeIssues(parsed.error) };
+    }
+    return { ok: true, data: parsed.data };
+  } catch (cause) {
+    // Depth-capped input should never make safeParse throw, but a defensive
+    // catch keeps the total-function contract if Zod internals ever do.
+    return {
+      ok: false,
+      message: `schema validation failed unexpectedly: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    };
+  }
 }
 
 /**
@@ -247,20 +335,25 @@ function parseOrThrow(envelope: ExportEnvelopeInput): ExportEnvelope {
  */
 function scopeForest(
   options: BuildExportOptions,
-): readonly BookmarksTreeNode[] {
+):
+  | { ok: true; nodes: readonly BookmarksTreeNode[] }
+  | { ok: false; message: string } {
   if (options.folderId !== undefined) {
     const found = findNode(options.tree, options.folderId);
     if (found === undefined) {
-      throw new ExportError(
-        "scope_not_found",
-        `folderId "${options.folderId}" is not in the supplied tree`,
-      );
+      return {
+        ok: false,
+        message: `folderId "${options.folderId}" is not in the supplied tree`,
+      };
     }
-    return [found];
+    return { ok: true, nodes: [found] };
   }
-  return options.tree.flatMap((node) =>
-    node.id === ROOT_NODE_ID ? (node.children ?? []) : [node],
-  );
+  return {
+    ok: true,
+    nodes: options.tree.flatMap((node) =>
+      node.id === ROOT_NODE_ID ? (node.children ?? []) : [node],
+    ),
+  };
 }
 
 /** Depth-first search for a node by id. */

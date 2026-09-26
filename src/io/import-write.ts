@@ -6,6 +6,7 @@ import {
 } from "../sync/chrome-bookmarks";
 import { createBookmark, createFolder } from "../sync/mutations";
 import type { ImportItem, ImportMeta, ImportPlan } from "./import-plan";
+import { isBlockedScheme } from "./netscape";
 
 /**
  * Import writer — the write half of the local-file import flow. Consumes the
@@ -27,6 +28,11 @@ import type { ImportItem, ImportMeta, ImportPlan } from "./import-plan";
  * miss — a nameKey collision keeps the library's existing def, it is never
  * clobbered. `createdAt`/`updatedAt` are not carried; the repo stamps this
  * library's own timestamps.
+ *
+ * URL safety is re-checked HERE, not trusted from the plan: a raw
+ * `ImportItem[]` input can carry an empty or blocked-scheme URL the planner
+ * would have pruned, so {@link writeItems} refuses them (recorded as
+ * failures — `createBookmark` is never reached) before touching Chrome.
  *
  * ## Partial-failure policy
  *
@@ -198,6 +204,26 @@ async function writeItems(
       await writeMeta(item, folder.id, summary);
       await writeItems(item.children, folder.id, summary);
     } else {
+      // Re-validate the URL at the write boundary — a raw ImportItem[] input
+      // bypasses planImport's pruning and must never reach createBookmark
+      // with an empty or scriptable URL. Same shared blocklist the Netscape
+      // parser and the planner apply.
+      if (item.url.trim() === "") {
+        summary.failures.push({
+          kind: "bookmark",
+          title: item.title,
+          message: "Refused: the URL is empty.",
+        });
+        continue;
+      }
+      if (isBlockedScheme(item.url)) {
+        summary.failures.push({
+          kind: "bookmark",
+          title: item.title,
+          message: `Refused: ${JSON.stringify(item.url)} uses a blocked URL scheme.`,
+        });
+        continue;
+      }
       try {
         const created = await createBookmark({
           parentId,

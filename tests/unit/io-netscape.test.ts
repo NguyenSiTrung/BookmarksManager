@@ -356,6 +356,57 @@ describe("parseNetscape scheme filtering", () => {
   });
 });
 
+describe("parseNetscape rows outside any DL", () => {
+  it("still parses a file that dropped its root <DL>", () => {
+    const { tree, stats } = ok(
+      parseNetscape(
+        '<!DOCTYPE NETSCAPE-Bookmark-file-1>' +
+          '<DT><A HREF="https://top.example/">Top</A>' +
+          '<DT><H3>Orphan Folder</H3>' +
+          '<DL><p><DT><A HREF="https://in.example/">In</A></DL><p>' +
+          '<DT><A HREF="https://last.example/">Last</A>',
+      ),
+    );
+    expect(stats).toEqual({ folders: 1, bookmarks: 3, skipped: 0, invalid: 0 });
+    expect(tree[0]).toMatchObject({ title: "Top" });
+    const orphanFolder = folder(tree[1]);
+    expect(orphanFolder.title).toBe("Orphan Folder");
+    // The DL inside the unclosed DT belongs to the folder — walked once.
+    expect(orphanFolder.children.map((n) => n.title)).toEqual(["In"]);
+    expect(tree[2]).toMatchObject({ title: "Last" });
+  });
+
+  it("parses a bare <A> and a <DD> orphan at top level", () => {
+    const { tree, stats } = ok(
+      parseNetscape(
+        '<p><A HREF="https://loose.example/">Loose</A>' +
+          '<DD><DT><A HREF="https://dd.example/">InDD</A></DD>',
+      ),
+    );
+    expect(stats.bookmarks).toBe(2);
+    expect(tree.map((n) => n.title)).toEqual(["Loose", "InDD"]);
+  });
+
+  it("an orphan folder <DT> consumes a following sibling <DL> once", () => {
+    // Explicit `</DT><DL>` style: the sibling DL is the folder's contents,
+    // the same as inside a <DL> container — and it is walked exactly once,
+    // so nothing leaks to top level or gets counted twice.
+    const { tree, stats } = ok(
+      parseNetscape(
+        '<DT><H3>Folder</H3></DT>' +
+          '<DL><p><DT><A HREF="https://sib.example/">Sib</A></DL><p>' +
+          '<DT><A HREF="https://tail.example/">Tail</A>',
+      ),
+    );
+    expect(stats).toEqual({ folders: 1, bookmarks: 2, skipped: 0, invalid: 0 });
+    const f = folder(tree[0]);
+    expect(f.title).toBe("Folder");
+    expect(f.children.map((n) => n.title)).toEqual(["Sib"]);
+    expect(tree[1]).toMatchObject({ title: "Tail" });
+    expect(tree).toHaveLength(2);
+  });
+});
+
 describe("parseNetscape input rejection", () => {
   it("fails with too_large above MAX_FILE_BYTES (20 MiB)", () => {
     expect(MAX_FILE_BYTES).toBe(20 * 1024 * 1024);

@@ -7,6 +7,7 @@ import {
   parseCsv,
   type CsvBookmarkRow,
 } from "../../src/io/csv";
+import { MAX_FILE_BYTES } from "../../src/io/netscape";
 
 // Contract under test (documented in src/io/csv.ts):
 //  - Columns, exact header: title,url,folder_path,tags,category,notes,created
@@ -232,6 +233,13 @@ describe("parseCsv — header validation", () => {
     if (res.ok) {
       expect(res.rows[0]?.title).toBe("T");
     }
+  });
+
+  it("rejects input above MAX_FILE_BYTES (too_large) before parsing", () => {
+    // Same 20 MiB cap as the Netscape/JSON parsers — fires before any
+    // record decoding, so the body needs no valid rows.
+    const res = parseCsv(`${HEADER}\r\n${"x".repeat(MAX_FILE_BYTES)}`);
+    expect(res).toMatchObject({ ok: false, code: "too_large" });
   });
 
   it("ignores extra unknown columns and maps by name", () => {

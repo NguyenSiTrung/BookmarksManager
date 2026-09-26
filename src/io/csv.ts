@@ -1,5 +1,6 @@
 import { z } from "../schemas/z";
 import { Category } from "../schemas/bookmark";
+import { MAX_FILE_BYTES } from "./netscape";
 
 /**
  * CSV export/import for bookmarks. Pure functions — no DOM, no `chrome`, no
@@ -20,6 +21,12 @@ import { Category } from "../schemas/bookmark";
  * - `folder_path` — `/`-joined ancestor folder titles, topmost first
  *                   (`Work/Docs`); "" means top level. The string is carried
  *                   verbatim — the import writer owns splitting/validation.
+ *                   **Known format limitation:** `/` is an UNESCAPED
+ *                   delimiter, so a folder title that itself contains `/`
+ *                   cannot round-trip — it splits into nested folders on
+ *                   import (`"A/B"` becomes `A` → `B`). Titles are written
+ *                   verbatim on export; the corruption only surfaces if the
+ *                   file is re-imported. Use JSON export for lossless trees.
  * - `tags`        — `;`-separated tag names inside ONE cell (`;` because `,`
  *                   is the CSV delimiter). Import splits, trims each, drops
  *                   empties.
@@ -115,7 +122,7 @@ export interface CsvParseSuccess {
 
 export interface CsvParseFailure {
   ok: false;
-  code: "empty" | "missing_columns";
+  code: "empty" | "missing_columns" | "too_large";
   message: string;
 }
 
@@ -286,11 +293,21 @@ const CreatedStamp = z.union([
 
 /**
  * Parse CSV text into validated rows. Fatal only for missing content
- * (`"empty"`) or a header missing required column names
- * (`"missing_columns"`); every row-level problem is collected into
- * `invalid` with its 1-based record number and a reason.
+ * (`"empty"`), a header missing required column names (`"missing_columns"`),
+ * or an oversized file (`"too_large"` — the same {@link MAX_FILE_BYTES} cap
+ * as Netscape/JSON imports, checked on UTF-8 byte length before any parsing
+ * work); every row-level problem is collected into `invalid` with its
+ * 1-based record number and a reason.
  */
 export function parseCsv(text: string): CsvParseResult {
+  const bytes = new TextEncoder().encode(text).byteLength;
+  if (bytes > MAX_FILE_BYTES) {
+    return {
+      ok: false,
+      code: "too_large",
+      message: `File is ${bytes} bytes; CSV imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
+    };
+  }
   const records = parseRecords(text);
   const headerIdx = records.findIndex((r) => !isBlankRecord(r));
   if (headerIdx === -1) {
