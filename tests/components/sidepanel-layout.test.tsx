@@ -801,9 +801,14 @@ describe("App", () => {
       expect(texts).not.toContain("Alpha");
     });
 
-    // Duplicates: exact pair (x.example) then normalized pair (a.example).
+    // Duplicates mounts the grouped view (badges + keep-one), not the
+    // flat listbox — group cards replace `role="option"` rows.
     fireEvent.click(screen.getByRole("button", { name: "Duplicates" }));
-    await waitFor(() => expect(optionTexts().length).toBe(4));
+    await waitFor(() =>
+      expect(screen.getAllByText(/exact|normalized/i).length).toBeGreaterThan(
+        0,
+      ),
+    );
 
     // Recently saved: dateAdded desc → Delta, Gamma, Beta, Alpha.
     fireEvent.click(

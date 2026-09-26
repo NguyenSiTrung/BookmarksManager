@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import type { DuplicateGroup } from "../../duplicates/group";
+import { DuplicatesView } from "./DuplicatesView";
 import { useLiveQuery } from "dexie-react-hooks";
 import { listMeta, listTags } from "../../db/meta";
 import { Category } from "../../schemas/bookmark";
@@ -11,7 +13,7 @@ import {
   useBookmarkSelection,
 } from "./BookmarkList";
 import { FolderTree } from "./FolderTree";
-import { resolveView, viewTitle } from "./views";
+import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
 
 /**
@@ -94,6 +96,11 @@ export function App() {
   const metaById = useMemo(
     () => new Map(metas.map((meta) => [meta.id, meta])),
     [metas],
+  );
+  const duplicateGroups = useMemo(
+    (): readonly DuplicateGroup<BookmarkItem>[] =>
+      view.kind === "duplicates" ? resolveDuplicateGroups(tree) : [],
+    [view.kind, tree],
   );
   const tagNameByKey = useMemo(
     () => new Map(tagDefs.map((tag) => [tag.nameKey, tag.name])),
@@ -220,13 +227,24 @@ export function App() {
             <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
               <h2 className="text-sm font-medium">{title}</h2>
             </header>
-            <BookmarkList
-              items={items}
-              metaById={metaById}
-              tagNameByKey={tagNameByKey}
-              onActivateItem={openItem}
-              className="flex-1"
-            />
+            {view.kind === "duplicates" ? (
+              <DuplicatesView
+                groups={duplicateGroups}
+                metaById={metaById}
+                tagNameByKey={tagNameByKey}
+                loading={tree.folders.size === 0}
+                onActivateItem={openItem}
+                className="flex-1"
+              />
+            ) : (
+              <BookmarkList
+                items={items}
+                metaById={metaById}
+                tagNameByKey={tagNameByKey}
+                onActivateItem={openItem}
+                className="flex-1"
+              />
+            )}
           </section>
         </div>
       </div>
