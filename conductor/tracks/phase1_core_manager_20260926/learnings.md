@@ -77,3 +77,25 @@ Full list: `conductor/patterns.md` (35 entries, elevated from `phase0_foundation
   - `groupDuplicates<T extends DuplicateCandidate>(items): DuplicateGroup<T>[]` — exact groups before normalized; normalized bucket suppressed only when member-id set is identical to an emitted exact group; ordering by key first-seen.
   - Gotcha: `http://x:443` ≠ `https://x` (per-scheme default-port reading); suppression assumes unique ids.
 ---
+
+## [2026-09-26 05:35] - Phase 1 Task 6: Worker sync — cascade delete, reconcile, broadcast, `bookmarks` permission
+- **Implemented:** `src/sync/{listeners,reconcile}.ts`, wired into `background.ts`; `bookmarks` permission in wxt.config + permissions.md.
+- **Commit:** `a47b2d7` (landed from worktree `wt/p1t6`)
+- **Learnings:**
+  - `registerBookmarkListeners()` idempotent per `chrome.bookmarks` instance via WeakMap; `BookmarksChangedMessage`/`BookmarksChangedEvent` Zod schemas; `BOOKMARKS_CHANGED_TYPE` constant.
+  - `reconcileMetadata(): Promise<number>` diffs `getTree()` ids vs raw `bookmarkMeta` keys (reaps schema-invalid dead rows too).
+  - Broadcast for `"removed"` fires AFTER cascade delete resolves; other events broadcast synchronously, fire-and-forget.
+  - Deviation accepted: `tests/unit/scaffold.test.ts` permission assertion updated — same precedent as T3's verno assertion.
+---
+
+## [2026-09-26 05:38] - Phase 1 Task 8: Checkpoint — automated gate
+- **Gate evidence (main @ a47b2d7 + docs):**
+  - `npm run lint` — clean (after adding `.worktrees/**` to eslint ignores: eslint does not honor .gitignore; nested `.wxt`/`.output`/`.agents` copies inside worktrees were linted until excluded)
+  - `npm run typecheck` — clean
+  - `npx vitest run` — **614/614 tests, 24 files**
+  - `npm run build` — clean (chrome-mv3, 662 kB)
+  - `npm run check:manifest` — manifest permissions match store/permissions.md
+  - `npm run check:bundle` — no eval/new Function/remote script
+  - `E2E_HEADLESS=1 npm run test:e2e` — 1/1 pass (extension loads, renders surfaces, zero requests)
+- **Phase-1 scope review:** dispatched code reviewer over diff aba1987..HEAD (5668 insertions) — see ledger.
+---

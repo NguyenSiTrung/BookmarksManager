@@ -65,12 +65,12 @@
   - [x] Failing tests: lazy rows (empty meta ⇒ row deleted), get/put/patch, bulk delete by IDs, tag definition CRUD with case-insensitive uniqueness, tag rename/delete propagating through the `*tags` index, fresh-object writes (Dexie key write-back gotcha)
   - [x] Implement with Zod validation on read
 
-- [ ] Task 6: Worker sync — cascade delete, startup reconcile, change broadcast; add `bookmarks` permission
+- [x] Task 6: Worker sync — cascade delete, startup reconcile, change broadcast; add `bookmarks` permission — `a47b2d7`
   <!-- files: src/sync/listeners.ts, src/sync/reconcile.ts, src/entrypoints/background.ts, wxt.config.ts, store/permissions.md, tests/unit/sync-listeners.test.ts, tests/unit/sync-reconcile.test.ts -->
   <!-- depends: task1, task5 -->
-  - [ ] Failing tests against the fake: `onRemoved` deletes metadata for the node and every descendant in `removeInfo.node`; reconcile deletes rows whose IDs are absent; listeners never touch the network
-  - [ ] Register listeners at worker startup; broadcast a typed `bookmarks-changed` message
-  - [ ] Add `bookmarks` to `wxt.config.ts` and a justified row to `store/permissions.md`; `check:manifest` green
+  - [x] Failing tests against the fake: `onRemoved` deletes metadata for the node and every descendant in `removeInfo.node`; reconcile deletes rows whose IDs are absent; listeners never touch the network
+  - [x] Register listeners at worker startup; broadcast a typed `bookmarks-changed` message
+  - [x] Add `bookmarks` to `wxt.config.ts` and a justified row to `store/permissions.md`; `check:manifest` green
 
 - [x] Task 7: Tree read model and live hook — `130b790`
   <!-- files: src/sync/tree.ts, src/ui/hooks/useBookmarkTree.ts, tests/unit/sync-tree.test.ts, tests/components/useBookmarkTree.test.tsx -->

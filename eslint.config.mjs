@@ -15,6 +15,7 @@ export default tseslint.config(
       ".codex/**",
       ".output/**",
       ".superpowers/**",
+      ".worktrees/**",
       ".wxt/**",
       "conductor/**",
       "coverage/**",
