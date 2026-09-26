@@ -17,10 +17,12 @@ describe("extension scaffold", () => {
     // `favicon` joined in Phase 4 Task 1 (Chrome's `_favicon` renderer
     // serves site icons for the manager UI — no host access needed);
     // `activeTab` joined in Phase 5 Task 1 (the quick-save popup reads the
-    // active tab's title/URL on the user's action).
+    // active tab's title/URL on the user's action); `contextMenus` joined in
+    // Phase 5 Task 3 (the right-click "Save page"/"Save link" items).
     expect(manifest?.permissions).toEqual([
       "activeTab",
       "bookmarks",
+      "contextMenus",
       "favicon",
       "storage",
       "sidePanel",

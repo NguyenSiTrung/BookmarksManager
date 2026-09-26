@@ -10,7 +10,14 @@ export default defineConfig({
   manifest: {
     name: "Bookmarks Manager",
     version: "0.1.0",
-    permissions: ["activeTab", "bookmarks", "favicon", "storage", "sidePanel"],
+    permissions: [
+      "activeTab",
+      "bookmarks",
+      "contextMenus",
+      "favicon",
+      "storage",
+      "sidePanel",
+    ],
     optional_host_permissions: [
       "https://api.typesafe.ai/*",
       "https://openrouter.ai/*",
