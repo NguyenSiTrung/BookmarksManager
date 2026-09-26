@@ -4,5 +4,4 @@ This file tracks major development tracks.
 
 ---
 
-## [x] Track: Phase 0 foundation and TypeSafe/OpenRouter provider connection
-*Link: [./tracks/phase0_foundation_20260925/](./tracks/phase0_foundation_20260925/)*
+<!-- Archived: 2026-09-25 — Phase 0 foundation and TypeSafe/OpenRouter provider connection (see conductor/archive/phase0_foundation_20260925/) -->
