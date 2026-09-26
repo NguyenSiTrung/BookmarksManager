@@ -181,6 +181,12 @@ const registrations = new WeakMap<ChromeBookmarksApi, () => void>();
  * function without adding listeners. Returns a no-op when
  * `chrome.bookmarks` is unavailable (the worker keeps serving messages even
  * if the bookmarks surface is absent in some context).
+ *
+ * Total by contract: each `onX` helper re-resolves `chrome.bookmarks` at
+ * call time, so a PARTIAL surface (present but missing an event) would
+ * throw mid-subscription. The whole block is wrapped and any listeners
+ * already attached are detached again — registration is all-or-nothing and
+ * can never take down later startup code (the provider onMessage handler).
  */
 export function registerBookmarkListeners(): () => void {
   let api: ChromeBookmarksApi | undefined | null;
@@ -196,13 +202,24 @@ export function registerBookmarkListeners(): () => void {
   if (existing !== undefined) {
     return existing;
   }
-  const unsubscribers = [
-    onCreated(handleCreated),
-    onChanged(handleChanged),
-    onMoved(handleMoved),
-    onChildrenReordered(handleChildrenReordered),
-    onRemoved(handleRemoved),
-  ];
+  const unsubscribers: (() => void)[] = [];
+  try {
+    // One statement per subscribe: a single push(f(), g(), …) call would
+    // evaluate every argument BEFORE pushing any result, so a throw would
+    // leak the listeners already attached. Sequential pushes guarantee each
+    // subscription's unsubscribe lands in the array before the next
+    // subscribe attempt runs.
+    unsubscribers.push(onCreated(handleCreated));
+    unsubscribers.push(onChanged(handleChanged));
+    unsubscribers.push(onMoved(handleMoved));
+    unsubscribers.push(onChildrenReordered(handleChildrenReordered));
+    unsubscribers.push(onRemoved(handleRemoved));
+  } catch {
+    for (const unsubscribe of unsubscribers) {
+      unsubscribe();
+    }
+    return () => {};
+  }
   const unregister = (): void => {
     for (const unsubscribe of unsubscribers) {
       unsubscribe();

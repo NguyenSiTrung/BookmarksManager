@@ -280,6 +280,77 @@ describe("registration lifecycle", () => {
     expect(firstSendMessage).not.toHaveBeenCalled();
   });
 
+  it("is a no-op when the chrome namespace has no bookmarks slice", () => {
+    sendMessage = vi.fn(() => Promise.resolve(undefined));
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+
+    // Must not throw: background.ts calls this BEFORE the provider
+    // onMessage registration, so a throw would take the handler down.
+    expect(() => registerBookmarkListeners()).not.toThrow();
+    const off = registerBookmarkListeners();
+    expect(() => off()).not.toThrow();
+  });
+
+  it("is a no-op when no chrome global exists at all", () => {
+    // jsdom exposes no `chrome`; nothing is stubbed in this test.
+    expect(() => registerBookmarkListeners()).not.toThrow();
+    expect(registerBookmarkListeners()()).toBeUndefined();
+  });
+
+  it("cleans up partial subscriptions when an event surface is missing", async () => {
+    fake = createFakeBookmarks();
+    sendMessage = vi.fn(() => Promise.resolve(undefined));
+    // Partial surface: `onMoved` is absent, so registration fails mid-way
+    // through the five subscriptions (created + changed already attached).
+    // The spread shares the fake's FakeEvent instances, so spying on
+    // `fake.onX` observes what `partial.onX` receives.
+    const partial = { ...fake, onMoved: undefined };
+    vi.stubGlobal("chrome", {
+      bookmarks: partial,
+      runtime: { sendMessage },
+    });
+    const addCreated = vi.spyOn(fake.onCreated, "addListener");
+    const addChanged = vi.spyOn(fake.onChanged, "addListener");
+    const addReordered = vi.spyOn(fake.onChildrenReordered, "addListener");
+    const addRemoved = vi.spyOn(fake.onRemoved, "addListener");
+    const removeCreated = vi.spyOn(fake.onCreated, "removeListener");
+    const removeChanged = vi.spyOn(fake.onChanged, "removeListener");
+
+    const off = registerBookmarkListeners(); // must not throw
+
+    // created + changed were subscribed before the throw at onMoved…
+    expect(addCreated).toHaveBeenCalledTimes(1);
+    expect(addChanged).toHaveBeenCalledTimes(1);
+    // …reordered/removed were never reached…
+    expect(addReordered).not.toHaveBeenCalled();
+    expect(addRemoved).not.toHaveBeenCalled();
+    // …and the two attached listeners were detached again by the cleanup —
+    // removeListener received exactly the callback addListener took.
+    expect(removeCreated).toHaveBeenCalledTimes(1);
+    expect(removeChanged).toHaveBeenCalledTimes(1);
+    expect(removeCreated.mock.calls[0]?.[0]).toBe(
+      addCreated.mock.calls[0]?.[0],
+    );
+    expect(removeChanged.mock.calls[0]?.[0]).toBe(
+      addChanged.mock.calls[0]?.[0],
+    );
+
+    // End state: no live subscription — firing the shared events broadcasts
+    // nothing (all-or-nothing registration, no leaked partials).
+    await fake.create({ title: "x", url: "https://x.example/" });
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The failed registration returns an inert unsubscribe and is not
+    // recorded in the WeakMap, so a repaired surface may register later —
+    // and a repeat attempt on the same partial api cleans up again.
+    expect(() => off()).not.toThrow();
+    expect(() => registerBookmarkListeners()).not.toThrow();
+    expect(addCreated).toHaveBeenCalledTimes(2);
+    expect(removeCreated).toHaveBeenCalledTimes(2);
+    await fake.create({ title: "y", url: "https://y.example/" });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("the returned unsubscribe detaches all five listeners", async () => {
     installChrome({
       bookmarksBar: [{ id: "n", title: "n", url: "https://n.example/" }],

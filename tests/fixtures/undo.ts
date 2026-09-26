@@ -23,7 +23,10 @@ export const undoFolderNode = {
       parentId: "f-9",
       index: 0,
       title: "Nested folder",
-      children: [undoLeafNode],
+      // The embedded copy must agree with its placement: this leaf sits
+      // under "f-10" at position 0 (undoLeafNode's own parentId/index
+      // describe where it lives in the bulk_move fixture instead).
+      children: [{ ...undoLeafNode, parentId: "f-10", index: 0 }],
     },
   ],
 } satisfies z.input<typeof UndoNode>;
