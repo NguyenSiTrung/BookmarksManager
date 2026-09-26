@@ -113,3 +113,14 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Pattern: caret-aware suggestions need `onSelect`/`onKeyUp` caret sync plus a `pendingCaret` ref applied in `useLayoutEffect` after `value` changes (controlled-input caret can't be set mid-change).
   - Pattern: Enter with NO highlighted option must not preventDefault — the popup/palette surfaces need Enter for "open first result".
 ---
+
+## [2026-09-26 16:42] - Phase 2 Task 4: Command palette
+- **Implemented:** `palette.ts` (pure) — `buildPaletteSections({query, search, tree, tagDefs})` → Bookmarks (runQuery hits) + Views + Folders + Tags + Categories; non-empty query substring-narrows jump sections, empty sections drop, null index just omits Bookmarks. `CommandPalette.tsx` — Radix Dialog, combobox input driving a grouped listbox, index-0 pre-highlight, wrap-around arrows, Enter dispatches (jump→view switch + clears active search; bookmark→open). App: Ctrl/Cmd+K toggles via document keydown.
+- **Files changed:** src/entrypoints/sidepanel/palette.ts, src/entrypoints/sidepanel/CommandPalette.tsx, src/entrypoints/sidepanel/App.tsx, tests/unit/palette-items.test.ts, tests/components/command-palette.test.tsx
+- **Commit:** f1d61f9
+- **Learnings:**
+  - Gotcha: `FolderNode.isRoot` covers Chrome's FIXED roots (ids 1-3: "Bookmarks bar", "Other bookmarks") — those are real jump/`folder:` targets; only the synthetic "0" has empty title. Filter by `title !== ""`, not `!isRoot`.
+  - Gotcha: `folderTitles`/`folderIds` are STORED fields, not indexed — free text never matches folder names; only `folder:` filters them.
+  - Rule: new react-hooks eslint bans setState in effects AND in-JSX mutations — use render-phase state adjustment (`if (open !== prevOpen)`), derived clamps (`Math.min(active, len-1)`), and useMemo for per-section flat offsets.
+  - Gotcha: Radix Dialog focus restore doesn't reach elements focused without a trigger (e.g. `/`-focused search input) — capture `document.activeElement` on open and `.focus()` it via queueMicrotask after close.
+---

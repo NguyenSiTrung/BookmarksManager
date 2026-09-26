@@ -89,10 +89,10 @@
   - [x] Failing tests: suggestion listbox, arrow/Enter selection, quote insertion, Esc closes suggestions before clearing the query
   - [x] Implement
 
-- [ ] Task 4: Command palette — dialog, results, jump-to
+- [x] Task 4: Command palette — dialog, results, jump-to (f1d61f9)
   <!-- files: src/entrypoints/sidepanel/palette.ts, src/entrypoints/sidepanel/CommandPalette.tsx, src/entrypoints/sidepanel/App.tsx, tests/unit/palette-items.test.ts, tests/components/command-palette.test.tsx -->
-  - [ ] Failing tests: Ctrl/Cmd+K opens; ARIA combobox; sections for bookmarks, views, folders, tags, categories; keyboard navigation; Esc restores focus
-  - [ ] Implement
+  - [x] Failing tests: Ctrl/Cmd+K opens; ARIA combobox; sections for bookmarks, views, folders, tags, categories; keyboard navigation; Esc restores focus
+  - [x] Implement
 
 - [ ] Task 5: Palette commands and per-result actions
   <!-- files: src/entrypoints/sidepanel/palette.ts, src/entrypoints/sidepanel/CommandPalette.tsx, src/entrypoints/sidepanel/App.tsx, tests/components/command-palette-actions.test.tsx -->
