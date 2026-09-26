@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-26 -->
+
 # Bookmarks Manager
 
 ## Vision
@@ -29,3 +31,7 @@ Jev proposes classifications, tags, and folder placement with confidence scores.
 No developer backend, analytics, remote code, or data leaving the device by default. Use the least permissions needed for shipped features. Keep data flows, privacy disclosures, and store materials consistent with actual behavior.
 
 `PROJECT_PLAN.md` contains the detailed feature inventory, architecture, milestones, and store policy checklist. This guide summarizes the approved direction without replacing that plan.
+
+## Delivery Status
+
+- **Phase 0 foundation delivered** (archived `phase0_foundation_20260925`, 2026-09-25): MV3 scaffold, consent-gated Jev provider connection with TypeSafe/OpenRouter presets, WebCrypto-protected provider keys, and CI-guarded store disclosures. Bookmark management, search, tagging, and the offline core are not yet built.

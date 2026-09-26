@@ -1,0 +1,30 @@
+{
+  "last_refresh": "2026-09-26",
+  "previous_marker": "2026-09-25",
+  "scope": "all",
+  "files_updated": [
+    "product.md",
+    "tech-stack.md",
+    "workflow.md",
+    "patterns.md"
+  ],
+  "drift_resolved": {
+    "tech-stack.md": "Replaced 'planned, not installed' framing with the real Phase 0 dependency set (WXT 0.21.4, React 19.3, TS 6.0.3, Zod 4.6.5 jitless, Dexie 4.4.6, Tailwind 4, Vitest 5, Playwright 1.63, ESLint 9 flat, jsdom/fake-indexeddb/Testing Library); marked Zustand, TanStack Query, shadcn/ui, MiniSearch, @mozilla/readability as [planned]",
+    "patterns.md": "Replaced 'no code/tests exist yet' placeholders with real conventions, architecture state, gotchas, and test inventory; elevated 5 additional learnings missed at archive",
+    "workflow.md": "Completion gate now names the CI-mirroring command sequence including check:manifest/check:bundle and conditional e2e",
+    "product.md": "Added Delivery Status section recording Phase 0 foundation delivery"
+  },
+  "beads": {
+    "enabled": true,
+    "open_issues": 8,
+    "drift": "none — no active plan.md; all 8 open issues are phase-0 follow-up backlog (P3)",
+    "note": "bd warns 'beads.role not configured (GH#2950)' — cosmetic"
+  },
+  "learnings_consolidation": {
+    "tracks_scanned": ["phase0_foundation_20260925"],
+    "new_patterns_elevated": 5,
+    "note": "Archive-time elevation already covered most items; refresh added Playwright channel, WXT scaffold, zero-egress e2e, satisfies-fixture, and CryptoKey-type patterns"
+  },
+  "untracked_files": [".beads/issues.jsonl", "conductor/*.md.bak"],
+  "active_tracks": []
+}

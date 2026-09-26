@@ -10,7 +10,7 @@
 
 1. Write a failing test for each behavior or bug fix, then make it pass and refactor. For project scaffolding or documentation, verify the corresponding artifacts and configuration instead.
 2. Validate schemas at trust boundaries. Include invalid fixtures, privacy and consent cases, and error paths where relevant.
-3. Run the narrowest relevant tests while developing. Before task completion, run applicable lint, type checks, tests, and build. Target **more than 80% test coverage** once the test suite and coverage reporting exist; investigate meaningful gaps rather than writing tests only for a number.
+3. Run the narrowest relevant tests while developing. Before task completion, run the applicable slice of the CI gate — `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` → `check:bundle` (→ `xvfb-run -a test:e2e` when touching entrypoints or egress behavior). Target **more than 80% test coverage** once the test suite and coverage reporting exist; investigate meaningful gaps rather than writing tests only for a number.
 4. Keep code, permissions, disclosures, consent versions, and store documentation synchronized whenever data flow changes.
 
 ## Task Completion and Commits
