@@ -22,6 +22,11 @@ export default defineConfig({
       "https://api.typesafe.ai/*",
       "https://openrouter.ai/*",
     ],
+    // `bm <query>` in the address bar searches bookmarks locally (Phase 3).
+    // The keyword needs no extra permission; suggestions come from a
+    // session-scoped MiniSearch index in the service worker (see
+    // `src/search/omnibox.ts`) — no query ever leaves the device.
+    omnibox: { keyword: "bm" },
     // `_execute_action` is the MV3 reserved command name that opens the
     // extension's popup when one is declared — no `chrome.commands.onCommand`
     // listener is needed (the browser handles the dispatch). `Ctrl+Shift+Y` /

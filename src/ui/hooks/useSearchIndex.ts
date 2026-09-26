@@ -9,13 +9,11 @@ import {
 import type {
   SearchDocument,
   SearchIndex,
-  SearchSourceAncestor,
-  SearchSourceBookmark,
 } from "../../search/index";
+import { toSourceBookmark } from "../../search/index";
 import { collectDuplicateIds } from "../../search/run";
 import type { SearchIndexHandle } from "../../search/run";
-import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
-import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
+import type { FlattenedTree } from "../../sync/tree";
 
 export type { SearchIndexHandle } from "../../search/run";
 
@@ -41,50 +39,6 @@ export type { SearchIndexHandle } from "../../search/run";
  * `duplicateIds` recomputed only when the corpus changes — never per
  * keystroke.
  */
-
-/**
- * Ancestor folders of `item`, topmost first, excluding the synthetic root
- * "0" — resolved through the folders map (item.path holds titles only).
- * Cycle-guarded against malformed trees.
- */
-function ancestorsOf(
-  tree: FlattenedTree,
-  item: BookmarkItem,
-): SearchSourceAncestor[] {
-  const out: SearchSourceAncestor[] = [];
-  const seen = new Set<string>();
-  let cursor = item.parentId;
-  while (
-    cursor !== undefined &&
-    cursor !== ROOT_NODE_ID &&
-    !seen.has(cursor)
-  ) {
-    seen.add(cursor);
-    const folder = tree.folders.get(cursor);
-    if (folder === undefined) break;
-    out.push({ id: folder.id, title: folder.title });
-    cursor = folder.parentId;
-  }
-  return out.reverse();
-}
-
-/** Map one flattened bookmark + its meta row onto a source document. */
-function toSource(
-  tree: FlattenedTree,
-  item: BookmarkItem,
-  meta: BookmarkMeta | undefined,
-): SearchSourceBookmark {
-  return {
-    id: item.id,
-    title: item.title,
-    url: item.url,
-    ...(item.dateAdded === undefined ? {} : { dateAdded: item.dateAdded }),
-    ancestors: ancestorsOf(tree, item),
-    tagKeys: meta?.tags ?? [],
-    ...(meta?.category === undefined ? {} : { category: meta.category }),
-    ...(meta?.notes === undefined ? {} : { notes: meta.notes }),
-  };
-}
 
 /**
  * Structural diff between the previous and next document maps.
@@ -132,7 +86,10 @@ export function useSearchIndex(
     for (const item of tree.bookmarks.values()) {
       next.set(
         item.id,
-        toSearchDocument(toSource(tree, item, metaById.get(item.id)), tagNames),
+        toSearchDocument(
+          toSourceBookmark(tree, item, metaById.get(item.id)),
+          tagNames,
+        ),
       );
     }
 

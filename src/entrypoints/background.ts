@@ -1,5 +1,6 @@
 import { defineBackground } from "wxt/utils/define-background";
 import { handleProviderMessage } from "../messages/provider";
+import { registerOmnibox } from "../search/omnibox";
 import { registerContextMenus } from "../sync/context-menu";
 import { registerBookmarkListeners } from "../sync/listeners";
 import { reconcileMetadata } from "../sync/reconcile";
@@ -42,6 +43,11 @@ export default defineBackground(() => {
   // left by a worker evicted mid-confirmation. Total: a partial `chrome`
   // surface degrades to a no-op rather than taking down the handler below.
   registerContextMenus();
+  // `bm` omnibox keyword: session-scoped local index, ≤8 escaped
+  // suggestions, disposition routing via the typed tabs slice. A missing
+  // `chrome.omnibox` surface (Firefox, tests) degrades to a no-op, and all
+  // listeners are total so a failure can never take down the worker.
+  registerOmnibox();
   void reconcileMetadata().catch(() => {
     // Best-effort cleanup; the next worker start retries.
   });

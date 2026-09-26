@@ -66,6 +66,7 @@ const manifest = config.manifest as
           description?: string;
         }
       >;
+      omnibox?: { keyword?: string };
     }
   | undefined;
 
@@ -109,6 +110,12 @@ describe("manifest keyboard shortcut", () => {
  * The generated manifest only exists after `npm run build`, so this skips (with
  * a clear message) rather than failing when the tests run without a build.
  */
+describe("manifest omnibox keyword", () => {
+  it("declares the `bm` keyword for local bookmark search", () => {
+    expect(manifest?.omnibox?.keyword).toBe("bm");
+  });
+});
+
 const GENERATED_MANIFEST = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../.output/chrome-mv3/manifest.json",
@@ -126,6 +133,7 @@ describe.skipIf(!hasBuild)("generated manifest (built in the worktree)", () => {
             description?: string;
           }
         >;
+        omnibox?: { keyword?: string };
       })
     : undefined;
 
@@ -135,6 +143,10 @@ describe.skipIf(!hasBuild)("generated manifest (built in the worktree)", () => {
     expect(command).toEqual(manifest?.commands?._execute_action);
     expect(command?.suggested_key?.default).toBe("Ctrl+Shift+Y");
     expect(command?.suggested_key?.mac).toBe("Command+Shift+Y");
+  });
+
+  it("ships the `bm` omnibox keyword", () => {
+    expect(generated?.omnibox?.keyword).toBe("bm");
   });
 });
 

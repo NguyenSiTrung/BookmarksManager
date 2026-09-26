@@ -12,6 +12,14 @@ import type {
   QueryWarning,
 } from "./query";
 import type { SearchHit, SearchIndex } from "./index";
+import {
+  buildTagNameMap,
+  createSearchIndex,
+  toSearchDocument,
+  toSourceBookmark,
+} from "./index";
+import type { BookmarkMeta, TagDef } from "../schemas/meta";
+import type { FlattenedTree } from "../sync/tree";
 
 /**
  * Query executor for the search language (spec §1–§2). `runQuery` runs a
@@ -84,6 +92,36 @@ export interface RunQueryContext {
    * keystrokes; when absent, `is:duplicate` matches nothing.
    */
   duplicateIds?: ReadonlySet<string>;
+}
+
+/**
+ * One-shot handle builder for surfaces that own a whole index rather than
+ * subscribing to a live one — the omnibox session build and tests. Maps
+ * every bookmark through {@link toSourceBookmark} (the same source mapping
+ * `useSearchIndex` uses), adds all documents to a fresh index, and derives
+ * `ctx` (`treeOrder` + `duplicateIds`) from the same tree.
+ */
+export function buildSearchHandle(
+  tree: FlattenedTree,
+  metas: readonly BookmarkMeta[],
+  tagDefs: readonly TagDef[],
+): SearchIndexHandle {
+  const tagNames = buildTagNameMap(tagDefs);
+  const metaById = new Map(metas.map((meta) => [meta.id, meta]));
+  const index = createSearchIndex();
+  index.addAll(
+    [...tree.bookmarks.values()].map((item) =>
+      toSearchDocument(toSourceBookmark(tree, item, metaById.get(item.id)), tagNames)
+    ),
+  );
+  const bookmarks = [...tree.bookmarks.values()];
+  return {
+    index,
+    ctx: {
+      treeOrder: bookmarks.map((item) => item.id),
+      duplicateIds: collectDuplicateIds(bookmarks),
+    },
+  };
 }
 
 export interface RunQueryResult {

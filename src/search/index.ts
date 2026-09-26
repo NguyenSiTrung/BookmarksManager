@@ -1,6 +1,9 @@
 import MiniSearch from "minisearch";
 import type { SearchResult } from "minisearch";
 import type { Category } from "../schemas/bookmark";
+import type { BookmarkMeta } from "../schemas/meta";
+import { ROOT_NODE_ID } from "../sync/chrome-bookmarks";
+import type { BookmarkItem, FlattenedTree } from "../sync/tree";
 
 /**
  * Pure search-index layer: one MiniSearch document per bookmark, built from
@@ -175,6 +178,57 @@ export function extractDomain(url: string): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Ancestor folders of `item`, topmost first, excluding the synthetic root
+ * "0" — resolved through the folders map (item.path holds titles only, so
+ * ids must be walked via `parentId`). Cycle-guarded against malformed trees.
+ * Shared by the live hook and the omnibox session index so both surfaces
+ * index identical `folder:` semantics.
+ */
+export function ancestorsOf(
+  tree: FlattenedTree,
+  item: BookmarkItem,
+): SearchSourceAncestor[] {
+  const out: SearchSourceAncestor[] = [];
+  const seen = new Set<string>();
+  let cursor = item.parentId;
+  while (
+    cursor !== undefined &&
+    cursor !== ROOT_NODE_ID &&
+    !seen.has(cursor)
+  ) {
+    seen.add(cursor);
+    const folder = tree.folders.get(cursor);
+    if (folder === undefined) break;
+    out.push({ id: folder.id, title: folder.title });
+    cursor = folder.parentId;
+  }
+  return out.reverse();
+}
+
+/**
+ * Resolve one flattened bookmark + its meta row onto the plain
+ * {@link SearchSourceBookmark} document source — the single mapping both
+ * `useSearchIndex` (diff-based live index) and the omnibox session index
+ * build from.
+ */
+export function toSourceBookmark(
+  tree: FlattenedTree,
+  item: BookmarkItem,
+  meta: BookmarkMeta | undefined,
+): SearchSourceBookmark {
+  return {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    ...(item.dateAdded === undefined ? {} : { dateAdded: item.dateAdded }),
+    ancestors: ancestorsOf(tree, item),
+    tagKeys: meta?.tags ?? [],
+    ...(meta?.category === undefined ? {} : { category: meta.category }),
+    ...(meta?.notes === undefined ? {} : { notes: meta.notes }),
+  };
 }
 
 /**
