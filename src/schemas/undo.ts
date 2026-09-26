@@ -1,0 +1,59 @@
+import { z } from "./z";
+import { BookmarkMeta, TagDef } from "./meta";
+
+/** Operations that write an undo snapshot before mutating the tree/tags. */
+export const UndoKind = z.enum(["delete", "bulk_move", "merge", "tag_delete"]);
+export type UndoKind = z.infer<typeof UndoKind>;
+
+/**
+ * One Chrome bookmark node captured before removal/move, sufficient to
+ * re-create the subtree at its original position (`parentId` + `index`).
+ * `url` is absent on folders. `children` recurses — a removed folder carries
+ * its whole subtree so cascade restores need no extra rows.
+ */
+export const UndoNode = z.strictObject({
+  id: z.string(), // Chrome node id at snapshot time (pre-delete)
+  parentId: z.string(),
+  index: z.number().int().min(0),
+  title: z.string(), // Chrome permits empty titles
+  url: z.string().min(1).optional(),
+  get children() {
+    return z.array(UndoNode).optional();
+  },
+});
+export type UndoNode = z.infer<typeof UndoNode>;
+
+/**
+ * The BookmarkMeta rows belonging to snapshotted nodes, kept alongside them so
+ * metadata can be remapped onto the new Chrome IDs on restore. Same shape as
+ * the `bookmarkMeta` table row.
+ */
+export const UndoMeta = BookmarkMeta;
+export type UndoMeta = z.infer<typeof UndoMeta>;
+
+/**
+ * Snapshot written to the Dexie `undo` table (`++id,createdAt`) before a
+ * delete, bulk move, merge, or tag-delete. `id` is auto-incremented on write,
+ * so it is absent in the input document and present once persisted.
+ * `tagDef` carries the deleted tag's definition for `tag_delete` restores;
+ * for other kinds it stays absent (the tag rows live in `meta` already).
+ */
+export const UndoSnapshot = z
+  .strictObject({
+    id: z.number().int().positive().optional(), // assigned by IndexedDB
+    createdAt: z.iso.datetime(),
+    kind: UndoKind,
+    nodes: z.array(UndoNode),
+    meta: z.array(UndoMeta),
+    tagDef: TagDef.optional(),
+  })
+  .superRefine((snapshot, ctx) => {
+    if (snapshot.kind === "tag_delete" && snapshot.tagDef === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["tagDef"],
+        message: "tagDef is required for tag_delete snapshots",
+      });
+    }
+  });
+export type UndoSnapshot = z.infer<typeof UndoSnapshot>;
