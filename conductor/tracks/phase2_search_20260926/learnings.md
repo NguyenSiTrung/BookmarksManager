@@ -160,3 +160,14 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Gotcha: "Indexing…" is untestable through `App` (build lands in a microtask); test it by rendering `PopupSearch` with `search={null}` prop directly.
   - Pattern: controlled `query` lifted to `App` is what makes "form returns unchanged on clear" work — the form unmounts during search but its state never left the parent.
 ---
+
+## [2026-09-26 17:15] - Phase 3 Task 2: `bm` omnibox keyword
+- **Implemented:** `src/search/omnibox.ts` — `escapeXml` (& < > " '), `toSuggestions` (≤8, openable-only, `title — <url>url</url>` escaped descriptions, `content`=URL), `loadSessionIndex` (getTree+listMeta+listTags → `buildSearchHandle`, total), `registerOmnibox` wiring the four listeners with session lifecycle + lazy build + emitted-content set. `wxt.config.ts` adds `omnibox.keyword="bm"`; `background.ts` calls `registerOmnibox()` (no-op when the surface is absent).
+- **Files changed:** src/search/omnibox.ts (new), src/search/index.ts (ancestorsOf/toSourceBookmark extracted), src/search/run.ts (buildSearchHandle), src/ui/hooks/useSearchIndex.ts (uses shared mapping), src/entrypoints/background.ts, wxt.config.ts, tests/unit/omnibox.test.ts (18), tests/unit/manifest-commands.test.ts (+2)
+- **Commit:** 7979a88
+- **Learnings:**
+  - Gotcha: `isOpenableUrl` is a DENYLIST — bare words ("fish") pass it, so entered-text vs suggestion-content can't be decided by the URL guard alone; keep a per-session set of emitted `content` strings instead.
+  - Pattern: inject the omnibox surface + deps (`load`, `open`) into `registerOmnibox` — tests drive a fake listener bus with zero chrome globals, and the MV3 lazy-global stays optional for Firefox/tests.
+  - Gotcha: `FolderNode` uses `childIds` (not `children`) plus `isRoot`/`isManaged`; `BookmarkItem` needs `isRoot`/`isManaged` too — hand-built FlattenedTree fixtures must carry all of them.
+  - Gotcha: `chrome.omnibox.setDefaultSuggestion` takes `{description}` — `content` isn't required there even though SuggestResult has it.
+---

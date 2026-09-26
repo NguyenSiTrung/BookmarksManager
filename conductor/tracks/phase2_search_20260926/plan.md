@@ -112,10 +112,10 @@
   - [x] Failing tests: lazy index after first paint ("Indexing…"), top-10 results replace the form and clearing restores it unchanged, Enter opens a new tab, Ctrl/Cmd+Enter the current tab, unopenable URLs disabled; existing `popup-save` tests stay green
   - [x] Implement
 
-- [ ] Task 2: `bm` omnibox keyword
+- [x] Task 2: `bm` omnibox keyword (7979a88)
   <!-- files: src/search/omnibox.ts, src/entrypoints/background.ts, wxt.config.ts, tests/unit/omnibox.test.ts, tests/unit/manifest-commands.test.ts -->
-  - [ ] Failing tests: session index built on `onInputStarted` and dropped on cancel/enter; ≤ 8 suggestions; XML escaping of `& < > " '`; disposition handling; free text opens the top result; never opens `javascript:`/`data:`; handlers total and log no query data; manifest declares `omnibox.keyword = "bm"`
-  - [ ] Implement
+  - [x] Failing tests: session index built on `onInputStarted` and dropped on cancel/enter; ≤ 8 suggestions; XML escaping of `& < > " '`; disposition handling; free text opens the top result; never opens `javascript:`/`data:`; handlers total and log no query data; manifest declares `omnibox.keyword = "bm"`
+  - [x] Implement
 
 - [ ] Task 3: Checkpoint — automated gate for Phase 3 (evidence in `learnings.md`)
   <!-- depends: task1, task2 -->
