@@ -13,6 +13,8 @@ import {
   useBookmarkSelection,
 } from "./BookmarkList";
 import { FolderTree } from "./FolderTree";
+import { ExportDialog } from "./ExportDialog";
+import { ImportDialog } from "./ImportDialog";
 import { TagManager } from "./TagManager";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
@@ -89,6 +91,8 @@ export function App() {
 
   const [view, setView] = useState<SidePanelView>({ kind: "all" });
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const items = useMemo(
     () => resolveView(view, tree, metas),
     [view, tree, metas],
@@ -121,9 +125,23 @@ export function App() {
           <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
           <button
             type="button"
+            onClick={() => setImportOpen(true)}
+            className={navButtonClass + " ml-auto"}
+          >
+            Import…
+          </button>
+          <button
+            type="button"
+            onClick={() => setExportOpen(true)}
+            className={navButtonClass}
+          >
+            Export…
+          </button>
+          <button
+            type="button"
             disabled
             title="The review queue arrives in a later phase"
-            className="ml-auto rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground"
+            className="rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground"
           >
             Review suggestions
           </button>
@@ -259,6 +277,19 @@ export function App() {
           </section>
         </div>
         <TagManager open={tagManagerOpen} onOpenChange={setTagManagerOpen} />
+        <ImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          tree={tree}
+        />
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          tree={tree}
+          meta={metas}
+          tagDefs={tagDefs}
+          currentFolderId={view.kind === "folder" ? view.folderId : undefined}
+        />
       </div>
     </SelectionContext.Provider>
   );
