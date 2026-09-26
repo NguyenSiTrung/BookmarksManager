@@ -201,41 +201,41 @@
 <!-- execution: parallel -->
 <!-- depends: phase4 -->
 
-- [ ] Task 1: Popup quick save; add `activeTab` permission
+- [x] Task 1: Popup quick save; add `activeTab` permission — `a445e88`
   <!-- files: src/entrypoints/popup/*, src/sync/last-folder.ts, wxt.config.ts, store/permissions.md, tests/components/popup-save.test.tsx -->
-  - [ ] Failing tests: prefilled title/URL from the active tab, last-used folder default, tags/category/notes, "Already saved in <folder>" with edit, "Open manager" opens the side panel, render budget under 150 ms
-  - [ ] Implement; add `activeTab` to `wxt.config.ts` and `store/permissions.md`
+  - [x] Failing tests: prefilled title/URL from the active tab, last-used folder default, tags/category/notes, "Already saved in <folder>" with edit, "Open manager" opens the side panel, render budget under 150 ms
+  - [x] Implement; add `activeTab` to `wxt.config.ts` and `store/permissions.md`
 
-- [ ] Task 2: Keyboard shortcut
+- [x] Task 2: Keyboard shortcut — `50dcfd1`
   <!-- files: wxt.config.ts, tests/unit/manifest-commands.test.ts -->
   <!-- depends: task1 -->
-  - [ ] Failing test: built manifest has `commands._execute_action` with a suggested key that avoids Chrome defaults
-  - [ ] Implement
+  - [x] Failing test: built manifest has `commands._execute_action` with a suggested key that avoids Chrome defaults
+  - [x] Implement
 
-- [ ] Task 3: Context menu save; add `contextMenus` permission
+- [x] Task 3: Context menu save; add `contextMenus` permission — `81b2044` (+ failure-badge `b2e4787`)
   <!-- files: src/sync/context-menu.ts, src/entrypoints/background.ts, wxt.config.ts, store/permissions.md, tests/unit/context-menu.test.ts -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: "Save page" / "Save link" items registered on install, click saves into the last-used folder, badge confirmation clears, incognito tabs handled, no network
-  - [ ] Implement; add `contextMenus` to `wxt.config.ts` and `store/permissions.md`
+  - [x] Failing tests: "Save page" / "Save link" items registered on install, click saves into the last-used folder, badge confirmation clears, incognito tabs handled, no network
+  - [x] Implement; add `contextMenus` to `wxt.config.ts` and `store/permissions.md`
 
-- [ ] Task 4: Delete all extension data
+- [x] Task 4: Delete all extension data — `77e55ac`
   <!-- files: src/security/delete-all.ts, src/entrypoints/options/DeleteAllData.tsx, tests/unit/delete-all.test.ts, tests/components/delete-all.test.tsx -->
-  - [ ] Failing tests: confirm dialog copy lists what is deleted and says native bookmarks are untouched; deletes the Dexie database, clears `chrome.storage.local`, removes granted optional host permissions; native bookmark fake unchanged; UI returns to first-run state
-  - [ ] Implement
+  - [x] Failing tests: confirm dialog copy lists what is deleted and says native bookmarks are untouched; deletes the Dexie database, clears `chrome.storage.local`, removes granted optional host permissions; native bookmark fake unchanged; UI returns to first-run state
+  - [x] Implement
 
-- [ ] Task 5: Store docs and PROJECT_PLAN status
+- [x] Task 5: Store docs and PROJECT_PLAN status — `6e9309c`
   <!-- files: store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, PROJECT_PLAN.md -->
   <!-- depends: task1, task2, task3, task4 -->
-  - [ ] Describe only shipped local behavior (tags, notes, categories, undo snapshots, local file import/export, `_favicon`); reviewer notes explain testing without a key
-  - [ ] Update `PROJECT_PLAN.md` §1.1 and §15 Phase 1 status; confirm `check:manifest` and doc/permission grep consistency
+  - [x] Describe only shipped local behavior (tags, notes, categories, undo snapshots, local file import/export, `_favicon`); reviewer notes explain testing without a key
+  - [x] Update `PROJECT_PLAN.md` §1.1 and §15 Phase 1 status; confirm `check:manifest` and doc/permission grep consistency
 
-- [ ] Task 6: End-to-end specs
+- [x] Task 6: End-to-end specs — `71020fd`
   <!-- files: tests/e2e/core-manager.spec.ts, tests/e2e/helpers/*.ts -->
   <!-- depends: task1, task2, task3, task4 -->
-  - [ ] Side panel shows worker-created bookmarks and updates live on external changes; move via drag/"Move to…"; import → export round trip; delete-all leaves bookmarks intact; zero `^https?://` requests after `context.close()` with all features exercised; 10k-seed render
-  - [ ] Implement
+  - [x] Side panel shows worker-created bookmarks and updates live on external changes; move via drag/"Move to…"; import → export round trip; delete-all leaves bookmarks intact; zero `^https?://` requests after `context.close()` with all features exercised; 10k-seed render
+  - [x] Implement
 
-- [ ] Task 7: Checkpoint — automated gate for Phase 5 (evidence in `learnings.md`)
+- [x] Task 7: Checkpoint — automated gate for Phase 5 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4, task5, task6 -->
 
 - [ ] Task 8: Conductor - User Manual Verification 'Phase 1 Core Manager' (Protocol in workflow.md) — the only manual verification, at the end of the track
