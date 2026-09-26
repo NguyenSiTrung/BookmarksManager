@@ -117,7 +117,7 @@
   - [x] Failing tests: session index built on `onInputStarted` and dropped on cancel/enter; ≤ 8 suggestions; XML escaping of `& < > " '`; disposition handling; free text opens the top result; never opens `javascript:`/`data:`; handlers total and log no query data; manifest declares `omnibox.keyword = "bm"`
   - [x] Implement
 
-- [ ] Task 3: Checkpoint — automated gate for Phase 3 (evidence in `learnings.md`)
+- [x] Task 3: Checkpoint — automated gate for Phase 3 (evidence in `learnings.md`) — green at 7979a88
   <!-- depends: task1, task2 -->
 
 ---
