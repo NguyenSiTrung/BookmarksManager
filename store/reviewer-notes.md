@@ -6,25 +6,74 @@
 
 ## What this release is
 
-A foundation release: the extension's popup, side panel, and options
-surfaces and the local storage schema are in place, plus a working,
-consent-gated Test connection for the Jev AI providers TypeSafe and
-OpenRouter. Bookmark management features ship in later releases; the
-`bookmarks` permission is deliberately absent.
+The offline core manager, plus the optional provider connection from the
+previous slice:
+
+- A quick-save popup, a keyboard shortcut, and right-click "Save page" /
+  "Save link" items.
+- A side panel with a folder tree, a virtualized list/grid, and views for all,
+  recently saved, untagged, duplicates, tags, and categories.
+- Tags, categories, and notes stored locally; undo for delete, bulk move,
+  duplicate merge, and tag delete.
+- Drag-and-drop moves and reorders.
+- Local import and export (JSON, Netscape HTML, CSV) and local duplicate
+  detection with keep-one merge.
+- Site icons through Chrome's built-in `_favicon` renderer.
+- "Delete all extension data".
+- An optional, consent-gated Test connection for the Jev AI providers TypeSafe
+  and OpenRouter.
+
+Not in this release: search and the command palette, the AI review queue, the
+link checker, cloud sync, and accounts.
 
 ## Testing without an API key
 
-Everything in this build works with no account and no key:
+Everything except the provider Test connection works with no account and no
+key. Suggested walkthrough:
 
 1. Install the extension. It makes **zero network requests** on install or
-   page load — verify in DevTools if desired.
-2. Click the toolbar action to open the popup; open the side panel; open the
-   options page from extension details. All three render without errors.
-3. Permissions at install are only `storage` and `sidePanel` — no host
-   access, no bookmarks access.
-4. Until a provider is fully enabled, no request can be made: the Test
-   connection button only appears once consent, host permission, and
-   settings are all in place.
+   page load. This is asserted automatically by `tests/e2e/shell.spec.ts`,
+   which loads the extension in a fresh Chromium profile, exercises the
+   popup, side panel, and options surfaces, and fails if the page or the
+   service worker emits a single `http(s)` request (before the context is
+   closed).
+2. Permissions at install are the required set only — `activeTab`,
+   `bookmarks`, `contextMenus`, `favicon`, `storage`, `sidePanel`. There is no
+   host access and no page-content access at install.
+3. **Quick save from the popup:** click the toolbar action. The form is
+   prefilled with the active tab's title and URL; add tags, a category, notes,
+   and pick a folder, then Save. Re-opening the popup defaults to the folder
+   you last used. Saving a URL that already exists shows "Already saved in
+   <folder>" with an "Edit that bookmark" button that opens the side panel on
+   that bookmark.
+4. **Quick save from the keyboard:** press Ctrl+Shift+Y (Command+Shift+Y on
+   macOS), or rebind it at `chrome://extensions/shortcuts`, to open the same
+   popup.
+5. **Quick save from the context menu:** right-click a page → "Save page to
+   Bookmarks Manager", or right-click a link → "Save link to Bookmarks
+   Manager". The item saves into the last-used folder and the toolbar shows a
+   brief "✓".
+6. **Side panel:** open it from the toolbar action's "Open manager" button or
+   the browser's side-panel picker. Browse the folder tree and the views;
+   select one or many bookmarks; edit title/URL/tags/category/notes; move with
+   "Move to…"; delete (with an undo toast); reorder by dragging, including a
+   keyboard-accessible drag mode; create, rename, and delete folders.
+7. **Import a file:** side panel → "Import…" → choose a `.json`, `.html`/`.htm`,
+   or `.csv` file from your device. A preview shows folder/bookmark/duplicate/
+   invalid counts before anything is written; confirm to import into a new
+   "Imported <date>" folder under Other bookmarks, then delete that folder in
+   one click if you want to undo it.
+8. **Export:** side panel → "Export…" → choose a format (JSON, Netscape HTML,
+   CSV) and scope (whole library or current folder). The file downloads
+   locally; no upload occurs, and exports contain no API keys.
+9. **Duplicates:** open the "Duplicates" view. Groups are labeled exact or
+   normalized (tracking parameters and trivial URL differences are ignored).
+   Use "Keep this one" to merge a group, then undo from the toast.
+10. **Delete all extension data:** Options → "Delete all extension data" →
+    confirm. The dialog lists exactly what is removed and states that native
+    bookmarks are untouched. After confirming, open the browser's native
+    bookmark manager: your bookmarks are all still there, unchanged. The
+    extension is back to its first-run state (reload the Options page).
 
 ## Testing the provider connection
 
@@ -52,9 +101,11 @@ needs a real provider key:
   refusal codes such as `no_key`/`no_consent`/`no_permission`, `reconnect`
   for an unreadable stored key, `not_enabled`, `internal_error`) — never
   keys or response bodies.
+- Until consent, host permission, and a stored key are all in place the Test
+  connection button is not available and no request can be made — the gate
+  re-checks consent and permission before every send.
 - Revoking removes consent and the host permission (with an option to delete
-  the stored key) and stops all further requests — the gate re-checks
-  consent and permission before every send.
+  the stored key) and stops all further requests.
 - _A temporary low-credit test key can be supplied at submission time and
   revoked after review — decide at release._
 
@@ -65,6 +116,9 @@ needs a real provider key:
 - `npm run check:bundle` — asserts the emitted bundle contains no `eval(`,
   no `new Function`, and no remote `<script src>` tags; all code is bundled
   by WXT and only minified, never obfuscated.
+- `tests/e2e/shell.spec.ts` — loads the built extension in a fresh profile and
+  fails if any `http(s)` request is emitted before teardown, proving the
+  zero-egress claim for a fresh install.
 - CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, build,
   both checks above, and a headed Chromium smoke test that loads the
   extension and renders all three surfaces.
@@ -83,3 +137,7 @@ needs a real provider key:
   destination origin, feature `jev_test`, and the top-level field names
   (`model`, `state`, `questions`) — never request contents, headers, keys,
   or bookmark data.
+- Bookmark metadata (tags, category, notes) and undo snapshots live only in
+  the extension's IndexedDB, keyed by Chrome bookmark id; the native bookmark
+  tree is the source of truth and "Delete all extension data" never touches
+  it.

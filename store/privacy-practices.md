@@ -7,35 +7,50 @@
 > alters data flow — a mismatch between dashboard answers, the privacy policy,
 > and actual behavior can suspend all of the publisher's items.
 >
-> This version describes the **current slice only**: the extension foundation
-> plus a shipped, consent-gated synthetic Jev test-connection flow. Bookmark
-> management features are not in this release and are not declared here.
+> This version describes the **shipped core manager**: bookmark management
+> (quick save, side panel, tags, categories, notes, drag and drop, import and
+> export, duplicate detection, `_favicon` icons, delete all data), plus the
+> optional, consent-gated synthetic Jev test-connection flow. Every local
+> feature works with no account and no key.
 
 ## Single purpose
 
-> Manage and review your Chrome bookmarks from the side panel. This
-> foundation release ships the extension's surfaces (popup, side panel,
-> options) and local storage, plus an optional connection test for an AI
-> provider you configure with your own API key. The test sends only a fixed
-> synthetic payload — never your bookmarks. Bookmark management features are
-> not in this release.
+> Manage, save, and organize your Chrome bookmarks from the side panel. The
+> extension keeps your native bookmarks as the source of truth and adds local
+> tags, categories, and notes on top; quick save from the popup, a keyboard
+> shortcut, or the right-click menu; drag and drop; and local import/export
+> and duplicate detection. An optional connection test for an AI provider you
+> configure with your own API key sends only a fixed synthetic payload — never
+> your bookmarks.
 
 ## Permission justifications
 
 Use the justification column of `store/permissions.md` verbatim; CI
 (`npm run check:manifest`) keeps that table equal to the generated manifest.
 
-- `storage` — store encrypted provider API-key envelopes in
+- `activeTab` — Read the current tab's title and URL for the quick-save popup
+  when the user opens it; the grant is scoped to that one user action and
+  expires when the tab navigates.
+- `bookmarks` — Read the native bookmark tree for the side-panel manager UI and
+  write user-initiated create/update/move/remove plus quick-save.
+- `contextMenus` — Add the right-click "Save page to Bookmarks Manager" and
+  "Save link to Bookmarks Manager" items that quick-save into the last-used
+  folder.
+- `favicon` — Serve cached page favicons via Chrome's built-in
+  `chrome-extension://<id>/_favicon/?pageUrl=...&size=...` renderer so the
+  manager UI can show site icons without host access or any network request.
+- `sidePanel` — Show the Bookmarks Manager UI in Chrome's side panel.
+- `storage` — Store encrypted provider API-key envelopes in
   chrome.storage.local; plaintext keys are never persisted.
-- `sidePanel` — show the Bookmarks Manager UI in Chrome's side panel.
-- `https://api.typesafe.ai/*` (optional) — Jev test connection to TypeSafe,
-  started by the user.
-- `https://openrouter.ai/*` (optional) — Jev test connection to OpenRouter,
-  started by the user.
+- `https://api.typesafe.ai/*` (optional) — Jev test connection to the TypeSafe
+  provider, started by the user.
+- `https://openrouter.ai/*` (optional) — Jev test connection to the OpenRouter
+  provider, started by the user.
 
-(These two optional patterns back the shipped, consent-gated Test connection
-— the only feature that produces network traffic, and only on an explicit
-Test connection click.)
+(The two optional patterns back the shipped, consent-gated Test connection —
+the only feature that produces network traffic, and only on an explicit Test
+connection click. The extension requests no host access at install time and
+reads no page content on any site.)
 
 ## Remote code
 
@@ -48,17 +63,23 @@ build on any hit.
 
 Conservative declaration — under-declaring is the risky direction:
 
-- **Authentication information: yes.** The user's own API key is stored
-  encrypted on the device and sent only to the provider that issued it, in
-  the `Authorization: Bearer` header, when the user runs a Test connection —
-  never on install, page load, in the background, or on enable.
-- **Everything else: not collected in this release.** The only other
-  transmission is the test connection's fixed synthetic payload (`model`,
-  `state`, `questions`), which contains no user data.
+- **Authentication information: yes, only if you set up the optional AI
+  provider.** The user's own API key is stored encrypted on the device and sent
+  only to the provider that issued it, in the `Authorization: Bearer` header,
+  when the user runs a Test connection — never on install, page load, in the
+  background, or on enable. Users who never configure a provider store and send
+  no key.
+- **Bookmark data stays on the device.** Titles, URLs, folder structure, tags,
+  categories, and notes are read from and written to Chrome's own bookmarks and
+  the extension's local IndexedDB. They are never transmitted anywhere. Imports
+  and exports are local file reads and downloads.
+- **Everything else: not collected.** The only other transmission is the test
+  connection's fixed synthetic payload (`model`, `state`, `questions`), which
+  contains no user data.
 - Not collected: personally identifiable information, health information,
   financial and payment information, personal communications, location, web
   history, user activity, website content. (No click or keystroke monitoring;
-  no bookmark or page content leaves the device in this release.)
+  no bookmark, tag, note, or page content leaves the device.)
 
 Before any future feature sends bookmark, page, or activity data, update this
 declaration, `store/privacy-policy.md`, and the in-product consent screen in
