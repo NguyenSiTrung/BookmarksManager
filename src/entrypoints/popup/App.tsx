@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { patchMeta } from "../../db/meta";
+import { listMeta, listTags, patchMeta } from "../../db/meta";
+import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { normalizeUrl } from "../../duplicates/normalize";
 import type { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
@@ -17,7 +18,11 @@ import { flattenTree } from "../../sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
 import { registerDbReleaseListener } from "../../security/delete-all";
 import { CategorySelect } from "../../ui/components/category-select";
+import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
+import { openBookmarkUrl } from "../../sync/tabs";
+import type { OpenUrlDisposition } from "../../sync/tabs";
 import { openSidePanel, queryActiveTab, setPendingEditId } from "./chrome";
+import { PopupSearch } from "./Search";
 
 /**
  * Quick-save popup (spec §3).
@@ -119,6 +124,11 @@ export function App() {
   const windowIdRef = useRef<number | undefined>(undefined);
   /** Synchronous re-entrancy guard — `busy` state lags a fast double submit. */
   const savingRef = useRef(false);
+  /** Search box text; while non-empty the results list replaces the form. */
+  const [searchQuery, setSearchQuery] = useState("");
+  /** Meta/tag rows for the search index — loaded lazily post-paint. */
+  const [metas, setMetas] = useState<readonly BookmarkMeta[]>([]);
+  const [tagDefs, setTagDefs] = useState<readonly TagDef[]>([]);
 
   // Answer the Options page's "delete all extension data" broadcast by closing
   // this page's Dexie connection; an open connection would block the drop.
@@ -147,6 +157,29 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  // Lazy index inputs: the save form is the popup's hot path, so the meta /
+  // tag rows the search index needs are fetched only after the first real
+  // paint (ready === true). `useSearchIndex` then builds off-paint inside an
+  // effect; until the handle lands, the results area reads "Indexing…".
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    void (async () => {
+      const [metaRows, tagRows] = await Promise.all([
+        listMeta().catch((): BookmarkMeta[] => []),
+        listTags().catch((): TagDef[] => []),
+      ]);
+      if (cancelled) return;
+      setMetas(metaRows);
+      setTagDefs(tagRows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready]);
+
+  const search = useSearchIndex(tree, metas, tagDefs);
 
   const destinations = useMemo(() => folderOptions(tree), [tree]);
 
@@ -238,6 +271,18 @@ export function App() {
     openSidePanel(windowIdRef.current);
   };
 
+  /**
+   * Result opens route through the typed tabs slice: foreground/click →
+   * `tabs.create`, Ctrl/Cmd+Enter → `tabs.update` on the current tab. No
+   * `tabs` permission needed; unopenable URLs are filtered in the component.
+   */
+  const handleOpenResult = (
+    resultUrl: string,
+    disposition: OpenUrlDisposition,
+  ): void => {
+    void openBookmarkUrl(resultUrl, disposition);
+  };
+
   return (
     <main
       data-testid="popup-quick-save"
@@ -254,9 +299,16 @@ export function App() {
         </button>
       </header>
 
+      <PopupSearch
+        search={search}
+        query={searchQuery}
+        onQueryChange={setSearchQuery}
+        onOpen={handleOpenResult}
+      />
+
       {!ready ? (
         <p className="mt-3 text-xs text-muted-foreground">Loading…</p>
-      ) : (
+      ) : searchQuery !== "" ? null : (
         <form
           className="mt-3 space-y-2"
           onSubmit={(event) => {
