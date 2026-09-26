@@ -13,6 +13,11 @@ previous slice:
   "Save link" items.
 - A side panel with a folder tree, a virtualized list/grid, and views for all,
   recently saved, untagged, duplicates, tags, and categories.
+- Fully local search across title, URL, domain, tags, and notes — with a
+  filter syntax (`tag:`, `folder:`, `is:duplicate`, `before:`, negation,
+  quotes) and autocomplete — available from the side-panel search bar, a
+  Ctrl+K / Command+K command palette (jump targets, commands, per-result
+  actions), the popup's search box, and the `bm` address-bar keyword.
 - Tags, categories, and notes stored locally; undo for delete, bulk move,
   duplicate merge, and tag delete.
 - Drag-and-drop moves and reorders.
@@ -23,8 +28,8 @@ previous slice:
 - An optional, consent-gated Test connection for the Jev AI providers TypeSafe
   and OpenRouter.
 
-Not in this release: search and the command palette, the AI review queue, the
-link checker, cloud sync, and accounts.
+Not in this release: the AI review queue, the link checker, cloud sync, and
+accounts.
 
 ## Testing without an API key
 
@@ -41,7 +46,12 @@ key. Suggested walkthrough:
    too (before the context is closed). `tests/e2e/core-manager.spec.ts`
    repeats the same assertion while exercising the core features end to end,
    including a context-menu save driven inside the service worker and the
-   browser-resolved keyboard shortcut.
+   browser-resolved keyboard shortcut. `tests/e2e/search.spec.ts` asserts the
+   same zero-egress invariant while driving every search surface — the
+   side-panel bar (including a live update mid-query), the command palette,
+   and the popup search — so search traffic provably never leaves the device.
+   (The `bm` omnibox path is unit-tested: the browser's address bar cannot be
+   driven by automation.)
 2. Permissions at install are the required set only — `activeTab`,
    `bookmarks`, `contextMenus`, `favicon`, `storage`, `sidePanel`. There is no
    host access and no page-content access at install.
@@ -63,18 +73,33 @@ key. Suggested walkthrough:
    select one or many bookmarks; edit title/URL/tags/category/notes; move with
    "Move to…"; delete (with an undo toast); reorder by dragging, including a
    keyboard-accessible drag mode; create, rename, and delete folders.
-7. **Import a file:** side panel → "Import…" → choose a `.json`, `.html`/`.htm`,
+7. **Search:** type in the side-panel search bar (or press `/` to focus it).
+   Results update live and support the filter syntax — try
+   `tag:<name>`, `folder:<name>`, `is:duplicate`, `is:untagged`, or a quoted
+   phrase; inline suggestions complete keys and values, and inline warnings
+   explain a malformed filter. Escape clears the query and restores the
+   previous view. Press Ctrl+K (Command+K on macOS) for the command palette:
+   bookmarks, views, folders, tags, categories, and commands in one list;
+   Enter on a bookmark opens it, and each row's "⋯" menu offers Reveal in
+   folder, Edit, and Copy URL. The quick-save popup also has a search box —
+   typing swaps the save form for the top ten results, Enter opens in a new
+   tab, Ctrl+Enter (Command+Enter) in the current tab. In the address bar,
+   type `bm` then Space/Tab to search bookmarks from the omnibox; up to eight
+   suggestions appear and Enter opens the top hit. All of this runs on the
+   device — the e2e suite proves zero requests during search, and no query is
+   ever stored.
+8. **Import a file:** side panel → "Import…" → choose a `.json`, `.html`/`.htm`,
    or `.csv` file from your device. A preview shows folder/bookmark/duplicate/
    invalid counts before anything is written; confirm to import into a new
    "Imported <date>" folder under Other bookmarks, then delete that folder in
    one click if you want to undo it.
-8. **Export:** side panel → "Export…" → choose a format (JSON, Netscape HTML,
+9. **Export:** side panel → "Export…" → choose a format (JSON, Netscape HTML,
    CSV) and scope (whole library or current folder). The file downloads
    locally; no upload occurs, and exports contain no API keys.
-9. **Duplicates:** open the "Duplicates" view. Groups are labeled exact or
+10. **Duplicates:** open the "Duplicates" view. Groups are labeled exact or
    normalized (tracking parameters and trivial URL differences are ignored).
    Use "Keep this one" to merge a group, then undo from the toast.
-10. **Delete all extension data:** Options → "Delete all extension data" →
+11. **Delete all extension data:** Options → "Delete all extension data" →
     confirm. The dialog lists exactly what is removed and states that native
     bookmarks are untouched. After confirming, open the browser's native
     bookmark manager: your bookmarks are all still there, unchanged. The

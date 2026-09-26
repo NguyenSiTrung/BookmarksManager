@@ -8,20 +8,22 @@
 > and actual behavior can suspend all of the publisher's items.
 >
 > This version describes the **shipped core manager**: bookmark management
-> (quick save, side panel, tags, categories, notes, drag and drop, import and
-> export, duplicate detection, `_favicon` icons, delete all data), plus the
+> (quick save, side panel, fully local search with the `bm` address-bar
+> keyword, tags, categories, notes, drag and drop, import and export,
+> duplicate detection, `_favicon` icons, delete all data), plus the
 > optional, consent-gated synthetic Jev test-connection flow. Every local
 > feature works with no account and no key.
 
 ## Single purpose
 
-> Manage, save, and organize your Chrome bookmarks from the side panel. The
-> extension keeps your native bookmarks as the source of truth and adds local
-> tags, categories, and notes on top; quick save from the popup, a keyboard
-> shortcut, or the right-click menu; drag and drop; and local import/export
-> and duplicate detection. An optional connection test for an AI provider you
-> configure with your own API key sends only a fixed synthetic payload — never
-> your bookmarks.
+> Manage, search, save, and organize your Chrome bookmarks from the side
+> panel. The extension keeps your native bookmarks as the source of truth and
+> adds local tags, categories, and notes on top; quick save from the popup, a
+> keyboard shortcut, or the right-click menu; fully on-device search across
+> the side panel, a command palette, the popup, and the `bm` address-bar
+> keyword; drag and drop; and local import/export and duplicate detection.
+> An optional connection test for an AI provider you configure with your own
+> API key sends only a fixed synthetic payload — never your bookmarks.
 
 ## Permission justifications
 
@@ -73,6 +75,9 @@ Conservative declaration — under-declaring is the risky direction:
   categories, and notes are read from and written to Chrome's own bookmarks and
   the extension's local IndexedDB. They are never transmitted anywhere. Imports
   and exports are local file reads and downloads.
+- **Search queries are never stored or sent.** All search — the side-panel
+  bar, command palette, popup, and `bm` omnibox keyword — runs against an
+  in-memory local index; typing produces zero network requests.
 - **Everything else: not collected.** The only other transmission is the test
   connection's fixed synthetic payload (`model`, `state`, `questions`), which
   contains no user data.

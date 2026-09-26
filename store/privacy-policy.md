@@ -7,7 +7,7 @@
 > The publisher name, contact email, hosted URL, and effective date below are
 > placeholders to fill in at release time — do not publish with placeholders.
 
-**Version:** 0.2 draft
+**Version:** 0.3 draft
 **Effective date:** _release prerequisite — set at publication_
 **Hosted URL:** _release prerequisite — not yet published_
 
@@ -48,6 +48,14 @@ extension sends zero requests.
 - **Site icons** are served by Chrome's own built-in `_favicon` renderer using
   the `favicon` permission. The extension requests no host access for icons and
   makes no request to any icon service.
+- **Search** runs entirely on your device. The side-panel bar, the command
+  palette (Ctrl+K / Command+K), the popup search box, and the `bm`
+  address-bar keyword all query a local index built in memory from your
+  bookmarks and their tags, notes, and categories. Search queries are never
+  stored, logged, or sent anywhere — typing into any search surface produces
+  no network request of any kind. The index itself is held in memory only:
+  it is rebuilt when a surface opens (the omnibox builds a fresh one per
+  session and discards it when you leave) and is never written to disk.
 - **Import and export** are local file operations: you pick a file on your own
   device (JSON, Netscape HTML, or CSV) or download one. The file is read and
   written entirely in the browser — nothing is uploaded, and no server is
@@ -60,6 +68,8 @@ extension sends zero requests.
 - Undo snapshots for reversible operations, in IndexedDB.
 - Extension settings and preferences (for example the last folder a quick save
   used), in IndexedDB.
+- The search index exists only in memory — it is not persisted, and search
+  queries are never written to any storage surface.
 - Provider records, written only if you set up the optional AI feature; they
   stay on the device:
   - Consent records: a versioned `jev_test` grant per provider origin,

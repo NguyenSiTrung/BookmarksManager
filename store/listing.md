@@ -12,8 +12,9 @@ Bookmarks Manager
 
 ## Short description (draft)
 
-A fast, offline bookmarks manager in the side panel: save, tag, organize,
-import, and de-duplicate your bookmarks. No account, no sign-in, no tracking.
+A fast, offline bookmarks manager in the side panel: search, save, tag,
+organize, import, and de-duplicate your bookmarks. No account, no sign-in,
+no tracking.
 
 ## Full description (draft)
 
@@ -29,6 +30,12 @@ What you can do:
 - **Quick save** the current page from the popup, a keyboard shortcut
   (Ctrl+Shift+Y / Command+Shift+Y), or the right-click menu — with tags,
   notes, a category, and a folder. The last folder you used is remembered.
+- **Search** instantly, entirely on your device. A fuzzy index covers title,
+  URL, domain, tags, and notes, with a filter syntax (`tag:`, `folder:`,
+  `is:duplicate`, `before:`, negation, quoted phrases) and inline
+  autocomplete. Search from the side-panel bar, a command palette
+  (Ctrl+K / Command+K), the popup's search box, or the address bar with the
+  `bm` keyword. Search queries are never stored or sent anywhere.
 - **Browse and manage** from the side panel: a folder tree, a virtualized
   list or grid, and views for all, recently saved, untagged, duplicates,
   tags, and categories.
@@ -38,6 +45,10 @@ What you can do:
   keyboard-accessible drag mode.
 - **Undo** a delete, a bulk move, a duplicate merge, or a tag delete — the
   last operations are reversible.
+- **Jump anywhere** from the command palette: bookmarks, views, folders,
+  tags, and categories, plus commands like Import, Export, Tag manager, New
+  folder, Undo, and per-result actions (open, reveal in folder, edit, copy
+  URL).
 - **Find duplicates** locally (exact and normalized URLs, ignoring tracking
   parameters) and merge a group while keeping one bookmark.
 - **Import and export** your library as JSON, Netscape HTML, or CSV. These are
@@ -58,9 +69,9 @@ when you click it. Revoke consent and access at any time from the options
 page. AI features are entirely optional; every feature above works without a
 key.
 
-Not in this release: search and a command palette, the AI review queue, a
-link checker, cloud sync, and accounts. The extension requests no access to
-your browsing history or page content.
+Not in this release: the AI review queue, a link checker, cloud sync, and
+accounts. The extension requests no access to your browsing history or page
+content.
 
 ## What's new
 
@@ -74,6 +85,9 @@ Version 0.1 — first release.
   and tag delete.
 - Local import/export as JSON, Netscape HTML, or CSV; local duplicate
   detection with keep-one merge.
+- Local search everywhere: the side-panel bar, the Ctrl+K / Command+K
+  command palette, the popup, and the `bm` omnibox keyword — fuzzy matching
+  with filters, computed on-device, with queries never stored or sent.
 - Site icons via the browser's built-in favicon renderer.
 - "Delete all extension data" with a confirmation that names what is removed
   and states that native bookmarks are untouched.
@@ -106,8 +120,8 @@ English
   statements — no "100% private" or "best" claims.
 - The optional AI features are described as optional and key-based; the
   listing names providers once, in context, rather than as a keyword list.
-- The "Not in this release" list is kept truthful: search, the command
-  palette, the AI review queue, the link checker, and cloud sync are not
-  shipped, so they must not be promised.
+- The "Not in this release" list is kept truthful: the AI review queue, the
+  link checker, cloud sync, and accounts are not shipped, so they must not
+  be promised.
 - As features land in later releases, extend the feature list and re-check it
   against `store/permissions.md` and the privacy policy in the same change.
