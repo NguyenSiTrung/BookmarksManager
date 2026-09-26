@@ -21,7 +21,7 @@ A Chrome extension (Manifest V3) that replaces the built-in bookmark manager wit
 
 **Delivered: Phases 0 and 1 of section 15 — the offline core manager — plus the TypeSafe/OpenRouter connection slice from Phase 3** (archived tracks `conductor/archive/phase0_foundation_20260925/` and `conductor/archive/phase1_core_manager_20260926/`). Statuses below are per plan area; "Partial" means one real path exists and is tested, not that the area is finished.
 
-**Gate at this revision** (run 2026-09-26): `npm run lint`, `npm run typecheck`, `npm run test -- --run` (46 files, 1112 tests), `npm run build`, `npm run check:manifest`, and `npm run check:bundle` all pass. The Phase 1 e2e specs and the phase checkpoint are the track's remaining tasks; the Phase 0 `tests/e2e/shell.spec.ts` smoke spec currently fails on a stale popup assertion and is updated there. CI runs the e2e spec under a headed browser (`xvfb-run`) for MV3 fidelity.
+**Gate at this revision** (run 2026-09-26): `npm run lint` (0 errors, one `react-hooks/incompatible-library` warning on the virtualizer call), `npm run typecheck`, `npm run test -- --run` (46 files, 1128 tests), `npm run build`, `npm run check:manifest`, `npm run check:bundle`, and `npm run test:e2e` (7 Playwright specs: 6 core-manager plus the shell smoke; all pass headed under `xvfb-run`) all pass. The Phase 1 e2e specs and the phase checkpoint landed, so the track is archived and no track is active. CI runs the e2e specs under a headed browser (`xvfb-run`) for MV3 fidelity.
 
 | Plan area | Status | Implemented today | Still missing |
 |---|---|---|---|
@@ -29,10 +29,10 @@ A Chrome extension (Manifest V3) that replaces the built-in bookmark manager wit
 | §5.2 Jev decisions | Not started | — | Every question set (categorize, tags, placement, health, duplicates, rerank), confidence policy, review queue |
 | §5.3 LLM features | Not started | — | LLM client, escalation, explanations, restructure proposals, summaries |
 | §5.4 v2 features | Not started | — | `alarms` scheduling, smart collections, tuning UI, hierarchical classification, per-task routing |
-| §6.1 Components | Partial | Service worker (bookmark listeners, startup reconcile, context-menu registration), popup quick save, side-panel manager, Options page, consented egress in `src/net/`, Dexie v2 plus `chrome.storage.local` | Search index, job queue, LLM client, confidence router, link checker, content script |
+| §6.1 Components | Partial | Service worker (bookmark listeners, startup reconcile, context-menu registration), popup quick save, side-panel manager, Options page, consented egress in `src/net/`, typed worker↔UI provider messages in `src/messages/`, Dexie v2 plus `chrome.storage.local` | Search index, job queue, LLM client, confidence router, link checker, content script |
 | §6.2 Decision pipeline | Not started | — | Deterministic checks on real bookmarks, question building, routing, audit/undo |
 | §6.3 Tech stack | Partial | WXT 0.21.4, React 19.3, Tailwind 4, strict TypeScript 6, Zod 4.6.5 (jitless), Dexie 4.4.6 + dexie-react-hooks, radix-ui primitives, `@dnd-kit/core` + `@dnd-kit/sortable`, `@tanstack/react-virtual`, Vitest 5, Testing Library, Playwright 1.63, ESLint 9 flat, GitHub Actions | MiniSearch, `@mozilla/readability`, the shadcn/ui package (only its primitives were copied into `src/ui/components/`), Zustand, and TanStack Query are not installed |
-| §6.4 Directory layout | Partial | `src/{entrypoints,jev,net,consent,security,schemas,db,sync,io,duplicates,undo,ui}`, `tests/{unit,components,fixtures,e2e}`, `store/`, `scripts/`, `.github/workflows/` | `src/{llm,decisions,search,jobs}`, `tests/mock-servers/`, `tests/fixtures/labeled/` |
+| §6.4 Directory layout | Partial | `src/{entrypoints,jev,net,consent,security,schemas,db,sync,io,duplicates,undo,messages,ui}`, `tests/{unit,components,fixtures,e2e,fakes}`, `store/`, `scripts/`, `.github/workflows/` | `src/{llm,decisions,search,jobs}`, `tests/mock-servers/`, `tests/fixtures/labeled/`, `store/assets/` |
 | §7 Data model | Partial | `Bookmark`, `Tag`, `Decision` (all seven kinds), `ProviderSettings`, `ConsentRecord`, `BookmarkMeta`, `TagDef`, `UndoSnapshot`, and `ExportEnvelope` schemas with valid/invalid fixtures; Dexie v2 tables `metadata`, `decisions`, `consents`, `sentLog`, `keyMaterials`, `bookmarkMeta`, `tags`, `undo` | Bookmark persistence beyond extension metadata (the native tree is the source of truth); any settings schema beyond provider settings |
 | §8.1 Provider presets | Partial | TypeSafe and OpenRouter with fixed endpoints and per-preset model allowlists (`src/net/presets.ts`) | Custom base URLs and the OpenRouter alpha Decisions preset (deferred to 1.1) |
 | §8.2 Wire schemas | Done | `src/jev/wire.ts`: SystemOne request/response, Noul/Choice/Score questions, answer-key and answer-type cross-check, synthetic test request | — |
@@ -42,10 +42,10 @@ A Chrome extension (Manifest V3) that replaces the built-in bookmark manager wit
 | §9, §10, §11 | Not started | — | Question design, confidence policy, LLM layer |
 | §12 Security and privacy | Partial | AES-GCM 256 with a non-extractable `CryptoKey` in IndexedDB and ciphertext in `chrome.storage.local`, worker-only key access, masked keys, single `fetch` module, metadata-only sent log, and delete-all-data (IndexedDB plus `chrome.storage.local`/`session` plus granted optional host permissions; native bookmarks untouched) | Passphrase mode, sensitive-site blocklist, URL cleaning, notes and page-text rules for AI features |
 | §13 Store readiness | Partial | Draft `store/` documents describing the shipped core manager and provider slice; `check:manifest` and `check:bundle` CI guards; the generated manifest declares `activeTab`, `bookmarks`, `contextMenus`, `favicon`, `storage`, `sidePanel` plus the two narrow optional origins | Public privacy-policy URL, icon/screenshots/promo assets, dashboard answers, 2-Step Verification and trader declaration, every item of section 13.13 |
-| §14 Testing strategy | Partial | 1112 Vitest unit/component tests, one Playwright shell/e2e smoke spec, manifest and bundle compliance tests, CI running the full gate | Mock Jev/OpenAI HTTP servers, live smoke script, labeled fixtures, quality evals, core-manager e2e (worker sync, drag/move, import/export round trip, delete-all) |
-| §15 Phases | Phases 0–1 done; Phases 2–6 open | See the status column in section 15 | — |
+| §14 Testing strategy | Partial | 1128 Vitest unit/component tests, 7 Playwright e2e specs (external-change sync, "Move to…", import/export round trip, delete-all, 10k virtualized render, zero-egress core sweep, shell smoke), manifest and bundle compliance tests, CI running the full gate | Mock Jev/OpenAI HTTP servers, live smoke script, labeled fixtures, quality evals |
+| §15 Phases | Phases 0–1 done; Phase 3 partial; Phases 2, 4–8 open | See the status column in section 15 | — |
 
-Eight Phase 0 follow-ups are tracked as open Beads issues labeled `followup phase0` (P3) rather than in this plan: `src/messages/provider.ts` split, per-preset key-store serialization, egress lint breadth, e2e positive control, background protocol note, keys IV-branch test, bundle-script hardening, and a sent-log retention cap.
+Nine P3 Beads issues are open rather than tracked here: the eight `followup phase0` items — `src/messages/provider.ts` split, per-preset key-store serialization, egress lint breadth, e2e positive control, background protocol note, keys IV-branch test, bundle-script hardening, and a sent-log retention cap — plus `BookmarksManager-sb9` (move the popup↔sidepanel handoff helpers out of `popup/chrome.ts` into `src/sync/`).
 
 ---
 
@@ -752,7 +752,7 @@ Sources: [Program Policies](https://developer.chrome.com/docs/webstore/program-p
 }
 ```
 
-**Implemented today (2026-09-26):** the generated manifest declares only `storage` and `sidePanel`, plus the narrow optional origins `https://api.typesafe.ai/*` and `https://openrouter.ai/*`. Each remaining permission above is added with the feature that needs it, so no "future-proofing" appears in a shipped manifest (section 1.1, `store/permissions.md`).
+**Implemented today (2026-09-26):** the generated manifest declares `activeTab`, `bookmarks`, `contextMenus`, `favicon`, `storage`, and `sidePanel`, plus the narrow optional origins `https://api.typesafe.ai/*` and `https://openrouter.ai/*` and the `_execute_action` quick-save command. `scripting` is not declared yet, because the on-demand extraction content script is not built. Each remaining permission above is added with the feature that needs it, so no "future-proofing" appears in a shipped manifest (section 1.1, `store/permissions.md`).
 
 **Staged release (recommended).** Broad patterns such as `https://*/*` make reviews take longer. Also, the minimum-permission policy applies to optional permissions as well:
 - **1.0** ships the core plus the TypeSafe, OpenRouter, and LLM presets, with narrow host patterns only.
@@ -945,7 +945,7 @@ Estimates assume one developer working full time.
 | **7. Release 1.1** | Not started | Custom base URLs and the link checker (with soft-404) with broad optional host permissions, updated disclosures, `CONSENT_VERSION` increase | 1 week |
 | **8. v2** | Not started | Scheduled maintenance (adds `alarms`), smart collections, threshold tuning UI, hierarchical classification, per-task routing | 2 to 3 weeks |
 
-**Status note (2026-09-26):** Phases 0 and 1 are complete. Phase 0 ran past its 4-day scope by including the consented TypeSafe/OpenRouter connection slice, and Phase 1 shipped the offline core manager. Phase 3's provider layer is roughly half delivered (section 1.1); Phases 2, 4, 5, and 6 have not started. The estimates above remain unchanged, so the remaining work to 1.0 is about 9 to 10 weeks.
+**Status note (2026-09-26):** Phases 0 and 1 are complete and both tracks are archived, so no track is active. Phase 0 ran past its 4-day scope by including the consented TypeSafe/OpenRouter connection slice, and Phase 1 shipped the offline core manager with its e2e suite (7 Playwright specs green). Phase 3's provider layer is roughly half delivered (section 1.1); Phases 2, 4, 5, and 6 have not started. The estimates above remain unchanged, so the remaining work to 1.0 is about 9 to 10 weeks.
 
 **Total**: about 11 weeks of work to a public 1.0 (Phases 0 to 6), plus store review time. Release 1.1 follows about a week later; v2 takes another 2 to 3 weeks.
 
