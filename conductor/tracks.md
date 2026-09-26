@@ -8,5 +8,4 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Phase 1 — Core manager (sync, side panel, quick save, tags/categories, drag and drop, import/export, duplicates, favicons, delete all data)
-*Link: [./conductor/tracks/phase1_core_manager_20260926/](./conductor/tracks/phase1_core_manager_20260926/)*
+<!-- Archived: 2026-09-26 — Phase 1 Core manager completed: all 5 phases (data/sync, mutations+undo, import/export, side panel UI, quick save+delete-all) with full gate green (1128 unit/component tests, 7 e2e) and user-accepted manual verification (see conductor/archive/phase1_core_manager_20260926/) -->

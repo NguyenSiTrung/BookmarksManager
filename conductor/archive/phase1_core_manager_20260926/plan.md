@@ -2,7 +2,7 @@
 
 **Goal:** Ship the offline core manager from `PROJECT_PLAN.md` §15 Phase 1: native-tree sync, side panel, quick save, tags and categories, drag and drop, import/export, local duplicates with merge and undo, `_favicon` icons, and "Delete all extension data".
 
-**Spec:** `conductor/tracks/phase1_core_manager_20260926/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§5.1, 6, 7, 12, 13.3, and 15.
+**Spec:** `conductor/archive/phase1_core_manager_20260926/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§5.1, 6, 7, 12, 13.3, and 15.
 
 **Tech Stack:** WXT, React 19, Tailwind 4, strict TypeScript, Zod 4 (jitless), Dexie 4 + `dexie-react-hooks`, shadcn/ui components on `radix-ui`, `@dnd-kit/core` + `@dnd-kit/sortable` 6.x, `@tanstack/react-virtual`, Vitest, Testing Library, Playwright.
 
@@ -238,5 +238,5 @@
 - [x] Task 7: Checkpoint — automated gate for Phase 5 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4, task5, task6 -->
 
-- [ ] Task 8: Conductor - User Manual Verification 'Phase 1 Core Manager' (Protocol in workflow.md) — the only manual verification, at the end of the track
+- [x] Task 8: Conductor - User Manual Verification 'Phase 1 Core Manager' — verified 2026-09-26 (user accepted the automated gate: 1128 unit tests + 7 e2e + lint/typecheck/build/manifest/bundle green on `6897fad`) (Protocol in workflow.md) — the only manual verification, at the end of the track
   <!-- depends: task7 -->

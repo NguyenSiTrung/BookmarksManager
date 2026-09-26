@@ -19,7 +19,7 @@ A Chrome extension (Manifest V3) that replaces the built-in bookmark manager wit
 
 ### 1.1 Implementation status (as of 2026-09-26)
 
-**Delivered: Phases 0 and 1 of section 15 — the offline core manager — plus the TypeSafe/OpenRouter connection slice from Phase 3** (archived track `conductor/archive/phase0_foundation_20260925/`; active track `conductor/tracks/phase1_core_manager_20260926/`). Statuses below are per plan area; "Partial" means one real path exists and is tested, not that the area is finished.
+**Delivered: Phases 0 and 1 of section 15 — the offline core manager — plus the TypeSafe/OpenRouter connection slice from Phase 3** (archived tracks `conductor/archive/phase0_foundation_20260925/` and `conductor/archive/phase1_core_manager_20260926/`). Statuses below are per plan area; "Partial" means one real path exists and is tested, not that the area is finished.
 
 **Gate at this revision** (run 2026-09-26): `npm run lint`, `npm run typecheck`, `npm run test -- --run` (46 files, 1112 tests), `npm run build`, `npm run check:manifest`, and `npm run check:bundle` all pass. The Phase 1 e2e specs and the phase checkpoint are the track's remaining tasks; the Phase 0 `tests/e2e/shell.spec.ts` smoke spec currently fails on a stale popup assertion and is updated there. CI runs the e2e spec under a headed browser (`xvfb-run`) for MV3 fidelity.
 
