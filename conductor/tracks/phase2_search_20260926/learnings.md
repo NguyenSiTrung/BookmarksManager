@@ -171,3 +171,19 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Gotcha: `FolderNode` uses `childIds` (not `children`) plus `isRoot`/`isManaged`; `BookmarkItem` needs `isRoot`/`isManaged` too — hand-built FlattenedTree fixtures must carry all of them.
   - Gotcha: `chrome.omnibox.setDefaultSuggestion` takes `{description}` — `content` isn't required there even though SuggestResult has it.
 ---
+
+## [2026-09-26 17:20] - Phase 3 checkpoint — automated gate GREEN
+- **Gate evidence (run on main @ 68af1c3):**
+  - `npm run lint` — 0 errors, 1 pre-existing warning (TanStack `useVirtualizer` compiler-skip in BookmarkList.tsx:478)
+  - `npm run typecheck` — clean (wxt prepare + tsc --noEmit)
+  - `npm run test -- --run` — 1591 passed / 61 files (1564 + 7 popup-search + 18 omnibox + 2 manifest)
+  - `npm run build` — OK; `.output/chrome-mv3/manifest.json` verified `"omnibox":{"keyword":"bm"}`
+  - `npm run check:manifest` — permissions match store/permissions.md (omnibox adds none)
+  - `npm run check:bundle` — no eval/new Function/remote script tags
+  - `xvfb-run -a npm run test:e2e` — 7/7 passed (26.8s), including the zero-egress sweep
+- **Phase 3 commits:** 76a1f5b (popup search), 7979a88 (bm omnibox)
+- **Learnings:**
+  - All four search surfaces now share the same pipeline: (hook|buildSearchHandle) → runQuery → isOpenable/openBookmarkUrl. Popup and omnibox added zero new search semantics.
+  - Zero-egress posture holds: omnibox suggestions are computed in the worker from local Dexie/tree data; the e2e request sweep remains green.
+  - Deferred to Phase 4: e2e search specs (popup typing + palette + zero-egress with all surfaces exercised), store-doc updates for the `bm` keyword.
+---
