@@ -126,13 +126,13 @@
 <!-- execution: sequential -->
 <!-- depends: phase2, phase3 -->
 
-- [ ] Task 1: E2E search specs and zero-egress extension
+- [x] Task 1: E2E search specs and zero-egress extension (ff9fd3e)
   <!-- files: tests/e2e/search.spec.ts, tests/e2e/core-manager.spec.ts, tests/e2e/helpers/* -->
-  - [ ] Side-panel search with a live update, palette keyboard flow, popup search opening a tab, zero egress with every search surface exercised (omnibox covered by unit tests; Playwright cannot drive the address bar)
+  - [x] Side-panel search with a live update, palette keyboard flow, popup search opening a tab, zero egress with every search surface exercised (omnibox covered by unit tests; Playwright cannot drive the address bar)
 
-- [ ] Task 2: Store documents for search and the omnibox
+- [x] Task 2: Store documents for search and the omnibox (b191ea0)
   <!-- files: store/listing.md, store/reviewer-notes.md, store/privacy-policy.md, store/privacy-practices.md -->
-  - [ ] Describe local-only search, the `bm` keyword, and "queries are not stored or sent"; `check:manifest` green
+  - [x] Describe local-only search, the `bm` keyword, and "queries are not stored or sent"; `check:manifest` green
 
 - [ ] Task 3: Checkpoint — automated full gate for the track (evidence in `learnings.md`)
 

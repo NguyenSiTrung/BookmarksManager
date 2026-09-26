@@ -187,3 +187,21 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Zero-egress posture holds: omnibox suggestions are computed in the worker from local Dexie/tree data; the e2e request sweep remains green.
   - Deferred to Phase 4: e2e search specs (popup typing + palette + zero-egress with all surfaces exercised), store-doc updates for the `bm` keyword.
 ---
+
+## [2026-09-26 17:30] - Phase 4 checkpoint — automated full-track gate GREEN
+- **Gate evidence (run on main @ b191ea0):**
+  - `npm run lint` — 0 errors, 1 pre-existing warning (TanStack `useVirtualizer` compiler-skip in BookmarkList.tsx:478)
+  - `npm run typecheck` — clean
+  - `npm run test -- --run` — 1591 passed / 61 files
+  - `npm run build` — OK; generated manifest verified `"omnibox":{"keyword":"bm"}`
+  - `npm run check:manifest` — permissions match store/permissions.md
+  - `npm run check:bundle` — clean
+  - `xvfb-run -a npm run test:e2e` — 11/11 passed (39.1s), including 4 new search specs and the zero-egress sweep across all search surfaces
+- **Phase 4 commits:** ff9fd3e (e2e search specs), b191ea0 (store docs)
+- **Flake note:** `delete-all.test.tsx` "keeps a failure visible when the dialog was dismissed mid-operation" intermittently fails under parallel workers (timing-dependent); passes in isolation and on the clean rerun. Worth a look if it recurs.
+- **Learnings:**
+  - e2e: fake https domains land on `chrome-error://` offline — use `chrome-extension://<id>/*.html` bookmark URLs for deterministic open assertions; they also stay inside the internal-scheme egress boundary.
+  - Playwright cannot drive the omnibox — address-bar coverage stays in unit tests, noted in reviewer docs.
+  - Store-docs discipline held: search shipped → listing "not in this release" lists updated, walkthrough renumbered, policy bumped to 0.3 draft, `check:manifest` green throughout.
+- **Track status:** Phases 1–4 implementation complete. Remaining: Task 4 — manual user verification of the search UX (cannot be automated; needs a human pass in a real browser).
+---
