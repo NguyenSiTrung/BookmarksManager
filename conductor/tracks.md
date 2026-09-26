@@ -12,5 +12,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Phase 2 — Search: MiniSearch index, query syntax, side-panel search bar, command palette, popup search, and `bm` omnibox keyword
+## [~] Track: Phase 2 — Search: MiniSearch index, query syntax, side-panel search bar, command palette, popup search, and `bm` omnibox keyword
 *Link: [./conductor/tracks/phase2_search_20260926/](./conductor/tracks/phase2_search_20260926/)*

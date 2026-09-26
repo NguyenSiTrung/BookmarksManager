@@ -33,39 +33,39 @@
 <!-- execution: parallel -->
 <!-- depends: -->
 
-- [ ] Task 1: Query parser — tokens, quotes, negation, typed AST, warnings
+- [x] Task 1: Query parser — tokens, quotes, negation, typed AST, warnings (7bb3752)
   <!-- files: src/search/query.ts, tests/unit/search-query.test.ts -->
-  - [ ] Table-driven failing tests: every filter key, quoted values and phrases, `-` negation, unknown `key:` → free text (URLs), malformed dates/categories/empty values → warnings, `is:dead` → "not available" warning, never throws on arbitrary input
-  - [ ] Implement
+  - [x] Table-driven failing tests: every filter key, quoted values and phrases, `-` negation, unknown `key:` → free text (URLs), malformed dates/categories/empty values → warnings, `is:dead` → "not available" warning, never throws on arbitrary input
+  - [x] Implement
 
-- [ ] Task 2: Index documents, build, incremental diff; add `minisearch`
+- [x] Task 2: Index documents, build, incremental diff; add `minisearch` (be93aab)
   <!-- files: src/search/index.ts, tests/unit/search-index.test.ts, tests/fixtures/search.ts, package.json, package-lock.json -->
-  - [ ] Failing tests: document mapping (domain without `www.`, tag display names, notes, folder ancestors, dateAdded, category), field boosts, prefix + fuzzy matching, diff update (add/discard/replace) equals a full rebuild
-  - [ ] `npm install minisearch@^7.2.0`; implement
+  - [x] Failing tests: document mapping (domain without `www.`, tag display names, notes, folder ancestors, dateAdded, category), field boosts, prefix + fuzzy matching, diff update (add/discard/replace) equals a full rebuild
+  - [x] `npm install minisearch@^7.2.0`; implement
 
-- [ ] Task 3: Query executor — filters, AND/OR/negation, ordering
+- [x] Task 3: Query executor — filters, AND/OR/negation, ordering (0e6ec6c)
   <!-- files: src/search/run.ts, tests/unit/search-run.test.ts -->
   <!-- depends: task1, task2 -->
-  - [ ] Failing tests: tag AND, single-valued-key OR, cross-key AND, negation, `folder:` subtree and `a/b` path, `domain:` subdomains, `before:`/`after:` boundaries in local time, `is:duplicate`/`is:untagged`, relevance vs tree order for filter-only queries, empty query
-  - [ ] Implement
+  - [x] Failing tests: tag AND, single-valued-key OR, cross-key AND, negation, `folder:` subtree and `a/b` path, `domain:` subdomains, `before:`/`after:` boundaries in local time, `is:duplicate`/`is:untagged`, relevance vs tree order for filter-only queries, empty query
+  - [x] Implement
 
-- [ ] Task 4: Autocomplete suggestions
+- [x] Task 4: Autocomplete suggestions (de59303)
   <!-- files: src/search/suggest.ts, tests/unit/search-suggest.test.ts -->
   <!-- depends: task1 -->
-  - [ ] Failing tests: partial key → keys, values after `tag:`/`folder:`/`category:`/`is:`, quoting values with spaces, cursor-position replacement
-  - [ ] Implement
+  - [x] Failing tests: partial key → keys, values after `tag:`/`folder:`/`category:`/`is:`, quoting values with spaces, cursor-position replacement
+  - [x] Implement
 
-- [ ] Task 5: Openable-URL guard and typed tabs slice
+- [x] Task 5: Openable-URL guard and typed tabs slice (44a76cf)
   <!-- files: src/search/openable.ts, src/sync/tabs.ts, tests/unit/search-openable.test.ts, tests/unit/tabs.test.ts -->
-  - [ ] Failing tests: `javascript:`/`data:` rejected; open in current / new foreground / new background tab via `chrome.tabs.create`/`update`; absent and partial surfaces handled
-  - [ ] Implement
+  - [x] Failing tests: `javascript:`/`data:` rejected; open in current / new foreground / new background tab via `chrome.tabs.create`/`update`; absent and partial surfaces handled
+  - [x] Implement
 
-- [ ] Task 6: 10k performance test
+- [x] Task 6: 10k performance test (b3b6bd6)
   <!-- files: tests/unit/search-perf.test.ts -->
   <!-- depends: task3 -->
-  - [ ] Synthetic 10k fixture; assert median query < 50 ms and build < 500 ms
+  - [x] Synthetic 10k fixture; assert median query < 50 ms and build < 500 ms
 
-- [ ] Task 7: Checkpoint — automated gate for Phase 1 (evidence in `learnings.md`)
+- [x] Task 7: Checkpoint — automated gate for Phase 1 (evidence in `learnings.md`) — green at b3b6bd6
   <!-- depends: task1, task2, task3, task4, task5, task6 -->
 
 ---
