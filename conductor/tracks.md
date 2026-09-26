@@ -9,3 +9,8 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-26 — Phase 1 Core manager completed: all 5 phases (data/sync, mutations+undo, import/export, side panel UI, quick save+delete-all) with full gate green (1128 unit/component tests, 7 e2e) and user-accepted manual verification (see conductor/archive/phase1_core_manager_20260926/) -->
+
+---
+
+## [ ] Track: Phase 2 — Search: MiniSearch index, query syntax, side-panel search bar, command palette, popup search, and `bm` omnibox keyword
+*Link: [./conductor/tracks/phase2_search_20260926/](./conductor/tracks/phase2_search_20260926/)*
