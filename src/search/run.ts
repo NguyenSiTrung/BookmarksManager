@@ -58,6 +58,18 @@ import type { SearchHit, SearchIndex } from "./index";
  * order.
  */
 
+/**
+ * A live index plus the context `runQuery` needs — the shape index-owning
+ * hooks (`useSearchIndex`) and one-shot builders (omnibox session index)
+ * hand to view resolution.
+ */
+export interface SearchIndexHandle {
+  /** The live index. */
+  index: SearchIndex;
+  /** Per-query context for `runQuery`. */
+  ctx: RunQueryContext;
+}
+
 /** Extra per-query context `runQuery` needs beyond the index. */
 export interface RunQueryContext {
   /**

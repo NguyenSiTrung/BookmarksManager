@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/components/dropdown-menu";
 import { useBookmarkTree } from "../../ui/hooks/useBookmarkTree";
+import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
 import {
   BookmarkList,
   SelectionContext,
@@ -35,6 +36,7 @@ import { FolderTree } from "./FolderTree";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
+import { SearchBar } from "./SearchBar";
 import {
   clearPendingEditId,
   onPendingEditId,
@@ -137,9 +139,26 @@ export function App() {
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * The live search index: built after mount, diff-updated as tree/metas/
+   * tagDefs change. `null` until the first build lands.
+   */
+  const search = useSearchIndex(tree, metas, tagDefs);
+  /**
+   * Any non-empty query shows the `search` view over the whole library;
+   * clearing it returns to `view` untouched — the previous view is never
+   * overwritten while searching, so restoring needs no bookkeeping.
+   */
+  const activeView: SidePanelView = useMemo(
+    () =>
+      searchQuery === "" ? view : { kind: "search", query: searchQuery },
+    [searchQuery, view],
+  );
   const items = useMemo(
-    () => resolveView(view, tree, metas),
-    [view, tree, metas],
+    () => resolveView(activeView, tree, metas, search),
+    [activeView, tree, metas, search],
   );
   const orderedIds = useMemo(() => items.map((item) => item.id), [items]);
   const selection = useBookmarkSelection(orderedIds);
@@ -149,14 +168,14 @@ export function App() {
   );
   const duplicateGroups = useMemo(
     (): readonly DuplicateGroup<BookmarkItem>[] =>
-      view.kind === "duplicates" ? resolveDuplicateGroups(tree) : [],
-    [view.kind, tree],
+      activeView.kind === "duplicates" ? resolveDuplicateGroups(tree) : [],
+    [activeView.kind, tree],
   );
   const tagNameByKey = useMemo(
     () => new Map(tagDefs.map((tag) => [tag.nameKey, tag.name])),
     [tagDefs],
   );
-  const title = viewTitle(view, tree, tagDefs);
+  const title = viewTitle(activeView, tree, tagDefs);
 
   // P4.T3 action surface: the toast controller owns notifications and the
   // Undo affordance; dialog targets are plain state so every row menu, the
@@ -234,6 +253,34 @@ export function App() {
   // this panel's Dexie connection; the `useLiveQuery` subscriptions above keep
   // one open, which would otherwise block the database drop forever.
   useEffect(() => registerDbReleaseListener(), []);
+
+  /**
+   * `/` focuses the search bar from anywhere in the panel. Guarded exactly
+   * like the other global keys: `defaultPrevented` means dnd-kit (or another
+   * handler) already claimed the event, and a focus inside any text-entry
+   * surface (input/textarea/select/contenteditable) must not be stolen.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.key !== "/") return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const openItem = (item: BookmarkItem): void => {
     window.open(item.url, "_blank", "noopener,noreferrer");
@@ -491,10 +538,22 @@ export function App() {
                 aria-label={title}
                 className="flex min-w-0 flex-1 flex-col"
               >
+                <SearchBar
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChange={setSearchQuery}
+                  resultCount={
+                    searchQuery === ""
+                      ? null
+                      : search === null
+                        ? null
+                        : items.length
+                  }
+                />
                 <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
                   <h2 className="text-sm font-medium">{title}</h2>
                 </header>
-                {view.kind === "duplicates" ? (
+                {activeView.kind === "duplicates" ? (
                   <DuplicatesView
                     groups={duplicateGroups}
                     metaById={metaById}
@@ -516,7 +575,9 @@ export function App() {
                     tagNameByKey={tagNameByKey}
                     onActivateItem={openItem}
                     onDeleteSelection={(ids) => void handleDeleteIds(ids)}
-                    reorderable={view.kind === "all" || view.kind === "folder"}
+                    reorderable={
+                      activeView.kind === "all" || activeView.kind === "folder"
+                    }
                     renderItemActions={renderItemActions}
                     renderItemContextMenu={renderItemContextMenu}
                     className="flex-1"

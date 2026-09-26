@@ -2,6 +2,8 @@ import { groupDuplicates } from "../../duplicates/group";
 import type { DuplicateGroup } from "../../duplicates/group";
 import type { Category } from "../../schemas/bookmark";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
+import { runQuery } from "../../search/run";
+import type { SearchIndexHandle } from "../../search/run";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
 
@@ -27,6 +29,10 @@ import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
  *                   normalized), first occurrence wins.
  *  - `recent`     — all bookmarks sorted by `dateAdded` descending, capped
  *                   at {@link RECENT_VIEW_LIMIT}.
+ *  - `search`     — results of `runQuery` over the whole library for the
+ *                   typed query; relevance order for text, tree order for
+ *                   filter-only queries. Not tree-ordered, so reorder drop
+ *                   slots stay off (the same rule as tag/category/recent).
  *
  * Everything here is pure — no `chrome`, no Dexie, no React — so the same
  * resolution can run in tests, workers, or a future search implementation.
@@ -38,7 +44,8 @@ export type SidePanelView =
   | { kind: "category"; category: Category }
   | { kind: "untagged" }
   | { kind: "duplicates" }
-  | { kind: "recent" };
+  | { kind: "recent" }
+  | { kind: "search"; query: string };
 
 export type SidePanelViewKind = SidePanelView["kind"];
 
@@ -112,12 +119,15 @@ export function resolveDuplicateGroups(
 /**
  * Resolve a view to an ordered list of bookmarks. `metas` is the flat
  * `bookmarkMeta` table contents (any order); a `Map` is built lazily only
- * for views that join through meta rows.
+ * for views that join through meta rows. `search` is the live index handle
+ * from `useSearchIndex` — required only by the `search` view; while it is
+ * still building the view resolves to an empty list.
  */
 export function resolveView(
   view: SidePanelView,
   tree: FlattenedTree,
   metas: readonly BookmarkMeta[] = [],
+  search?: SearchIndexHandle | null,
 ): BookmarkItem[] {
   let metaById: Map<string, BookmarkMeta> | undefined;
   const metaOf = (id: string): BookmarkMeta | undefined => {
@@ -175,6 +185,19 @@ export function resolveView(
         )
         .slice(0, RECENT_VIEW_LIMIT);
     }
+    case "search": {
+      // Index still building (or the query only has whitespace) → nothing
+      // to show yet. Hits resolve to live BookmarkItems via the tree so row
+      // actions/selection keep working on search results.
+      if (search == null || view.query.trim() === "") return [];
+      const hits = runQuery(search.index, view.query, search.ctx).hits;
+      const out: BookmarkItem[] = [];
+      for (const hit of hits) {
+        const item = tree.bookmarks.get(hit.id);
+        if (item !== undefined) out.push(item);
+      }
+      return out;
+    }
   }
 }
 
@@ -207,5 +230,10 @@ export function viewTitle(
       return "Duplicates";
     case "recent":
       return "Recently saved";
+    case "search": {
+      const query = view.query.trim();
+      const shown = query.length > 40 ? `${query.slice(0, 40)}…` : query;
+      return `Results for “${shown}”`;
+    }
   }
 }

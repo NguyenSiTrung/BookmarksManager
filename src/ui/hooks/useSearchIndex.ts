@@ -13,9 +13,11 @@ import type {
   SearchSourceBookmark,
 } from "../../search/index";
 import { collectDuplicateIds } from "../../search/run";
-import type { RunQueryContext } from "../../search/run";
+import type { SearchIndexHandle } from "../../search/run";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
+
+export type { SearchIndexHandle } from "../../search/run";
 
 /**
  * Live MiniSearch index over the flattened bookmark tree plus extension
@@ -39,12 +41,6 @@ import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
  * `duplicateIds` recomputed only when the corpus changes — never per
  * keystroke.
  */
-export interface SearchIndexHandle {
-  /** The live index; the same instance across diff updates. */
-  index: SearchIndex;
-  /** Per-query context for `runQuery`. */
-  ctx: RunQueryContext;
-}
 
 /**
  * Ancestor folders of `item`, topmost first, excluding the synthetic root
