@@ -13,8 +13,15 @@ const manifest = config.manifest as
 describe("extension scaffold", () => {
   it("declares the required permissions", () => {
     // `bookmarks` joined the initial set in Phase 1 Task 6 (worker sync:
-    // cascade delete + startup reconcile read/write the native tree).
-    expect(manifest?.permissions).toEqual(["bookmarks", "storage", "sidePanel"]);
+    // cascade delete + startup reconcile read/write the native tree);
+    // `favicon` joined in Phase 4 Task 1 (Chrome's `_favicon` renderer
+    // serves site icons for the manager UI — no host access needed).
+    expect(manifest?.permissions).toEqual([
+      "bookmarks",
+      "favicon",
+      "storage",
+      "sidePanel",
+    ]);
   });
 
   it("declares only the initial host patterns", () => {

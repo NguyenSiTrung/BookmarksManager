@@ -18,6 +18,7 @@ manifest's `host_permissions` / `optional_host_permissions`; plain names map to
 | Permission | Level | Justification |
 |---|---|---|
 | `bookmarks` | required | Read the native bookmark tree for the side-panel manager UI and write user-initiated create/update/move/remove plus quick-save |
+| `favicon` | required | Serve cached page favicons via Chrome's built-in `chrome-extension://<id>/_favicon/?pageUrl=...&size=...` renderer so the manager UI can show site icons without host access or any network request |
 | `sidePanel` | required | Show the Bookmarks Manager UI in Chrome's side panel |
 | `storage` | required | Store encrypted provider API-key envelopes in chrome.storage.local; plaintext keys are never persisted |
 
@@ -47,7 +48,7 @@ change._
 
 ## Not requested in this slice
 
-`activeTab`, `scripting`, `contextMenus`, `favicon`, `alarms`,
+`activeTab`, `scripting`, `contextMenus`, `alarms`,
 `history`, `tabs`, `cookies`, `webRequest`, `offscreen`, `unlimitedStorage`,
 `<all_urls>`, and broad wildcard patterns such as `https://*/*` or `http://*/*`.
 None of them ship in this release. Each future permission must be added only
