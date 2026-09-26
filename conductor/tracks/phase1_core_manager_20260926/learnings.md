@@ -99,3 +99,22 @@ Full list: `conductor/patterns.md` (35 entries, elevated from `phase0_foundation
   - `E2E_HEADLESS=1 npm run test:e2e` — 1/1 pass (extension loads, renders surfaces, zero requests)
 - **Phase-1 scope review:** dispatched code reviewer over diff aba1987..HEAD (5668 insertions) — see ledger.
 ---
+
+### Checkpoint addendum — phase review fix round
+- Phase-scoped review found 2 Important findings (partial `chrome.bookmarks` surface sync-throwing in `registerBookmarkListeners` and `useBookmarkTree` — both violating their own no-throw contracts) + 1 Minor fixture inconsistency.
+- Fix round 1 landed `0c8ce07` + `4e84961`: sequential-push subscriptions under try/catch with cleanup (a single `push(f(), g())` evaluates all args before pushing — leaks earlier listeners on throw), async `refresh` so sync throws become caught rejections, consistent undo fixture. 98/98 scoped tests green; lint + typecheck clean.
+- **Pattern worth elevating:** lazy `declare const chrome` slices throw SYNCHRONOUSLY on absent surfaces — every caller boundary (event subscriptions, effect bodies, startup registration) needs try/catch or an async wrapper, and tests should cover absent AND partial surfaces.
+---
+---
+
+## [2026-09-26 07:10] - Phase 3 Tasks 1–4: Import/export formats + planner
+- `src/io/export-json.ts` (5c2751c): version-1 strict `ExportEnvelope`; Chrome ids are join keys only; whole-library export unwraps synthetic root `"0"`; folder-scope omits orphan meta; two-space JSON + trailing newline.
+- `src/io/netscape.ts` (cccb3fc): DOMParser-only parsing (no innerHTML); 20 MiB `MAX_FILE_BYTES`; blocks `javascript:`/`data:`/`vbscript:` incl. whitespace/entity obfuscation; exports valid Netscape.
+- `src/io/csv.ts` (09b4a4d): exact 7 columns; formula-injection escaping (`= + - @ TAB CR`) BEFORE quoting, no pre-trim; per-row validity; http(s)-only; blank rows skipped.
+- `src/io/import-plan.ts` + `import-write.ts` (99d3d07): pure `planImport` (preview counts, zero writes); normalized-URL dup skip with `importDuplicates` override + in-file dedupe; dated root under Other bookmarks; meta via separate `putMeta` for failure attribution; tag defs nameKey-restored; undo = `removeTree(importRoot)`.
+---
+
+## [2026-09-26 07:58] - Phase 3 Task 5: Checkpoint — gate + phase review
+- **Gate evidence (main @ 57bf2f8):** lint clean · typecheck clean · **862/862 tests, 30 files** · build clean · check:manifest OK · check:bundle OK · e2e skipped (no entrypoint/UI changes this phase).
+- **Phase-3 review: CHANGES REQUESTED → fixed in `57bf2f8`** (9 files): 20 MiB cap on `parseCsv`/`parseExport`; `writeImport` re-checks blocked/empty URLs so raw `ImportItem[]` cannot bypass the planner; `buildExport`/`serializeExport` now return result unions (`ExportError` class deleted); Netscape orphan `<DT>`/`<A>` rows parsed via `walkedDl` dedupe set; `MAX_TREE_DEPTH=64` guards Zod recursion + `safeParse` wrapped; CSV `/`-in-folder-name limitation documented; single shared `isBlockedScheme` exported from netscape.ts.
+- **Pattern worth elevating:** every fallible IO entry point returns `{ok}|{ok:false,code,message}` — no thrown error classes; defense-in-depth belongs at BOTH planner and writer (never trust the caller to have planned).

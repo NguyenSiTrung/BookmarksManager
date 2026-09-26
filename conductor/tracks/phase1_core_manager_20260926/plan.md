@@ -78,7 +78,7 @@
   - [x] Failing tests: flatten to folders/bookmarks maps, folder paths, `isRoot`/`isManaged` flags, children order; hook re-renders on fake events and unsubscribes on unmount
   - [x] Implement
 
-- [ ] Task 8: Checkpoint — automated gate for Phase 1 (evidence in `learnings.md`)
+- [x] Task 8: Checkpoint — automated gate for Phase 1 (gate green 2026-09-26: lint, typecheck, 614 tests, build, check:manifest, check:bundle, e2e; phase review fix round landed `0c8ce07`+`4e84961`) (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4, task5, task6, task7 -->
 
 ---
@@ -87,10 +87,10 @@
 <!-- execution: parallel -->
 <!-- depends: phase1 -->
 
-- [ ] Task 1: Guarded mutation service
+- [x] Task 1: Guarded mutation service — `461110a`
   <!-- files: src/sync/mutations.ts, tests/unit/sync-mutations.test.ts -->
-  - [ ] Failing tests: create bookmark/folder, update title/URL, move/reorder, remove/removeTree; reject root and managed nodes with typed errors; metadata written alongside where given
-  - [ ] Implement over the typed slice
+  - [x] Failing tests: create bookmark/folder, update title/URL, move/reorder, remove/removeTree; reject root and managed nodes with typed errors; metadata written alongside where given
+  - [x] Implement over the typed slice
 
 - [ ] Task 2: Undo stack
   <!-- files: src/undo/snapshot.ts, src/undo/restore.ts, tests/unit/undo.test.ts -->
@@ -98,17 +98,17 @@
   - [ ] Failing tests: snapshot before delete / bulk move / tag delete; LIFO restore re-creates nodes at original parent+index with ID remap for metadata; cap at 20 (oldest dropped); missing parent ⇒ restore into Other bookmarks with a reported fallback
   - [ ] Implement using the `undo` table
 
-- [ ] Task 3: Duplicate merge
+- [x] Task 3: Duplicate merge — `d1adef6`
   <!-- files: src/duplicates/merge.ts, tests/unit/duplicates-merge.test.ts -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: tag union, notes joined with a separator, category rule (kept, else first found), others deleted, undo restores all
-  - [ ] Implement
+  - [x] Failing tests: tag union, notes joined with a separator, category rule (kept, else first found), others deleted, undo restores all
+  - [x] Implement
 
-- [ ] Task 4: Bulk tag and category operations
+- [x] Task 4: Bulk tag and category operations — `d203040`
   <!-- files: src/sync/tag-ops.ts, tests/unit/tag-ops.test.ts -->
   <!-- depends: task2 -->
-  - [ ] Failing tests: bulk add/remove tag, set/clear category, tag rename/recolor/delete with affected counts, tag delete undoable
-  - [ ] Implement
+  - [x] Failing tests: bulk add/remove tag, set/clear category, tag rename/recolor/delete with affected counts, tag delete undoable
+  - [x] Implement
 
 - [ ] Task 5: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4 -->
@@ -119,28 +119,28 @@
 <!-- execution: parallel -->
 <!-- depends: phase1 -->
 
-- [ ] Task 1: JSON export/import envelope
+- [x] Task 1: JSON export/import envelope — `5c2751c`
   <!-- files: src/io/export-json.ts, tests/unit/io-json.test.ts -->
-  - [ ] Failing tests: whole-library and single-folder export; round trip restores tree, tags, categories, notes, tag definitions; seeded keys, key material, consents, provider settings, sentLog, and decisions are absent from output; invalid envelopes rejected
-  - [ ] Implement
+  - [x] Failing tests: whole-library and single-folder export; round trip restores tree, tags, categories, notes, tag definitions; seeded keys, key material, consents, provider settings, sentLog, and decisions are absent from output; invalid envelopes rejected
+  - [x] Implement
 
 - [ ] Task 2: Netscape HTML export and import parser
   <!-- files: src/io/netscape.ts, tests/unit/io-netscape.test.ts, tests/fixtures/netscape/*.html -->
   - [ ] Failing tests with Chrome/Firefox export fixtures: nested folders, `ADD_DATE`, `TAGS`, HTML entities, `javascript:`/`data:` skipped, malformed markup, size cap; export escapes titles/URLs
   - [ ] Implement with `DOMParser` (no `innerHTML`)
 
-- [ ] Task 3: CSV export and import
+- [x] Task 3: CSV export and import — `09b4a4d`
   <!-- files: src/io/csv.ts, tests/unit/io-csv.test.ts -->
-  - [ ] Failing tests: RFC 4180 quoting, embedded newlines/quotes, formula-injection escaping for `= + - @`, tab, CR, tag/category columns, header validation, invalid rows counted
-  - [ ] Implement
+  - [x] Failing tests: RFC 4180 quoting, embedded newlines/quotes, formula-injection escaping for `= + - @`, tab, CR, tag/category columns, header validation, invalid rows counted
+  - [x] Implement
 
-- [ ] Task 4: Import planner and writer
+- [x] Task 4: Import planner and writer — `99d3d07`
   <!-- files: src/io/import-plan.ts, src/io/import-write.ts, tests/unit/io-import.test.ts -->
   <!-- depends: task1, task2, task3 -->
-  - [ ] Failing tests: preview counts (folders, bookmarks, duplicates, invalid) without writes; duplicate skip by normalized URL with override; writes into "Imported <YYYY-MM-DD HH:mm>" under Other bookmarks preserving structure; metadata restore for JSON/CSV; summary; undo removes the import folder
-  - [ ] Implement
+  - [x] Failing tests: preview counts (folders, bookmarks, duplicates, invalid) without writes; duplicate skip by normalized URL with override; writes into "Imported <YYYY-MM-DD HH:mm>" under Other bookmarks preserving structure; metadata restore for JSON/CSV; summary; undo removes the import folder
+  - [x] Implement
 
-- [ ] Task 5: Checkpoint — automated gate for Phase 3 (evidence in `learnings.md`)
+- [x] Task 5: Checkpoint — automated gate for Phase 3 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4 -->
 
 ---
@@ -160,13 +160,13 @@
   <!-- files: src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/views.ts, tests/components/sidepanel-layout.test.tsx -->
   <!-- depends: task1 -->
   - [ ] Failing tests: ARIA tree keyboard navigation (arrows, Home/End, expand/collapse), list/grid toggle, virtualization with 10k items, views All / folder / tag / category / Untagged / Duplicates / Recently saved
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 3: Item and folder actions
   <!-- files: src/entrypoints/sidepanel/EditDialog.tsx, src/entrypoints/sidepanel/BulkBar.tsx, src/entrypoints/sidepanel/MoveToDialog.tsx, src/entrypoints/sidepanel/FolderActions.tsx, src/entrypoints/sidepanel/UndoToast.tsx, tests/components/sidepanel-actions.test.tsx -->
   <!-- depends: task2 -->
   - [ ] Failing tests: edit title/URL/folder/tags/category/notes; multi-select + bulk move/delete/tag/category; Move to…; folder create/rename/delete with count; undo toast; disabled actions on root/managed nodes
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 4: Drag and drop
   <!-- files: src/entrypoints/sidepanel/dnd.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, tests/components/sidepanel-dnd.test.tsx -->
