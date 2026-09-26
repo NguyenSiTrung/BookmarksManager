@@ -107,3 +107,9 @@ _Last refreshed: 2026-09-25_
 - **Egress assertions should filter OUT known-internal schemes** (`chrome-extension:`, `chrome:`, `data:`, `blob:`, `about:`) rather than matching only `http(s)` — otherwise `ws://`/`ftp://` exfil passes. (from: phase1_core_manager_20260926)
 - **A review diff must include `tests/`** — a path-scoped diff that omits them makes a reviewer report "no tests in this phase" as a finding. (from: phase1_core_manager_20260926)
 - **Local-index reorder after removal:** same-parent capacity is `length - 1`, cross-parent is `length` — encode both in the fake so index validation is actually exercised. (from: phase1_core_manager_20260926)
+
+## Elevated at refresh — track `phase1_core_manager_20260926` (refreshed 2026-09-26)
+
+- **Dexie migration test pattern:** seed a genuine vN-1 database via a standalone `Dexie` with only the older `version().stores()`, close, reopen with the real class, and assert `verno` plus preserved rows. Declaring a new version mechanically bumps `Dexie.verno` — schema-shape tests asserting verno/table-list must be updated in the same commit. (from: phase1_core_manager_20260926)
+- **ESLint does not honor `.gitignore`** — `.worktrees/**` must be listed in `eslint.config.mjs` `ignores`, or nested `.wxt`/`.output`/`.agents` copies inside worktrees get linted. (from: phase1_core_manager_20260926)
+- **Guard managed/root bookmark writes via `isFixedRoot`/`unmodifiable` predicates, never error-message matching** — the fake's managed/root error strings are our contract, not byte-verified against real Chrome. (from: phase1_core_manager_20260926)
