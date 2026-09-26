@@ -20,6 +20,7 @@ import {
   useBookmarkSelection,
 } from "./BookmarkList";
 import { BulkBar, deleteNodesWithUndo, deleteResultMessage } from "./BulkBar";
+import { DndProvider } from "./dnd";
 import { EditDialog } from "./EditDialog";
 import {
   FolderActionDialog,
@@ -300,155 +301,157 @@ export function App() {
               Review suggestions
             </button>
           </header>
-          <div className="flex min-h-0 flex-1">
-            <aside className="flex w-44 shrink-0 flex-col border-r border-border">
-              <nav
-                aria-label="Views"
-                className="shrink-0 space-y-3 overflow-y-auto p-2"
-              >
-                <ul className="space-y-0.5">
-                  {FIXED_VIEWS.map(({ kind, label }) => (
-                    <li key={kind}>
-                      <button
-                        type="button"
-                        aria-pressed={view.kind === kind}
-                        onClick={() => setView(makeView(kind))}
-                        className={navButtonClass}
-                      >
-                        {label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <section aria-label="Tag management">
-                  <button
-                    type="button"
-                    onClick={() => setTagManagerOpen(true)}
-                    className={navButtonClass}
-                  >
-                    Manage tags…
-                  </button>
-                </section>
-                {tagDefs.length > 0 && (
-                  <section aria-label="Tags">
+          <DndProvider tree={tree} selection={selection}>
+            <div className="flex min-h-0 flex-1">
+              <aside className="flex w-44 shrink-0 flex-col border-r border-border">
+                <nav
+                  aria-label="Views"
+                  className="shrink-0 space-y-3 overflow-y-auto p-2"
+                >
+                  <ul className="space-y-0.5">
+                    {FIXED_VIEWS.map(({ kind, label }) => (
+                      <li key={kind}>
+                        <button
+                          type="button"
+                          aria-pressed={view.kind === kind}
+                          onClick={() => setView(makeView(kind))}
+                          className={navButtonClass}
+                        >
+                          {label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <section aria-label="Tag management">
+                    <button
+                      type="button"
+                      onClick={() => setTagManagerOpen(true)}
+                      className={navButtonClass}
+                    >
+                      Manage tags…
+                    </button>
+                  </section>
+                  {tagDefs.length > 0 && (
+                    <section aria-label="Tags">
+                      <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                        Tags
+                      </h2>
+                      <ul className="space-y-0.5">
+                        {tagDefs.map((tag) => (
+                          <li key={tag.nameKey}>
+                            <button
+                              type="button"
+                              aria-pressed={
+                                view.kind === "tag" &&
+                                view.nameKey === tag.nameKey
+                              }
+                              onClick={() =>
+                                setView({ kind: "tag", nameKey: tag.nameKey })
+                              }
+                              className={navButtonClass}
+                            >
+                              <span aria-hidden="true">#</span>
+                              {tag.name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                  <section aria-label="Categories">
                     <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                      Tags
+                      Categories
                     </h2>
                     <ul className="space-y-0.5">
-                      {tagDefs.map((tag) => (
-                        <li key={tag.nameKey}>
+                      {Category.options.map((category) => (
+                        <li key={category}>
                           <button
                             type="button"
                             aria-pressed={
-                              view.kind === "tag" &&
-                              view.nameKey === tag.nameKey
+                              view.kind === "category" &&
+                              view.category === category
                             }
                             onClick={() =>
-                              setView({ kind: "tag", nameKey: tag.nameKey })
+                              setView({ kind: "category", category })
                             }
                             className={navButtonClass}
                           >
-                            <span aria-hidden="true">#</span>
-                            {tag.name}
+                            {category.charAt(0).toUpperCase() +
+                              category.slice(1)}
                           </button>
                         </li>
                       ))}
                     </ul>
                   </section>
-                )}
-                <section aria-label="Categories">
+                </nav>
+                <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-2">
                   <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                    Categories
+                    Folders
                   </h2>
-                  <ul className="space-y-0.5">
-                    {Category.options.map((category) => (
-                      <li key={category}>
-                        <button
-                          type="button"
-                          aria-pressed={
-                            view.kind === "category" &&
-                            view.category === category
-                          }
-                          onClick={() =>
-                            setView({ kind: "category", category })
-                          }
-                          className={navButtonClass}
-                        >
-                          {category.charAt(0).toUpperCase() +
-                            category.slice(1)}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              </nav>
-              <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-2">
-                <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                  Folders
-                </h2>
-                {tree.folders.size === 0 ? (
-                  <p className="px-2 text-xs text-muted-foreground">
-                    Loading…
-                  </p>
+                  {tree.folders.size === 0 ? (
+                    <p className="px-2 text-xs text-muted-foreground">
+                      Loading…
+                    </p>
+                  ) : (
+                    <FolderTree
+                      tree={tree}
+                      selectedFolderId={
+                        view.kind === "folder" ? view.folderId : undefined
+                      }
+                      onSelectFolder={(folderId) =>
+                        setView({ kind: "folder", folderId })
+                      }
+                      renderFolderActions={(node) => (
+                        <FolderActions node={node} onAction={handleFolderAction} />
+                      )}
+                      renderFolderContextMenu={(node) => (
+                        <FolderActionsContextItems
+                          node={node}
+                          onAction={handleFolderAction}
+                        />
+                      )}
+                    />
+                  )}
+                </div>
+              </aside>
+              <section
+                aria-label={title}
+                className="flex min-w-0 flex-1 flex-col"
+              >
+                <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
+                  <h2 className="text-sm font-medium">{title}</h2>
+                </header>
+                {view.kind === "duplicates" ? (
+                  <DuplicatesView
+                    groups={duplicateGroups}
+                    metaById={metaById}
+                    tagNameByKey={tagNameByKey}
+                    loading={tree.folders.size === 0}
+                    onActivateItem={openItem}
+                    onRequestUndo={() =>
+                      toastCtl.showToast({
+                        message: "Duplicates merged.",
+                        undoable: true,
+                      })
+                    }
+                    className="flex-1"
+                  />
                 ) : (
-                  <FolderTree
-                    tree={tree}
-                    selectedFolderId={
-                      view.kind === "folder" ? view.folderId : undefined
-                    }
-                    onSelectFolder={(folderId) =>
-                      setView({ kind: "folder", folderId })
-                    }
-                    renderFolderActions={(node) => (
-                      <FolderActions node={node} onAction={handleFolderAction} />
-                    )}
-                    renderFolderContextMenu={(node) => (
-                      <FolderActionsContextItems
-                        node={node}
-                        onAction={handleFolderAction}
-                      />
-                    )}
+                  <BookmarkList
+                    items={items}
+                    metaById={metaById}
+                    tagNameByKey={tagNameByKey}
+                    onActivateItem={openItem}
+                    onDeleteSelection={(ids) => void handleDeleteIds(ids)}
+                    renderItemActions={renderItemActions}
+                    renderItemContextMenu={renderItemContextMenu}
+                    className="flex-1"
                   />
                 )}
-              </div>
-            </aside>
-            <section
-              aria-label={title}
-              className="flex min-w-0 flex-1 flex-col"
-            >
-              <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
-                <h2 className="text-sm font-medium">{title}</h2>
-              </header>
-              {view.kind === "duplicates" ? (
-                <DuplicatesView
-                  groups={duplicateGroups}
-                  metaById={metaById}
-                  tagNameByKey={tagNameByKey}
-                  loading={tree.folders.size === 0}
-                  onActivateItem={openItem}
-                  onRequestUndo={() =>
-                    toastCtl.showToast({
-                      message: "Duplicates merged.",
-                      undoable: true,
-                    })
-                  }
-                  className="flex-1"
-                />
-              ) : (
-                <BookmarkList
-                  items={items}
-                  metaById={metaById}
-                  tagNameByKey={tagNameByKey}
-                  onActivateItem={openItem}
-                  onDeleteSelection={(ids) => void handleDeleteIds(ids)}
-                  renderItemActions={renderItemActions}
-                  renderItemContextMenu={renderItemContextMenu}
-                  className="flex-1"
-                />
-              )}
-              <BulkBar onMoveRequest={(ids) => setMoveIds(ids)} />
-            </section>
-          </div>
+                <BulkBar onMoveRequest={(ids) => setMoveIds(ids)} />
+              </section>
+            </div>
+          </DndProvider>
         </div>
         <EditDialog
           target={editTarget}

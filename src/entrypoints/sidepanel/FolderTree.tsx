@@ -4,6 +4,7 @@ import { ContextMenu } from "radix-ui";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { FlattenedTree, FolderNode } from "../../sync/tree";
 import { cn } from "../../ui/lib/cn";
+import { FolderRowDnd, useDndState } from "./dnd";
 
 /**
  * ARIA folder tree for the side panel's left pane.
@@ -155,6 +156,9 @@ export function FolderTree({
   );
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const itemEls = useRef(new Map<string, HTMLElement>());
+  // While a drag is live, dnd-kit owns the arrow/Space/Esc keys — the tree
+  // must not also move roving focus or expand/collapse rows.
+  const { dragging } = useDndState();
 
   const visible = useMemo(
     () => computeVisibleFolders(tree, overrides),
@@ -206,6 +210,7 @@ export function FolderTree({
     event: ReactKeyboardEvent<HTMLElement>,
     index: number,
   ): void => {
+    if (dragging) return;
     const entry = visible[index];
     if (entry === undefined) return;
 
@@ -288,7 +293,7 @@ export function FolderTree({
             }}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              "flex cursor-default items-center gap-1 rounded-sm px-1 py-1 text-sm outline-hidden select-none",
+              "relative flex cursor-default items-center gap-1 rounded-sm px-1 py-1 text-sm outline-hidden select-none",
               "focus-visible:bg-accent focus-visible:text-accent-foreground",
               selected && "bg-accent text-accent-foreground",
               node.isManaged && "text-muted-foreground",
@@ -307,6 +312,10 @@ export function FolderTree({
               {entry.expandable ? (entry.expanded ? "▾" : "▸") : ""}
             </span>
             <FolderGlyph className="shrink-0 text-muted-foreground" />
+            {/* P4.T4: the drag handle + the (absolute) drop overlay for this
+                row. The overlay is positioned over the `relative` <li>, so
+                the row markup itself is untouched. */}
+            <FolderRowDnd node={node} />
             <span className="truncate">
               {node.title === "" ? "Untitled folder" : node.title}
             </span>

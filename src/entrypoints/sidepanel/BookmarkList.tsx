@@ -18,6 +18,7 @@ import type { BookmarkMeta } from "../../schemas/meta";
 import type { BookmarkItem } from "../../sync/tree";
 import { Favicon } from "../../ui/components/favicon";
 import { cn } from "../../ui/lib/cn";
+import { DragHandle, useDndState, useDropZone } from "./dnd";
 
 /**
  * Virtualized bookmark list/grid for the right pane, plus the selection
@@ -273,6 +274,17 @@ function Option({
   const title = item.title === "" ? item.url : item.title;
   const actions = renderItemActions?.(item);
   const menuContent = renderItemContextMenu?.(item);
+  // P4.T4: the row doubles as a reorder drop slot ("insert before this row").
+  // A bookmark has no children, so it is never a folder target.
+  const { dropRef, invalid } = useDropZone(
+    `slot:${item.id}`,
+    {
+      kind: "slot",
+      ...(item.parentId === undefined ? {} : { parentId: item.parentId }),
+      ...(item.index === undefined ? {} : { index: item.index }),
+    },
+    item.parentId === undefined || item.index === undefined,
+  );
   const row = (
     <div
       role="option"
@@ -281,13 +293,19 @@ function Option({
       aria-setsize={setSize}
       tabIndex={active ? 0 : -1}
       data-bookmark-id={item.id}
-      ref={(el) => registerRef(item.id, el)}
+      data-dnd-drop={`slot:${item.id}`}
+      data-drop-invalid={invalid ? "true" : undefined}
+      ref={(el) => {
+        registerRef(item.id, el);
+        dropRef(el);
+      }}
       onClick={(event) => onSelect(event, item, index)}
       onDoubleClick={() => onActivate(item)}
       className={cn(
         "h-full cursor-default overflow-hidden rounded-sm outline-hidden",
         "focus-visible:ring-2 focus-visible:ring-ring",
         "aria-selected:bg-accent aria-selected:text-accent-foreground",
+        invalid && "ring-2 ring-destructive ring-inset",
         layout === "list"
           ? "flex items-center gap-2 px-2"
           : "flex flex-col items-center justify-center gap-1 p-2 text-center",
@@ -338,6 +356,19 @@ function Option({
         >
           {actions}
         </span>
+      )}
+      {layout === "list" && (
+        // P4.T4 drag handle — a SIBLING of the kebab wrapper (whose span
+        // stops propagation), so the row's click-select / roving focus stays
+        // intact. Managed bookmarks can't be moved, so their handle is inert.
+        <DragHandle
+          id={item.id}
+          kind="bookmark"
+          label={title}
+          parentId={item.parentId}
+          index={item.index}
+          disabled={item.isManaged}
+        />
       )}
     </div>
   );
@@ -402,6 +433,9 @@ export function BookmarkList({
 }: BookmarkListProps) {
   const contextSelection = useSelection();
   const selection = selectionProp ?? contextSelection;
+  // While a drag is live, dnd-kit owns the arrow/Space/Esc keys — the
+  // listbox must not also move roving focus or toggle the selection.
+  const { dragging } = useDndState();
   const [layout, setLayout] = useState<"list" | "grid">("list");
   const [activeIndex, setActiveIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -471,6 +505,7 @@ export function BookmarkList({
   const handleListKeyDown = (
     event: ReactKeyboardEvent<HTMLElement>,
   ): void => {
+    if (dragging) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       selection.selectAll();
