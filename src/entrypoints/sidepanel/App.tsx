@@ -36,6 +36,7 @@ import { FolderTree } from "./FolderTree";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
+import { CommandPalette } from "./CommandPalette";
 import { SearchBar } from "./SearchBar";
 import {
   clearPendingEditId,
@@ -140,6 +141,7 @@ export function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   /**
    * The live search index: built after mount, diff-updated as tree/metas/
@@ -176,12 +178,13 @@ export function App() {
     [tagDefs],
   );
   // Autocomplete vocabularies for the search bar: tag display names plus
-  // folder titles (the synthetic root has no title and never completes).
+  // folder titles — fixed roots ("Bookmarks bar"…) are real folders; only
+  // the synthetic root has no title and drops out.
   const suggestionSources = useMemo(
     () => ({
       tags: tagDefs.map((tag) => tag.name),
       folders: [...tree.folders.values()]
-        .filter((folder) => !folder.isRoot)
+        .filter((folder) => folder.title !== "")
         .map((folder) => folder.title),
     }),
     [tagDefs, tree.folders],
@@ -273,7 +276,20 @@ export function App() {
    */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.defaultPrevented || event.key !== "/") return;
+      if (event.defaultPrevented) return;
+      // Ctrl/Cmd+K toggles the command palette from anywhere — including
+      // from inside text fields (it's a chord, not a printable key).
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === "k" || event.key === "K")
+      ) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (event.key !== "/") return;
       const target = event.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
@@ -649,6 +665,23 @@ export function App() {
           meta={metas}
           tagDefs={tagDefs}
           currentFolderId={view.kind === "folder" ? view.folderId : undefined}
+        />
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          search={search}
+          tree={tree}
+          tagDefs={tagDefs}
+          onJump={(next) => {
+            // A jump is a view switch — clear any active search so the
+            // destination is actually shown.
+            setSearchQuery("");
+            setView(next);
+          }}
+          onOpenBookmark={(id) => {
+            const item = tree.bookmarks.get(id);
+            if (item !== undefined) openItem(item);
+          }}
         />
         <UndoToast
           toast={toastCtl.toast}
