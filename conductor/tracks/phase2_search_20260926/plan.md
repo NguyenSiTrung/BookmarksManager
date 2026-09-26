@@ -84,10 +84,10 @@
   - [x] Failing tests: `search` view kind; typing switches the view and clearing restores the previous one; `/` focuses and Esc clears; `aria-live` count; inline warnings; bulk actions on results; no drop slots
   - [x] Implement
 
-- [ ] Task 3: Shared query input with autocomplete
-  <!-- files: src/ui/components/query-input.tsx, src/entrypoints/sidepanel/SearchBar.tsx, tests/components/query-input.test.tsx -->
-  - [ ] Failing tests: suggestion listbox, arrow/Enter selection, quote insertion, Esc closes suggestions before clearing the query
-  - [ ] Implement
+- [x] Task 3: Shared query input with autocomplete (63690b2)
+  <!-- files: src/ui/components/query-input.tsx, src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/App.tsx, tests/components/query-input.test.tsx -->
+  - [x] Failing tests: suggestion listbox, arrow/Enter selection, quote insertion, Esc closes suggestions before clearing the query
+  - [x] Implement
 
 - [ ] Task 4: Command palette — dialog, results, jump-to
   <!-- files: src/entrypoints/sidepanel/palette.ts, src/entrypoints/sidepanel/CommandPalette.tsx, src/entrypoints/sidepanel/App.tsx, tests/unit/palette-items.test.ts, tests/components/command-palette.test.tsx -->

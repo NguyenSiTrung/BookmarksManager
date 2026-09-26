@@ -102,3 +102,14 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Gotcha: single-letter terms only prefix-match tokens starting with them — `a` ≠ substring match.
   - Pattern: no jest-dom in this repo — use `toBeNull()`/`toBeTruthy()`/`textContent`/`.value`, never `toBeInTheDocument`/`toHaveTextContent`.
 ---
+
+## [2026-09-26 16:30] - Phase 2 Task 3: QueryInput with autocomplete
+- **Implemented:** `src/ui/components/query-input.tsx` — controlled input over `suggestFilters`; ARIA combobox (`aria-expanded`/`aria-controls`/`aria-activedescendant` on input, `role="listbox"`/`option` popup). Arrow keys cycle (wrap), ArrowDown reopens a dismissed popup, Enter accepts only a highlighted option (falls through so surfaces keep Enter-to-open), Esc dismisses the popup first and forwards to `onEscape` once closed. `SearchBar` now renders QueryInput with `sources={tags,folders}` built in App (root folders excluded — empty titles).
+- **Files changed:** src/ui/components/query-input.tsx, src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/App.tsx, tests/components/query-input.test.tsx, tests/components/sidepanel-search.test.tsx (combobox role + listbox scoping)
+- **Commit:** 63690b2
+- **Learnings:**
+  - Gotcha: suggest "fresh context" needs the caret strictly OUTSIDE every token span — a single interior space still belongs to the preceding token (inclusive end); only ≥2 spaces, trailing whitespace, or an empty query reach it.
+  - Gotcha: `role="combobox"` replaces the `type="search"` implicit role — tests must query `combobox`, and suggestion `role="option"`s collide with result-list options; scope result assertions to the `aria-label="Bookmarks"` listbox.
+  - Pattern: caret-aware suggestions need `onSelect`/`onKeyUp` caret sync plus a `pendingCaret` ref applied in `useLayoutEffect` after `value` changes (controlled-input caret can't be set mid-change).
+  - Pattern: Enter with NO highlighted option must not preventDefault — the popup/palette surfaces need Enter for "open first result".
+---
