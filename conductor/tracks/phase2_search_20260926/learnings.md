@@ -135,3 +135,18 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Gotcha: `chrome.runtime.openOptionsPage` needs its own lazy slice — the test stub provides only `{bookmarks, tabs, runtime:{getURL}}`; a bare `chrome.runtime.openOptionsPage()` call is undefined→guarded.
   - Pattern: `FolderActionRequest.kind:"create"` takes the PARENT FolderNode — palette's "New folder" resolves the folder-in-view or falls back to "1" (Bookmarks bar).
 ---
+
+## [2026-09-26 17:00] - Phase 2 checkpoint — automated gate GREEN
+- **Gate evidence (run on main @ ce72e85):**
+  - `npm run lint` — 0 errors, 1 pre-existing warning (TanStack `useVirtualizer` compiler-skip in BookmarkList.tsx:478)
+  - `npm run typecheck` — clean (wxt prepare + tsc --noEmit)
+  - `npm run test -- --run` — 1564 passed / 59 files
+  - `npm run build` — OK
+  - `npm run check:manifest` — permissions match store/permissions.md (no new permissions added)
+  - `npm run check:bundle` — no eval/new Function/remote script tags
+  - `xvfb-run -a npm run test:e2e` — 7/7 passed (27.5s), including the zero-egress sweep
+- **Phase 2 commits:** adb06e5 (useSearchIndex), b0a1406 (search view+bar), 63690b2 (QueryInput), f1d61f9 (palette), 3502b03 (commands+actions)
+- **Learnings:**
+  - Side-panel search UX chain is complete: `/` → SearchBar (autocomplete + warnings + live count) → runQuery → live BookmarkItems with row actions intact; Ctrl/Cmd+K → palette (jump targets + commands + per-result actions over the same index).
+  - Deferred to Phase 3: popup lazy index + Enter/Ctrl-Enter dispositions; `bm` omnibox (manifest key, fresh-per-session index, XML-escaped descriptions, ≤8 suggestions, disposition routing, no unopenable opens).
+---

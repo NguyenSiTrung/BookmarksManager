@@ -99,7 +99,7 @@
   - [x] Failing tests: Import, Export, Tag manager, New folder, Undo, Options; Open, Ctrl/Cmd+Enter new tab, Reveal in folder, Edit, Copy URL (success + failure toast); open disabled for unopenable URLs
   - [x] Implement
 
-- [ ] Task 6: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
+- [x] Task 6: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
 
 ---
 
