@@ -27,6 +27,12 @@ import type { FlattenedTree } from "../../sync/tree";
  * A `getTree()` rejection (e.g. the API is unreachable) keeps the previous
  * model — the next event retries. A generation counter makes out-of-order
  * resolutions harmless: only the most recently issued fetch may commit.
+ *
+ * The wrappers in `chrome-bookmarks.ts` resolve `chrome.bookmarks` lazily at
+ * call time, so an absent surface throws *synchronously*, not as a rejection.
+ * `refresh` is therefore `async` (a sync throw inside becomes a caught
+ * rejection) and the subscriptions sit behind their own try/catch — either
+ * way the hook settles on the empty model instead of crashing the component.
  */
 export function useBookmarkTree(): FlattenedTree {
   const [model, setModel] = useState<FlattenedTree>(() => ({
@@ -37,28 +43,31 @@ export function useBookmarkTree(): FlattenedTree {
   useEffect(() => {
     let cancelled = false;
     let generation = 0;
+    const unsubscribers: Array<() => void> = [];
 
-    const refresh = (): void => {
+    const refresh = async (): Promise<void> => {
       const request = ++generation;
-      void getTree()
-        .then((tree) => {
-          if (!cancelled && request === generation) {
-            setModel(flattenTree(tree));
-          }
-        })
-        .catch(() => {
-          // Keep the previous model; the next event refetches.
-        });
+      try {
+        const tree = await getTree();
+        if (!cancelled && request === generation) {
+          setModel(flattenTree(tree));
+        }
+      } catch {
+        // Keep the previous model; the next event refetches.
+      }
     };
 
-    refresh();
-    const unsubscribers = [
-      onCreated(refresh),
-      onChanged(refresh),
-      onMoved(refresh),
-      onChildrenReordered(refresh),
-      onRemoved(refresh),
-    ];
+    void refresh();
+    try {
+      unsubscribers.push(onCreated(refresh));
+      unsubscribers.push(onChanged(refresh));
+      unsubscribers.push(onMoved(refresh));
+      unsubscribers.push(onChildrenReordered(refresh));
+      unsubscribers.push(onRemoved(refresh));
+    } catch {
+      // Part or all of the event surface is missing. Whatever subscribed
+      // stays in `unsubscribers` and is still removed on unmount.
+    }
 
     return () => {
       cancelled = true;

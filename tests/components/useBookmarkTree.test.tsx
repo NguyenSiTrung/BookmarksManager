@@ -13,6 +13,7 @@ import {
   OTHER_BOOKMARKS_ID,
   ROOT_NODE_ID,
 } from "../../src/sync/chrome-bookmarks";
+import type { OnCreatedListener } from "../../src/sync/chrome-bookmarks";
 import type { FlattenedTree } from "../../src/sync/tree";
 import { useBookmarkTree } from "../../src/ui/hooks/useBookmarkTree";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -234,5 +235,59 @@ describe("useBookmarkTree", () => {
     });
     expect(renders).toBe(rendersAtUnmount);
     expect(latest?.bookmarks.size).toBe(0);
+  });
+});
+
+describe("useBookmarkTree without a full chrome.bookmarks surface", () => {
+  it("renders the empty model without crashing when chrome.bookmarks is absent", async () => {
+    // The lazy slice resolves `chrome.bookmarks` at call time: `getTree()`
+    // and every `onX()` helper throw *synchronously* here. The hook must
+    // swallow that and settle on the empty model, not crash the component.
+    vi.stubGlobal("chrome", {});
+    renders = 0;
+
+    const view = render(<Probe />);
+    // Flush the swallowed getTree/subscription failures.
+    await act(async () => {});
+
+    expect(latest?.folders.size).toBe(0);
+    expect(latest?.bookmarks.size).toBe(0);
+    expect(view.getByTestId("probe").textContent).toContain('"folders":0');
+    // Cleanup must not throw either.
+    view.unmount();
+  });
+
+  it("still shows the fetched tree when the event surface is missing, and cleans up what subscribed", async () => {
+    const listeners = new Set<OnCreatedListener>();
+    const onCreatedEvent = {
+      addListener: (cb: OnCreatedListener) => {
+        listeners.add(cb);
+      },
+      removeListener: (cb: OnCreatedListener) => {
+        listeners.delete(cb);
+      },
+      hasListener: (cb: OnCreatedListener) => listeners.has(cb),
+    };
+    vi.stubGlobal("chrome", {
+      bookmarks: {
+        // getTree works; onCreated exists; the other four events are absent.
+        getTree: async () => [
+          { id: ROOT_NODE_ID, title: "", children: [] },
+        ],
+        onCreated: onCreatedEvent,
+      },
+    });
+    renders = 0;
+
+    const view = render(<Probe />);
+    await waitFor(() => expect(latest?.folders.size).toBe(1));
+    expect(latest?.folders.get(ROOT_NODE_ID)?.isRoot).toBe(true);
+    // The helper threw synchronously on the first missing event; onCreated
+    // was already subscribed before that throw.
+    expect(listeners.size).toBe(1);
+
+    view.unmount();
+    // Whatever subscribed before the throw is still removed on unmount.
+    expect(listeners.size).toBe(0);
   });
 });
