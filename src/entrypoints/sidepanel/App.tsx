@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DuplicateGroup } from "../../duplicates/group";
 import { DuplicatesView } from "./DuplicatesView";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -35,6 +35,10 @@ import { FolderTree } from "./FolderTree";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
+import {
+  clearPendingEditId,
+  readPendingEditId,
+} from "../popup/chrome";
 import { TagManager } from "./TagManager";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
@@ -161,6 +165,33 @@ export function App() {
   const [folderRequest, setFolderRequest] = useState<FolderActionRequest | null>(
     null,
   );
+
+  /**
+   * P5.T1 handoff: the quick-save popup's "Edit that bookmark" stashes the
+   * existing node id in `chrome.storage.session` (see
+   * `src/entrypoints/popup/chrome.ts`) before opening this panel. Read it once
+   * the tree has loaded — the effect re-runs on every tree update, so an id
+   * that arrives before the first `getTree()` resolves is picked up on the
+   * next pass — then open the shared `EditDialog` for it and clear the key so
+   * a later mount does not re-open the same bookmark. Absent session storage
+   * degrades to `null` (no-op).
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const pendingId = await readPendingEditId();
+      if (pendingId === null) return;
+      const entry =
+        tree.bookmarks.get(pendingId) ?? tree.folders.get(pendingId);
+      if (entry === undefined || cancelled) return;
+      await clearPendingEditId();
+      if (cancelled) return;
+      setEditTarget(entry);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tree]);
 
   const openItem = (item: BookmarkItem): void => {
     window.open(item.url, "_blank", "noopener,noreferrer");
