@@ -3,7 +3,7 @@ import { getMetaByIds } from "../db/meta";
 import type { TagDef } from "../schemas/meta";
 import { UndoSnapshot } from "../schemas/undo";
 import type { UndoKind, UndoMeta, UndoNode } from "../schemas/undo";
-import { get, getSubTree } from "../sync/chrome-bookmarks";
+import { get, getSubTree, isFixedRoot } from "../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 
 /**
@@ -115,9 +115,11 @@ function toUndoNode(
  * Deep capture of the subtree rooted at `id` — call BEFORE deleting or
  * merging so the whole removed structure can be replayed. Resolves the
  * live tree via `getSubTree` and the subtree's meta rows via
- * `getMetaByIds`. Returns `undefined` when the node does not exist or is
- * the fixed root "0" (a parentless, unpositioned node can never be
- * restored).
+ * `getMetaByIds`. Returns `undefined` when the node does not exist, is the
+ * fixed root "0" (a parentless, unpositioned node can never be restored),
+ * or is any other fixed root "1"–"3" — those carry `parentId`/`index` but
+ * a snapshot of one could only ever fail `root` on replay, wedging the
+ * stack head behind a permanently failing row.
  */
 export async function captureSubtree(
   id: string,
@@ -129,6 +131,7 @@ export async function captureSubtree(
     root = undefined;
   }
   if (root === undefined) return undefined;
+  if (isFixedRoot(root.id)) return undefined;
   if (root.parentId === undefined || root.index === undefined) {
     return undefined;
   }
@@ -141,10 +144,12 @@ export async function captureSubtree(
  * Shallow capture of each id's current `parentId`+`index` — call BEFORE a
  * bulk move so the move can be replayed in reverse. Nodes are emitted in
  * first-seen input order with duplicates collapsed; ids that no longer
- * resolve are skipped (a missing node has no position worth replaying).
- * Children are not captured — a moved node keeps its subtree attached, so
- * only its own placement matters. Meta rows are collected for the full
- * requested id list.
+ * resolve are skipped (a missing node has no position worth replaying), as
+ * are fixed roots "0"–"3" (a root can never be moved, so a recorded
+ * position for one could never be replayed either). Children are not
+ * captured — a moved node keeps its subtree attached, so only its own
+ * placement matters. Meta rows are collected for the full requested id
+ * list.
  */
 export async function captureNodes(
   ids: readonly string[],
@@ -160,7 +165,8 @@ export async function captureNodes(
     if (
       found === undefined ||
       found.parentId === undefined ||
-      found.index === undefined
+      found.index === undefined ||
+      isFixedRoot(found.id)
     ) {
       continue;
     }

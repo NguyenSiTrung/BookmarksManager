@@ -33,12 +33,21 @@ import type { DuplicateCandidate, DuplicateGroup } from "./group";
  *   `putMeta` resolves it to an empty field set and the lazy-row rule
  *   DELETES the merged row — a true pre-merge restore rather than leaving
  *   the unioned data behind.
+ * - **Leaf losers only.** Duplicate groups are bookmark-only: a group
+ *   member whose live node is a FOLDER (capture came back with no `url`)
+ *   rejects `invalid` before the snapshot is even pushed — `removeTree` on
+ *   a folder would delete its whole subtree (the kept node included, if the
+ *   folder is its ancestor) while `deleteMetaByIds` missed every
+ *   descendant's row.
  * - **Field order is kept-first.** Members are read in the order
  *   `[keepId, ...others in group order]`, so the union puts the kept
  *   bookmark's tags first and its note leads the joined notes; category is
  *   the kept item's when set, else the first found among the others in
- *   group order. Stored `tags` are nameKeys — merged output stays in
- *   nameKeys (patchMeta re-normalizes anyway).
+ *   group order. Only rows belonging to the kept node or to members whose
+ *   capture SUCCEEDED feed the union — a vanished member's stale row would
+ *   otherwise leak its tags/notes onto the kept bookmark. Stored `tags`
+ *   are nameKeys — merged output stays in nameKeys (patchMeta
+ *   re-normalizes anyway).
  * - **Notes join.** Non-empty `notes` values are joined verbatim with
  *   {@link MERGE_NOTES_SEPARATOR}; members with no row, no notes, or an
  *   empty-string note contribute no segment.
@@ -153,10 +162,24 @@ export async function mergeGroup<T extends DuplicateCandidate>(
     for (const id of others) {
       const capture = await captureSubtree(id);
       if (capture === undefined) continue; // vanished — nothing to restore
+      if (capture.node.url === undefined) {
+        // A folder loser would make removeTree delete its whole subtree —
+        // the kept node included when the folder is its ancestor — while
+        // deleteMetaByIds missed the descendants' rows. Groups are
+        // bookmark-only; reject before anything is pushed or mutated.
+        return {
+          ok: false,
+          code: "invalid",
+          message:
+            `Group member "${id}" is a folder, not a bookmark — ` +
+            `merge only accepts leaf bookmarks.`,
+        };
+      }
       nodes.push(capture.node);
       meta.push(...capture.meta);
       captured.push(id);
     }
+    const capturedIds = new Set(captured);
     const keptMeta = memberMeta.find((row) => row.id === keepId);
     // Survivor row for the kept node: its pre-merge meta, or an EMPTY row so
     // undo deletes the merged row when there was nothing before (see header).
@@ -170,7 +193,13 @@ export async function mergeGroup<T extends DuplicateCandidate>(
     await pushSnapshot({ kind: "merge", nodes, meta });
 
     // --- Apply: merged fields onto the kept node, then delete the losers. ---
-    const merged = mergeMemberMeta(memberMeta);
+    // Only rows of the kept node and successfully captured members feed the
+    // union — a vanished member's stale row must not leak onto the kept one.
+    const merged = mergeMemberMeta(
+      memberMeta.filter(
+        (row) => row.id === keepId || capturedIds.has(row.id),
+      ),
+    );
     await patchMeta(keepId, {
       tags: merged.tags,
       category: merged.category ?? null,

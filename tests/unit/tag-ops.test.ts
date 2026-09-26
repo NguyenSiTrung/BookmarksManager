@@ -151,6 +151,20 @@ describe("bulkAddTag", () => {
     expect(await db.tags.count()).toBe(0);
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
+
+  it("merges overlapping adds on the same id without losing updates", async () => {
+    // Each op does its read-modify-write inside one bookmarkMeta
+    // transaction, so the two transactions serialize and both keys survive
+    // (a bulk read + whole-array rewrite would lose whichever came second).
+    const [first, second] = await Promise.all([
+      bulkAddTag(["bm-a"], "First"),
+      bulkAddTag(["bm-a"], "Second"),
+    ]);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    const tags = (await getMeta("bm-a"))?.tags ?? [];
+    expect([...tags].sort()).toEqual(["first", "second"]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -206,6 +220,19 @@ describe("bulkRemoveTag", () => {
       ok: false,
       code: "invalid_tag",
     });
+  });
+
+  it("does not lose a concurrent add when another op removes a different tag", async () => {
+    await putMeta("bm-a", { tags: ["doomed"] });
+    const [removed, added] = await Promise.all([
+      bulkRemoveTag(["bm-a"], "doomed"),
+      bulkAddTag(["bm-a"], "fresh"),
+    ]);
+    expect(removed.ok).toBe(true);
+    expect(added.ok).toBe(true);
+    // Whichever transaction landed first, the row ends up carrying only
+    // "fresh": the remove saw and stripped "doomed", the add appended.
+    expect((await getMeta("bm-a"))?.tags).toEqual(["fresh"]);
   });
 });
 

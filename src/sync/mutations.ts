@@ -129,6 +129,13 @@ export interface CreateFolderOptions {
 // Guard internals — every check runs BEFORE the matching API call
 // ---------------------------------------------------------------------------
 
+/**
+ * Chrome's (and the fake's) "unknown id" rejection message. `get` rejects
+ * for every failure — only this message actually means the node is gone;
+ * anything else is a transport-level failure reported as `api`.
+ */
+const NODE_NOT_FOUND = /can't find bookmark/i;
+
 /** One `get` call mapped onto the error model; `role` names the id's job. */
 async function requireNode(
   id: string,
@@ -138,9 +145,20 @@ async function requireNode(
   try {
     nodes = await apiGet(id);
   } catch (cause) {
-    throw new MutationError("not_found", `${role} "${id}" does not exist.`, {
-      cause,
-    });
+    const detail = cause instanceof Error ? cause.message : "";
+    if (NODE_NOT_FOUND.test(detail)) {
+      throw new MutationError("not_found", `${role} "${id}" does not exist.`, {
+        cause,
+      });
+    }
+    // Not a lookup miss — a real API failure mislabeled not_found would
+    // send callers down a "deleted" path for a transient error.
+    throw new MutationError(
+      "api",
+      `chrome.bookmarks get for ${role} "${id}" failed` +
+        `${detail === "" ? "" : `: ${detail}`}`,
+      { cause },
+    );
   }
   const node = nodes[0];
   if (node === undefined) {
@@ -213,9 +231,10 @@ async function writableNode(
 /**
  * Guard for writes INSIDE a folder (create-under / move-into): the parent
  * must exist, not be the synthetic root "0" (children of "1"/"2"/"3" are
- * writable), be a folder, and sit outside every managed subtree. Returns
+ * writable), sit outside every managed subtree, and be a folder. Returns
  * the parent plus its ancestor chain for callers that need both (move's
- * descendant check).
+ * descendant check). The managed check runs BEFORE the leaf check,
+ * matching Chrome's own order.
  */
 async function writableParent(
   parentId: string,
@@ -228,12 +247,9 @@ async function writableParent(
       `Cannot ${action} directly under the root node "0".`,
     );
   }
-  if (!isFolder(parent)) {
-    throw new MutationError(
-      "invalid",
-      `Cannot ${action} under "${parentId}": it is a bookmark, not a folder.`,
-    );
-  }
+  // Managed BEFORE leaf-ness, matching Chrome's own check order: a managed
+  // bookmark as parent is a `managed` violation, not "a bookmark, not a
+  // folder" — `invalid` would misreport what is actually a permission wall.
   const chain = await ancestry(parent);
   const managed = managedAncestor(chain);
   if (managed !== undefined) {
@@ -241,6 +257,12 @@ async function writableParent(
       "managed",
       `Cannot ${action} under "${parentId}": it sits inside the managed ` +
         `folder "${managed.id}".`,
+    );
+  }
+  if (!isFolder(parent)) {
+    throw new MutationError(
+      "invalid",
+      `Cannot ${action} under "${parentId}": it is a bookmark, not a folder.`,
     );
   }
   return { parent, chain };
@@ -303,7 +325,7 @@ async function writeMeta(
 /**
  * Create a bookmark (a node carrying `url`) under `options.parentId`.
  * Guards: parent exists (`not_found`), is not the synthetic root "0"
- * (`root`), is a folder, sits outside managed subtrees (`managed`), and
+ * (`root`), sits outside managed subtrees (`managed`), is a folder, and
  * `index` fits the parent's child list (`invalid`). When `options.meta` is
  * present it is written via `putMeta` keyed by the created id. Resolves to
  * the created node.
@@ -415,8 +437,8 @@ export async function renameFolder(
  * Move or reorder a node. `destination` needs `parentId` and/or `index` —
  * neither rejects `invalid`. Guards, in order: the node exists and is not a
  * fixed root or inside a managed subtree; the destination parent (when
- * given) exists, is not the synthetic root "0", is a folder, and is outside
- * managed subtrees; the destination is not the node itself or one of its
+ * given) exists, is not the synthetic root "0", is outside managed
+ * subtrees, and is a folder; the destination is not the node itself or one of its
  * descendants (`invalid`); and `index` fits post-removal bounds — the
  * destination's child count minus one when the node stays in its parent
  * (`invalid`). Resolves to the moved node.

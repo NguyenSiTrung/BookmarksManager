@@ -37,6 +37,10 @@ export type UndoMeta = z.infer<typeof UndoMeta>;
  * so it is absent in the input document and present once persisted.
  * `tagDef` carries the deleted tag's definition for `tag_delete` restores;
  * for other kinds it stays absent (the tag rows live in `meta` already).
+ * `idMap` is restore progress persisted by `src/undo/restore.ts`: old
+ * snapshot id → new Chrome id for every node recreated so far, written back
+ * after each successful create so a failed restore resumes instead of
+ * replaying (fresh Chrome ids make a naive retry duplicate everything).
  */
 export const UndoSnapshot = z
   .strictObject({
@@ -46,6 +50,7 @@ export const UndoSnapshot = z
     nodes: z.array(UndoNode),
     meta: z.array(UndoMeta),
     tagDef: TagDef.optional(),
+    idMap: z.record(z.string(), z.string()).optional(),
   })
   .superRefine((snapshot, ctx) => {
     if (snapshot.kind === "tag_delete" && snapshot.tagDef === undefined) {

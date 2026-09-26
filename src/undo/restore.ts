@@ -1,6 +1,5 @@
 import { db } from "../db/database";
 import {
-  createTag,
   getMeta,
   getTag,
   MetaRepoError,
@@ -36,9 +35,25 @@ import { peekLatest } from "./snapshot";
  * - **Pop on success.** The `undo` row is deleted only AFTER the restore
  *   completes. A failed restore leaves the row in place — it reports
  *   `{ok:false}` and can be retried (a transient API failure heals on the
- *   next call) or inspected. Restores are not atomic across
- *   `chrome.bookmarks`: a mid-restore failure can leave a partial result,
- *   which the kept row and the next undo attempt converge on.
+ *   next call), explicitly dropped via {@link discardLatest}, or inspected.
+ *   Restores are not atomic across `chrome.bookmarks`: a mid-restore
+ *   failure can leave a partial result, which the kept row and the next
+ *   undo attempt converge on.
+ * - **Serialized.** `undoLatest`/`discardLatest` calls queue on a
+ *   module-level promise chain, so peek→replay→pop can never interleave
+ *   with a second call — two concurrent undos cannot both replay the same
+ *   row.
+ * - **Idempotent, resumable replay.** Two mechanisms make a re-run safe:
+ *   (a) a top-level snapshot node whose ORIGINAL id still resolves is
+ *   skipped outright — Chrome never reuses ids, so a live original means
+ *   the node was never deleted (a merge that failed after `pushSnapshot`
+ *   but before removals, or a loser whose `removeTree` rejected);
+ *   (b) every successful recreate is written back to the row's `idMap`
+ *   (old id → new Chrome id) via {@link persistProgress}, so a retry after
+ *   a partial restore resumes from the persisted remap instead of
+ *   duplicating already-recreated subtrees — fresh Chrome ids make a
+ *   naive replay duplicate everything. A persisted mapping whose new node
+ *   has itself been deleted is treated as dead and recreated fresh.
  * - **LIFO over valid rows.** Reads go through `peekLatest`, which applies
  *   the repository's invalid⇒absent rule — a corrupt row is invisible and
  *   never popped or replayed.
@@ -55,9 +70,9 @@ import { peekLatest } from "./snapshot";
  *   `fellBackToOther` reports it. A parent that exists but turned managed
  *   is NOT a fallback — the create/move guard rejects `managed`, typed.
  * - **Index clamping.** Recorded indexes are clamped to the destination's
- *   current child count (post-removal capacity for same-parent moves), so
- *   a parent that shrank since the snapshot restores at the end instead of
- *   failing `invalid`.
+ *   current child count (post-removal capacity for same-parent moves, the
+ *   live child count of a resumed folder), so a parent that shrank since
+ *   the snapshot restores at the end instead of failing `invalid`.
  * - **Per-kind semantics.**
  *   - `delete` / `merge`: recreate each top-level node at its original
  *     parent+index (children recursively, in captured order), then remap
@@ -68,15 +83,18 @@ import { peekLatest } from "./snapshot";
  *     sibling order). Nodes deleted since the move are skipped — nothing
  *     can move back — and `meta` is never rewritten: moving never changed
  *     it, so restoring stale rows would only clobber later edits.
- *   - `tag_delete`: recreate the `TagDef` through the meta repo (an
- *     already-recreated tag is kept, not collided) and re-add the nameKey
- *     to each listed bookmark's tags — unioned with whatever the row has
- *     now, never clobbering interim edits. Rows for bookmarks that no
- *     longer exist are skipped.
+ *   - `tag_delete`: recreate the `TagDef` verbatim (original `createdAt`
+ *     included; an already-recreated tag is kept, not collided) and re-add
+ *     ONLY the deleted nameKey to each listed bookmark's tags, inserted at
+ *     its recorded position — tags the user removed since the delete must
+ *     not be resurrected from the stale snapshot row. Rows already
+ *     carrying the key are left untouched (and do not count as restored);
+ *     rows for bookmarks that no longer exist are skipped.
  * - The result is a total union, house pattern: `{ok:true, restoredIds,
  *   idMap, fellBackToOther}` or `{ok:false, code, message}`. Nothing
- *   throws; `MutationError`s map to their own code, `MetaRepoError`s to
- *   theirs, and anything else reports `api`.
+ *   throws — the whole operation (stack read, replay, pop) runs inside the
+ *   failure boundary; `MutationError`s map to their own code,
+ *   `MetaRepoError`s to theirs, and anything else reports `api`.
  */
 
 /** `code` values on a failed undo: the empty stack plus every typed guard. */
@@ -89,12 +107,15 @@ export type UndoFailureCode =
 export interface UndoSuccess {
   ok: true;
   /**
-   * Ids the restore wrote or moved — NEW Chrome ids for recreated nodes
-   * (delete/merge), the moved nodes' own ids for bulk_move, and the
-   * affected bookmark ids for tag_delete.
+   * Ids the restore wrote or moved — NEW Chrome ids for nodes recreated by
+   * THIS call (delete/merge), the moved nodes' own ids for bulk_move, and
+   * the affected bookmark ids for tag_delete. Nodes recreated by an
+   * earlier failed attempt (persisted in the row's `idMap`) are skipped,
+   * not re-reported.
    */
   restoredIds: string[];
-  /** Old snapshot id → new Chrome id for every recreated node. */
+  /** Old snapshot id → new Chrome id for every recreated node — including
+   * mappings persisted by earlier attempts of the same snapshot. */
   idMap: Record<string, string>;
   /** True when at least one node restored into Other bookmarks because its
    * recorded parent was gone. */
@@ -109,10 +130,43 @@ export interface UndoFailure {
 
 export type UndoResult = UndoSuccess | UndoFailure;
 
+/** A discarded snapshot's row id — `discardLatest`'s success shape. */
+export interface DiscardSuccess {
+  ok: true;
+  /** Row id of the snapshot dropped without replaying it. */
+  discardedId: number;
+}
+
+export type DiscardResult = DiscardSuccess | UndoFailure;
+
 interface RestoreContext {
   restoredIds: string[];
   idMap: Record<string, string>;
   fellBackToOther: boolean;
+  /** Row id of the snapshot being replayed — progress writes go here. */
+  snapshotId?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Serialization — peek→replay→pop must never interleave between calls
+// ---------------------------------------------------------------------------
+
+/**
+ * The tail of the stack-operation queue. Each `undoLatest`/`discardLatest`
+ * call appends its work via {@link serialize}; the tail is normalized back
+ * to a resolved promise after every task so a (buggy) throwing task can
+ * never wedge the queue.
+ */
+let tail: Promise<void> = Promise.resolve();
+
+/** Run `task` after every previously queued stack operation settles. */
+function serialize<T>(task: () => Promise<T>): Promise<T> {
+  const result = tail.then(task);
+  tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 /** Total existence probe — `get` rejects on unknown ids. */
@@ -138,9 +192,30 @@ async function resolveParent(
 }
 
 /**
+ * Write the in-flight `idMap` back to the snapshot row — the resume anchor
+ * that lets a failed restore continue where it stopped instead of
+ * duplicating already-recreated nodes on retry.
+ */
+async function persistProgress(ctx: RestoreContext): Promise<void> {
+  if (ctx.snapshotId === undefined) return;
+  // modify() rather than update(): UpdateSpec's mapped type hits TS2615 on
+  // UndoNode's recursive `children`.
+  await db.undo
+    .where("id")
+    .equals(ctx.snapshotId)
+    .modify((row) => {
+      row.idMap = { ...ctx.idMap };
+    });
+}
+
+/**
  * Recreate `node` under `parentId` at `index`, then its children in
- * captured order (each clamped to the fresh folder's growth). Records the
- * old→new id pair for every created node.
+ * captured order (each clamped to the folder's LIVE child count, so a
+ * resumed folder that already holds children from an earlier attempt slots
+ * the rest correctly). A node already present in `ctx.idMap` — recreated
+ * by an earlier attempt — is not created again; its mapped id simply
+ * becomes the parent for the child pass. Records/persists the old→new id
+ * pair for every created node.
  */
 async function recreateSubtree(
   node: UndoNode,
@@ -148,28 +223,36 @@ async function recreateSubtree(
   index: number,
   ctx: RestoreContext,
 ): Promise<void> {
-  const created =
-    node.url !== undefined
-      ? await createBookmark({
-          parentId,
-          title: node.title,
-          url: node.url,
-          index,
-        })
-      : await createFolder({ parentId, title: node.title, index });
-  ctx.idMap[node.id] = created.id;
-  ctx.restoredIds.push(created.id);
-  let createdCount = 0;
+  let createdId = ctx.idMap[node.id];
+  if (createdId !== undefined && !(await nodeExists(createdId))) {
+    // An earlier attempt's recreation has itself been removed since —
+    // the persisted mapping is dead; recreate the node fresh.
+    delete ctx.idMap[node.id];
+    createdId = undefined;
+  }
+  if (createdId === undefined) {
+    const created =
+      node.url !== undefined
+        ? await createBookmark({
+            parentId,
+            title: node.title,
+            url: node.url,
+            index,
+          })
+        : await createFolder({ parentId, title: node.title, index });
+    createdId = created.id;
+    ctx.idMap[node.id] = createdId;
+    ctx.restoredIds.push(createdId);
+    await persistProgress(ctx);
+  }
   for (const child of node.children ?? []) {
-    // A restored folder starts empty, so the child lands at its recorded
-    // index or at the end of what we have recreated so far.
+    const siblings = await getChildren(createdId);
     await recreateSubtree(
       child,
-      created.id,
-      Math.min(child.index, createdCount),
+      createdId,
+      Math.min(child.index, siblings.length),
       ctx,
     );
-    createdCount += 1;
   }
 }
 
@@ -177,7 +260,10 @@ async function recreateSubtree(
  * `delete`/`merge` structure pass: recreate every top-level node in
  * ascending index order (independent parents cannot disturb each other;
  * same-parent siblings land low→high so the original order survives
- * clamping).
+ * clamping). A node whose ORIGINAL id still resolves was never deleted —
+ * Chrome never reuses ids — so replaying it would duplicate a live
+ * bookmark (merge applied after pushSnapshot failures, losers whose
+ * removeTree rejected): skip it.
  */
 async function recreateNodes(
   snapshot: UndoSnapshot,
@@ -185,6 +271,7 @@ async function recreateNodes(
 ): Promise<void> {
   const ordered = [...snapshot.nodes].sort((a, b) => a.index - b.index);
   for (const node of ordered) {
+    if (await nodeExists(node.id)) continue; // never deleted — do not clone
     const parentId = await resolveParent(node.parentId, ctx);
     const siblings = await getChildren(parentId);
     await recreateSubtree(node, parentId, Math.min(node.index, siblings.length), ctx);
@@ -254,11 +341,14 @@ async function restoreMoves(
 }
 
 /**
- * `tag_delete`: restore the definition (unless an identical-keyed tag was
- * recreated since — the live def wins) and re-add the nameKey to each
- * listed bookmark's tags, unioned ahead of its current tags so the
- * original ordering is preserved without dropping interim additions.
- * Bookmarks that no longer exist are skipped.
+ * `tag_delete`: restore the definition verbatim — original `createdAt`
+ * included — unless an identical-keyed tag was recreated since (the live
+ * def wins, no collision). Then re-add ONLY the deleted nameKey to each
+ * listed bookmark's tags, inserted at the position it held in the
+ * pre-delete row so the original ordering is approximated without
+ * resurrecting tags the user removed since. Rows already carrying the key
+ * and bookmarks that no longer exist are skipped (and do not count toward
+ * `restoredIds`).
  */
 async function restoreTagDelete(
   snapshot: UndoSnapshot,
@@ -272,29 +362,31 @@ async function restoreTagDelete(
     );
   }
   if ((await getTag(tagDef.nameKey)) === undefined) {
-    const options: { color?: string; description?: string } = {};
-    if (tagDef.color !== undefined) options.color = tagDef.color;
-    if (tagDef.description !== undefined) {
-      options.description = tagDef.description;
-    }
-    await createTag(tagDef.name, options);
+    // Verbatim restore of the snapshotted def (schema-validated on write
+    // and on read) — `createTag` would stamp a fresh createdAt. The
+    // recheck inside the transaction keeps a concurrently recreated def
+    // winning instead of being overwritten.
+    await db.transaction("rw", db.tags, async () => {
+      if ((await getTag(tagDef.nameKey)) === undefined) {
+        await db.tags.put({ ...tagDef });
+      }
+    });
   }
   for (const meta of snapshot.meta) {
     if (!(await nodeExists(meta.id))) continue;
     const current = await getMeta(meta.id);
-    const tags = mergeTags(meta.tags, current?.tags ?? []);
+    if (current !== undefined && current.tags.includes(tagDef.nameKey)) {
+      continue; // already re-added — nothing changes
+    }
+    const tags = [...(current?.tags ?? [])];
+    const recorded = meta.tags.indexOf(tagDef.nameKey);
+    // Insert where the key sat in the pre-delete list, clamped to the
+    // current list; not found (defensive) → append.
+    const at = recorded < 0 ? tags.length : Math.min(recorded, tags.length);
+    tags.splice(at, 0, tagDef.nameKey);
     await patchMeta(meta.id, { tags });
     ctx.restoredIds.push(meta.id);
   }
-}
-
-/** `first` followed by the not-already-present entries of `rest`. */
-function mergeTags(
-  first: readonly string[],
-  rest: readonly string[],
-): string[] {
-  const seen = new Set(first);
-  return [...first, ...rest.filter((tag) => !seen.has(tag))];
 }
 
 function toFailure(cause: unknown): UndoFailure {
@@ -311,20 +403,29 @@ function toFailure(cause: unknown): UndoFailure {
 /**
  * Pop the newest valid snapshot and replay it. The `undo` row is deleted
  * only after the restore succeeds (pop-on-success); a failure keeps the
- * row so it can be retried. Returns the union described in the module
- * header — never throws.
+ * row — including its persisted `idMap` progress — so a retry resumes
+ * instead of replaying. The whole operation is serialized against other
+ * `undoLatest`/`discardLatest` calls and returns the union described in
+ * the module header — never throws.
  */
-export async function undoLatest(): Promise<UndoResult> {
-  const snapshot = await peekLatest();
-  if (snapshot === undefined) {
-    return { ok: false, code: "empty", message: "Nothing to undo." };
-  }
-  const ctx: RestoreContext = {
-    restoredIds: [],
-    idMap: {},
-    fellBackToOther: false,
-  };
+export function undoLatest(): Promise<UndoResult> {
+  return serialize(runUndoLatest);
+}
+
+async function runUndoLatest(): Promise<UndoResult> {
   try {
+    const snapshot = await peekLatest();
+    if (snapshot === undefined) {
+      return { ok: false, code: "empty", message: "Nothing to undo." };
+    }
+    const ctx: RestoreContext = {
+      restoredIds: [],
+      // Progress persisted by an earlier failed attempt resumes the
+      // replay where it stopped.
+      idMap: { ...(snapshot.idMap ?? {}) },
+      fellBackToOther: false,
+      snapshotId: snapshot.id,
+    };
     switch (snapshot.kind) {
       case "delete":
       case "merge":
@@ -341,16 +442,39 @@ export async function undoLatest(): Promise<UndoResult> {
         await restoreTagDelete(snapshot, ctx);
         break;
     }
+    if (snapshot.id !== undefined) {
+      await db.undo.delete(snapshot.id);
+    }
+    return {
+      ok: true,
+      restoredIds: ctx.restoredIds,
+      idMap: ctx.idMap,
+      fellBackToOther: ctx.fellBackToOther,
+    };
   } catch (cause) {
     return toFailure(cause);
   }
-  if (snapshot.id !== undefined) {
-    await db.undo.delete(snapshot.id);
-  }
-  return {
-    ok: true,
-    restoredIds: ctx.restoredIds,
-    idMap: ctx.idMap,
-    fellBackToOther: ctx.fellBackToOther,
-  };
+}
+
+/**
+ * Drop the newest valid snapshot WITHOUT replaying it — the explicit
+ * escape hatch for a head that can never restore (e.g. its recorded parent
+ * has since become managed, or the snapshot predates this build's
+ * fixed-root capture guard), which pop-on-success would otherwise wedge
+ * atop the stack forever. Serialized with `undoLatest`; the row below the
+ * discarded head becomes the next undo target. Never throws.
+ */
+export function discardLatest(): Promise<DiscardResult> {
+  return serialize(async (): Promise<DiscardResult> => {
+    try {
+      const snapshot = await peekLatest();
+      if (snapshot === undefined || snapshot.id === undefined) {
+        return { ok: false, code: "empty", message: "Nothing to discard." };
+      }
+      await db.undo.delete(snapshot.id);
+      return { ok: true, discardedId: snapshot.id };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  });
 }

@@ -37,7 +37,7 @@ import {
   pushSnapshot,
   UNDO_STACK_LIMIT,
 } from "../../src/undo/snapshot";
-import { undoLatest } from "../../src/undo/restore";
+import { discardLatest, undoLatest } from "../../src/undo/restore";
 import type { UndoResult, UndoSuccess } from "../../src/undo/restore";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -228,6 +228,15 @@ describe("captureSubtree", () => {
   it("returns undefined for an unknown node", async () => {
     expect(await captureSubtree("no-such-node")).toBeUndefined();
   });
+
+  it("returns undefined for every fixed root — a snapshot of a root could never be restored", async () => {
+    // "0" has no parentId/index (already excluded); "1"–"3" DO have them,
+    // so without the guard they would produce snapshots whose restore can
+    // only ever fail `root` — wedging the stack head.
+    for (const id of ["0", "1", "2", "3"]) {
+      expect(await captureSubtree(id)).toBeUndefined();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -260,6 +269,16 @@ describe("captureNodes", () => {
 
   it("skips ids that no longer exist", async () => {
     const capture = await captureNodes(["bm-b", "ghost"]);
+    expect(capture.nodes.map((n) => n.id)).toEqual(["bm-b"]);
+  });
+
+  it("skips fixed roots — moving a root can never be replayed", async () => {
+    const capture = await captureNodes([
+      BOOKMARKS_BAR_ID,
+      "bm-b",
+      OTHER_BOOKMARKS_ID,
+      "0",
+    ]);
     expect(capture.nodes.map((n) => n.id)).toEqual(["bm-b"]);
   });
 });
@@ -524,6 +543,129 @@ describe("undoLatest — delete", () => {
 });
 
 // ---------------------------------------------------------------------------
+// undoLatest — idempotent / resumable restore
+// ---------------------------------------------------------------------------
+
+describe("undoLatest — idempotent restore", () => {
+  it("does not recreate a top-level node whose original id still resolves", async () => {
+    // A snapshot pushed by a mutation that then failed BEFORE removing
+    // anything (e.g. a merge whose patchMeta threw) still sits on the stack.
+    // Chrome never reuses ids, so a live original id means "never deleted" —
+    // replaying the row must be a no-op for that node, not a duplicate.
+    const capture = await captureSubtree("bm-b");
+    await pushSnapshot({
+      kind: "delete",
+      nodes: [capture!.node],
+      meta: capture!.meta,
+    });
+    // NB: bm-b is NOT removed — the mutation never happened.
+
+    const result = expectOk(await undoLatest());
+    expect(result.idMap).toEqual({});
+    expect(result.restoredIds).toEqual([]);
+    // Exactly one bm-b, untouched at its original slot.
+    expect((await getChildren(BOOKMARKS_BAR_ID)).map((n) => n.id)).toEqual([
+      "folder-a",
+      "bm-b",
+      "bm-c",
+      "bm-k",
+      "bm-l1",
+      "bm-l2",
+    ]);
+    expect(await peekLatest()).toBeUndefined(); // still pops on success
+  });
+
+  it("resumes a partially-failed restore instead of replaying it", async () => {
+    const b = await captureSubtree("bm-b");
+    const c = await captureSubtree("bm-c");
+    await pushSnapshot({
+      kind: "delete",
+      nodes: [b!.node, c!.node],
+      meta: [],
+    });
+    await removeTree("bm-b");
+    await removeTree("bm-c");
+
+    // First attempt: bm-b is recreated, then the second create fails.
+    const origCreate = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) =>
+      details.title === "C"
+        ? Promise.reject(new Error("chrome boom"))
+        : origCreate(details),
+    );
+    const failed = await undoLatest();
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.code).toBe("api");
+
+    // The kept row carries its progress: bm-b's old→new id mapping survived.
+    const kept = await peekLatest();
+    expect(kept?.idMap?.["bm-b"]).toBeDefined();
+    vi.restoreAllMocks();
+
+    const retried = expectOk(await undoLatest());
+    const newB = retried.idMap["bm-b"];
+    const newC = retried.idMap["bm-c"];
+    expect(newB).toBeDefined();
+    expect(newC).toBeDefined();
+    // bm-b was NOT recreated a second time — the resume skipped it.
+    const bar = await getChildren(BOOKMARKS_BAR_ID);
+    expect(bar.map((n) => n.id)).toEqual([
+      "folder-a",
+      newB,
+      newC,
+      "bm-k",
+      "bm-l1",
+      "bm-l2",
+    ]);
+    expect(bar.filter((n) => n.title === "B")).toHaveLength(1);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("serializes concurrent calls: one replays, the other reports empty — no double replay", async () => {
+    const capture = await captureSubtree("bm-b");
+    await pushSnapshot({ kind: "delete", nodes: [capture!.node], meta: [] });
+    await removeTree("bm-b");
+    const spy = vi.spyOn(fake, "create");
+
+    const results = await Promise.all([undoLatest(), undoLatest()]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(
+      results.filter((r) => !r.ok && r.code === "empty"),
+    ).toHaveLength(1);
+    // The snapshot was replayed exactly once — no duplicate bookmark.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const bar = await getChildren(BOOKMARKS_BAR_ID);
+    expect(bar.filter((n) => n.title === "B")).toHaveLength(1);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("returns a typed failure instead of throwing when the stack read fails", async () => {
+    vi.spyOn(db.undo, "toArray").mockRejectedValue(new Error("idb boom"));
+    await expect(undoLatest()).resolves.toMatchObject({
+      ok: false,
+      code: "api",
+      message: expect.stringContaining("idb boom"),
+    });
+  });
+
+  it("returns a typed failure when the pop fails after a successful restore", async () => {
+    const capture = await captureSubtree("bm-b");
+    await pushSnapshot({ kind: "delete", nodes: [capture!.node], meta: [] });
+    await removeTree("bm-b");
+    vi.spyOn(db.undo, "delete").mockRejectedValue(new Error("idb boom"));
+
+    const result = await undoLatest();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("api");
+    // The snapshot row survives for a later attempt (which will skip the
+    // already-restored node via the persisted idMap).
+    const kept = await peekLatest();
+    expect(kept).toBeDefined();
+    expect(kept?.idMap?.["bm-b"]).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // undoLatest — bulk_move
 // ---------------------------------------------------------------------------
 
@@ -722,6 +864,70 @@ describe("undoLatest — tag_delete", () => {
     expect(await getMeta("bm-c")).toBeUndefined();
     expect(await getTag("reading list")).toBeDefined();
   });
+
+  it("re-adds ONLY the deleted nameKey — tags removed since the delete stay gone", async () => {
+    await createTag("Doomed");
+    await putMeta("bm-b", { tags: ["doomed", "keep"] });
+    const tagDef = await getTag("doomed");
+    await pushSnapshot({
+      kind: "tag_delete",
+      nodes: [],
+      meta: await getMetaByIds(["bm-b"]),
+      tagDef,
+    });
+    await deleteTag("doomed");
+    // Post-delete the user removed "keep" and added "new" — undo must not
+    // resurrect "keep" from the stale snapshot row.
+    await putMeta("bm-b", { tags: ["new"] });
+
+    const result = expectOk(await undoLatest());
+    expect(result.restoredIds).toEqual(["bm-b"]);
+    // "doomed" returns at its recorded position (index 0); "keep" stays gone.
+    expect((await getMeta("bm-b"))?.tags).toEqual(["doomed", "new"]);
+  });
+
+  it("reports no restored rows when the bookmark already carries the key again", async () => {
+    await createTag("T");
+    await putMeta("bm-b", { tags: ["t"] });
+    const tagDef = await getTag("t");
+    await pushSnapshot({
+      kind: "tag_delete",
+      nodes: [],
+      meta: await getMetaByIds(["bm-b"]),
+      tagDef,
+    });
+    await deleteTag("t");
+    await putMeta("bm-b", { tags: ["t", "x"] }); // re-added before undo
+
+    const result = expectOk(await undoLatest());
+    expect(result.restoredIds).toEqual([]);
+    expect((await getMeta("bm-b"))?.tags).toEqual(["t", "x"]);
+  });
+
+  it("restores the tag def with its original createdAt", async () => {
+    const old = "2020-01-01T00:00:00.000Z";
+    await db.tags.put({
+      name: "Vintage",
+      nameKey: "vintage",
+      createdAt: old,
+      updatedAt: old,
+    });
+    const tagDef = await getTag("vintage");
+    await putMeta("bm-b", { tags: ["vintage"] });
+    await pushSnapshot({
+      kind: "tag_delete",
+      nodes: [],
+      meta: await getMetaByIds(["bm-b"]),
+      tagDef,
+    });
+    await deleteTag("vintage");
+
+    expectOk(await undoLatest());
+    expect(await getTag("vintage")).toMatchObject({
+      name: "Vintage",
+      createdAt: old,
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -740,5 +946,43 @@ describe("undoLatest — stack semantics", () => {
   it("treats a corrupt stored snapshot as absent", async () => {
     await db.undo.add({ bogus: true } as unknown as UndoSnapshot);
     expect(await undoLatest()).toMatchObject({ ok: false, code: "empty" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// discardLatest — the wedged-head escape hatch
+// ---------------------------------------------------------------------------
+
+describe("discardLatest", () => {
+  it("drops a permanently failing head so the stack below becomes reachable", async () => {
+    const restorable = await captureSubtree("bm-b");
+    await pushSnapshot({
+      kind: "delete",
+      nodes: [restorable!.node],
+      meta: [],
+    });
+    // The head can never restore: its recorded parent is managed.
+    await pushSnapshot({
+      kind: "delete",
+      nodes: [leafSnapshotNode("wedged", "managed", 0)],
+      meta: [],
+    });
+    await removeTree("bm-b");
+
+    const blocked = await undoLatest();
+    expect(blocked).toMatchObject({ ok: false, code: "managed" });
+    expect(await peekLatest()).toBeDefined();
+
+    const discarded = await discardLatest();
+    expect(discarded).toMatchObject({ ok: true });
+    expect(await peekLatest()).toBeDefined(); // bm-b's row now heads the stack
+
+    const result = expectOk(await undoLatest());
+    expect(result.idMap["bm-b"]).toBeDefined();
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("reports empty when there is nothing to discard", async () => {
+    expect(await discardLatest()).toMatchObject({ ok: false, code: "empty" });
   });
 });

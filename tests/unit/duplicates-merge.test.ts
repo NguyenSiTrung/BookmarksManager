@@ -15,9 +15,11 @@ import type { DuplicateGroup } from "../../src/duplicates/group";
 import { MERGE_NOTES_SEPARATOR, mergeGroup } from "../../src/duplicates/merge";
 import type { MergeResult, MergeSuccess } from "../../src/duplicates/merge";
 import { BOOKMARKS_BAR_ID, get, getChildren } from "../../src/sync/chrome-bookmarks";
+import { createFolder } from "../../src/sync/mutations";
 import { undoLatest } from "../../src/undo/restore";
 import type { UndoResult, UndoSuccess } from "../../src/undo/restore";
 import { listSnapshots, peekLatest } from "../../src/undo/snapshot";
+import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
 /**
@@ -53,12 +55,14 @@ function groupOf(...ids: string[]): DuplicateGroup {
   };
 }
 
+let fake: FakeBookmarksApi;
+
 beforeAll(async () => {
   await db.open();
 });
 
 beforeEach(async () => {
-  installBookmarksFake({
+  fake = installBookmarksFake({
     bookmarksBar: [
       { id: "bm-k", title: "Keep", url: "https://example.com/page" },
       { id: "bm-l1", title: "L1", url: "https://example.com/page" },
@@ -391,11 +395,106 @@ describe("mergeGroup — failures", () => {
       "bm-managed",
     ]);
 
-    // The undo attempt recreates bm-l1, then hits the managed destination
-    // and reports typed — the snapshot is kept for a later retry.
-    const undo = await undoLatest();
-    expect(undo).toMatchObject({ ok: false, code: "managed" });
-    expect((await barChildIds()).length).toBe(3); // bm-l1 partially restored
-    expect(await peekLatest()).toBeDefined();
+    // Undo: bm-managed was never deleted, so its live original id is skipped
+    // — the managed destination is never touched — while bm-l1 IS recreated
+    // under a fresh Chrome id, exactly once and at its recorded position.
+    const undo = expectUndoOk(await undoLatest());
+    const newL1 = undo.idMap["bm-l1"];
+    expect(newL1).toBeDefined();
+    expect(newL1).not.toBe("bm-l1");
+    expect(undo.idMap["bm-managed"]).toBeUndefined();
+    expect(await barChildIds()).toEqual(["bm-k", newL1, "bm-l2", "bm-solo"]);
+    expect((await get("bm-managed"))[0]).toBeDefined(); // still itself
+    // bm-l1's meta row rides the remap onto the new id; the kept node's
+    // pre-merge row is restored too.
+    expect(await getMeta(newL1 as string)).toMatchObject({ tags: ["l1"] });
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep"],
+      notes: "k note",
+    });
+    expect(await peekLatest()).toBeUndefined(); // popped on success
+  });
+
+  it("rejects a folder loser before mutating anything — groups are leaf-only", async () => {
+    // A folder in `others` would make removeTree delete its whole subtree
+    // (possibly including the kept node) and leak descendant meta rows.
+    const folder = await createFolder({
+      parentId: BOOKMARKS_BAR_ID,
+      title: "Folder loser",
+    });
+    await putMeta("bm-k", { tags: ["keep"] });
+    const result = await mergeGroup(groupOf("bm-k", folder.id), "bm-k");
+    expect(result).toMatchObject({ ok: false, code: "invalid" });
+    // Nothing mutated: no snapshot, no meta change, folder intact.
+    expect(await listSnapshots()).toEqual([]);
+    expect(await getMeta("bm-k")).toMatchObject({ tags: ["keep"] });
+    expect((await get(folder.id))[0]).toBeDefined();
+    expect(await barChildIds()).toEqual([
+      "bm-k",
+      "bm-l1",
+      "bm-l2",
+      "bm-solo",
+      folder.id,
+    ]);
+  });
+
+  it("does not union meta of members that vanished before the merge", async () => {
+    // A stale meta row survives for a node that no longer exists — it must
+    // not leak onto the kept bookmark.
+    await putMeta("ghost-loser", {
+      tags: ["ghosttag"],
+      notes: "ghost note",
+    });
+    await putMeta("bm-l1", { tags: ["l1"] });
+    const result = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1", "ghost-loser"), "bm-k"),
+    );
+    expect(result.mergedMeta.tags).toEqual(["l1"]);
+    expect(result.mergedMeta.notes).toBeUndefined();
+    expect(result.removedIds).toEqual(["bm-l1"]);
+    expect(await getMeta("bm-k")).toMatchObject({ tags: ["l1"] });
+  });
+
+  it("leaves live losers untouched on undo when the merge failed before removals", async () => {
+    // Joined notes exceed the 10k meta cap: patchMeta throws invalid_meta
+    // AFTER the snapshot was pushed, so nothing was ever removed. Replaying
+    // the snapshot must not duplicate the live losers.
+    await putMeta("bm-l1", { notes: "x".repeat(6000) });
+    await putMeta("bm-l2", { notes: "y".repeat(6000) });
+    const result = await mergeGroup(
+      groupOf("bm-k", "bm-l1", "bm-l2"),
+      "bm-k",
+    );
+    expect(result).toMatchObject({ ok: false, code: "invalid_meta" });
+    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+
+    const undo = expectUndoOk(await undoLatest());
+    expect(undo.idMap).toEqual({}); // nothing was recreated
+    // Both losers still exist exactly once — replay created no duplicates.
+    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("does not duplicate a loser whose removeTree failed when the merge is undone", async () => {
+    await putMeta("bm-l1", { tags: ["l1"] });
+    const removeSpy = vi
+      .spyOn(fake, "removeTree")
+      .mockRejectedValueOnce(new Error("chrome boom"));
+    const result = await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k");
+    expect(result).toMatchObject({ ok: false, code: "api" });
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+    // bm-l1 was never removed — the loser is still live.
+    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+    removeSpy.mockRestore();
+
+    const undo = expectUndoOk(await undoLatest());
+    // The live loser is skipped — no duplicate is created for it.
+    expect(undo.idMap["bm-l1"]).toBeUndefined();
+    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+    expect(
+      (await barChildIds()).filter((id) => id === "bm-l1"),
+    ).toHaveLength(1);
+    expect(await getMeta("bm-l1")).toMatchObject({ tags: ["l1"] });
+    expect(await peekLatest()).toBeUndefined();
   });
 });

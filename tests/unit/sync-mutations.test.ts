@@ -237,6 +237,38 @@ describe("createBookmark", () => {
     );
   });
 
+  it("reports managed (not invalid) for a managed leaf used as parent", async () => {
+    // Chrome/the fake check managed before leaf-ness: a managed bookmark
+    // as parent is a `managed` violation, not a leaf-as-parent one.
+    const spy = vi.spyOn(fake, "create");
+    await expectMutationError(
+      createBookmark({
+        parentId: "managed-child",
+        title: "x",
+        url: "https://x.example/",
+      }),
+      "managed",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("maps a non-not-found get rejection to api, not not_found", async () => {
+    // A transient API failure is not "the node is gone" — it must surface
+    // as `api` so callers don't mislabel it. The mocked rejection hits the
+    // requireNode(parent) lookup inside createBookmark.
+    vi.spyOn(fake, "get").mockRejectedValueOnce(
+      new Error("sync transport boom"),
+    );
+    await expectMutationError(
+      createBookmark({
+        parentId: "folder-a",
+        title: "x",
+        url: "https://x.example/",
+      }),
+      "api",
+    );
+  });
+
   it("rejects an out-of-range or fractional index before the write", async () => {
     const spy = vi.spyOn(fake, "create");
     for (const index of [-1, 3, 1.5]) {
