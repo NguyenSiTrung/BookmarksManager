@@ -1,6 +1,8 @@
 import Dexie, { type Table } from "dexie";
 import type { Decision } from "../schemas/decision";
+import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
+import type { UndoSnapshot } from "../schemas/undo";
 
 /**
  * Settings row. `key` is a stable lookup string — ProviderSettings rows use
@@ -36,12 +38,15 @@ export interface KeyMaterialEntry {
 
 export class BookmarksManagerDB extends Dexie {
   // `declare` keeps these off emitted class fields; Dexie assigns them in
-  // version(1).stores() below.
+  // the version().stores() declarations below.
   declare metadata: Table<MetadataEntry, string>;
   declare decisions: Table<Decision, string>;
   declare consents: Table<ConsentRecord, [string, string]>;
   declare sentLog: Table<SentLogEntry, number>;
   declare keyMaterials: Table<KeyMaterialEntry, string>;
+  declare bookmarkMeta: Table<BookmarkMeta, string>;
+  declare tags: Table<TagDef, string>;
+  declare undo: Table<UndoSnapshot, number>;
 
   constructor() {
     super("BookmarksManager");
@@ -57,6 +62,16 @@ export class BookmarksManagerDB extends Dexie {
       sentLog: "++id,sentAt",
       // CryptoKey handles persisted via structured clone under a stable id.
       keyMaterials: "id",
+    });
+    this.version(2).stores({
+      // Extension-owned metadata, one row per Chrome bookmark node id;
+      // *tags is a multiEntry index over tag nameKeys so tag → bookmark
+      // lookups don't require a full-table scan.
+      bookmarkMeta: "id,*tags,category,updatedAt",
+      // TagDef rows keyed by their case-insensitive nameKey.
+      tags: "nameKey",
+      // LIFO undo snapshots; ++id is the recency order, createdAt indexed.
+      undo: "++id,createdAt",
     });
   }
 }
