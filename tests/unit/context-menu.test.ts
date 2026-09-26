@@ -14,6 +14,7 @@ import { OTHER_BOOKMARKS_ID } from "../../src/sync/chrome-bookmarks";
 import {
   BADGE_CLEAR_DELAY_MS,
   BADGE_CONFIRM_TEXT,
+  BADGE_ERROR_TEXT,
   CONTEXT_MENU_ITEMS,
   INCOGNITO_SKIP_MESSAGE,
   SAVE_LINK_MENU_ID,
@@ -379,6 +380,51 @@ describe("badge confirmation", () => {
       (call) => (call[0] as { text: string }).text,
     );
     expect(badgeTexts).toEqual(["", BADGE_CONFIRM_TEXT, ""]);
+  });
+});
+
+describe("failure badge", () => {
+  it("shows an error badge when the save fails, then clears it", async () => {
+    installChrome();
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    registerContextMenus();
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenCalledWith({ text: "" }),
+    );
+
+    const createSpy = vi
+      .spyOn(fake, "create")
+      .mockRejectedValue(new Error("boom"));
+    await handleContextMenuClick(PAGE_CLICK, PAGE_TAB);
+
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenLastCalledWith({
+        text: BADGE_ERROR_TEXT,
+      }),
+    );
+    const saved = (await fake.getChildren(OTHER_BOOKMARKS_ID)).filter(
+      (node) => node.url !== undefined,
+    );
+    expect(saved).toEqual([]);
+    createSpy.mockRestore();
+
+    const calls = timeoutSpy.mock.calls as unknown as [
+      () => void,
+      number?,
+    ][];
+    await vi.waitFor(() =>
+      expect(
+        calls.some((call) => call[1] === BADGE_CLEAR_DELAY_MS),
+      ).toBe(true),
+    );
+    const index = calls.findIndex((call) => call[1] === BADGE_CLEAR_DELAY_MS);
+    const timerId = timeoutSpy.mock.results[index]?.value as number;
+    clearTimeout(timerId);
+    calls[index]?.[0]?.();
+
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenLastCalledWith({ text: "" }),
+    );
   });
 });
 

@@ -149,6 +149,9 @@ export const CONTEXT_MENU_ITEMS: readonly ContextMenuCreateProperties[] = [
 /** Badge text shown after a successful save. */
 export const BADGE_CONFIRM_TEXT = "✓";
 
+/** Badge text shown when a save attempt fails, so it is never silent. */
+export const BADGE_ERROR_TEXT = "✕";
+
 /** How long the confirmation badge stays up before clearing (milliseconds). */
 export const BADGE_CLEAR_DELAY_MS = 1500;
 
@@ -174,16 +177,21 @@ async function setBadgeText(text: string): Promise<void> {
 }
 
 /**
- * Show the confirmation badge and schedule its clear. The clear is a
+ * Show `text` in the toolbar badge and schedule its clear. The clear is a
  * `setTimeout` (no `alarms` permission); an evicted worker may miss it, which
  * is repaired by the registration-time clear on the next worker start.
  */
-function confirmSaveBadge(): void {
-  void setBadgeText(BADGE_CONFIRM_TEXT).then(() => {
+function flashBadge(text: string): void {
+  void setBadgeText(text).then(() => {
     setTimeout(() => {
       void setBadgeText("");
     }, BADGE_CLEAR_DELAY_MS);
   });
+}
+
+/** Confirmation badge after a successful save. */
+function confirmSaveBadge(): void {
+  flashBadge(BADGE_CONFIRM_TEXT);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,7 +260,9 @@ export async function handleContextMenuClick(
     confirmSaveBadge();
   } catch {
     // Guards rejected (managed/root/unknown folder) or the tree is
-    // unavailable — the click is best-effort and must not throw.
+    // unavailable — the click is best-effort and must not throw, but the user
+    // still needs to know the save did not happen.
+    flashBadge(BADGE_ERROR_TEXT);
   }
 }
 
