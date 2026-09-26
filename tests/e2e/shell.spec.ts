@@ -57,7 +57,20 @@ test("extension loads, renders all three surfaces, and sends no requests", async
     await expect(
       popup.getByRole("heading", { name: "Bookmarks Manager" }),
     ).toBeVisible();
-    await expect(popup.getByLabel("Search bookmarks")).toBeVisible();
+    // P5.T1 replaced the popup's search UI with the quick-save form: title,
+    // URL, folder picker, tag entry, category and notes, plus the Save and
+    // "Open manager" actions (the fields render once the active-tab prefill
+    // and tree load settle).
+    await expect(popup.getByLabel("Title")).toBeVisible();
+    await expect(popup.getByLabel("URL")).toBeVisible();
+    await expect(popup.getByLabel("Folder")).toBeVisible();
+    await expect(popup.getByLabel("New tag name")).toBeVisible();
+    await expect(popup.getByLabel("Category")).toBeVisible();
+    await expect(popup.getByLabel("Notes")).toBeVisible();
+    await expect(popup.getByRole("button", { name: "Save" })).toBeVisible();
+    await expect(
+      popup.getByRole("button", { name: "Open manager" }),
+    ).toBeVisible();
 
     const sidepanel = await context.newPage();
     await sidepanel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
