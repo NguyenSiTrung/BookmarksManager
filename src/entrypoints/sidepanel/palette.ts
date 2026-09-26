@@ -1,5 +1,6 @@
 import { Category } from "../../schemas/bookmark";
 import type { TagDef } from "../../schemas/meta";
+import { isOpenableUrl } from "../../search/openable";
 import { runQuery } from "../../search/run";
 import type { SearchIndexHandle } from "../../search/run";
 import type { FlattenedTree } from "../../sync/tree";
@@ -27,6 +28,15 @@ import type { SidePanelView } from "./views";
  * Every item's `view` (jump) or `id`/`url` (bookmark) is resolved HERE so
  * the component layer only renders and dispatches — no lookup work in JSX.
  */
+/** Commands the palette can dispatch into the panel's existing flows. */
+export type PaletteCommand =
+  | "import"
+  | "export"
+  | "tag-manager"
+  | "new-folder"
+  | "undo"
+  | "options";
+
 export type PaletteItem =
   | {
       kind: "bookmark";
@@ -35,6 +45,11 @@ export type PaletteItem =
       label: string;
       detail: string;
       url: string;
+      /**
+       * `isOpenableUrl(url)` — `false` for `javascript:`/`data:` results,
+       * which keep Reveal/Edit/Copy but no Open actions.
+       */
+      openable: boolean;
     }
   | {
       kind: "jump";
@@ -42,6 +57,12 @@ export type PaletteItem =
       detail: string;
       /** The side-panel view activating this item selects. */
       view: SidePanelView;
+    }
+  | {
+      kind: "command";
+      label: string;
+      detail: string;
+      command: PaletteCommand;
     };
 
 export interface PaletteSection {
@@ -63,6 +84,16 @@ const FIXED_VIEWS: readonly { label: string; view: SidePanelView }[] = [
   { label: "Recently saved", view: { kind: "recent" } },
   { label: "Untagged", view: { kind: "untagged" } },
   { label: "Duplicates", view: { kind: "duplicates" } },
+];
+
+/** Fixed commands, always appended as the last section (spec §5). */
+const COMMANDS: readonly { label: string; command: PaletteCommand }[] = [
+  { label: "Import bookmarks…", command: "import" },
+  { label: "Export bookmarks…", command: "export" },
+  { label: "Manage tags…", command: "tag-manager" },
+  { label: "New folder…", command: "new-folder" },
+  { label: "Undo last action", command: "undo" },
+  { label: "Open options", command: "options" },
 ];
 
 function capitalize(value: string): string {
@@ -93,6 +124,7 @@ export function buildPaletteSections({
         label: hit.title === "" ? hit.url : hit.title,
         detail: hit.folderTitles.join(" › "),
         url: hit.url,
+        openable: isOpenableUrl(hit.url),
       }));
     } catch {
       // runQuery is total by contract; belt-and-suspenders keeps the
@@ -150,6 +182,18 @@ export function buildPaletteSections({
       view: { kind: "category", category } as SidePanelView,
     })),
   );
+
+  const commandItems: PaletteItem[] = COMMANDS.filter((entry) =>
+    matches(needle, entry.label),
+  ).map((entry) => ({
+    kind: "command",
+    label: entry.label,
+    detail: "",
+    command: entry.command,
+  }));
+  if (commandItems.length > 0) {
+    sections.push({ id: "commands", label: "Commands", items: commandItems });
+  }
 
   return sections;
 }

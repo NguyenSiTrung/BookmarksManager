@@ -8,12 +8,18 @@ import {
   DialogDescription,
   DialogTitle,
 } from "../../ui/components/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../../ui/components/dropdown-menu";
 import { cn } from "../../ui/lib/cn";
 import {
   buildPaletteSections,
   flattenPaletteSections,
 } from "./palette";
-import type { PaletteItem } from "./palette";
+import type { PaletteCommand, PaletteItem } from "./palette";
 import type { SidePanelView } from "./views";
 
 /**
@@ -42,7 +48,21 @@ export interface CommandPaletteProps {
   onJump(view: SidePanelView): void;
   /** Bookmark results — activating one opens the live bookmark. */
   onOpenBookmark(id: string): void;
+  /** Command items — the App maps each to its existing flow. */
+  onCommand(command: PaletteCommand): void;
+  /**
+   * Secondary bookmark actions: `"open-background"` (Ctrl/Cmd+Enter),
+   * `"reveal"`, `"edit"`, `"copy"`. Plain activation is `onOpenBookmark`.
+   */
+  onBookmarkAction(id: string, action: PaletteBookmarkAction): void;
 }
+
+/** Secondary actions a bookmark result offers (Enter is `onOpenBookmark`). */
+export type PaletteBookmarkAction =
+  | "open-background"
+  | "reveal"
+  | "edit"
+  | "copy";
 
 export function CommandPalette({
   open,
@@ -52,6 +72,8 @@ export function CommandPalette({
   tagDefs,
   onJump,
   onOpenBookmark,
+  onCommand,
+  onBookmarkAction,
 }: CommandPaletteProps) {
   const listId = useId();
   const [query, setQuery] = useState("");
@@ -101,11 +123,39 @@ export function CommandPalette({
     wasOpen.current = open;
   }, [open]);
 
-  const run = (item: PaletteItem | undefined): void => {
+  const run = (
+    item: PaletteItem | undefined,
+    event?: { ctrlKey?: boolean; metaKey?: boolean },
+  ): void => {
     if (item === undefined) return;
+    if (item.kind === "jump") {
+      onOpenChange(false);
+      onJump(item.view);
+      return;
+    }
+    if (item.kind === "command") {
+      onOpenChange(false);
+      onCommand(item.command);
+      return;
+    }
+    // Bookmark: Ctrl/Cmd+Enter is "open in a new (background) tab"; a plain
+    // Enter opens foreground. Unopenable URLs refuse silently — the open
+    // actions are hidden from its menu the same way.
+    if (!item.openable) return;
     onOpenChange(false);
-    if (item.kind === "jump") onJump(item.view);
-    else onOpenBookmark(item.id);
+    if (event?.ctrlKey === true || event?.metaKey === true) {
+      onBookmarkAction(item.id, "open-background");
+    } else {
+      onOpenBookmark(item.id);
+    }
+  };
+
+  const bookmarkAction = (
+    item: Extract<PaletteItem, { kind: "bookmark" }>,
+    action: PaletteBookmarkAction,
+  ): void => {
+    onOpenChange(false);
+    onBookmarkAction(item.id, action);
   };
 
   /** Flat-list index where each section starts (aria-activedescendant ids). */
@@ -158,7 +208,7 @@ export function CommandPalette({
                 );
               } else if (e.key === "Enter") {
                 e.preventDefault();
-                run(flat[clampedActive]);
+                run(flat[clampedActive], e);
               }
             }}
             className="w-full bg-transparent text-sm outline-hidden"
@@ -188,7 +238,9 @@ export function CommandPalette({
                         key={
                           item.kind === "bookmark"
                             ? `bm:${item.id}`
-                            : `jump:${item.label}`
+                            : item.kind === "command"
+                              ? `cmd:${item.command}`
+                              : `jump:${item.label}`
                         }
                         id={`${listId}-opt-${index}`}
                         role="option"
@@ -206,6 +258,59 @@ export function CommandPalette({
                           <span className="min-w-0 truncate text-xs text-muted-foreground">
                             {item.detail}
                           </span>
+                        )}
+                        {item.kind === "bookmark" && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label={`Actions for ${item.label}`}
+                                onClick={(e) => e.stopPropagation()}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="ml-auto shrink-0 rounded-sm px-1 text-xs text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                ⋯
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {item.openable && (
+                                <>
+                                  <DropdownMenuItem
+                                    onSelect={() => {
+                                      onOpenChange(false);
+                                      onOpenBookmark(item.id);
+                                    }}
+                                  >
+                                    Open
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      bookmarkAction(item, "open-background")
+                                    }
+                                  >
+                                    Open in new tab
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  bookmarkAction(item, "reveal")
+                                }
+                              >
+                                Reveal in folder
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => bookmarkAction(item, "edit")}
+                              >
+                                Edit…
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onSelect={() => bookmarkAction(item, "copy")}
+                              >
+                                Copy URL
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         )}
                       </li>
                     );

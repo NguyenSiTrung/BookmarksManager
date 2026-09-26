@@ -138,7 +138,13 @@ describe("buildPaletteSections", () => {
       tagDefs: TAGS,
     });
     const labels = sections.map((s) => s.label);
-    expect(labels).toEqual(["Views", "Folders", "Tags", "Categories"]);
+    expect(labels).toEqual([
+      "Views",
+      "Folders",
+      "Tags",
+      "Categories",
+      "Commands",
+    ]);
 
     const views = sections[0]!.items.map((i) => i.label);
     expect(views).toEqual([
@@ -164,6 +170,10 @@ describe("buildPaletteSections", () => {
     expect(sections[3]!.items.map((i) => i.label)).toEqual(
       Category.options.map((c) => c.charAt(0).toUpperCase() + c.slice(1)),
     );
+    // Commands ride along, always last.
+    const commands = sections[4]!.items;
+    expect(commands.every((i) => i.kind === "command")).toBe(true);
+    expect(commands.map((i) => i.label)).toContain("Open options");
   });
 
   it("puts matching bookmarks first for a text query", () => {

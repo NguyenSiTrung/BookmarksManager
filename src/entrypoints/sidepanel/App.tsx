@@ -15,6 +15,7 @@ import {
 } from "../../ui/components/dropdown-menu";
 import { useBookmarkTree } from "../../ui/hooks/useBookmarkTree";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
+import { openBookmarkUrl } from "../../sync/tabs";
 import {
   BookmarkList,
   SelectionContext,
@@ -38,6 +39,7 @@ import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
 import { CommandPalette } from "./CommandPalette";
 import { SearchBar } from "./SearchBar";
+
 import {
   clearPendingEditId,
   onPendingEditId,
@@ -48,6 +50,20 @@ import { TagManager } from "./TagManager";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
+
+/** Lazy slice: `chrome.runtime.openOptionsPage`, absent in tests/popup. */
+declare const chrome: {
+  runtime?: { openOptionsPage?: () => Promise<void> | void } | null;
+};
+
+function openOptionsPage(): void {
+  try {
+    const fn = chrome.runtime?.openOptionsPage;
+    if (typeof fn === "function") void fn.call(chrome.runtime);
+  } catch {
+    // No runtime surface — nothing to do.
+  }
+}
 
 /**
  * Side-panel application shell — two panes:
@@ -311,6 +327,20 @@ export function App() {
 
   const openItem = (item: BookmarkItem): void => {
     window.open(item.url, "_blank", "noopener,noreferrer");
+  };
+
+  /**
+   * Palette opens go through the typed tabs slice (`openBookmarkUrl`) — a
+   * typed failure becomes an error toast instead of a silent no-op.
+   */
+  const openViaTabs = (url: string, active: boolean): void => {
+    void openBookmarkUrl(url, active ? "foreground" : "background").then(
+      (result) => {
+        if (!result.ok) {
+          toastCtl.showToast({ message: result.message, error: true });
+        }
+      },
+    );
   };
 
   /**
@@ -680,7 +710,58 @@ export function App() {
           }}
           onOpenBookmark={(id) => {
             const item = tree.bookmarks.get(id);
-            if (item !== undefined) openItem(item);
+            if (item !== undefined) openViaTabs(item.url, true);
+          }}
+          onBookmarkAction={(id, action) => {
+            const item = tree.bookmarks.get(id);
+            if (item === undefined) return;
+            if (action === "open-background") {
+              openViaTabs(item.url, false);
+            } else if (action === "reveal") {
+              // Jump to the parent folder and select the row.
+              setSearchQuery("");
+              setView({ kind: "folder", folderId: item.parentId ?? "0" });
+              selection.selectOnly(item.id);
+            } else if (action === "edit") {
+              setEditTarget(item);
+            } else {
+              // Copy URL — clipboard write rides the user gesture; both
+              // outcomes surface through the toast.
+              void navigator.clipboard
+                .writeText(item.url)
+                .then(() =>
+                  toastCtl.showToast({ message: "Copied URL" }),
+                )
+                .catch((cause: unknown) =>
+                  toastCtl.showToast({
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Could not copy the URL",
+                    error: true,
+                  }),
+                );
+            }
+          }}
+          onCommand={(command) => {
+            if (command === "import") setImportOpen(true);
+            else if (command === "export") setExportOpen(true);
+            else if (command === "tag-manager") setTagManagerOpen(true);
+            else if (command === "new-folder") {
+              // Create under the folder in view, else the bookmarks bar.
+              const parent =
+                view.kind === "folder"
+                  ? tree.folders.get(view.folderId)
+                  : undefined;
+              const node = parent ?? tree.folders.get("1");
+              if (node !== undefined) {
+                setFolderRequest({ kind: "create", node });
+              }
+            } else if (command === "undo") {
+              void toastCtl.undo();
+            } else {
+              openOptionsPage();
+            }
           }}
         />
         <UndoToast

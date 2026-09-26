@@ -30,6 +30,7 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
  */
 
 let fake: FakeBookmarksApi;
+let chromeStub: { tabs: { create: ReturnType<typeof vi.fn> } };
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -65,8 +66,12 @@ beforeEach(async () => {
     ],
     otherBookmarks: [{ id: "b4", title: "Delta", url: "https://d.example/" }],
   });
+  chromeStub = {
+    tabs: { create: vi.fn().mockResolvedValue({ id: 1 }) },
+  };
   vi.stubGlobal("chrome", {
     bookmarks: fake,
+    tabs: chromeStub.tabs,
     runtime: {
       getURL: (path: string) => `chrome-extension://test-extension-id/${path}`,
     },
@@ -205,34 +210,29 @@ describe("command palette", () => {
 
   it("typing narrows to bookmark results; Enter opens the bookmark", async () => {
     await renderApp();
-    // Wait until the live index is ready so typing finds hits.
     pressPaletteShortcut();
     await screen.findByRole("dialog");
-    const open = vi.fn();
-    vi.stubGlobal("open", open);
-    // jsdom window.open is a vi-unfriendly stub — replace it on the window.
-    const origOpen = window.open;
-    window.open = open;
-    try {
-      fireEvent.change(paletteInput(), { target: { value: "delta" } });
-      await waitFor(() => {
-        const hit = within(paletteList()).queryByRole("option", {
-          name: /Delta/,
-        });
-        expect(hit).toBeTruthy();
+    const tabsCreate = (
+      chromeStub.tabs.create as ReturnType<typeof vi.fn>
+    );
+    fireEvent.change(paletteInput(), { target: { value: "delta" } });
+    await waitFor(() => {
+      const hit = within(paletteList()).queryByRole("option", {
+        name: /Delta/,
       });
+      expect(hit).toBeTruthy();
+    });
 
-      fireEvent.keyDown(paletteInput(), { key: "ArrowDown" });
-      fireEvent.keyDown(paletteInput(), { key: "Enter" });
-      expect(open).toHaveBeenCalledWith(
-        "https://d.example/",
-        "_blank",
-        "noopener,noreferrer",
-      );
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    } finally {
-      window.open = origOpen;
-    }
+    // Result 0 is pre-highlighted — Enter opens it in a foreground tab via
+    // the typed tabs slice.
+    fireEvent.keyDown(paletteInput(), { key: "Enter" });
+    await waitFor(() =>
+      expect(tabsCreate).toHaveBeenCalledWith({
+        url: "https://d.example/",
+        active: true,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("Esc closes and restores the element that had focus", async () => {
