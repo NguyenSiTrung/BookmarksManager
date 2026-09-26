@@ -11,8 +11,10 @@ const manifest = config.manifest as
   | undefined;
 
 describe("extension scaffold", () => {
-  it("declares only the initial required permissions", () => {
-    expect(manifest?.permissions).toEqual(["storage", "sidePanel"]);
+  it("declares the required permissions", () => {
+    // `bookmarks` joined the initial set in Phase 1 Task 6 (worker sync:
+    // cascade delete + startup reconcile read/write the native tree).
+    expect(manifest?.permissions).toEqual(["bookmarks", "storage", "sidePanel"]);
   });
 
   it("declares only the initial host patterns", () => {
