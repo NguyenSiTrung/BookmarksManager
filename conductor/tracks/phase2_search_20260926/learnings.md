@@ -150,3 +150,13 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Side-panel search UX chain is complete: `/` → SearchBar (autocomplete + warnings + live count) → runQuery → live BookmarkItems with row actions intact; Ctrl/Cmd+K → palette (jump targets + commands + per-result actions over the same index).
   - Deferred to Phase 3: popup lazy index + Enter/Ctrl-Enter dispositions; `bm` omnibox (manifest key, fresh-per-session index, XML-escaped descriptions, ≤8 suggestions, disposition routing, no unopenable opens).
 ---
+
+## [2026-09-26 17:05] - Phase 3 Task 1: Popup search
+- **Implemented:** `Search.tsx` — combobox input + listbox ("Popup results"), top-10 `runQuery` hits, arrow/Enter nav, hover sets active, "Indexing…" while `search===null`, "No matches." when empty. `App.tsx` lazy-loads `listMeta`/`listTags` only after `ready` (first real paint), feeds `useSearchIndex`, and swaps the form for results while `searchQuery!==""` — form state lives in App so clearing restores it untouched. Opens route through `onOpen` → `openBookmarkUrl` (foreground / `current` on Ctrl/Cmd+Enter).
+- **Files changed:** src/entrypoints/popup/Search.tsx (new), src/entrypoints/popup/App.tsx, tests/components/popup-search.test.tsx (new, 7 tests)
+- **Commit:** 76a1f5b
+- **Learnings:**
+  - Pattern: popup search reuses `useSearchIndex` directly — the popup loads metas lazily post-paint (spec: "after first paint") instead of `useLiveQuery`, so the save form is never blocked.
+  - Gotcha: "Indexing…" is untestable through `App` (build lands in a microtask); test it by rendering `PopupSearch` with `search={null}` prop directly.
+  - Pattern: controlled `query` lifted to `App` is what makes "form returns unchanged on clear" work — the form unmounts during search but its state never left the parent.
+---
