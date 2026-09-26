@@ -110,7 +110,7 @@
   - [x] Failing tests: bulk add/remove tag, set/clear category, tag rename/recolor/delete with affected counts, tag delete undoable
   - [x] Implement
 
-- [ ] Task 5: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
+- [x] Task 5: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
   <!-- depends: task1, task2, task3, task4 -->
 
 ---
