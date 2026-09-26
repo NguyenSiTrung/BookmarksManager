@@ -39,22 +39,25 @@ import { flattenTree } from "./tree";
  * actually used.
  *
  * Badge strategy: on success the toolbar badge shows {@link BADGE_CONFIRM_TEXT}
- * ("✓") and a `setTimeout` clears it after {@link BADGE_CLEAR_DELAY_MS}. No
- * `alarms` permission is requested, so the timer lives only in the worker.
- * Trade-off: an MV3 worker evicted inside that window cannot fire the timeout
- * and would leave a stale "✓" on the toolbar. Mitigation: every worker start
- * clears the badge at registration time (the `void setBadgeText("")` below), so
- * the stale mark is wiped the next time the worker wakes for any reason; a
- * click also overwrites it before scheduling its own clear. A missing or
- * failing `chrome.action` surface degrades to a no-op — the badge is
- * decoration and never blocks the save.
+ * ("✓") and a `setTimeout` clears it after {@link BADGE_CLEAR_DELAY_MS}. A
+ * failed save and a click with nothing to save (an empty/whitespace URL) both
+ * show {@link BADGE_ERROR_TEXT} ("✕") the same way, so no user-initiated click
+ * is silent. No `alarms` permission is requested, so the timer lives only in
+ * the worker. Trade-off: an MV3 worker evicted inside that window cannot fire
+ * the timeout and would leave a stale badge on the toolbar. Mitigation: every
+ * worker start clears the badge at registration time (the `void
+ * setBadgeText("")` below), so the stale mark is wiped the next time the
+ * worker wakes for any reason; a click also overwrites it before scheduling
+ * its own clear. A missing or failing `chrome.action` surface degrades to a
+ * no-op — the badge is decoration and never blocks the save.
  *
  * Incognito policy: **skip and log**. Chrome runs an extension in a single
  * process unless it declares `"incognito": "split"` (this one does not), and
  * `tab.incognito` is reported on the click's tab. Saving an incognito page
  * would write its URL into the user's durable, Chrome-synced bookmark tree —
  * a privacy leak from private browsing into persistent storage. So a click
- * whose tab reports `incognito: true` saves nothing, shows no badge, and logs
+ * whose tab reports `incognito: true` saves nothing, shows no badge (NOT even
+ * the error badge: any badge would be feedback about a private page), and logs
  * {@link INCOGNITO_SKIP_MESSAGE} (a generic reason — never the URL or title).
  * The handler is total: a click from any context never throws.
  *
@@ -220,12 +223,14 @@ async function resolveSaveFolderId(): Promise<string> {
 
 /**
  * Handle one context-menu click. Total by contract — it never throws into
- * Chrome's synchronous dispatch; every failure path returns without a badge.
+ * Chrome's synchronous dispatch; every failure path returns after reporting
+ * itself in the badge (except the incognito skip, which stays silent).
  *
  * Page clicks save `info.pageUrl` titled by the tab's title; link clicks save
  * `info.linkUrl` titled by `info.linkText`. An empty title falls back to the
- * URL, matching the popup. Incognito tabs are skipped (see the module doc).
- * The chosen folder is remembered as the last-used default after the write.
+ * URL, matching the popup; a click with no URL at all has nothing to save and
+ * shows the error badge. Incognito tabs are skipped (see the module doc). The
+ * chosen folder is remembered as the last-used default after the write.
  */
 export async function handleContextMenuClick(
   info: ContextMenuClickData,
@@ -243,7 +248,13 @@ export async function handleContextMenuClick(
     }
 
     const url = (isPage ? info.pageUrl : info.linkUrl)?.trim() ?? "";
-    if (url === "") return;
+    if (url === "") {
+      // Nothing to save. This used to be fully silent; a click the user made
+      // must always produce visible feedback, so it gets the same error badge
+      // as a failed save (the badge text carries no URL, so nothing leaks).
+      flashBadge(BADGE_ERROR_TEXT);
+      return;
+    }
 
     const rawTitle = isPage ? tab?.title : info.linkText;
     const title = rawTitle?.trim() ?? "";

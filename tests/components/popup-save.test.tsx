@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -20,7 +21,10 @@ import {
 import { db } from "../../src/db/database";
 import { getMeta, getTag } from "../../src/db/meta";
 import { App as PopupApp } from "../../src/entrypoints/popup/App";
-import { PENDING_EDIT_KEY } from "../../src/entrypoints/popup/chrome";
+import {
+  PENDING_EDIT_KEY,
+  setPendingEditId,
+} from "../../src/entrypoints/popup/chrome";
 import { App as SidePanelApp } from "../../src/entrypoints/sidepanel/App";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
@@ -38,14 +42,17 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
  *                    ("Already saved in <folder>") with an "Edit that bookmark"
  *                    handoff; and an "Open manager" action that opens the side
  *                    panel (`chrome.sidePanel.open`).
- *  - `SidePanelApp`  the additive half of the handoff: on mount/first tree load
- *                    it reads `chrome.storage.session` and opens `EditDialog`
- *                    for the stashed id.
+ *  - `SidePanelApp`  the additive half of the handoff: it reads
+ *                    `chrome.storage.session` on the first tree load AND
+ *                    subscribes to `chrome.storage.onChanged`, so a handoff
+ *                    that arrives while the panel is already open still opens
+ *                    `EditDialog`.
  *
  * `chrome.bookmarks` is the in-memory fake; IndexedDB is fake-indexeddb; the
- * `tabs`/`sidePanel`/`storage.session` surfaces are minimal in-test stubs (the
- * production slices resolve them lazily, see `src/entrypoints/popup/chrome.ts`).
- * No network.
+ * `tabs`/`sidePanel`/`storage.session`/`storage.onChanged` surfaces are minimal
+ * in-test stubs (the production slices resolve them lazily, see
+ * `src/entrypoints/popup/chrome.ts`). The session stub emits `onChanged` for
+ * every write/removal, mirroring Chrome. No network.
  */
 
 const FIXED_NOW = 1_700_000_000_000;
@@ -55,12 +62,35 @@ const ACTIVE_TAB = {
   title: "Example Page",
   url: "https://example.com/page",
 };
+/** A URL the fake tree does NOT already contain. */
+const FRESH_TAB = {
+  id: 12,
+  windowId: 7,
+  title: "Fresh Page",
+  url: "https://fresh.example/page",
+};
 
 let fake: FakeBookmarksApi;
 /** In-memory `chrome.storage.session` backing store. */
 let session: Map<string, unknown>;
+/** Listeners registered on the stubbed `chrome.storage.onChanged`. */
+let storageListeners: ((
+  changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+  areaName: string,
+) => void)[];
 let tabsQuery: ReturnType<typeof vi.fn>;
 let sidePanelOpen: ReturnType<typeof vi.fn>;
+
+/** Emit one `chrome.storage.onChanged` event, as Chrome does after a write. */
+function emitStorageChange(
+  key: string,
+  oldValue: unknown,
+  newValue: unknown,
+): void {
+  for (const listener of [...storageListeners]) {
+    listener({ [key]: { oldValue, newValue } }, "session");
+  }
+}
 
 function sessionArea(): {
   get(keys?: string | string[] | null): Promise<Record<string, unknown>>;
@@ -80,11 +110,17 @@ function sessionArea(): {
       return out;
     },
     set: async (items) => {
-      for (const [key, value] of Object.entries(items)) session.set(key, value);
+      for (const [key, value] of Object.entries(items)) {
+        const oldValue = session.get(key);
+        session.set(key, value);
+        emitStorageChange(key, oldValue, value);
+      }
     },
     remove: async (keys) => {
       for (const key of Array.isArray(keys) ? keys : [keys]) {
+        const oldValue = session.get(key);
         session.delete(key);
+        emitStorageChange(key, oldValue, undefined);
       }
     },
   };
@@ -117,13 +153,35 @@ beforeEach(async () => {
   });
 
   session = new Map();
+  storageListeners = [];
   tabsQuery = vi.fn(async () => [ACTIVE_TAB]);
   sidePanelOpen = vi.fn(async () => undefined);
   vi.stubGlobal("chrome", {
     bookmarks: fake,
     tabs: { query: tabsQuery },
     sidePanel: { open: sidePanelOpen },
-    storage: { session: sessionArea() },
+    storage: {
+      session: sessionArea(),
+      onChanged: {
+        addListener: (
+          callback: (
+            changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+            areaName: string,
+          ) => void,
+        ) => {
+          storageListeners.push(callback);
+        },
+        removeListener: (
+          callback: (
+            changes: Record<string, { oldValue?: unknown; newValue?: unknown }>,
+            areaName: string,
+          ) => void,
+        ) => {
+          const index = storageListeners.indexOf(callback);
+          if (index >= 0) storageListeners.splice(index, 1);
+        },
+      },
+    },
     runtime: { getURL: (path: string) => `chrome-extension://test/${path}` },
   });
   stubElementRects();
@@ -288,6 +346,55 @@ describe("PopupApp — duplicate notice and handoff", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Duplicate discipline (review fix P5-FIX #5)
+// ---------------------------------------------------------------------------
+
+/** Render the popup against a URL the fake tree does not contain yet. */
+async function renderPopupForFreshTab(): Promise<void> {
+  tabsQuery.mockResolvedValue([FRESH_TAB]);
+  render(<PopupApp />);
+  await waitFor(() =>
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+      FRESH_TAB.title,
+    ),
+  );
+}
+
+describe("PopupApp — duplicate discipline", () => {
+  it("ignores a second submit while the first save is in flight", async () => {
+    await renderPopupForFreshTab();
+    const form = screen
+      .getByRole("button", { name: "Save" })
+      .closest("form");
+    if (form === null) throw new Error("the Save button is not in a form");
+
+    // Two submits dispatched in the same task: a `busy`-state check alone
+    // would let both through and create two bookmarks.
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    await screen.findByTestId("save-confirmation");
+    const children = await fake.getChildren("2");
+    expect(children.filter((node) => node.url === FRESH_TAB.url)).toHaveLength(
+      1,
+    );
+  });
+
+  it("recognises the just-saved bookmark as a duplicate", async () => {
+    await renderPopupForFreshTab();
+    expect(screen.queryByTestId("duplicate-notice")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("save-confirmation");
+
+    // The tree snapshot was refreshed, so the popup now offers "Edit that
+    // bookmark" for what it just wrote.
+    const notice = await screen.findByTestId("duplicate-notice");
+    expect(notice.textContent).toContain("Already saved in");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Open manager
 // ---------------------------------------------------------------------------
 
@@ -398,5 +505,33 @@ describe("SidePanelApp — pending edit handoff", () => {
       .toBe("Bar One");
     // Consumed once — the key is cleared so a later mount does not re-open it.
     await waitFor(() => expect(session.has(PENDING_EDIT_KEY)).toBe(false));
+  });
+
+  it("opens EditDialog when the id arrives while the panel is already open", async () => {
+    render(<SidePanelApp />);
+    await screen.findByRole("treeitem", { name: "Other bookmarks" });
+    // Nothing pending, no dialog, and the tree will not change again.
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Exactly what the popup's "Edit that bookmark" does. `act` wraps the
+    // storage write because the stub emits `onChanged` synchronously.
+    await act(async () => {
+      await setPendingEditId("bar1");
+    });
+
+    const dialog = await screen.findByRole("dialog");
+    expect((within(dialog).getByLabelText("Title") as HTMLInputElement).value)
+      .toBe("Bar One");
+    await waitFor(() => expect(session.has(PENDING_EDIT_KEY)).toBe(false));
+  });
+
+  it("clears a stale pending id whose bookmark no longer exists", async () => {
+    session.set(PENDING_EDIT_KEY, "deleted-bookmark");
+    render(<SidePanelApp />);
+
+    await screen.findByRole("treeitem", { name: "Other bookmarks" });
+    // Read → cleared unconditionally, even though nothing resolves for it.
+    await waitFor(() => expect(session.has(PENDING_EDIT_KEY)).toBe(false));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

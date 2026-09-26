@@ -11,10 +11,16 @@ import type { Locator, Page } from "@playwright/test";
  * the shell spec uses.
  */
 
-/** Wait until the quick-save popup has resolved its prefill and rendered. */
+/**
+ * Wait until the quick-save popup has resolved its prefill and rendered. The
+ * form only mounts once `tabs.query` + `getTree` + the last-folder read have
+ * settled, and on a cold profile that first IndexedDB open can outlast the 5 s
+ * default `expect` timeout (observed as an intermittent failure in the full
+ * suite), so the prefill assertion gets a generous budget.
+ */
 export async function waitForPopupReady(page: Page): Promise<void> {
   await expect(page.getByTestId("popup-quick-save")).toBeVisible();
-  await expect(page.getByLabel("Title")).toBeVisible();
+  await expect(page.getByLabel("Title")).toBeVisible({ timeout: 15_000 });
 }
 
 /**

@@ -324,6 +324,44 @@ describe("context-menu click saves", () => {
     });
   });
 
+  it("flashes the error badge for a click with nothing to save", async () => {
+    installChrome();
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    registerContextMenus();
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenCalledWith({ text: "" }),
+    );
+
+    // A page click with no URL and a whitespace-only link URL: both are
+    // no-ops, and neither may be silent.
+    await handleContextMenuClick({ menuItemId: SAVE_PAGE_MENU_ID }, PAGE_TAB);
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenLastCalledWith({
+        text: BADGE_ERROR_TEXT,
+      }),
+    );
+
+    const calls = timeoutSpy.mock.calls as unknown as [
+      () => void,
+      number?,
+    ][];
+    await vi.waitFor(() =>
+      expect(calls.some((call) => call[1] === BADGE_CLEAR_DELAY_MS)).toBe(true),
+    );
+    const index = calls.findIndex((call) => call[1] === BADGE_CLEAR_DELAY_MS);
+    const timerId = timeoutSpy.mock.results[index]?.value as number;
+    clearTimeout(timerId);
+    calls[index]?.[0]?.();
+
+    await vi.waitFor(() =>
+      expect(setBadgeText).toHaveBeenLastCalledWith({ text: "" }),
+    );
+    const saved = (await fake.getChildren(OTHER_BOOKMARKS_ID)).filter(
+      (node) => node.url !== undefined,
+    );
+    expect(saved).toEqual([]);
+  });
+
   it("is wired through the registered onClicked listener", async () => {
     installChrome();
     registerContextMenus();
@@ -448,9 +486,9 @@ describe("incognito policy", () => {
       (node) => node.url !== undefined,
     );
     expect(saved).toEqual([]);
-    expect(setBadgeText).not.toHaveBeenCalledWith({
-      text: BADGE_CONFIRM_TEXT,
-    });
+    // Deliberately silent — not even the error badge: any badge would be
+    // feedback about a private page (see the module doc's incognito policy).
+    expect(setBadgeText).not.toHaveBeenCalled();
     expect(infoSpy).toHaveBeenCalledWith(INCOGNITO_SKIP_MESSAGE);
     expect(infoSpy.mock.calls.flat().join(" ")).not.toContain(
       "secret.example",

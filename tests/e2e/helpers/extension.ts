@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
-import type { BrowserContext, Page, Request } from "@playwright/test";
+import type { BrowserContext, Page, Request, Worker } from "@playwright/test";
 
 /**
  * Shared plumbing for the real-browser e2e specs.
@@ -86,16 +86,22 @@ export async function startExtension(
 }
 
 /**
- * The extension id, resolved from the MV3 service worker's URL. A cold profile
- * can take a while to register the worker, so this waits for the
- * `serviceworker` event when none is present yet.
+ * The extension's MV3 service worker. A cold profile can take a while to
+ * register the worker, so this waits for the `serviceworker` event when none
+ * is present yet.
+ */
+export async function serviceWorker(context: BrowserContext): Promise<Worker> {
+  const [existing] = context.serviceWorkers();
+  if (existing) return existing;
+  return context.waitForEvent("serviceworker");
+}
+
+/**
+ * The extension id, resolved from the MV3 service worker's URL.
  */
 export async function extensionId(context: BrowserContext): Promise<string> {
-  let [serviceWorker] = context.serviceWorkers();
-  if (!serviceWorker) {
-    serviceWorker = await context.waitForEvent("serviceworker");
-  }
-  return new URL(serviceWorker.url()).host;
+  const worker = await serviceWorker(context);
+  return new URL(worker.url()).host;
 }
 
 /**
@@ -113,24 +119,39 @@ export async function openSurface(
   return page;
 }
 
-/** Live recording of the context's outbound http(s) requests. */
+/**
+ * Internal schemes that are NOT egress: they address the extension's own
+ * resources, the browser's own UI, or in-memory data. Everything else counts
+ * as an outbound request — including `ws://`, `wss://`, `ftp://` and any other
+ * scheme, so a non-http leak cannot slip past the assertion.
+ */
+const INTERNAL_SCHEME = /^(chrome-extension|chrome|devtools|data|blob|about):/;
+
+/** `true` when `url` is an internal, non-egress URL (see {@link INTERNAL_SCHEME}). */
+export function isInternalRequestUrl(url: string): boolean {
+  return INTERNAL_SCHEME.test(url);
+}
+
+/** Live recording of the context's outbound (non-internal) requests. */
 export interface RequestLog {
-  /** Outbound http(s) URLs recorded so far, in order. */
+  /** Outbound URLs recorded so far, in order. */
   readonly urls: string[];
   /** Detach the listener (call after `context.close()`). */
   stop(): void;
 }
 
 /**
- * Record every http(s) request the context issues — page- and
- * service-worker-originated alike. Playwright reports both on the context;
- * `chrome-extension://`, `chrome:`, `about:`, `data:` and `blob:` URLs are
- * internal noise and are filtered out.
+ * Record every request the context issues — page- and
+ * service-worker-originated alike — EXCEPT those on an internal scheme
+ * ({@link INTERNAL_SCHEME}). Playwright reports both on the context; filtering
+ * by exclusion rather than by an `^https?://` allow-list means a `ws://`,
+ * `wss://` or `ftp://` request fails the assertion too.
  */
 export function collectOutboundRequests(context: BrowserContext): RequestLog {
   const urls: string[] = [];
   const listener = (request: Request): void => {
-    if (/^https?:\/\//.test(request.url())) urls.push(request.url());
+    const url = request.url();
+    if (!isInternalRequestUrl(url)) urls.push(url);
   };
   context.on("request", listener);
   return {
@@ -139,4 +160,93 @@ export function collectOutboundRequests(context: BrowserContext): RequestLog {
       context.off("request", listener);
     },
   };
+}
+
+/** One context-menu click to replay through the worker (see below). */
+export interface ContextMenuClick {
+  menuItemId: string;
+  pageUrl?: string;
+  linkUrl?: string;
+  linkText?: string;
+}
+
+/**
+ * The `chrome` slice the worker-side helpers call. Declared as a narrow local
+ * slice (the house pattern the app's own modules follow — `@types/chrome`
+ * supplies the namespace but no usable global value binding); the evaluated
+ * callbacks are serialized and re-run inside the worker, where the real
+ * `chrome` exists.
+ */
+declare const chrome: {
+  contextMenus: {
+    onClicked: {
+      dispatch?(info: unknown): void;
+      hasListeners?(): boolean;
+    };
+  };
+  commands: {
+    getAll(): Promise<{ name?: string; shortcut?: string }[]>;
+  };
+};
+
+/**
+ * Drive the extension's context-menu save path inside the MV3 service worker.
+ *
+ * Chrome offers no way to synthesize a real right-click plus native menu
+ * selection from Playwright/CDP, and `chrome.contextMenus.onClicked` is not
+ * exposed for scripting — but the event object carries the binding's own
+ * `dispatch(info)` entry point, which invokes the listeners the extension
+ * registered (`registerContextMenus` in `src/sync/context-menu.ts`) with
+ * `info` and no `tab`. That is the real handler, running in the real worker,
+ * so this exercises the production click path rather than a re-implementation.
+ *
+ * `tab` cannot be supplied (the binding dispatches a single argument), so a
+ * page click's title falls back to its URL exactly as it does when Chrome
+ * reports no tab title; use a link click with `linkText` when a titled
+ * bookmark matters.
+ *
+ * Throws when the worker has no registered listener or the binding does not
+ * expose `dispatch`, so the spec can never silently "pass" without exercising
+ * anything.
+ */
+export async function dispatchContextMenuClick(
+  context: BrowserContext,
+  click: ContextMenuClick,
+): Promise<void> {
+  const worker = await serviceWorker(context);
+  await worker.evaluate((info) => {
+    const event = chrome.contextMenus.onClicked as {
+      dispatch?: (info: unknown) => void;
+      hasListeners?: () => boolean;
+    };
+    if (typeof event.hasListeners !== "function" || !event.hasListeners()) {
+      throw new Error(
+        "the extension registered no chrome.contextMenus.onClicked listener",
+      );
+    }
+    if (typeof event.dispatch !== "function") {
+      throw new Error(
+        "chrome.contextMenus.onClicked.dispatch is unavailable in this Chromium build",
+      );
+    }
+    event.dispatch(info);
+  }, click);
+}
+
+/**
+ * The keyboard shortcut the browser actually resolved for `command`, read
+ * from the worker (`chrome.commands.getAll()`). Proves the `_execute_action`
+ * binding exists in the running browser, which is what the shortcut opens.
+ * `null` when the command is not registered at all.
+ */
+export async function commandShortcut(
+  context: BrowserContext,
+  command: string,
+): Promise<string | null> {
+  const worker = await serviceWorker(context);
+  return worker.evaluate(async (name) => {
+    const commands = await chrome.commands.getAll();
+    const match = commands.find((entry) => entry.name === name);
+    return match?.shortcut ?? null;
+  }, command);
 }

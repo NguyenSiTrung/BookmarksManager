@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import config from "../../wxt.config";
 
@@ -96,3 +99,48 @@ describe("manifest keyboard shortcut", () => {
     expect(SHORTCUT_SHAPE.test(defaultKey ?? "")).toBe(true);
   });
 });
+
+/**
+ * The assertions above read the CONFIG object, which only proves what WXT was
+ * asked to emit. `npm run check:manifest` and the e2e keyboard assertion cover
+ * the built artifact, but a cheap check here closes the gap where a WXT
+ * change could drop or rewrite the command without any test noticing.
+ *
+ * The generated manifest only exists after `npm run build`, so this skips (with
+ * a clear message) rather than failing when the tests run without a build.
+ */
+const GENERATED_MANIFEST = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.output/chrome-mv3/manifest.json",
+);
+
+const hasBuild = existsSync(GENERATED_MANIFEST);
+
+describe.skipIf(!hasBuild)("generated manifest (built in the worktree)", () => {
+  const generated = hasBuild
+    ? (JSON.parse(readFileSync(GENERATED_MANIFEST, "utf8")) as {
+        commands?: Record<
+          string,
+          {
+            suggested_key?: { default?: string; mac?: string };
+            description?: string;
+          }
+        >;
+      })
+    : undefined;
+
+  it("ships the _execute_action command with the configured shortcut", () => {
+    const command = generated?.commands?._execute_action;
+    expect(command).toBeDefined();
+    expect(command).toEqual(manifest?.commands?._execute_action);
+    expect(command?.suggested_key?.default).toBe("Ctrl+Shift+Y");
+    expect(command?.suggested_key?.mac).toBe("Command+Shift+Y");
+  });
+});
+
+if (!hasBuild) {
+  // Surfaced in the run output so a missing build is never mistaken for a pass.
+  console.warn(
+    `manifest-commands: skipping the generated-manifest check — ${GENERATED_MANIFEST} not found (run \`npm run build\` first)`,
+  );
+}

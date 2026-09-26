@@ -13,12 +13,14 @@
  * Handoff key: {@link PENDING_EDIT_KEY} (`"bookmarksManager:pendingEditId"`).
  * The popup writes the existing bookmark's Chrome id to
  * `chrome.storage.session` and then calls `chrome.sidePanel.open()`; the side
- * panel reads and clears that key on mount (see the additive effect in
+ * panel reads and clears that key on mount, and also subscribes to
+ * `chrome.storage.onChanged` through {@link onPendingEditId} so a panel that
+ * is ALREADY open still sees the handoff (see the additive effects in
  * `src/entrypoints/sidepanel/App.tsx`). `storage.session` is in-memory and
  * cleared when the browser closes — exactly the lifetime a one-shot handoff
  * wants, and it never touches `chrome.storage.local` (reserved for encrypted
  * provider-key envelopes). When the surface is unavailable every helper
- * degrades to a no-op / `null`.
+ * degrades to a no-op / `null` / inert unsubscribe.
  */
 
 /** The active tab as the popup needs it (`activeTab` grants title/url). */
@@ -47,10 +49,31 @@ export interface ChromeSessionStorageArea {
   remove(keys: string | string[]): Promise<void>;
 }
 
+/** One storage key's before/after values, as `storage.onChanged` reports it. */
+export interface ChromeStorageChange {
+  oldValue?: unknown;
+  newValue?: unknown;
+}
+
+/** The `changes` payload of `chrome.storage.onChanged` for one write. */
+export type ChromeStorageChanges = Record<string, ChromeStorageChange>;
+
+export interface ChromeStorageChangedEvent {
+  addListener(
+    callback: (changes: ChromeStorageChanges, areaName: string) => void,
+  ): void;
+  removeListener(
+    callback: (changes: ChromeStorageChanges, areaName: string) => void,
+  ): void;
+}
+
 declare const chrome: {
   tabs?: ChromeTabsApi;
   sidePanel?: ChromeSidePanelApi;
-  storage?: { session?: ChromeSessionStorageArea };
+  storage?: {
+    session?: ChromeSessionStorageArea;
+    onChanged?: ChromeStorageChangedEvent;
+  };
 };
 
 /** `chrome.storage.session` key carrying the id the side panel should edit. */
@@ -132,4 +155,47 @@ export async function clearPendingEditId(): Promise<void> {
   } catch {
     // Best-effort — a stale id only re-opens the same editor.
   }
+}
+
+/**
+ * Subscribe to `chrome.storage.session` writes of {@link PENDING_EDIT_KEY}.
+ * The side panel is often ALREADY open when the popup hands a bookmark over,
+ * so a mount/tree read alone misses the handoff — this is the live half.
+ *
+ * `callback` receives the new id; a removal (the key being cleared) is not a
+ * handoff and is ignored, which also keeps a clear-then-read cycle from
+ * re-entering. Returns an unsubscribe.
+ *
+ * Total: a missing `storage` / `storage.onChanged` surface (or one that
+ * throws on `addListener`) degrades to an inert unsubscribe, leaving the
+ * mount/tree read as the only path — exactly the previous behaviour.
+ */
+export function onPendingEditId(callback: (id: string) => void): () => void {
+  let event: ChromeStorageChangedEvent | undefined;
+  try {
+    event = chrome.storage?.onChanged;
+  } catch {
+    event = undefined;
+  }
+  if (event === undefined) return () => {};
+
+  const listener = (changes: ChromeStorageChanges, areaName: string): void => {
+    if (areaName !== "session") return;
+    const newValue = changes[PENDING_EDIT_KEY]?.newValue;
+    if (typeof newValue !== "string" || newValue === "") return;
+    callback(newValue);
+  };
+
+  try {
+    event.addListener(listener);
+  } catch {
+    return () => {};
+  }
+  return () => {
+    try {
+      event.removeListener(listener);
+    } catch {
+      // The listener never attached (torn-down surface) — nothing to detach.
+    }
+  };
 }

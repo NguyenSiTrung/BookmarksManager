@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, test } from "@playwright/test";
+import { isInternalRequestUrl } from "./helpers/extension";
 
 const extensionDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -25,13 +26,16 @@ test("extension loads, renders all three surfaces, and sends no requests", async
   // the suite-wide timeout in playwright.config.ts.
   test.setTimeout(90_000);
   // Fresh-install privacy assertion: nothing is consented yet, so the
-  // extension may not emit a single http(s) request — not even at service-
+  // extension may not emit a single outbound request — not even at service-
   // worker startup. Playwright reports page- and service-worker-issued
-  // requests on the context; chrome-extension://, chrome:, about:, data:,
-  // and blob: URLs are internal noise and are filtered out.
+  // requests on the context; only INTERNAL schemes (chrome-extension:,
+  // chrome:, devtools:, data:, blob:, about:) are filtered out, so a request
+  // on any other scheme (ws://, wss://, ftp://, …) would fail this assertion
+  // too. The filter is shared with the core-manager egress walk
+  // (`isInternalRequestUrl` in ./helpers/extension.ts).
   const outboundUrls: string[] = [];
   const recordRequest = (url: string): void => {
-    if (/^https?:\/\//.test(url)) {
+    if (!isInternalRequestUrl(url)) {
       outboundUrls.push(url);
     }
   };
@@ -98,6 +102,6 @@ test("extension loads, renders all three surfaces, and sends no requests", async
   }
   expect(
     outboundUrls,
-    "fresh install must not send http(s) requests",
+    "fresh install must not send any outbound (non-internal) request",
   ).toEqual([]);
 });

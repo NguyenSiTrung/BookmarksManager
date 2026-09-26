@@ -21,6 +21,7 @@ import { db } from "../../src/db/database";
 import { DeleteAllData } from "../../src/entrypoints/options/DeleteAllData";
 import { PRESETS } from "../../src/net/presets";
 import {
+  DELETE_ALL_DATABASE_BLOCKED_MESSAGE,
   DELETE_ALL_DONE_MESSAGE,
   DELETE_ALL_ITEMS,
 } from "../../src/security/delete-all";
@@ -37,7 +38,10 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 let bookmarks: FakeBookmarksApi;
 let storageStore: Record<string, unknown>;
@@ -97,6 +101,17 @@ afterAll(() => {
 function openDialog() {
   fireEvent.click(
     screen.getByRole("button", { name: /delete all extension data/i }),
+  );
+}
+
+/**
+ * Replace `db.delete` with a stub. Dexie types `delete()` as returning a
+ * `PromiseExtended` (a Promise carrying extra helpers); the stubs below only
+ * need the Promise surface, so the cast is confined to this one helper.
+ */
+function stubDatabaseDelete(implementation: () => Promise<void>): void {
+  vi.spyOn(db, "delete").mockImplementation(
+    implementation as unknown as typeof db.delete,
   );
 }
 
@@ -191,5 +206,102 @@ describe("DeleteAllData confirm flow", () => {
     expect(alert.textContent).toMatch(/went wrong/i);
     expect(screen.queryByText(DELETE_ALL_DONE_MESSAGE)).toBeNull();
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("keeps a failure visible when the dialog was dismissed mid-operation", async () => {
+    // Same failure, but the user cancels before it lands: the section must
+    // still report it rather than dropping it with the dialog.
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          clear: vi.fn(async () => {
+            throw new Error("storage unavailable");
+          }),
+        },
+      },
+      permissions: { contains: containsSpy, remove: removeSpy },
+      bookmarks,
+    });
+    render(<DeleteAllData />);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/went wrong/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Robustness of the reset (review fix P5-FIX #1 and #2)
+// ---------------------------------------------------------------------------
+
+describe("DeleteAllData partial failures", () => {
+  it("stays dismissible while the reset is running, then reports the result", async () => {
+    const pending = { called: false, resolve: (): void => {} };
+    stubDatabaseDelete(
+      () =>
+        new Promise<void>((resolve) => {
+          pending.called = true;
+          pending.resolve = resolve;
+        }),
+    );
+    render(<DeleteAllData />);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+
+    // Mid-flight: Cancel is NOT disabled (the operation is idempotent and safe
+    // to leave running) and dismissing the dialog actually closes it.
+    const cancel = await screen.findByRole("button", { name: /cancel/i });
+    expect((cancel as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(cancel);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The reset is not tied to the dialog: it is still running here, and the
+    // section reports the result once it lands.
+    await waitFor(() => expect(pending.called).toBe(true));
+    pending.resolve();
+    await screen.findByText(DELETE_ALL_DONE_MESSAGE);
+  });
+
+  it("reports a database that could not be dropped instead of claiming a clean wipe", async () => {
+    // A blocked `indexedDB.deleteDatabase` never settles; the module's timeout
+    // turns that into `databaseDeleted: false` and the UI must say so.
+    stubDatabaseDelete(() => new Promise<void>(() => {}));
+    render(<DeleteAllData />);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+
+    const alert = await screen.findByRole(
+      "alert",
+      {},
+      // The production timeout (DB_DELETE_TIMEOUT_MS) plus the release grace.
+      { timeout: 10_000 },
+    );
+    expect(alert.textContent).toContain(DELETE_ALL_DATABASE_BLOCKED_MESSAGE);
+    expect(screen.queryByText(DELETE_ALL_DONE_MESSAGE)).toBeNull();
+  });
+
+  it("names the host origins it could not release", async () => {
+    // `remove` reports false AND the grant survives the follow-up check, so the
+    // origin lands in `permissionsFailed`.
+    removeSpy.mockImplementation(async () => false);
+    render(<DeleteAllData />);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/could not be released/i);
+    expect(alert.textContent).toContain(PRESETS.typesafe.permissionPattern);
+    expect(alert.textContent).toMatch(/chrome:\/\/extensions/);
   });
 });

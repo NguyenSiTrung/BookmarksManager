@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DuplicateGroup } from "../../duplicates/group";
 import { DuplicatesView } from "./DuplicatesView";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -37,8 +37,10 @@ import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
 import {
   clearPendingEditId,
+  onPendingEditId,
   readPendingEditId,
 } from "../popup/chrome";
+import { registerDbReleaseListener } from "../../security/delete-all";
 import { TagManager } from "./TagManager";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
@@ -165,33 +167,73 @@ export function App() {
   const [folderRequest, setFolderRequest] = useState<FolderActionRequest | null>(
     null,
   );
+  /**
+   * The live tree for the storage-change subscription below: that listener is
+   * registered once, so it must resolve an arriving id against the tree as it
+   * is NOW rather than the one captured at mount.
+   */
+  const treeRef = useRef(tree);
 
   /**
    * P5.T1 handoff: the quick-save popup's "Edit that bookmark" stashes the
    * existing node id in `chrome.storage.session` (see
-   * `src/entrypoints/popup/chrome.ts`) before opening this panel. Read it once
-   * the tree has loaded — the effect re-runs on every tree update, so an id
-   * that arrives before the first `getTree()` resolves is picked up on the
-   * next pass — then open the shared `EditDialog` for it and clear the key so
-   * a later mount does not re-open the same bookmark. Absent session storage
-   * degrades to `null` (no-op).
+   * `src/entrypoints/popup/chrome.ts`) before opening this panel. Two
+   * additive effects cover both orderings:
+   *
+   *  - the STORAGE subscription below catches a handoff that arrives while
+   *    this panel is already open (previously a no-op: the mount/tree effect
+   *    only ran on `tree` changes, so an open panel never saw the new id);
+   *  - the MOUNT/TREE read catches an id stashed before the panel existed,
+   *    which only becomes resolvable once the first `getTree()` lands.
+   *
+   * In both paths the key is cleared as soon as it is read — unconditionally,
+   * before the id is resolved — so a stale id whose bookmark was deleted can
+   * never be replayed into a later mount. Absent session storage degrades to
+   * `null` / an inert unsubscribe (no-op).
    */
+  const openPendingEdit = useCallback((id: string): void => {
+    const entry =
+      treeRef.current.bookmarks.get(id) ?? treeRef.current.folders.get(id);
+    if (entry === undefined) return;
+    setEditTarget(entry);
+  }, []);
+
   useEffect(() => {
+    treeRef.current = tree;
+  }, [tree]);
+
+  useEffect(() => {
+    return onPendingEditId((id) => {
+      // Clear first: the id is consumed whether or not it still resolves.
+      void clearPendingEditId();
+      openPendingEdit(id);
+    });
+  }, [openPendingEdit]);
+
+  useEffect(() => {
+    // Wait for the first `getTree()`: before it lands an id stashed by the
+    // popup would look "gone" and be discarded.
+    if (tree.folders.size === 0) return;
     let cancelled = false;
     void (async () => {
       const pendingId = await readPendingEditId();
       if (pendingId === null) return;
-      const entry =
-        tree.bookmarks.get(pendingId) ?? tree.folders.get(pendingId);
-      if (entry === undefined || cancelled) return;
       await clearPendingEditId();
       if (cancelled) return;
+      const entry =
+        tree.bookmarks.get(pendingId) ?? tree.folders.get(pendingId);
+      if (entry === undefined) return;
       setEditTarget(entry);
     })();
     return () => {
       cancelled = true;
     };
   }, [tree]);
+
+  // Answer the Options page's "delete all extension data" broadcast by closing
+  // this panel's Dexie connection; the `useLiveQuery` subscriptions above keep
+  // one open, which would otherwise block the database drop forever.
+  useEffect(() => registerDbReleaseListener(), []);
 
   const openItem = (item: BookmarkItem): void => {
     window.open(item.url, "_blank", "noopener,noreferrer");

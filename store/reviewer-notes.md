@@ -35,8 +35,13 @@ key. Suggested walkthrough:
    page load. This is asserted automatically by `tests/e2e/shell.spec.ts`,
    which loads the extension in a fresh Chromium profile, exercises the
    popup, side panel, and options surfaces, and fails if the page or the
-   service worker emits a single `http(s)` request (before the context is
-   closed).
+   service worker emits a single request outside the browser's own internal
+   schemes (`chrome-extension:`, `chrome:`, `devtools:`, `data:`, `blob:`,
+   `about:`) — so `ws://`, `wss://`, `ftp://` and anything else would fail it
+   too (before the context is closed). `tests/e2e/core-manager.spec.ts`
+   repeats the same assertion while exercising the core features end to end,
+   including a context-menu save driven inside the service worker and the
+   browser-resolved keyboard shortcut.
 2. Permissions at install are the required set only — `activeTab`,
    `bookmarks`, `contextMenus`, `favicon`, `storage`, `sidePanel`. There is no
    host access and no page-content access at install.
@@ -73,7 +78,11 @@ key. Suggested walkthrough:
     confirm. The dialog lists exactly what is removed and states that native
     bookmarks are untouched. After confirming, open the browser's native
     bookmark manager: your bookmarks are all still there, unchanged. The
-    extension is back to its first-run state (reload the Options page).
+    extension is back to its first-run state (reload the Options page). If
+    another Bookmarks Manager window was still holding the local database
+    open, the dialog says so instead of claiming a clean wipe, and names any
+    host permission it could not release so you can revoke it at
+    `chrome://extensions`.
 
 ## Testing the provider connection
 
@@ -117,8 +126,10 @@ needs a real provider key:
   no `new Function`, and no remote `<script src>` tags; all code is bundled
   by WXT and only minified, never obfuscated.
 - `tests/e2e/shell.spec.ts` — loads the built extension in a fresh profile and
-  fails if any `http(s)` request is emitted before teardown, proving the
-  zero-egress claim for a fresh install.
+  fails if any request outside the browser's own internal schemes is emitted
+  before teardown, proving the zero-egress claim for a fresh install;
+  `tests/e2e/core-manager.spec.ts` asserts the same thing across the whole
+  feature walkthrough.
 - CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, build,
   both checks above, and a headed Chromium smoke test that loads the
   extension and renders all three surfaces.

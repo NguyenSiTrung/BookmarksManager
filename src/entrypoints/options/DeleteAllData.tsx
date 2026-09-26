@@ -1,10 +1,13 @@
 import { useState } from "react";
 import {
+  DELETE_ALL_DATABASE_BLOCKED_MESSAGE,
   DELETE_ALL_DONE_MESSAGE,
   DELETE_ALL_ITEMS,
+  DELETE_ALL_PERMISSIONS_FAILED_NOTICE,
   NATIVE_BOOKMARKS_NOTICE,
   deleteAllExtensionData,
 } from "../../security/delete-all";
+import type { DeleteAllResult } from "../../security/delete-all";
 import {
   Dialog,
   DialogClose,
@@ -21,6 +24,19 @@ import {
  * operation removes and states plainly that native Chrome bookmarks are
  * untouched; confirming runs {@link deleteAllExtensionData} and, on success,
  * replaces the section with the first-run state.
+ *
+ * The dialog stays dismissible while the reset runs (Cancel is never
+ * disabled): the operation is idempotent and safe to leave running, and the
+ * result is reported by the section once it lands. That matters because the
+ * reset can legitimately take a few seconds — it waits for other extension
+ * contexts to release the shared IndexedDB database (see
+ * `src/security/delete-all.ts`), and reports a typed partial failure rather
+ * than hanging when a context refuses.
+ *
+ * Partial failures are never hidden behind the success line: a database that
+ * could not be dropped, or a granted host permission that could not be
+ * released, renders as a warning naming what is left behind (and the exact
+ * origins, so they can be revoked at chrome://extensions).
  *
  * The reset closes the shared Dexie connection, so the page cannot keep using
  * IndexedDB afterwards — the first-run panel tells the user to reload, which
@@ -41,7 +57,7 @@ const secondaryButtonClass =
 export function DeleteAllData() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [result, setResult] = useState<DeleteAllResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const onConfirm = () => {
@@ -49,8 +65,8 @@ export function DeleteAllData() {
     setBusy(true);
     setError(null);
     void deleteAllExtensionData()
-      .then(() => {
-        setDone(true);
+      .then((outcome) => {
+        setResult(outcome);
         setOpen(false);
       })
       .catch(() => {
@@ -61,13 +77,16 @@ export function DeleteAllData() {
       });
   };
 
+  /**
+   * Dismissal is always allowed, including mid-operation: the reset keeps
+   * running and reports into the section when it finishes.
+   */
   const handleOpenChange = (next: boolean) => {
-    if (busy) return;
     if (!next) setError(null);
     setOpen(next);
   };
 
-  if (done) {
+  if (result !== null) {
     return (
       <section
         aria-labelledby="delete-all-heading"
@@ -76,9 +95,28 @@ export function DeleteAllData() {
         <h2 id="delete-all-heading" className="text-lg font-medium">
           Delete all extension data
         </h2>
-        <p role="status" className="mt-2 text-sm text-green-700">
-          {DELETE_ALL_DONE_MESSAGE}
-        </p>
+        {result.databaseDeleted ? (
+          <p role="status" className="mt-2 text-sm text-green-700">
+            {DELETE_ALL_DONE_MESSAGE}
+          </p>
+        ) : (
+          <p role="alert" className="mt-2 text-sm text-red-700">
+            {DELETE_ALL_DATABASE_BLOCKED_MESSAGE}
+          </p>
+        )}
+        {result.permissionsFailed.length > 0 && (
+          <div
+            role="alert"
+            className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <p>{DELETE_ALL_PERMISSIONS_FAILED_NOTICE}</p>
+            <ul className="mt-1 list-disc space-y-1 pl-5">
+              {result.permissionsFailed.map((origin) => (
+                <li key={origin}>{origin}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         <p className="mt-1 text-sm text-gray-700">
           Reload the Options page to start fresh. Your native Chrome bookmarks
           are untouched.
@@ -105,6 +143,16 @@ export function DeleteAllData() {
       >
         Delete all extension data
       </button>
+
+      {/*
+        The dialog is dismissible mid-operation, so a failure that lands after
+        the user closed it still has to be visible somewhere.
+      */}
+      {error !== null && !open && (
+        <p role="alert" className="mt-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent>
@@ -137,11 +185,7 @@ export function DeleteAllData() {
 
           <DialogFooter>
             <DialogClose asChild>
-              <button
-                type="button"
-                disabled={busy}
-                className={secondaryButtonClass}
-              >
+              <button type="button" className={secondaryButtonClass}>
                 Cancel
               </button>
             </DialogClose>

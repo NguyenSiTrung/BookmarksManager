@@ -15,6 +15,7 @@ import { createBookmark } from "../../sync/mutations";
 import { bulkAddTag } from "../../sync/tag-ops";
 import { flattenTree } from "../../sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
+import { registerDbReleaseListener } from "../../security/delete-all";
 import { CategorySelect } from "../../ui/components/category-select";
 import { openSidePanel, queryActiveTab, setPendingEditId } from "./chrome";
 
@@ -44,6 +45,16 @@ import { openSidePanel, queryActiveTab, setPendingEditId } from "./chrome";
  * "Open manager" opens the side panel for the popup's window. Both side-panel
  * actions call `chrome.sidePanel.open()` synchronously inside the click
  * handler to satisfy Chrome's user-gesture requirement.
+ *
+ * Duplicate discipline: `savingRef` is a synchronous re-entrancy guard (state
+ * lags a fast double submit), and a successful save refreshes the popup's tree
+ * snapshot so the just-created bookmark is recognised as a duplicate straight
+ * away — the notice and "Edit that bookmark" then work for it, and a second
+ * submit cannot silently create a copy.
+ *
+ * While open, the popup also answers the Options page's "delete all extension
+ * data" release broadcast (`registerDbReleaseListener`) by closing its shared
+ * Dexie connection, so the popup cannot block the database drop.
  */
 
 const EMPTY_TREE: FlattenedTree = { folders: new Map(), bookmarks: new Map() };
@@ -106,6 +117,12 @@ export function App() {
   const [savedFolder, setSavedFolder] = useState<string | null>(null);
   /** The popup window's id, captured with the active tab for `sidePanel.open`. */
   const windowIdRef = useRef<number | undefined>(undefined);
+  /** Synchronous re-entrancy guard — `busy` state lags a fast double submit. */
+  const savingRef = useRef(false);
+
+  // Answer the Options page's "delete all extension data" broadcast by closing
+  // this page's Dexie connection; an open connection would block the drop.
+  useEffect(() => registerDbReleaseListener(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +172,23 @@ export function App() {
     setChips(chips.filter((chip) => chip.key !== key));
   };
 
+  /**
+   * Re-read the native tree so the duplicate notice reflects what is actually
+   * stored. Called after a successful save; a refresh that comes back empty
+   * (an unreadable tree) keeps the previous snapshot rather than emptying the
+   * folder picker.
+   */
+  const refreshTree = async (): Promise<void> => {
+    const flat = flattenTree(await loadTree());
+    if (flat.folders.size === 0) return;
+    setTree(flat);
+  };
+
   const handleSave = async (): Promise<void> => {
+    // Guard first, synchronously: two submits dispatched in the same task
+    // would both pass a `busy`-state check and create two bookmarks.
+    if (savingRef.current) return;
+    savingRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -179,9 +212,11 @@ export function App() {
       });
       await setLastFolderId(folderId);
       setSavedFolder(folderLabel(tree, folderId));
+      await refreshTree();
     } catch (cause) {
       setError(describeError(cause));
     } finally {
+      savingRef.current = false;
       setBusy(false);
     }
   };

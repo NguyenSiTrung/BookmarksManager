@@ -3,9 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { bookmarkMetaCount } from "./helpers/db";
+import { bookmarkMetaCount, databaseExists } from "./helpers/db";
 import {
   collectOutboundRequests,
+  commandShortcut,
+  dispatchContextMenuClick,
   extensionId,
   launchExtensionContext,
   openSurface,
@@ -47,7 +49,12 @@ import {
  * `chrome.bookmarks.create` time, measured locally.
  *
  * Nothing here fetches: the extension must stay offline and the specs use
- * local temp fixtures plus Blob downloads only.
+ * local temp fixtures plus Blob downloads only. The egress walk records EVERY
+ * request the context makes and filters out only internal schemes (see
+ * `isInternalRequestUrl`), and it drives the context-menu click path from the
+ * service worker itself (see `dispatchContextMenuClick`) plus asserts the
+ * browser-resolved keyboard shortcut, so "every core feature is exercised"
+ * covers the menu and shortcut entry points too.
  */
 
 /** Number of bookmarks the virtualization spec seeds. */
@@ -274,6 +281,9 @@ test("delete-all wipes extension data but leaves native bookmarks intact", async
       url: "https://meta-seed.example/page",
       tag: "keeper",
     });
+    // The database exists and holds rows before the reset (both probes are
+    // non-creating — see ./helpers/db.ts).
+    expect(await databaseExists(popup)).toBe(true);
     expect(await bookmarkMetaCount(popup)).toBeGreaterThan(0);
     // The options page's reset deletes the shared IndexedDB database; an open
     // connection in another page would block that, so close the writer first.
@@ -290,8 +300,9 @@ test("delete-all wipes extension data but leaves native bookmarks intact", async
 
     // Native Chrome bookmarks survive byte-for-byte...
     expect(await getBookmark(options, seeded.id)).not.toBeNull();
-    // ...while the extension's own metadata is gone (the database is dropped,
-    // so the store no longer exists and the raw count reads 0).
+    // ...while the extension's own DATABASE is gone, not merely emptied: the
+    // database name no longer exists, so the store cannot be read at all.
+    expect(await databaseExists(options)).toBe(false);
     expect(await bookmarkMetaCount(options)).toBe(0);
   } finally {
     await ext.context.close();
@@ -341,7 +352,7 @@ test("renders a 10k-bookmark library through a bounded virtualized window", asyn
   }
 });
 
-test("sends no http(s) requests while every core feature is exercised", async () => {
+test("sends no external requests while every core feature is exercised", async () => {
   test.setTimeout(120_000);
   const context = await launchExtensionContext();
   const requests = collectOutboundRequests(context);
@@ -378,7 +389,28 @@ test("sends no http(s) requests while every core feature is exercised", async ()
       "Other bookmarks / Egress target",
     );
 
-    // 3. Import a JSON export fixture.
+    // 3. Context-menu save. A real right-click plus native menu selection
+    //    cannot be driven from Playwright, so the registered onClicked
+    //    listener is dispatched inside the service worker — the production
+    //    click path, in the production context (see
+    //    `dispatchContextMenuClick`). The panel's live tree then shows it.
+    await dispatchContextMenuClick(context, {
+      menuItemId: "save-link",
+      linkUrl: "https://egress.example/context-link",
+      linkText: "Egress context link",
+    });
+    await expect(
+      sidepanel.getByText("Egress context link", { exact: true }),
+    ).toBeVisible();
+
+    // 4. Keyboard path: `_execute_action` is what the shortcut fires, and the
+    //    browser resolves its binding — assert it here rather than trusting
+    //    the config object. The popup it opens is the surface driven in step 1.
+    expect(await commandShortcut(context, "_execute_action")).toBe(
+      "Ctrl+Shift+Y",
+    );
+
+    // 5. Import a JSON export fixture.
     const fixture = writeImportFixture(dir);
     const input = await openImportDialog(sidepanel);
     await input.setInputFiles(fixture);
@@ -387,11 +419,12 @@ test("sends no http(s) requests while every core feature is exercised", async ()
     await expect(sidepanel.getByText("Import complete.")).toBeVisible();
     await dismissDialog(sidepanel);
 
-    // 4. Export the library (Blob + anchor download).
+    // 6. Export the library (Blob + anchor download).
     const exported = await exportLibraryJson(sidepanel);
     expect(exported.text).toContain("https://egress.example/popup");
+    expect(exported.text).toContain("https://egress.example/context-link");
 
-    // 5. Delete all extension data from the options page. The reset drops the
+    // 7. Delete all extension data from the options page. The reset drops the
     //    shared IndexedDB database, which an open connection would block, so
     //    the panel is closed first.
     await sidepanel.close();
@@ -411,6 +444,6 @@ test("sends no http(s) requests while every core feature is exercised", async ()
   requests.stop();
   expect(
     requests.urls,
-    "exercising every feature must still send no http(s) requests",
+    "exercising every feature must still send no external requests",
   ).toEqual([]);
 });
