@@ -1,4 +1,5 @@
 import { groupDuplicates } from "../../duplicates/group";
+import type { DuplicateGroup } from "../../duplicates/group";
 import type { Category } from "../../schemas/bookmark";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
@@ -91,6 +92,21 @@ export function duplicateBookmarkItems(tree: FlattenedTree): BookmarkItem[] {
     }
   }
   return out;
+}
+
+/**
+ * Grouped-duplicates resolution for the dedicated duplicates view (P4.T6):
+ * the same `groupDuplicates` pass {@link duplicateBookmarkItems} flattens
+ * into the generic `duplicates` list, but keeping each group's `kind`/`key`
+ * and the full `BookmarkItem` rows — the grouped UI shows exact/normalized
+ * badges, the shared key, and per-member folder paths from `item.path`.
+ * Exact groups come first, then normalized ones (see `groupDuplicates`).
+ * Pure — same purity contract as the rest of this module.
+ */
+export function resolveDuplicateGroups(
+  tree: FlattenedTree,
+): DuplicateGroup<BookmarkItem>[] {
+  return groupDuplicates([...tree.bookmarks.values()]);
 }
 
 /**
