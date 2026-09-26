@@ -92,11 +92,11 @@
   - [x] Failing tests: create bookmark/folder, update title/URL, move/reorder, remove/removeTree; reject root and managed nodes with typed errors; metadata written alongside where given
   - [x] Implement over the typed slice
 
-- [ ] Task 2: Undo stack
+- [x] Task 2: Undo stack — `82fe4c2` (+ review fix `8a24151`)
   <!-- files: src/undo/snapshot.ts, src/undo/restore.ts, tests/unit/undo.test.ts -->
   <!-- depends: task1 -->
-  - [ ] Failing tests: snapshot before delete / bulk move / tag delete; LIFO restore re-creates nodes at original parent+index with ID remap for metadata; cap at 20 (oldest dropped); missing parent ⇒ restore into Other bookmarks with a reported fallback
-  - [ ] Implement using the `undo` table
+  - [x] Failing tests: snapshot before delete / bulk move / tag delete; LIFO restore re-creates nodes at original parent+index with ID remap for metadata; cap at 20 (oldest dropped); missing parent ⇒ restore into Other bookmarks with a reported fallback
+  - [x] Implement using the `undo` table
 
 - [x] Task 3: Duplicate merge — `d1adef6`
   <!-- files: src/duplicates/merge.ts, tests/unit/duplicates-merge.test.ts -->
@@ -124,10 +124,10 @@
   - [x] Failing tests: whole-library and single-folder export; round trip restores tree, tags, categories, notes, tag definitions; seeded keys, key material, consents, provider settings, sentLog, and decisions are absent from output; invalid envelopes rejected
   - [x] Implement
 
-- [ ] Task 2: Netscape HTML export and import parser
+- [x] Task 2: Netscape HTML export and import parser — `cccb3fc`
   <!-- files: src/io/netscape.ts, tests/unit/io-netscape.test.ts, tests/fixtures/netscape/*.html -->
-  - [ ] Failing tests with Chrome/Firefox export fixtures: nested folders, `ADD_DATE`, `TAGS`, HTML entities, `javascript:`/`data:` skipped, malformed markup, size cap; export escapes titles/URLs
-  - [ ] Implement with `DOMParser` (no `innerHTML`)
+  - [x] Failing tests with Chrome/Firefox export fixtures: nested folders, `ADD_DATE`, `TAGS`, HTML entities, `javascript:`/`data:` skipped, malformed markup, size cap; export escapes titles/URLs
+  - [x] Implement with `DOMParser` (no `innerHTML`)
 
 - [x] Task 3: CSV export and import — `09b4a4d`
   <!-- files: src/io/csv.ts, tests/unit/io-csv.test.ts -->
@@ -160,13 +160,13 @@
   <!-- files: src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/views.ts, tests/components/sidepanel-layout.test.tsx -->
   <!-- depends: task1 -->
   - [ ] Failing tests: ARIA tree keyboard navigation (arrows, Home/End, expand/collapse), list/grid toggle, virtualization with 10k items, views All / folder / tag / category / Untagged / Duplicates / Recently saved
-  - [x] Implement
+  - [ ] Implement
 
 - [ ] Task 3: Item and folder actions
   <!-- files: src/entrypoints/sidepanel/EditDialog.tsx, src/entrypoints/sidepanel/BulkBar.tsx, src/entrypoints/sidepanel/MoveToDialog.tsx, src/entrypoints/sidepanel/FolderActions.tsx, src/entrypoints/sidepanel/UndoToast.tsx, tests/components/sidepanel-actions.test.tsx -->
   <!-- depends: task2 -->
   - [ ] Failing tests: edit title/URL/folder/tags/category/notes; multi-select + bulk move/delete/tag/category; Move to…; folder create/rename/delete with count; undo toast; disabled actions on root/managed nodes
-  - [x] Implement
+  - [ ] Implement
 
 - [ ] Task 4: Drag and drop
   <!-- files: src/entrypoints/sidepanel/dnd.tsx, src/entrypoints/sidepanel/FolderTree.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, tests/components/sidepanel-dnd.test.tsx -->
