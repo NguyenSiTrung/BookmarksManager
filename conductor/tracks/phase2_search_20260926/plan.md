@@ -94,10 +94,10 @@
   - [x] Failing tests: Ctrl/Cmd+K opens; ARIA combobox; sections for bookmarks, views, folders, tags, categories; keyboard navigation; Esc restores focus
   - [x] Implement
 
-- [ ] Task 5: Palette commands and per-result actions
+- [x] Task 5: Palette commands and per-result actions (3502b03)
   <!-- files: src/entrypoints/sidepanel/palette.ts, src/entrypoints/sidepanel/CommandPalette.tsx, src/entrypoints/sidepanel/App.tsx, tests/components/command-palette-actions.test.tsx -->
-  - [ ] Failing tests: Import, Export, Tag manager, New folder, Undo, Options; Open, Ctrl/Cmd+Enter new tab, Reveal in folder, Edit, Copy URL (success + failure toast); open disabled for unopenable URLs
-  - [ ] Implement
+  - [x] Failing tests: Import, Export, Tag manager, New folder, Undo, Options; Open, Ctrl/Cmd+Enter new tab, Reveal in folder, Edit, Copy URL (success + failure toast); open disabled for unopenable URLs
+  - [x] Implement
 
 - [ ] Task 6: Checkpoint — automated gate for Phase 2 (evidence in `learnings.md`)
 

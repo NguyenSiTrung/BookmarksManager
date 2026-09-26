@@ -124,3 +124,14 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Rule: new react-hooks eslint bans setState in effects AND in-JSX mutations — use render-phase state adjustment (`if (open !== prevOpen)`), derived clamps (`Math.min(active, len-1)`), and useMemo for per-section flat offsets.
   - Gotcha: Radix Dialog focus restore doesn't reach elements focused without a trigger (e.g. `/`-focused search input) — capture `document.activeElement` on open and `.focus()` it via queueMicrotask after close.
 ---
+
+## [2026-09-26 16:57] - Phase 2 Task 5: Palette commands + actions
+- **Implemented:** `COMMANDS` section (Import/Export/Manage tags/New folder/Undo/Open options), substring-narrowed like jumps; bookmark items carry `openable: isOpenableUrl(url)` — `javascript:`/`data:` rows keep Reveal/Edit/Copy but no opens, and Enter no-ops. Opens route through `openBookmarkUrl` (Enter→foreground, Ctrl/Cmd+Enter→background); typed failures → error toast. Per-option `⋯` DropdownMenu: Reveal in folder (jump to parent + `selectOnly`), Edit…, Copy URL → clipboard → "Copied URL" / error toast.
+- **Files changed:** palette.ts, CommandPalette.tsx, App.tsx, tests/components/command-palette-actions.test.tsx, tests/components/command-palette.test.tsx (tabs stub), tests/unit/palette-items.test.ts (Commands section)
+- **Commit:** 3502b03
+- **Learnings:**
+  - Gotcha: Radix DropdownMenuTrigger opens on POINTERDOWN — `fireEvent.click` alone won't open it in jsdom; fire `pointerDown` + `click`.
+  - Pattern: palette opens use `openBookmarkUrl` (typed slice), not `window.open` — failures surface as error toasts; tests stub `chrome.tabs.create` not `window.open`.
+  - Gotcha: `chrome.runtime.openOptionsPage` needs its own lazy slice — the test stub provides only `{bookmarks, tabs, runtime:{getURL}}`; a bare `chrome.runtime.openOptionsPage()` call is undefined→guarded.
+  - Pattern: `FolderActionRequest.kind:"create"` takes the PARENT FolderNode — palette's "New folder" resolves the folder-in-view or falls back to "1" (Bookmarks bar).
+---
