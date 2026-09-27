@@ -9,7 +9,6 @@ import {
   OTHER_BOOKMARKS_ID,
   createBookmark,
   createFolder,
-  findBookmarkByTitle,
 } from "./helpers/seed";
 import { waitForPopupReady, waitForSidePanelReady } from "./helpers/surfaces";
 
