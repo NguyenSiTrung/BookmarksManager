@@ -139,12 +139,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         worker's fetch, record it in `learnings.md` and file a Beads follow-up instead of weakening asserts
   - [ ] Implement helpers
 
-- [ ] Task 3: Live smoke script
+- [x] Task 3: Live smoke script
   <!-- files: tests/live/jev-smoke.test.ts, vitest.live.config.ts, package.json -->
-  - [ ] `npm run test:live`: synthetic request to TypeSafe/OpenRouter when `TYPESAFE_API_KEY` /
+  - [x] `npm run test:live`: synthetic request to TypeSafe/OpenRouter when `TYPESAFE_API_KEY` /
         `OPENROUTER_API_KEY` is set, validates `SystemOneResponse`; skipped without keys; not in CI or
         the default Vitest include
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 4: Phase 4 automated checkpoint — full gate green, evidence in `learnings.md`
 

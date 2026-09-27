@@ -168,3 +168,16 @@ Full gate green at Phase 3 completion:
 - `npm run test -- --run` — 68 files, 1783 tests, all pass (+16 define tests).
 - `npm run build` — clean (1.09 MB); `check:manifest` OK; `check:bundle` OK.
 - `xvfb-run -a npm run test:e2e` — 11/11 pass.
+
+## Phase 4 — Task 3: live smoke harness
+
+- `vitest.live.config.ts` is a standalone node-env config including only `tests/live/**`; the default
+  suite never collects it because vitest.config.ts `include` scopes to tests/unit + tests/components.
+- `it.skipIf(key === undefined)` keeps the suite green keyless; keys come from `process.env` only,
+  are never logged, and the smoke mirrors the gate's fetch shape (omit/error/Bearer/15s abort).
+- Gotcha: `npx vitest run --list` is not a flag in Vitest 5 — use `npx vitest list`. And grepping
+  `list` output for "live" false-matches test names containing the substring; grep for the path
+  `tests/live` instead.
+- Housekeeping: HEAD was lint-broken on a clean checkout — the unused `findBookmarkByTitle` import in
+  tests/e2e/search.spec.ts (documented in PROJECT_PLAN.md §Gate notes) was only fixed in the working
+  tree. Committed as b2cde90 so worktrees branched at HEAD lint-clean.
