@@ -122,6 +122,7 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
 - [x] Task 3: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
 
 ## Phase 4: Options completion, e2e, live smoke
+<!-- status: complete -->
 <!-- execution: parallel -->
 <!-- depends: phase2 -->
 

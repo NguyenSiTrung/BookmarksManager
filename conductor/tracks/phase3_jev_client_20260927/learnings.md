@@ -212,3 +212,13 @@ Full gate green at Phase 3 completion:
   Only the native prompt widget (browser-owned UI) is unexercised. Beads follow-up filed.
 - IndexedDB assertions in e2e use non-creating opens (`indexedDB.databases()` then `open()` guarded)
   from an extension page context — reading `consents`/`sentLog` without creating a stray empty db.
+
+## Phase 4 — checkpoint evidence (Task 4, complete)
+
+- lint: 0 errors, 1 known warning (react-hooks/incompatible-library, TanStack Virtual in BookmarkList)
+- typecheck: clean
+- unit+component: **1789/1789** (68 files)
+- build: 1.09 MB; check:manifest OK; check:bundle OK (no eval/new Function/remote script)
+- e2e: **13/13** incl. provider.spec.ts (consent→Test-connection→1 routed request→1 sentLog row;
+  no-consent → zero requests, not_enabled)
+- test:live: 2 skipped as designed without TYPESAFE_API_KEY/OPENROUTER_API_KEY
