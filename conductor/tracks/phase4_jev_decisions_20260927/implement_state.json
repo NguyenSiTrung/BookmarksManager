@@ -1,7 +1,7 @@
 {
   "current_phase": "Phase 4: UI surfaces",
   "current_phase_index": 3,
-  "current_task_index": 3,
+  "current_task_index": 5,
   "completed_phases": ["Phase 1: Pure decision foundations", "Phase 2: Consent, gate, and persistence", "Phase 3: Worker pipeline"],
   "section_count": 1,
   "last_handoff": "2026-09-27T16:42:00Z",
@@ -14,5 +14,5 @@
       "handoff_file": "handoff_20260927_164200.md"
     }
   ],
-  "status": "handed_off"
+  "status": "in_progress"
 }

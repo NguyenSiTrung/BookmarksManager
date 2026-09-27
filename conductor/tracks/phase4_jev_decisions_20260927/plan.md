@@ -267,19 +267,47 @@ all behind a new per-provider bookmark-data consent.
        failed-revert toast lacks retry; decisionRevertRef not disarmed on auto-hide; test-name nit;
        optional panel-helper extraction. -->
 
-- [ ] Task 4: Library-scan launcher
+- [x] Task 4: Library-scan launcher — `99ef757` + fix `124c32c`/`aabe019` (worker `wt/p4-p4t4` `1fbb99e`); review APPROVED_WITH_CONCERNS → concerns resolved
   <!-- files: src/entrypoints/sidepanel/ScanPanel.tsx, tests/components/scan-panel.test.tsx -->
   <!-- depends: task3 -->
-  - [ ] Failing tests: the cost estimate is shown before start; progress, pause, resume, cancel; running
+  - [x] Failing tests: the cost estimate is shown before start; progress, pause, resume, cancel; running
         cost; the resumed state renders after reopening
-  - [ ] Implement (the coordinator wires it into `App.tsx`)
+  - [x] Implement (the coordinator wires it into `App.tsx`)
+  <!-- landed 99ef757 (worker 1fbb99e, wt/p4-p4t4) + coordinator wiring b804f51 + fix 124c32c +
+       re-review follow-up aabe019. ScanPanel.tsx: minimized {id,title,url} props; estimateJobCost
+       lower bound ("at least ~N tokens across M batches") before Start (FR7); Start →
+       JOB_START(library_scan, ids); live card via useLiveQuery (progress/usage/cost,
+       Pause/Resume/Cancel), terminal states with a per-row "New scan" dismissal (a NEW later row always
+       shows), {ok:false} rendered verbatim; the Dexie row is the source of truth (a reopened panel
+       renders the persisted state). Fix: the querier returns a null sentinel so Start stays disabled
+       until the first live read resolves (no start race on an unsurfaced running row). Cross-task in
+       background.ts: JOB_START/JOB_RESUME provider-gated before any row flip (typed invalid_input
+       refusal the panel renders verbatim), resume fire-and-forget relaunches the runner (injectable
+       relaunchJob seam), runPersistedJob only drives running/pending rows and marks a JobRunnerError
+       strand failed instead of stranding silently. 13 component tests + 7 background-jobs tests.
+       Review: APPROVED_WITH_CONCERNS → re-review APPROVED_WITH_CONCERNS with 3 resume-path Importants →
+       fixed in aabe019 exactly as the reviewer prescribed. Deferred minors: role="status" wraps the
+       whole card; dismissal resets on a radix remount (covered by the new-row override test);
+       DecisionMessage.parse throw (unreachable); FR7 tokens-only wording (Phase 3 deferral). -->
 
-- [ ] Task 5: Ask toggle and no-match state
+- [x] Task 5: Ask toggle and no-match state — `4855f49` + fix `124c32c` (worker `wt/p4-p4t5` `fe10f78`); review APPROVED
   <!-- files: src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/ask.tsx, tests/components/search-ask.test.tsx -->
   <!-- depends: task3 -->
-  - [ ] Failing tests: the Ask toggle is visible only with consent; results are reranked in order; "no
+  - [x] Failing tests: the Ask toggle is visible only with consent; results are reranked in order; "no
         match" shows; plain search stays local and makes zero requests when Ask is off
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 4855f49 (worker fe10f78, wt/p4-p4t5) + coordinator wiring b804f51 + fix 124c32c. ask.tsx
+       useAskSearch (consent-gated toggle via a live consents read at CONSENT_VERSION; 350 ms debounce;
+       stale-reply guard via a request counter; ranked/no-match/skipped/error notes via askNoteText) +
+       SearchBar role="switch" toggle + optional onRerankOrder; App.tsx tags the order with the query it
+       answered and applies it as a pure permutation of that query's results only (a new query renders
+       local order until its own reply lands). Fixes: the dispatch sends the TRIMMED query (the note
+       comparison matches); applyRerankOrder ranks a repeated id once (a duplicated verdict can no
+       longer duplicate a row and drop an unranked one). 12 search-ask tests + 3 sidepanel-scan-ask
+       App-level tests. Deferred minors: a re-typed identical query reuses the old "Ranked by Ask."
+       note for ~350 ms (benign); the sub-frame Ask-off reply race is self-correcting; mid-flight drop
+       tests; the default relaunch (real runPersistedJob with a live provider) is seam-tested only —
+       Phase 5 Task 1's e2e must exercise the resume relaunch end to end (re-review Minor 7). -->
 
 - [ ] Task 6: Phase 4 automated checkpoint — full gate green, evidence in `learnings.md`
 

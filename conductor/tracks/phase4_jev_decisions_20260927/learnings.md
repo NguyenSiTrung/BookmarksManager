@@ -40,6 +40,71 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 18:15] - Phase 4 Tasks 4-5 fix rounds: job-intent wiring at the worker boundary
+
+- **A panel that renders the row must never race the row's first read.** `useLiveQuery`'s initial
+  `undefined` means "read pending", NOT "no row" — collapsing the two let Start fire while a live row
+  was still unread. Fix: the querier itself returns `JobDocument | null` (a null sentinel; a failed
+  read degrades to `null` too), so `undefined` survives ONLY as useLiveQuery's pending signal and
+  Start can key `disabled` off it. The three pre-existing tests that clicked Start synchronously after
+  render had to learn `await waitFor(disabled === false)` first — that update was the point, not
+  test-weakening (the re-reviewer empirically confirmed jsdom swallows clicks on the disabled button).
+- **Job intents are egress-gated like every other decisions handler.** `JOB_START` and `JOB_RESUME`
+  call `requireActiveProvider()` BEFORE any row mutation: `runPersistedJob` deliberately returns
+  silently when no provider is active (right for restart resume), so an un-gated user intent would
+  flip a row to Queued/Running that nothing ever drives. The refusal is the same typed
+  `invalid_input` message the panel renders verbatim. The four copies of that message collapsed into
+  one `requireActiveProvider()` helper.
+- **Resume must relaunch, and the relaunch must re-check the row.** A paused job's runner loop
+  already returned at its batch boundary, so `JOB_RESUME` = flip + fire-and-forget
+  `relaunchJob(id)` (an injectable `ProductionHandlersDeps` seam, defaulting to `runPersistedJob`,
+  mirroring `ResumeJobsDeps`). And `runPersistedJob` only drives `running`/`pending` rows: a pause
+  landing between the caller's flip and the relaunch's read wins — otherwise the runner's own
+  `setJobStatus("running")` (legal from `paused`) would un-pause it and drive egress the user halted.
+- **Surface caller-error strands as `failed` rows.** A `JobRunnerError` from `runner.run` (work-set
+  mismatch — e.g. a bookmark deleted while paused; validation throws before any egress) used to be
+  swallowed by the fire-and-forget `.catch`, stranding a live-looking row. Now it is marked `failed`
+  with the (static, redacted) message under the runner's own discipline — only a still-`running` row
+  may fail, and `pending` passes through `running` first because `pending → failed` has no legal
+  edge; a concurrent pause/cancel still wins. Non-`JobRunnerError` (transport/context) stays
+  retry-on-next-start.
+- **Rerank verdicts are untrusted input to the list.** `applyRerankOrder` must rank a repeated id
+  ONCE — per-occurrence pushes duplicated the row and (via the unranked filter) silently DROPPED an
+  unranked result, breaking the pure-permutation contract. One `rankedIds.has(id)` skip guard, tested
+  end-to-end through App with a `[b2, b2, b1]` verdict.
+- **Dispatch the settled form of a query.** The Ask debounce now sends `query.trim()` and tags the
+  reply with the same settled value the render-time note compares against — the provider never sees
+  trailing whitespace, and the note keeps answering the raw input.
+- Re-review of a fix round found the SAME defect class the original review caught, one path over:
+  JOB_START was gated but JOB_RESUME wasn't. When a fix introduces a "flip then drive" sequence,
+  audit every pre-existing silent-return between the flip and the drive.
+- Deferred to Phase 5 Task 1 e2e (re-review Minor 7): the default relaunch (`runPersistedJob` with a
+  live provider) is seam-tested only; the resume relaunch must be exercised end to end.
+
+## [2026-09-27 17:05] - Phase 4 Tasks 4-5: ScanPanel + Ask toggle (worker landings)
+
+- `ScanPanel.tsx` takes MINIMIZED rows (`{id, title, url}`) — `id` is exactly what `JOB_START` sends
+  and `{title, url}` exactly what `estimateJobCost` folds; notes never enter the work set. The
+  estimate says "at least ~N tokens across M batches" because it excludes the fixed question
+  scaffolding the pipeline adds per request.
+- The panel keeps NO shadow job state: one `useLiveQuery` over the latest `library_scan` row by
+  `createdAt` drives progress/usage/status, so a reopened panel (or worker restart mid-run) renders
+  the persisted state with zero local bookkeeping. Mutations are protocol intents only; the echoed
+  `job` in a reply is never rendered — only the live row is.
+- "New scan" on a terminal card dismisses THAT row id locally (rows are never deleted); a NEW later
+  row always re-opens the card — pinned by a test that seeds a second row with a later `createdAt`
+  after dismissing the first.
+- `ask.tsx` is a state/logic hook (`useAskSearch`) + pure note mapper (`askNoteText`); SearchBar
+  renders both. The toggle is consent-gated by a live `db.consents` read at the CURRENT
+  `CONSENT_VERSION` (a stale-version row must not show it), visibility-only — the worker re-verifies
+  before any send. One `RERANK` per settled query (350 ms debounce), stale replies dropped by a
+  request-counter ref, `{sent:false}` is NOT an error (quiet skipped note), and Ask-off never sends
+  or reports an order.
+- App tags each reported order with the query it answered; the `items` memo applies the permutation
+  only when `rerankOrder.query === activeView.query`, so a pending or stale verdict can never
+  permute a different query's results. MiniSearch default semantics: AND across terms with prefix
+  matching (a test query "not" prefix-matches "notes").
+
 ## [2026-09-27 16:50] - Phase 4 Task 3: Side-panel Review view + Analyze actions
 
 - `ReviewView.tsx` (new) renders the pending-decision queue; `views.ts` gains a `review` kind whose
