@@ -134,6 +134,6 @@
   <!-- files: store/listing.md, store/reviewer-notes.md, store/privacy-policy.md, store/privacy-practices.md -->
   - [x] Describe local-only search, the `bm` keyword, and "queries are not stored or sent"; `check:manifest` green
 
-- [ ] Task 3: Checkpoint — automated full gate for the track (evidence in `learnings.md`)
+- [x] Task 3: Checkpoint — automated full gate for the track (evidence in `learnings.md`) — green at b191ea0
 
-- [ ] Task 4: Conductor - User Manual Verification 'Phase 2 Search' (Protocol in workflow.md)
+- [x] Task 4: Conductor - User Manual Verification 'Phase 2 Search' — accepted by user 2026-09-26

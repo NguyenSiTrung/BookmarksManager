@@ -205,3 +205,7 @@ Full list: `conductor/patterns.md`. The ones most relevant to search:
   - Store-docs discipline held: search shipped → listing "not in this release" lists updated, walkthrough renumbered, policy bumped to 0.3 draft, `check:manifest` green throughout.
 - **Track status:** Phases 1–4 implementation complete. Remaining: Task 4 — manual user verification of the search UX (cannot be automated; needs a human pass in a real browser).
 ---
+
+## [2026-09-26 17:45] - Track complete — manual verification ACCEPTED
+- User verified the search UX manually in a real browser (side-panel search + filters + palette, popup form swap, `bm` omnibox, zero egress) — all accepted.
+- Track closed: phases 1-4 complete; patterns elevated to `conductor/patterns.md`; track archived to `conductor/archive/phase2_search_20260926/`.

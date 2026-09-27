@@ -12,5 +12,4 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Phase 2 — Search: MiniSearch index, query syntax, side-panel search bar, command palette, popup search, and `bm` omnibox keyword
-*Link: [./conductor/tracks/phase2_search_20260926/](./conductor/tracks/phase2_search_20260926/)*
+<!-- Archived: 2026-09-26 — Phase 2 Search completed: MiniSearch fuzzy index + query language (filters/negation/quotes/warnings), side-panel search bar with autocomplete, Ctrl/Cmd+K command palette with commands and per-result actions, popup search, and the `bm` omnibox keyword — all fully local with zero egress; full gate green (1591 unit/component, 11 e2e) and user-accepted manual verification (see conductor/archive/phase2_search_20260926/) -->
