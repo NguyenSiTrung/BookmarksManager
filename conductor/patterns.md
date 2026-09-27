@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-26 -->
+<!-- Last refreshed: 2026-09-27 -->
 
 # Codebase Patterns
 
@@ -126,3 +126,18 @@ _Last refreshed: 2026-09-25_
 - **react-hooks eslint (new rules) bans setState in effects and in-JSX mutation** — use render-phase state adjustment (`if (open !== prevOpen) setState`), derived clamps, and useMemo for flat index offsets. Radix Dialog's focus restore misses elements focused without a trigger — capture `document.activeElement` and `.focus()` in a microtask after close. (from: phase2_search_20260926)
 - **e2e on an offline browser**: fake https domains land on `chrome-error://` — bookmark `chrome-extension://<id>/*.html` URLs for deterministic tab-open assertions (also stays inside the internal-scheme egress boundary). Playwright cannot drive the omnibox — keep address-bar coverage in unit tests. (from: phase2_search_20260926)
 - **Fixture shape drift:** `FolderNode` uses `childIds` (not `children`) and both node kinds require `isRoot`/`isManaged` — hand-built `FlattenedTree` fixtures must carry them. (from: phase2_search_20260926)
+
+## Elevated from track `phase3_jev_client_20260927` (2026-09-27)
+
+- **Scoped consent gates validate cheap-before-sensitive.** `sendConsented` checks scope registration and the scope's deep-equal request guard *before* reading consent rows, permissions, or key material — unknown scopes can't even probe state. Each scope owns a request-shape predicate; extend the frozen registry, never the caller.
+- **Playwright CAN route extension service-worker fetches** — `context.route("https://host/**")` intercepts MV3 worker `fetch` end to end, so provider e2e can exercise the real gate + real `fetch` with a scripted response.
+- **`chrome.permissions.request` never resolves under Playwright Chromium** (headed/headless, click/evaluate/CDP userGesture — promise pends forever, no prompt window exists). Workaround: copy the built `.output/chrome-mv3` to a temp dir, promote the optional host pattern to `host_permissions` in the manifest copy, and launch from that — the production `permissions.request` path still runs and resolves `true` for the already-held permission.
+- **Retry/backoff purity:** inject `sleep`/`random`/`now` so tests drive full-jitter exponential backoff and `retry-after` (delta-seconds AND HTTP-date) deterministically; classify retries by outcome code, never by inspecting response bodies.
+- **Per-key concurrency without a library:** a lazy `Map<key, Promise<unknown>>` tail chain serializes sends per preset across all client instances; await the tail then chain — simpler and testable than a semaphore for ≤4-deep queues.
+- **Error chains need assertion discipline.** When an outer error wraps an inner typed error as `cause`, redaction tests must assert on every link (message, `JSON.stringify` round-trip, `inspect()` output) — asserting only `cause === undefined` on the outer error misses a leaky inner one.
+- **Assert typed errors via a public `inspect()`/serialization shape,** not `instanceof` alone — `vi.mock` boundaries and message-port serialization both erase class identity.
+- **`noul` (yes/no) confidence is a margin, not a probability:** `noulMargin(p, t)` validates `0<t<1` and `0≤p≤1`; choice/score reuse the provider's own confidence field.
+- **Verify test-suite exclusion with `vitest list --filesOnly`,** not a grep for the directory name — substring matches on "live"/"e2e" inside test names produce false positives.
+- **HTTP mock servers for provider tests:** bind `127.0.0.1` on an ephemeral port, script status/delay/malformed-body per call index, record every request, and drain/destroy sockets on `close()` so hanging replies can't leak across tests.
+
+_Last refreshed: 2026-09-27_
