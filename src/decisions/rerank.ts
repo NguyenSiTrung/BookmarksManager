@@ -55,6 +55,12 @@ export interface RerankSearchOptions {
   readonly preset: PresetId;
   /** Model id sent in the request; the response may report another. */
   readonly model: string;
+  /**
+   * The user's own blocklist (normalized hosts). A shortlisted hit on a
+   * user-blocklisted host is skipped exactly like a built-in-sensitive one
+   * and never enters a request. Absent means the user has added no entries.
+   */
+  readonly userBlocklist?: readonly string[];
   /** An already-built client (tests / reuse). When absent one is created. */
   readonly client?: JevClient;
   /** Transport override when the service creates its own client. */
@@ -237,10 +243,13 @@ async function runRerank(
   // positional `candidate_<index>` keys, so ids stay on the device.
   const sent: { id: string; bookmark: SentBookmark }[] = [];
   for (const candidate of shortlist) {
-    const bookmark = minimizeBookmark({
-      title: candidate.title,
-      url: candidate.url,
-    });
+    const bookmark = minimizeBookmark(
+      {
+        title: candidate.title,
+        url: candidate.url,
+      },
+      options.userBlocklist,
+    );
     if (bookmark === null) continue;
     sent.push({ id: candidate.id, bookmark });
   }

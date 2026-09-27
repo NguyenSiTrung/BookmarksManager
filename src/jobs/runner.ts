@@ -389,6 +389,12 @@ export interface PipelineAnalyzerOptions {
   readonly context: AnalysisContext;
   readonly preset: PresetId;
   readonly model: string;
+  /**
+   * The user's own blocklist (normalized hosts). A job's analysis skips a
+   * user-blocklisted bookmark exactly like a built-in-sensitive one. Absent
+   * means the user has added no entries.
+   */
+  readonly userBlocklist?: readonly string[];
 }
 
 /**
@@ -408,12 +414,21 @@ export function createPipelineAnalyzer(
       preset: options.preset,
       model: options.model,
       checks,
+      ...(options.userBlocklist === undefined
+        ? {}
+        : { userBlocklist: options.userBlocklist }),
     });
 }
 
 export interface DuplicateScannerOptions {
   readonly preset: PresetId;
   readonly model: string;
+  /**
+   * The user's own blocklist (normalized hosts). A pair with a side on a
+   * user-blocklisted host is skipped exactly like a built-in-sensitive one.
+   * Absent means the user has added no entries.
+   */
+  readonly userBlocklist?: readonly string[];
 }
 
 /**
@@ -430,5 +445,8 @@ export function createDuplicateScanner(
       pairs,
       preset: options.preset,
       model: options.model,
+      ...(options.userBlocklist === undefined
+        ? {}
+        : { userBlocklist: options.userBlocklist }),
     });
 }

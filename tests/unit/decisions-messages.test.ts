@@ -539,22 +539,32 @@ describe("intent dispatch", () => {
 });
 
 describe("job resume on worker startup", () => {
-  it("resumes running and paused jobs from Dexie, not terminal ones", async () => {
+  it("resumes running and pending jobs, but NOT paused or terminal ones", async () => {
     const running = await enqueueJob({
       kind: "analyze_selection",
       bookmarkIds: ["bm-1"],
       now: () => NOW,
     });
     await setJobStatus(running.id, "running", {}, () => NOW);
+    // A job evicted between `enqueueJob` and the first `setJobStatus("running")`
+    // is still `pending` — an interrupted job, so it must resume.
+    const pending = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-2"],
+      now: () => NOW,
+    });
+    // A `paused` job only reaches that status via an explicit user action; it
+    // must stay paused until the user resumes it, so startup must NOT restart
+    // the egress/cost the user halted.
     const paused = await enqueueJob({
       kind: "library_scan",
-      bookmarkIds: ["bm-2"],
+      bookmarkIds: ["bm-3"],
       now: () => NOW,
     });
     await pauseJob(paused.id, () => NOW);
     const completed = await enqueueJob({
       kind: "analyze_selection",
-      bookmarkIds: ["bm-3"],
+      bookmarkIds: ["bm-4"],
       now: () => NOW,
     });
     await setJobStatus(completed.id, "running", {}, () => NOW);
@@ -574,7 +584,8 @@ describe("job resume on worker startup", () => {
       },
     });
 
-    expect(resumed.sort()).toEqual([running.id, paused.id].sort());
+    expect(resumed.sort()).toEqual([running.id, pending.id].sort());
+    expect(resumed).not.toContain(paused.id);
     expect(resumed).not.toContain(completed.id);
   });
 

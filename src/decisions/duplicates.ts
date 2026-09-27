@@ -108,6 +108,12 @@ interface ScanCommonOptions {
   readonly preset: PresetId;
   /** Model id sent in the request; the response may report another. */
   readonly model: string;
+  /**
+   * The user's own blocklist (normalized hosts). A pair with a side on a
+   * user-blocklisted host is skipped exactly like a built-in-sensitive one
+   * and never enters a request. Absent means the user has added no entries.
+   */
+  readonly userBlocklist?: readonly string[];
   /** An already-built client (tests / reuse). When absent one is created. */
   readonly client?: JevClient;
   /** Transport override when the service creates its own client. */
@@ -347,8 +353,14 @@ async function runPairs(
   const sendable: SendablePair[] = [];
   let skipped = 0;
   for (const pair of pairs) {
-    const a = minimizeBookmark({ title: pair.a.title, url: pair.a.url });
-    const b = minimizeBookmark({ title: pair.b.title, url: pair.b.url });
+    const a = minimizeBookmark(
+      { title: pair.a.title, url: pair.a.url },
+      options.userBlocklist,
+    );
+    const b = minimizeBookmark(
+      { title: pair.b.title, url: pair.b.url },
+      options.userBlocklist,
+    );
     if (a === null || b === null) {
       skipped += 1;
       continue;

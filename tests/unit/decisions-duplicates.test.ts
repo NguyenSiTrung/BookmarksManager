@@ -284,6 +284,22 @@ describe("scanNearDuplicates", () => {
     expect(await db.decisions.count()).toBe(0);
   });
 
+  it("skips a pair whose side is USER-blocklisted, sending the rest", async () => {
+    server.queue({ kind: "answer" });
+
+    const result = await scanNearDuplicates(
+      options({ userBlocklist: ["docs.rs"] }),
+    );
+
+    if (!result.sent) throw new Error("expected a sent result");
+    // docs.rs pair (user-blocklisted side) skipped; tokio.rs pair sent.
+    expect(result.pairs).toBe(2);
+    expect(result.skipped).toBe(1);
+    expect(server.requests).toHaveLength(1);
+    const raw = server.requests.map((r) => r.rawBody).join("\n");
+    expect(raw).not.toContain("docs.rs");
+  });
+
   it("makes no request when there are no near-duplicate pairs", async () => {
     const result = await scanNearDuplicates(
       options({

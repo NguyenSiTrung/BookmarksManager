@@ -1,5 +1,6 @@
 import { hasConsent, type ConsentScope } from "../consent/records";
 import { db } from "../db/database";
+import { readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
 import { DecisionState } from "../schemas/decision-state";
@@ -103,7 +104,11 @@ function deepEqual(a: unknown, b: unknown): boolean {
  */
 interface ScopeRegistration {
   readonly scope: ConsentScope;
-  readonly admits: (request: unknown, model: string) => boolean;
+  readonly admits: (
+    request: unknown,
+    model: string,
+    userBlocklist: readonly string[],
+  ) => boolean;
 }
 
 /**
@@ -131,14 +136,19 @@ function decisionStateUrls(state: DecisionState): string[] {
  * against the closed `DecisionState` schema — refusing unknown fields and any
  * URL that is not already cleaned (a query, fragment, or userinfo fails
  * `CleanedUrl`) — then run every URL-bearing field through the sensitive-site
- * blocklist. Also pins the request's `model` to the allowlist-checked `model`
- * argument, so the model the gate vetted is the model that is serialized
- * (mirroring `jev_test`'s deep-equal guard). Fails closed: a non-object
- * request, a `model` mismatch, a missing/!DecisionState state, or any
- * blocklisted URL is refused. Runs before the wire-schema parse and before
- * any consent, permission, or key read.
+ * blocklist (the built-in list AND the user's own persisted blocklist, so ANY
+ * caller is covered even if a service-level check is bypassed). Also pins the
+ * request's `model` to the allowlist-checked `model` argument, so the model
+ * the gate vetted is the model that is serialized (mirroring `jev_test`'s
+ * deep-equal guard). Fails closed: a non-object request, a `model` mismatch, a
+ * missing/!DecisionState state, or any blocklisted URL is refused. Runs before
+ * the wire-schema parse and before any consent, permission, or key read.
  */
-function admitsDecisionState(request: unknown, model: string): boolean {
+function admitsDecisionState(
+  request: unknown,
+  model: string,
+  userBlocklist: readonly string[],
+): boolean {
   if (typeof request !== "object" || request === null) {
     return false;
   }
@@ -150,7 +160,9 @@ function admitsDecisionState(request: unknown, model: string): boolean {
   if (!parsed.success) {
     return false;
   }
-  return decisionStateUrls(parsed.data).every((url) => !isSensitiveUrl(url));
+  return decisionStateUrls(parsed.data).every(
+    (url) => !isSensitiveUrl(url, userBlocklist),
+  );
 }
 
 /**
@@ -275,7 +287,12 @@ export async function sendConsented(
 
   assertPresetUrl(destination);
 
-  if (!scopeEntry.admits(request, model)) {
+  // Defense-in-depth: re-read the user's persisted blocklist on every call so
+  // ANY `jev_decisions` caller is covered, even if a service-level check were
+  // bypassed. `readBlocklist` fails closed to `[]`, so a broken lookup can
+  // never block every send.
+  const userBlocklist = await readBlocklist();
+  if (!scopeEntry.admits(request, model, userBlocklist)) {
     throw new NetworkGateError(
       "request_not_allowed",
       `Scope "${scope}" does not admit this request payload.`,

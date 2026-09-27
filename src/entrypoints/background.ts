@@ -10,6 +10,10 @@ import {
 } from "../decisions/apply";
 import { normalizeBlocklistEntry } from "../decisions/minimize";
 import {
+  DECISION_BLOCKLIST_KEY,
+  readBlocklist,
+} from "../decisions/blocklist";
+import {
   analyzeBookmark,
   DecisionPipelineError,
 } from "../decisions/pipeline";
@@ -52,7 +56,7 @@ import { reconcileMetadata } from "../sync/reconcile";
  * `bookmarks-changed` to open pages), rebuilds the right-click "Save page"/
  * "Save link" context-menu items (`src/sync/context-menu.ts`), runs one
  * metadata reconcile for deletions missed while the service worker was
- * suspended, and resumes any `running`/`paused` decision jobs from Dexie so a
+ * suspended, and resumes any `running`/`pending` decision jobs from Dexie so a
  * library scan survives an MV3 worker restart (FR7). It performs no network
  * requests at startup. `chrome` is the lazy-slice house pattern so test stubs
  * work; only `runtime.onMessage` is needed here — the sync modules (including
@@ -79,9 +83,11 @@ declare const chrome: {
 // Decisions production wiring
 // ---------------------------------------------------------------------------
 
-/** Namespaced `metadata` keys for the decisions settings + user blocklist. */
+/** Namespaced `metadata` key for the decisions settings. The blocklist key +
+ * reader live in `src/decisions/blocklist.ts` (shared with the egress gate);
+ * they are re-exported here for existing callers. */
 export const DECISION_SETTINGS_KEY = "decisions:settings";
-export const DECISION_BLOCKLIST_KEY = "decisions:blocklist";
+export { DECISION_BLOCKLIST_KEY, readBlocklist };
 
 /** The consented preset + model the decision services run against. */
 interface ActiveProvider {
@@ -120,18 +126,7 @@ async function readDecisionSettings(): Promise<DecisionSettings> {
   }
 }
 
-/** The persisted user blocklist (normalized hosts), or `[]` when unset. */
-async function readBlocklist(): Promise<string[]> {
-  try {
-    const row = await db.metadata.get(DECISION_BLOCKLIST_KEY);
-    const value = row?.value;
-    if (!Array.isArray(value)) return [];
-    return value.filter((entry): entry is string => typeof entry === "string");
-  } catch {
-    return [];
-  }
-}
-
+/** The current settings + blocklist snapshot the Options UI reads. */
 async function settingsSnapshot(): Promise<SettingsSnapshot> {
   const [settings, blocklist] = await Promise.all([
     readDecisionSettings(),
@@ -231,16 +226,21 @@ async function resolveWorkSet(
  * would silently skip the FR7 pair phase.
  */
 async function buildRunner(provider: ActiveProvider): Promise<JobRunner> {
-  const context = await loadAnalysisContext();
+  const [context, userBlocklist] = await Promise.all([
+    loadAnalysisContext(),
+    readBlocklist(),
+  ]);
   return new JobRunner({
     analyze: createPipelineAnalyzer({
       context,
       preset: provider.preset,
       model: provider.model,
+      userBlocklist,
     }),
     scanDuplicates: createDuplicateScanner({
       preset: provider.preset,
       model: provider.model,
+      userBlocklist,
     }),
   });
 }
@@ -272,15 +272,17 @@ function productionHandlers(): DecisionsHandlers {
           "No provider is enabled for decisions; enable one in Options first.",
         );
       }
-      const [bookmark, context] = await Promise.all([
+      const [bookmark, context, userBlocklist] = await Promise.all([
         resolveBookmark(bookmarkId),
         loadAnalysisContext(),
+        readBlocklist(),
       ]);
       return analyzeBookmark({
         bookmark,
         context,
         preset: provider.preset,
         model: provider.model,
+        userBlocklist,
       });
     },
     async saveSuggest(bookmark) {
@@ -291,7 +293,10 @@ function productionHandlers(): DecisionsHandlers {
           "No provider is enabled for decisions; enable one in Options first.",
         );
       }
-      const context = await loadAnalysisContext();
+      const [context, userBlocklist] = await Promise.all([
+        loadAnalysisContext(),
+        readBlocklist(),
+      ]);
       // Save-suggest also asks for a folder placement (plan §9.1/FR10).
       return analyzeBookmark({
         bookmark,
@@ -299,6 +304,7 @@ function productionHandlers(): DecisionsHandlers {
         preset: provider.preset,
         model: provider.model,
         checks: ["categorize", "tags", "placement"],
+        userBlocklist,
       });
     },
     async rerank(query) {
@@ -312,11 +318,13 @@ function productionHandlers(): DecisionsHandlers {
       const handle = await loadSessionIndex();
       if (handle === null) return { sent: false, reason: "empty" };
       const { hits } = runQuery(handle.index, query, handle.ctx);
+      const userBlocklist = await readBlocklist();
       return rerankSearch({
         query,
         hits,
         preset: provider.preset,
         model: provider.model,
+        userBlocklist,
       });
     },
     approve: (id) => approveDecision(id),
@@ -355,16 +363,20 @@ export interface ResumeJobsDeps {
 }
 
 /**
- * Resume every `running`/`paused` job from Dexie — a worker restart leaves
- * those rows mid-flight, and the runner continues from the last committed
- * batch. Terminal jobs are ignored, a job whose work set resolves empty is
+ * Resume every interrupted job from Dexie — a worker restart leaves a job
+ * `running` (evicted mid-flight) or `pending` (evicted between `enqueueJob`
+ * and the first `setJobStatus("running")`); the runner continues either from
+ * the last committed batch. A `paused` job is NOT resumed: it only reaches
+ * that status via an explicit user action, and restarting it would silently
+ * resume egress/cost the user halted — it stays paused until the user resumes
+ * it. Terminal jobs are ignored, a job whose work set resolves empty is
  * skipped, and any per-job failure is swallowed so one broken job can never
  * stop the others (or reject — the caller runs this fire-and-forget).
  */
 export async function resumeJobs(deps: ResumeJobsDeps): Promise<void> {
   let jobs: Job[];
   try {
-    jobs = await db.jobs.where("status").anyOf("running", "paused").toArray();
+    jobs = await db.jobs.where("status").anyOf("running", "pending").toArray();
   } catch {
     return;
   }

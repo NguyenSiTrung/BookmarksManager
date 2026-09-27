@@ -122,6 +122,13 @@ export interface AnalyzeBookmarkOptions {
   readonly model: string;
   /** Checks to run; defaults to `["categorize", "tags"]`. */
   readonly checks?: readonly AnalysisCheck[];
+  /**
+   * The user's own blocklist (normalized hosts). A bookmark on a
+   * user-blocklisted host is skipped exactly like a built-in-sensitive one
+   * (`{sent:false, reason:"blocklisted"}`) and never enters a request. Absent
+   * means the user has added no entries.
+   */
+  readonly userBlocklist?: readonly string[];
   /** An already-built client (tests / reuse). When absent one is created. */
   readonly client?: JevClient;
   /** Transport override when the pipeline creates its own client. */
@@ -725,7 +732,7 @@ async function runAnalysis(
   const checks = options.checks ?? DEFAULT_CHECKS;
   validateChecks(checks);
 
-  const sent = minimizeBookmark(options.bookmark);
+  const sent = minimizeBookmark(options.bookmark, options.userBlocklist);
   if (sent === null) {
     return { sent: false, reason: "blocklisted" };
   }

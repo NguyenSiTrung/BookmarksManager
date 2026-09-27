@@ -7,6 +7,7 @@ import {
   revokeTestConsent,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
+import { DECISION_BLOCKLIST_KEY } from "../../src/decisions/blocklist";
 import { makeSyntheticRequest } from "../../src/jev/wire";
 import { PRESETS } from "../../src/net/presets";
 import { NetworkGateError, sendConsented, sendConsentedTest } from "../../src/net/send";
@@ -605,6 +606,29 @@ describe("jev_decisions gate", () => {
     expect(containsSpy).not.toHaveBeenCalled();
     expect(readKey).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a URL the USER blocklisted (defense-in-depth over the services)", async () => {
+    // `news.ycombinator.com` is not built-in sensitive; it is only blocked
+    // because the user persisted it in their own blocklist. The gate re-reads
+    // that list, so a caller that skipped the service-level check is still
+    // refused — and no consent, permission, or key read happens first.
+    await db.metadata.put({
+      key: DECISION_BLOCKLIST_KEY,
+      value: ["news.ycombinator.com"],
+    });
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest(validState),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
   });
 
   it("validates the pairPartner URL, not just the primary bookmark", async () => {

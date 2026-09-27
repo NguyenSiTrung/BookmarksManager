@@ -8,11 +8,14 @@ import type { AnalyzeBookmarkResult } from "../../src/decisions/pipeline";
 import {
   JobRunner,
   JobRunnerError,
+  createDuplicateScanner,
+  createPipelineAnalyzer,
   type JobAnalyzeFn,
   type JobScanDuplicatesFn,
 } from "../../src/jobs/runner";
 import { cancelJob, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
 import type { NearDuplicatePair } from "../../src/decisions/candidates";
+import { flattenTree } from "../../src/sync/tree";
 
 /**
  * Job runner (spec FR7): a persisted, resumable batch job is processed one
@@ -645,5 +648,73 @@ describe("JobRunner library_scan pair phase", () => {
       committedBatches: 0,
       processedCount: 0,
     });
+  });
+});
+
+describe("job adapter user-blocklist threading", () => {
+  function emptyContext() {
+    return {
+      tagDefs: [],
+      corpus: { bookmarks: [], metas: [] },
+      tree: flattenTree([]),
+    };
+  }
+
+  it("createPipelineAnalyzer skips a user-blocklisted bookmark with no egress", async () => {
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-x"],
+      now,
+    });
+    const analyze = createPipelineAnalyzer({
+      context: emptyContext(),
+      preset: "typesafe",
+      model: "jev-latest",
+      userBlocklist: ["example.com"],
+    });
+
+    const result = await analyze({
+      bookmark: { id: "bm-x", title: "Example", url: "https://example.com/x" },
+      job,
+      checks: ["categorize"],
+    });
+
+    expect(result).toEqual({ sent: false, reason: "blocklisted" });
+  });
+
+  it("createDuplicateScanner skips a pair with a user-blocklisted side with no egress", async () => {
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: ["a", "b"],
+      now,
+    });
+    const scan = createDuplicateScanner({
+      preset: "typesafe",
+      model: "jev-latest",
+      userBlocklist: ["example.com"],
+    });
+
+    const result = await scan({
+      pairs: [
+        {
+          a: {
+            id: "a",
+            title: "Same",
+            url: "https://example.com/a",
+            domain: "example.com",
+          },
+          b: {
+            id: "b",
+            title: "Same",
+            url: "https://example.com/b",
+            domain: "example.com",
+          },
+          titleSimilarity: 1,
+        },
+      ],
+      job,
+    });
+
+    expect(result).toEqual({ sent: false, reason: "blocklisted" });
   });
 });

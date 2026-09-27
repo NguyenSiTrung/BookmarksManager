@@ -232,6 +232,19 @@ describe("analyzeBookmark", () => {
     expect(await db.usage.count()).toBe(0);
   });
 
+  it("skips a USER-blocklisted bookmark and makes no request", async () => {
+    // `tokio.rs` is not built-in sensitive; it is only blocked because the
+    // caller passed it in the user blocklist.
+    const result = await analyzeBookmark(
+      options({ userBlocklist: ["tokio.rs"] }),
+    );
+
+    expect(result).toEqual({ sent: false, reason: "blocklisted" });
+    expect(server.requests).toHaveLength(0);
+    expect(await db.decisions.count()).toBe(0);
+    expect(await db.usage.count()).toBe(0);
+  });
+
   it("auto-applies only when the kind's toggle is on", async () => {
     server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
     const settings = DecisionSettings.parse({

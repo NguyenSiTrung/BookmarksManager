@@ -366,6 +366,24 @@ describe("rerankSearch", () => {
     expect(await db.usage.count()).toBe(0);
   });
 
+  it("skips a USER-blocklisted hit and never sends it", async () => {
+    server.queue({ kind: "answer" });
+
+    const result = await rerankSearch(options({ userBlocklist: ["tokio.rs"] }));
+
+    expect(result.sent).toBe(true);
+    expect(server.requests).toHaveLength(1);
+    // github.com is sendable; tokio.rs is user-blocklisted (not built-in);
+    // mail.google.com is built-in sensitive. Only github.com is sent.
+    const body = firstRequest();
+    expect(body.state.candidateBookmarks).toEqual([
+      { title: "Rust async book", url: GITHUB_URL, domain: "github.com" },
+    ]);
+    expect(server.requests[0]?.rawBody).not.toContain("tokio.rs");
+    if (!result.sent) throw new Error("expected a sent result");
+    expect(result.results.map((r) => r.id)).toEqual(["bm-1"]);
+  });
+
   it("rejects an answer ID that was not among the candidates sent (no usage row)", async () => {
     const error = await rerankSearch(
       options({
