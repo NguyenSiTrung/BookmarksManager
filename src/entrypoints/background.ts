@@ -23,9 +23,17 @@ import type {
 } from "../decisions/pipeline";
 import { DecisionSettings } from "../decisions/policy";
 import { rerankSearch } from "../decisions/rerank";
-import { cancelJob, enqueueJob, getJob, pauseJob, resumeJob } from "../jobs/queue";
+import {
+  cancelJob,
+  enqueueJob,
+  getJob,
+  pauseJob,
+  resumeJob,
+  setJobStatus,
+} from "../jobs/queue";
 import {
   JobRunner,
+  JobRunnerError,
   createDuplicateScanner,
   createPipelineAnalyzer,
 } from "../jobs/runner";
@@ -261,16 +269,48 @@ async function buildRunner(provider: ActiveProvider): Promise<JobRunner> {
   });
 }
 
-/** Run (or resume) one persisted job against the live work set. */
-async function runPersistedJob(jobId: string): Promise<void> {
+/**
+ * Run (or resume) one persisted job against the live work set. Exported for
+ * the worker-wiring tests (the `productionHandlers` precedent).
+ *
+ * Only a LIVE row (`running`/`pending`) is ever driven: a pause/cancel that
+ * landed between the caller's flip and this read wins — re-entering the
+ * runner would otherwise flip the row back to `running` and drive egress
+ * the user explicitly halted. A caller-side `JobRunnerError` (work-set
+ * mismatch, …) strands a row that claims a live status nothing will drive,
+ * so it is surfaced as a `failed` row (the runner's own failure
+ * discipline) instead of being swallowed silently; anything else
+ * (transport/context) is left for the next worker start to retry.
+ */
+export async function runPersistedJob(jobId: string): Promise<void> {
   const job = await getJob(jobId);
   if (job === undefined) return;
+  if (job.status !== "running" && job.status !== "pending") return;
   const provider = await activeProvider();
   if (provider === null) return; // no consented provider — leave the job be
   const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
   if (bookmarks.length === 0) return;
-  const runner = await buildRunner(provider);
-  await runner.run(jobId, { bookmarks });
+  try {
+    const runner = await buildRunner(provider);
+    await runner.run(jobId, { bookmarks });
+  } catch (error) {
+    if (!(error instanceof JobRunnerError)) throw error;
+    try {
+      const current = await getJob(jobId);
+      if (current === undefined) return;
+      if (current.status === "pending") {
+        // `pending → failed` has no legal edge; every runner entry passes
+        // through `running` first, so the strand is visible from there.
+        await setJobStatus(jobId, "running");
+      } else if (current.status !== "running") {
+        // The user paused/canceled meanwhile — their status wins.
+        return;
+      }
+      await setJobStatus(jobId, "failed", { error: error.message });
+    } catch {
+      // Raced a concurrent transition — the row keeps whatever won.
+    }
+  }
 }
 
 /**
@@ -387,6 +427,10 @@ export function productionHandlers(
     },
     pauseJob: (id) => pauseJob(id),
     async resumeJob(id) {
+      // Refuse BEFORE the flip, exactly like startJob: with no provider the
+      // relaunch below would return silently and the flipped row would
+      // claim "Running" forever with nothing driving it.
+      await requireActiveProvider();
       const job = await resumeJob(id);
       // The flipped row alone is not enough (see ProductionHandlersDeps):
       // relaunch the runner, fire-and-forget exactly like startJob above.
