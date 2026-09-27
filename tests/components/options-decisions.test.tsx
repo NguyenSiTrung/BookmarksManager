@@ -220,8 +220,12 @@ describe("decisions consent disclosure", () => {
       name: /privacy policy/i,
     }) as HTMLAnchorElement;
     expect(link.href).toBe(PROVIDER_DISCLOSURES.openrouter.privacyPolicyUrl);
-    // Switching resets the agreement box — never pre-checked.
-    expect(agreeBox().checked).toBe(false);
+    // Switching resets the agreement box — never pre-checked. The consent
+    // panel reads pending until the live query emits for the new preset.
+    const agree = (await screen.findByRole("checkbox", {
+      name: /agree/i,
+    })) as HTMLInputElement;
+    expect(agree.checked).toBe(false);
     expect(allowButton().disabled).toBe(true);
   });
 });
@@ -281,6 +285,27 @@ describe("decisions consent grant and revoke", () => {
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
     await screen.findByRole("button", { name: /revoke .* analysis consent/i });
     expect(screen.queryByRole("checkbox", { name: /agree/i })).toBeNull();
+  });
+
+  it("renders pending — not the previous provider's panel — across a preset switch", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    render(<DecisionSettings />);
+    await screen.findByRole("button", {
+      name: /revoke typesafe analysis consent/i,
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    // Synchronously after the switch the stale TypeSafe verdict is still the
+    // live query's last emission — it must read pending, never a "Revoke
+    // OpenRouter…" panel under the new disclosure.
+    expect(screen.getByText(/checking consent/i)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /revoke openrouter/i }),
+    ).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /agree/i })).toBeNull();
+    // Once the query emits for OpenRouter, its real un-consented form shows.
+    const agree = await screen.findByRole("checkbox", { name: /agree/i });
+    expect((agree as HTMLInputElement).checked).toBe(false);
+    expect(allowButton().textContent).toContain("OpenRouter");
   });
 });
 
@@ -548,5 +573,45 @@ describe("protocol discipline", () => {
     expect(alert.textContent).toContain(
       "The request failed unexpectedly.",
     );
+  });
+});
+
+describe("settings load failure", () => {
+  it("shows a retryable failure — not perpetual loading — and retry re-calls GET_SETTINGS", async () => {
+    sendMessageSpy.mockRejectedValueOnce(new Error("worker gone"));
+    render(<DecisionSettings />);
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/did not return decision settings/i);
+    // A failed load is not "loading": no perpetual placeholder text.
+    expect(screen.queryByText(/loading decision settings/i)).toBeNull();
+    expect(screen.queryByText(/loading the blocklist/i)).toBeNull();
+    // Each worker-owned section offers a retry.
+    const retries = screen.getAllByRole("button", { name: /^retry$/i });
+    expect(retries).toHaveLength(2);
+    fireEvent.click(retries[0]!);
+    // The retry re-reads through the worker and recovers both sections.
+    await screen.findByRole("checkbox", { name: /tag additions/i });
+    await screen.findByLabelText(/block a host/i);
+    expect(sentTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /^retry$/i }),
+    ).toBeNull();
+  });
+
+  it("keeps the retry state when the retried load fails again", async () => {
+    sendMessageSpy.mockRejectedValue(new Error("worker gone"));
+    render(<DecisionSettings />);
+    await screen.findByRole("alert");
+    const retries = screen.getAllByRole("button", { name: /^retry$/i });
+    fireEvent.click(retries[0]!);
+    // A second GET_SETTINGS goes out, fails, and the retryable failure
+    // returns rather than dead-ending on "Loading…".
+    await waitFor(() =>
+      expect(sentTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]),
+    );
+    await screen.findAllByRole("button", { name: /^retry$/i });
+    expect(screen.queryByText(/loading decision settings/i)).toBeNull();
+    expect(screen.queryByText(/loading the blocklist/i)).toBeNull();
   });
 });

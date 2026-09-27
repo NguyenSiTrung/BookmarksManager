@@ -84,11 +84,57 @@ const AUTO_APPLY_KINDS = [
   { kind: "set_category", label: "Auto-apply category assignments" },
 ] as const;
 
+/**
+ * A consent verdict paired with the preset the live query read it for —
+ * lets a stale emission be recognized after a preset switch.
+ */
+interface ConsentRead {
+  preset: PresetId;
+  granted: boolean;
+}
+
+/**
+ * Pending/failed placeholder for the worker-owned sections. `loading` is the
+ * in-flight flag from `loadSettings`, so a settled-but-empty read shows a
+ * retryable failure instead of "Loading…" forever; the verbatim worker error
+ * renders in the page-level alert below.
+ */
+function LoadState({
+  loading,
+  label,
+  onRetry,
+}: {
+  loading: boolean;
+  label: string;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <p role="status" className="mt-2 text-sm text-gray-700">
+        Loading {label}…
+      </p>
+    );
+  }
+  return (
+    <p className="mt-2 text-sm text-gray-700">
+      Could not load {label}.
+      <button
+        type="button"
+        onClick={onRetry}
+        className="ml-2 rounded border border-gray-300 px-2 py-0.5 text-xs"
+      >
+        Retry
+      </button>
+    </p>
+  );
+}
+
 export function DecisionSettings() {
   const [presetId, setPresetId] = useState<PresetId>("typesafe");
   const [agreed, setAgreed] = useState(false);
   const [settings, setSettings] = useState<DecisionSettingsValue | null>(null);
   const [blocklist, setBlocklist] = useState<readonly string[] | null>(null);
+  const [loading, setLoading] = useState(true);
   const [newEntry, setNewEntry] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,16 +147,30 @@ export function DecisionSettings() {
 
   /**
    * The current provider's `jev_decisions` grant, live from `db.consents`.
-   * `undefined` while the first read is in flight. A stale `consentVersion`
-   * row reads as `false`, so a re-disclosure is just this screen again.
+   * Each emission names the preset it was read for: dexie-react-hooks keeps
+   * the previous result while a dep-changed query re-runs, so after a preset
+   * switch the stale verdict arrives tagged with the OLD preset. A stale
+   * `consentVersion` row reads as `false`, so a re-disclosure is just the
+   * un-consented screen again.
    */
-  const consentGranted = useLiveQuery(
-    () =>
-      hasConsent(DECISIONS_CONSENT_SCOPE, presetId).catch(
-        (): boolean => false,
-      ),
+  const consentRead = useLiveQuery(
+    (): Promise<ConsentRead> =>
+      hasConsent(DECISIONS_CONSENT_SCOPE, presetId)
+        .then((granted) => ({ preset: presetId, granted }))
+        .catch(() => ({ preset: presetId, granted: false })),
     [presetId],
   );
+
+  /**
+   * The verdict for the CURRENT preset only — `undefined` (pending) until
+   * the query emits a read taken for this `presetId`. The mismatched-preset
+   * stale emission therefore renders "Checking consent…" instead of
+   * flashing the prior provider's panel under the new disclosure.
+   */
+  const consentGranted =
+    consentRead !== undefined && consentRead.preset === presetId
+      ? consentRead.granted
+      : undefined;
 
   /**
    * Read the settings/blocklist snapshot through the decisions protocol.
@@ -118,6 +178,12 @@ export function DecisionSettings() {
    * `decisions:settings` directly.
    */
   const loadSettings = useCallback(async () => {
+    // `loading` marks a genuinely in-flight read — the sections only render
+    // "Loading…" while it is set, and a retryable failure once it settles
+    // without data. Clearing `error` here also retires a stale alert from a
+    // previous failed attempt.
+    setLoading(true);
+    setError(null);
     try {
       const raw = await chrome.runtime.sendMessage(
         DecisionMessage.parse({ type: "GET_SETTINGS" }),
@@ -133,6 +199,8 @@ export function DecisionSettings() {
       }
     } catch {
       setError("The extension worker did not return decision settings.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -143,6 +211,11 @@ export function DecisionSettings() {
       void loadSettings();
     });
   }, [loadSettings]);
+
+  /** Re-run the settings read after a failure — the Retry button's action. */
+  const onRetryLoad = () => {
+    void loadSettings();
+  };
 
   const onPresetChange = (next: PresetId) => {
     setPresetId(next);
@@ -467,9 +540,11 @@ export function DecisionSettings() {
           unless you turn them on.
         </p>
         {settings === null ? (
-          <p role="status" className="mt-2 text-sm text-gray-700">
-            Loading decision settings…
-          </p>
+          <LoadState
+            loading={loading}
+            label="decision settings"
+            onRetry={onRetryLoad}
+          />
         ) : (
           <div className="mt-2 space-y-2">
             {AUTO_APPLY_KINDS.map(({ kind, label }) => (
@@ -499,9 +574,11 @@ export function DecisionSettings() {
           what is consented above.
         </p>
         {blocklist === null ? (
-          <p role="status" className="mt-2 text-sm text-gray-700">
-            Loading the blocklist…
-          </p>
+          <LoadState
+            loading={loading}
+            label="the blocklist"
+            onRetry={onRetryLoad}
+          />
         ) : (
           <>
             {blocklist.length === 0 ? (
