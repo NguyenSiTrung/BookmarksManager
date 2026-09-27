@@ -1,0 +1,233 @@
+# Phase 4 Jev Decisions — Implementation Plan
+
+**Goal:** Deliver PROJECT_PLAN.md §15 Phase 4: Jev decisions on real bookmark metadata (categorize, tags,
+folder pre-select, near-duplicates, misfiled scan, search re-rank), the §10.2 confidence policy, the review
+queue with apply and undo, the audit log, the resumable job queue, cost tracking, and the "Data sent" log,
+all behind a new per-provider bookmark-data consent.
+
+**Spec:** `conductor/tracks/phase4_jev_decisions_20260927/spec.md`.
+
+## Global Constraints
+
+- Metadata only: no page text, content script, `scripting`, or Readability. No new permissions.
+  `CONSENT_VERSION` becomes 2, and the `store/` docs change **in the same task** that introduces the new
+  data flow (Phase 2 Task 1).
+- `fetch` stays in `src/net/**`, `z` is imported only from `src/schemas/z.ts`, handlers are total, and
+  errors are redacted (never read bodies on non-2xx; no `cause` that can hold response content).
+- `src/decisions/minimize.ts`, `candidates.ts`, `policy.ts`, and `src/jev/tasks/*` stay pure (no
+  `chrome`, DOM, React, or `fetch`).
+- Per task: failing test → implement → narrow checks → update the plan and `learnings.md` → commit the
+  intended files locally → `git notes add -m "…"` → close the mapped Beads task. Never push, pull, fetch,
+  or `bd dolt push`.
+- Phase-end tasks are **automated checkpoints**: the full gate (`lint` → `typecheck` → `test -- --run` →
+  `build` → `check:manifest` → `check:bundle` → `xvfb-run -a npm run test:e2e`), with evidence recorded in
+  `learnings.md`, marked complete when green. **The only user verification is the last task of the
+  track.**
+- Parallel workers own only their annotated files, in isolated `.worktrees/` worktrees. The coordinator
+  serializes shared files (`package.json`, `package-lock.json`, `src/entrypoints/background.ts`,
+  `src/db/database.ts`, `plan.md`, `learnings.md`, `PROJECT_PLAN.md`, `conductor/*.md`), Beads status, and
+  commits and notes.
+- `PROJECT_PLAN.md` carries uncommitted user edits. Never overwrite or commit them without asking.
+
+## File and Interface Map
+
+| Area | Files | Responsibility |
+|---|---|---|
+| State schema / minimization | `src/schemas/decision-state.ts`, `src/decisions/minimize.ts` | Closed `DecisionState`, URL cleaning, blocklist, notes exclusion |
+| Candidates | `src/decisions/candidates.ts` | Tag/folder/pair/rerank shortlists computed in code |
+| Policy | `src/decisions/policy.ts` | §10.2 bands, per-kind auto-apply settings, pre-select, no-match bar |
+| Question sets | `src/jev/tasks/*.ts` | `defineDecision` sets plus `questionSetVersion` |
+| Consent / gate | `src/consent/*`, `src/schemas/provider.ts`, `src/net/send.ts` | `jev_decisions` scope, v2, strict state guard |
+| Persistence | `src/db/database.ts`, `src/schemas/{job,audit,usage}.ts` | Dexie v3 `jobs`, `audit`, `usage` |
+| Store / apply | `src/decisions/store.ts`, `src/decisions/apply.ts` | Decision rows, approve/reject/revert, undo, audit |
+| Pipeline | `src/decisions/pipeline.ts`, `src/decisions/rerank.ts` | Minimize → candidates → Jev → policy → persist |
+| Jobs | `src/jobs/*.ts` | Resumable batches, pause/cancel, cost estimate |
+| Messages | `src/messages/decisions.ts`, `src/entrypoints/background.ts` | Total worker handlers for every decision intent |
+| UI | `src/entrypoints/{options,popup,sidepanel}/*` | Consent, settings, sent log, save suggestions, review, scan, Ask |
+| Store docs | `store/*.md`, `tests/unit/consent-snapshot.test.ts` | Disclosures matching the shipped data flow |
+| Tests | `tests/e2e/decisions.spec.ts`, `tests/live/*` | E2E decisions flow, live categorize smoke |
+
+---
+
+## Phase 1: Pure decision foundations
+<!-- execution: parallel -->
+<!-- depends: -->
+
+- [ ] Task 1: `DecisionState` schema and data minimization
+  <!-- files: src/schemas/decision-state.ts, src/decisions/minimize.ts, tests/unit/decision-state.test.ts, tests/unit/decisions-minimize.test.ts -->
+  - [ ] Failing tests: valid/invalid `DecisionState` fixtures (strict: unknown keys rejected); URL cleaning
+        strips query, fragment, and userinfo (IDN, ports, trailing `?`/`#` cases); the blocklist matches
+        banking/health/webmail samples, `file://`, private and loopback IPv4/IPv6, and dotless hosts; user
+        entries are added and removed; notes are never present in a minimized state
+  - [ ] Implement
+
+- [ ] Task 2: Candidate pre-filters
+  <!-- files: src/decisions/candidates.ts, tests/unit/decisions-candidates.test.ts -->
+  - [ ] Failing tests: the tag shortlist is capped at 30 and ranked by keyword/domain overlap
+        deterministically; the folder shortlist is capped at 50, plus `none`, and always includes the
+        current folder for misfiled; near-duplicate pairs require the same domain and a similar title and
+        exclude URL-normalized duplicates; the rerank shortlist takes the top 30 from `runQuery`; stable
+        ordering; empty-library cases
+  - [ ] Implement
+
+- [ ] Task 3: Confidence policy
+  <!-- files: src/decisions/policy.ts, tests/unit/decisions-policy.test.ts -->
+  - [ ] Failing tests: every §10.2 band boundary (0.5, 0.7, 0.85, inclusive/exclusive); auto-apply toggles
+        default to off; `move`/`merge_duplicates` never auto-apply at any confidence; pre-select at ≥ 0.7
+        only; the no-match bar; the escalation stub returns `unsure`; the settings schema rejects unknown
+        kinds
+  - [ ] Implement
+
+- [ ] Task 4: Question sets
+  <!-- files: src/jev/tasks/categorize.ts, src/jev/tasks/tags.ts, src/jev/tasks/placement.ts, src/jev/tasks/misfiled.ts, src/jev/tasks/near-duplicate.ts, src/jev/tasks/rerank.ts, src/jev/tasks/index.ts, tests/unit/jev-tasks.test.ts -->
+  <!-- depends: task1 -->
+  - [ ] Failing tests: JSON snapshots of `build()` for each set; `instructions` always present; questions
+        refer to state fields in backticks; option keys equal the candidate IDs; each set exports a
+        `questionSetVersion`; typed `run()` against a fake client maps values and confidence; the 255-option
+        and 64k guards hold at the candidate caps
+  - [ ] Implement
+
+- [ ] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
+
+## Phase 2: Consent, gate, and persistence
+<!-- execution: sequential -->
+<!-- depends: phase1 -->
+
+- [ ] Task 1: `jev_decisions` consent scope, `CONSENT_VERSION` 2, and store disclosures
+  <!-- files: src/schemas/provider.ts, src/consent/records.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md, store/permissions.md, store/listing.md, store/reviewer-notes.md, tests/unit/consent.test.ts, tests/unit/consent-snapshot.test.ts -->
+  - [ ] Failing tests: grant/revoke/has per `(scope, origin)`; v1 records read as stale for both scopes;
+        revoke removes both scopes; the disclosure constants list the exact `DecisionState` fields and
+        triggers; the consent snapshot test fails when sent fields change without a version bump and
+        matching `store/` text
+  - [ ] Implement; update the `store/` docs nearly verbatim from the disclosure constants
+
+- [ ] Task 2: Gate registration and strict state guard
+  <!-- files: src/net/send.ts, tests/unit/network-gate.test.ts -->
+  - [ ] Failing tests: `jev_decisions` admits only `DecisionState`-conforming requests; it refuses unknown
+        fields, dirty URLs, and blocklisted URLs with `request_not_allowed` before any consent, permission,
+        or key read (spy counts); `jev_test` behavior is unchanged; `sentLog.feature` records the scope
+  - [ ] Implement
+
+- [ ] Task 3: Dexie v3 — `jobs`, `audit`, `usage`
+  <!-- files: src/db/database.ts, src/schemas/job.ts, src/schemas/audit.ts, src/schemas/usage.ts, tests/unit/database-v3.test.ts, tests/fixtures/phase4.ts -->
+  - [ ] Failing tests: a genuine v2 → v3 migration preserves rows; valid/invalid fixtures per new schema;
+        delete-all still wipes the new tables; update the existing verno/table-list assertions in the same
+        commit
+  - [ ] Implement
+
+- [ ] Task 4: Decision store, apply, and audit
+  <!-- files: src/decisions/store.ts, src/decisions/apply.ts, tests/unit/decisions-store.test.ts, tests/unit/decisions-apply.test.ts -->
+  - [ ] Failing tests: persist/list/pending queries; approve applies through tag ops, category ops, `moveNode`,
+        or the duplicate merge, each with an undo snapshot; reject/revert transitions; an illegal transition
+        is refused; bulk approve is per-row atomic; every transition writes one audit row with no content;
+        a stale decision (bookmark gone or moved since) is refused
+  - [ ] Implement
+
+- [ ] Task 5: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
+
+## Phase 3: Worker pipeline
+<!-- execution: sequential -->
+<!-- depends: phase2 -->
+
+- [ ] Task 1: Analyze pipeline
+  <!-- files: src/decisions/pipeline.ts, tests/unit/decisions-pipeline.test.ts -->
+  - [ ] Failing tests against the mock Jev server: minimize → candidates → question sets → client
+        (`jev_decisions`) → answer-ID check → policy → persisted decisions and usage; blocklisted bookmarks
+        are skipped and never sent; auto-apply happens only with the toggle on; `source.model` comes from
+        the response; typed failures are surfaced without content
+  - [ ] Implement
+
+- [ ] Task 2: Rerank service
+  <!-- files: src/decisions/rerank.ts, tests/unit/decisions-rerank.test.ts -->
+  - [ ] Failing tests: the shortlist of 30 is sent in one request; results are sorted by probability; the
+        no-match bar applies; the query is sent only as `DecisionState.query`; an empty or local-only result
+        makes no request
+  - [ ] Implement
+
+- [ ] Task 3: Job queue
+  <!-- files: src/jobs/queue.ts, src/jobs/runner.ts, src/jobs/estimate.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts -->
+  - [ ] Failing tests: enqueue analyze-selection and library-scan jobs; batches persist progress; a simulated
+        worker restart resumes from the last committed batch without re-sending it; pause, resume, and
+        cancel; the cost estimate comes from `estimateTokens`; per-job usage totals
+  - [ ] Implement
+
+- [ ] Task 4: Worker messages and background wiring
+  <!-- files: src/messages/decisions.ts, src/entrypoints/background.ts, tests/unit/decisions-messages.test.ts -->
+  - [ ] Failing tests: Zod-validated intents (analyze, save-suggest, rerank, job start/pause/resume/cancel,
+        approve/reject/revert/bulk-approve, settings); total handlers; trusted-sender checks; job resume on
+        worker startup; no key material crosses the boundary
+  - [ ] Implement
+
+- [ ] Task 5: `sentLog` retention cap and clear (closes `BookmarksManager-sd1`)
+  <!-- files: src/net/sent-log.ts, src/net/send.ts, tests/unit/sent-log.test.ts -->
+  - [ ] Failing tests: the cap trims the oldest rows; clear empties the log; rows never hold content
+  - [ ] Implement
+
+- [ ] Task 6: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
+
+## Phase 4: UI surfaces
+<!-- execution: parallel -->
+<!-- depends: phase3 -->
+
+- [ ] Task 1: Options — decisions consent, auto-apply toggles, blocklist editor, Data sent log, cost totals
+  <!-- files: src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/DecisionSettings.tsx, src/entrypoints/options/SentLog.tsx, src/entrypoints/options/main.tsx, tests/components/options-decisions.test.tsx -->
+  - [ ] Failing tests: the decisions disclosure renders every field, trigger, and link, with the checkbox
+        unchecked; Enable is disabled until the box is checked; the v1→v2 re-disclosure shows; toggles
+        persist and default to off; blocklist add/remove; the sent log shows metadata only; clear
+  - [ ] Implement
+
+- [ ] Task 2: Popup save suggestions
+  <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Suggestions.tsx, tests/components/popup-suggestions.test.tsx -->
+  - [ ] Failing tests: the save form renders without waiting on Jev; the folder is pre-selected only at
+        ≥ 0.7; tag and category chips are accepted by click; a user change is never overridden by a late
+        suggestion; no request is made without consent; blocklisted pages show "not sent"
+  - [ ] Implement
+
+- [ ] Task 3: Side-panel Review view and Analyze actions
+  <!-- files: src/entrypoints/sidepanel/ReviewView.tsx, src/entrypoints/sidepanel/views.ts, src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/BulkBar.tsx, tests/components/review-view.test.tsx -->
+  - [ ] Failing tests: pending decisions listed with confidence shading and kind; approve, reject, and bulk
+        approve; the undo toast reverts; Analyze per row and from the bulk bar; accessible names and
+        keyboard operation
+  - [ ] Implement
+
+- [ ] Task 4: Library-scan launcher
+  <!-- files: src/entrypoints/sidepanel/ScanPanel.tsx, tests/components/scan-panel.test.tsx -->
+  <!-- depends: task3 -->
+  - [ ] Failing tests: the cost estimate is shown before start; progress, pause, resume, cancel; running
+        cost; the resumed state renders after reopening
+  - [ ] Implement (the coordinator wires it into `App.tsx`)
+
+- [ ] Task 5: Ask toggle and no-match state
+  <!-- files: src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/ask.tsx, tests/components/search-ask.test.tsx -->
+  <!-- depends: task3 -->
+  - [ ] Failing tests: the Ask toggle is visible only with consent; results are reranked in order; "no
+        match" shows; plain search stays local and makes zero requests when Ask is off
+  - [ ] Implement
+
+- [ ] Task 6: Phase 4 automated checkpoint — full gate green, evidence in `learnings.md`
+
+## Phase 5: End-to-end, live, and docs
+<!-- execution: sequential -->
+<!-- depends: phase4 -->
+
+- [ ] Task 1: Decisions e2e
+  <!-- files: tests/e2e/decisions.spec.ts, tests/e2e/helpers/decisions.ts -->
+  - [ ] Specs against the routed fake provider: no consent → zero egress; consent → Analyze → approve →
+        undo; save with folder pre-select; Ask rerank and no-match; library scan resumes after a worker
+        restart; exactly one `sentLog` row per request; request bodies contain no notes, query strings, or
+        blocklisted URLs; the existing zero-egress specs still pass
+
+- [ ] Task 2: Performance and live smoke
+  <!-- files: tests/unit/decisions-perf.test.ts, tests/live/decisions.live.test.ts -->
+  - [ ] Analyze-on-save under 1.5 s against the mock server; the popup-open and 10k search gates hold;
+        key-gated live categorize on fixture bookmarks against TypeSafe and OpenRouter, skipped when keyless
+
+- [ ] Task 3: Docs sync and follow-ups
+  - [ ] Update PROJECT_PLAN.md §1.1 / §13.3 / §15 (after asking about the pending user edits),
+        `conductor/product.md`, and `conductor/tech-stack.md`; elevate patterns to `conductor/patterns.md`
+  - [ ] File Beads follow-ups: opt-in page-text extraction (content script, `scripting`, Readability,
+        page-text consent) and the title-quality check
+
+- [ ] Task 4: Final automated checkpoint — full gate green, evidence in `learnings.md`
+
+- [ ] Task 5: Conductor - User Manual Verification 'Phase 4 Jev decisions' (Protocol in workflow.md)
