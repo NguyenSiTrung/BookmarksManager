@@ -3,9 +3,10 @@
 # Technology Stack
 
 The stack below reflects the **installed dependencies in `package.json`** as of the
-Phase 1 core manager track (`phase1_core_manager_20260926`, archived 2026-09-26),
-built on the Phase 0 foundation (`phase0_foundation_20260925`). Items still
-planned in `PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
+Phase 2 search track (`phase2_search_20260926`, archived 2026-09-26),
+built on the Phase 1 core manager (`phase1_core_manager_20260926`) and the
+Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
+`PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
 
 ## Platform
 
@@ -16,10 +17,11 @@ planned in `PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
 - Entrypoints: `src/entrypoints/background.ts` service worker plus React/HTML
   `popup/`, `sidepanel/` (emits the `side_panel` manifest key automatically), and
   `options/` surfaces.
-- Manifest permissions as of Phase 1: `activeTab`, `bookmarks`, `contextMenus`,
+- Manifest permissions as of Phase 2: `activeTab`, `bookmarks`, `contextMenus`,
   `favicon`, `storage`, `sidePanel`; `optional_host_permissions` for the
   TypeSafe/OpenRouter preset origins; the `_execute_action` quick-save command
-  (`Ctrl+Shift+Y`). `npm run check:manifest` keeps `store/permissions.md`
+  (`Ctrl+Shift+Y`); and `omnibox.keyword = "bm"` for address-bar search (no
+  permission needed). `npm run check:manifest` keeps `store/permissions.md`
   justifications in sync.
 
 ## Interface and State
@@ -56,8 +58,20 @@ planned in `PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
   snapshots and replay), `src/duplicates/` (URL normalize + grouping),
   `src/io/` (JSON/Netscape/CSV import/export planner + writers), and
   `src/ui/{components,hooks,lib}` (side-panel tree, list/grid, dialogs, toasts).
-- **[planned]** MiniSearch (local fuzzy search), `@mozilla/readability`
-  (opt-in page excerpt) — not yet installed.
+- **MiniSearch 7.2.0** powers fully local search (added in Phase 2). The pure
+  layer in `src/search/` — `query.ts` (parser + warnings), `index.ts`
+  (documents, boosts title>tags>domain>url>notes, `toSourceBookmark`/
+  `ancestorsOf`, `buildIndex`, `applyDocDiff`), `run.ts` (`runQuery` executor,
+  `SearchIndexHandle`, `buildSearchHandle`, `collectDuplicateIds`),
+  `suggest.ts` (autocomplete), `openable.ts` (URL denylist), `omnibox.ts`
+  (session-scoped index, XML-escaped ≤8 suggestions, disposition routing) —
+  has no React/Chrome imports; surfaces consume it via
+  `src/ui/hooks/useSearchIndex.ts` (live diff-updating handle), the shared
+  `src/ui/components/query-input.tsx` combobox, `src/sync/tabs.ts`
+  (`openBookmarkUrl` typed open slice), and `registerOmnibox()` in
+  `src/entrypoints/background.ts`.
+- **[planned]** `@mozilla/readability` (opt-in page excerpt) — not yet
+  installed.
 
 ## AI and Networking
 
