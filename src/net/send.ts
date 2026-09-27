@@ -131,17 +131,22 @@ function decisionStateUrls(state: DecisionState): string[] {
  * against the closed `DecisionState` schema — refusing unknown fields and any
  * URL that is not already cleaned (a query, fragment, or userinfo fails
  * `CleanedUrl`) — then run every URL-bearing field through the sensitive-site
- * blocklist. Fails closed: a non-object request, a missing/!DecisionState
- * state, or any blocklisted URL is refused. Runs before the wire-schema
- * parse and before any consent, permission, or key read.
+ * blocklist. Also pins the request's `model` to the allowlist-checked `model`
+ * argument, so the model the gate vetted is the model that is serialized
+ * (mirroring `jev_test`'s deep-equal guard). Fails closed: a non-object
+ * request, a `model` mismatch, a missing/!DecisionState state, or any
+ * blocklisted URL is refused. Runs before the wire-schema parse and before
+ * any consent, permission, or key read.
  */
-function admitsDecisionState(request: unknown): boolean {
+function admitsDecisionState(request: unknown, model: string): boolean {
   if (typeof request !== "object" || request === null) {
     return false;
   }
-  const parsed = DecisionState.safeParse(
-    (request as { state?: unknown }).state,
-  );
+  const candidate = request as { model?: unknown; state?: unknown };
+  if (candidate.model !== model) {
+    return false;
+  }
+  const parsed = DecisionState.safeParse(candidate.state);
   if (!parsed.success) {
     return false;
   }
@@ -152,8 +157,9 @@ function admitsDecisionState(request: unknown): boolean {
  * The frozen scope registry. `jev_test` admits exactly one payload: a
  * request deep-equal to `makeSyntheticRequest(model)`, so no caller-supplied
  * state, questions, or headers can leave under test consent. `jev_decisions`
- * admits only a request whose `state` strict-parses as a `DecisionState` and
- * whose every URL is already cleaned and off the sensitive-site blocklist.
+ * admits only a request whose `model` equals the allowlist-checked `model`
+ * argument and whose `state` strict-parses as a `DecisionState` with every
+ * URL already cleaned and off the sensitive-site blocklist.
  */
 const SCOPES = Object.freeze({
   jev_test: Object.freeze({

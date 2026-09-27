@@ -533,10 +533,14 @@ describe("jev_decisions gate", () => {
   };
 
   /** The full SystemOneRequest the gate sees — the state under test plus the
-   * fixed wire envelope. */
-  function decisionsRequest(state: unknown): unknown {
+   * fixed wire envelope. `model` defaults to the allowlisted value the gate is
+   * called with; tests pass a different one to exercise the model pin. */
+  function decisionsRequest(
+    state: unknown,
+    model = "jev-latest",
+  ): unknown {
     return {
-      model: "jev-latest",
+      model,
       state,
       questions: { q: { type: "noul", instructions: "Is this a test?" } },
     };
@@ -619,6 +623,7 @@ describe("jev_decisions gate", () => {
       }),
     ).catch((caught: unknown) => caught);
     expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
     expect(readKey).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -646,6 +651,7 @@ describe("jev_decisions gate", () => {
       }),
     ).catch((caught: unknown) => caught);
     expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
     expect(readKey).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -659,6 +665,82 @@ describe("jev_decisions gate", () => {
       decisionsRequest(validState),
     ).catch((caught: unknown) => caught);
     expect((error as NetworkGateError).code).toBe("no_consent");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request whose model differs from the allowlist-checked argument", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    // Both models are in typesafe's allowlist, so the earlier model-allowlist
+    // stage passes — only the guard's model pin can refuse this.
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest(validState, "jev-preview"),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("admits a matching model and serializes exactly that model", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    fetchSpy.mockResolvedValue(okResponse());
+    await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-preview",
+      decisionsRequest(validState, "jev-preview"),
+    );
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.model).toBe("jev-preview");
+  });
+
+  it("fails closed when the request is not an object", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      "not a request",
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the request omits state", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      {
+        model: "jev-latest",
+        questions: { q: { type: "noul", instructions: "Is this a test?" } },
+      },
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on an empty {} state", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest({}),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
