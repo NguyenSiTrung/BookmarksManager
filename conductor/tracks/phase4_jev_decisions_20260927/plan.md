@@ -319,12 +319,15 @@ all behind a new per-provider bookmark-data consent.
 <!-- execution: sequential -->
 <!-- depends: phase4 -->
 
-- [ ] Task 1: Decisions e2e
+- [x] Task 1: Decisions e2e
   <!-- files: tests/e2e/decisions.spec.ts, tests/e2e/helpers/decisions.ts -->
-  - [ ] Specs against the routed fake provider: no consent → zero egress; consent → Analyze → approve →
+  - [x] Specs against the routed fake provider: no consent → zero egress; consent → Analyze → approve →
         undo; save with folder pre-select; Ask rerank and no-match; library scan resumes after a worker
         restart; exactly one `sentLog` row per request; request bodies contain no notes, query strings, or
-        blocklisted URLs; the existing zero-egress specs still pass
+        blocklisted URLs; the existing zero-egress specs still pass — `37c7c18` + review fixes `98a611d`;
+        review Approved-with-fixes, both Importants + 3 Minors fixed. Sanctioned helper edits:
+        `tests/e2e/helpers/provider.ts` (copy-once extension root, `tabs` injection, `--host-resolver-rules`
+        for persistent profiles; backwards-compatible defaults, existing 13 specs untouched)
 
 - [ ] Task 2: Performance and live smoke
   <!-- files: tests/unit/decisions-perf.test.ts, tests/live/decisions.live.test.ts -->

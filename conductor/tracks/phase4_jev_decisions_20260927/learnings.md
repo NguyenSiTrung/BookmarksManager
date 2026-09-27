@@ -563,3 +563,35 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
     still the convention.
 ---
 
+
+## [2026-09-27] - Phase 5 Task 1: Decisions e2e
+- **Implemented:** `tests/e2e/decisions.spec.ts` (6 specs) + `tests/e2e/helpers/decisions.ts` (scriptable
+  fake decisions endpoint with a request valve, consent/seeding/reader helpers, `assertEgressBodiesClean`,
+  `restartableProvider`) + sanctioned `tests/e2e/helpers/provider.ts` edits (copy-once extension root,
+  `tabs` permission injection for popup prefill, `--host-resolver-rules` origin sinking for persistent
+  profiles, exported `captureRequest`/`readStoreRows`).
+- **Files changed:** as above (+ deleted scratch `tests/e2e/_probe.spec.ts` before commit)
+- **Commit:** `37c7c18` + review fixes `98a611d` (review: Approved-with-fixes — both Importants fixed:
+  popup-leg sentLog row, `restartableProvider().dispose()`; Minors taken: pre-rank order pin, jobs-row
+  artifact, 30 s poll budgets, dead `decisionsRows` export dropped)
+- **Learnings:**
+  - Patterns: a Playwright route is a perfect request VALVE for sequential runners — hold response
+    fulfillment to freeze the worker mid-batch, `release()` to let it drain; combine with a persistent
+    profile dir + copy-once extension root (same derived extension id) to emulate a browser restart, which
+    subsumes the MV3 worker restart no API can trigger on demand.
+  - Verified contracts: `src/jobs/runner.ts` is strictly sequential per bookmark within a batch (closed
+    valve holds exactly ONE request — poll to 1, never to batch size); `INTRANET_SUFFIXES`
+    (`src/decisions/minimize.ts`) blocklists `.example`/`.test`/… so e2e seeds must use `.dev`; MiniSearch
+    query terms are strict-AND (both candidates need both terms in title); `appendSentLog` runs after
+    `fetch` resolves, so a held/dying request writes NO row — exact sentLog counts are meaningful;
+    `pauseJob` flips the row immediately, so Pause-while-held is observable on the ScanPanel.
+  - Gotchas: popup prefill needs `bringToFront()` on the HTTPS page AFTER `context.newPage()` (a new page
+    steals the active-tab slot) before `popup.goto(chrome-extension://…)`. Chromium launch needs
+    `xvfb-run -a` — a bare `npx playwright test` fails ALL tests at launchPersistentContext with
+    exitCode=1, which looks like a product bug but isn't. Fake must answer EVERY requested question key
+    by type (client cross-check rejects missing/extra/mistyped) — unscripted `choices` fall back to
+    `options[0]`, which silently answers "article" for category.
+  - e2e gate: `xvfb-run -a npm run test:e2e` 19/19 (6 new + 13 existing) · vitest 92 files/2466 ·
+    lint 0 errors (1 pre-existing TanStack warning) · typecheck clean · build 1.20 MB · `check:manifest`
+    OK · `check:bundle` OK.
+---
