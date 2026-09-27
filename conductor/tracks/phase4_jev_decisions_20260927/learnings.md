@@ -40,6 +40,40 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 15:13] - Phase 3 Task 4: Worker messages and background wiring
+- **Implemented:** `src/messages/decisions.ts` (14-intent Zod discriminated union, total
+  `handleDecisionsMessage`, trusted-extension-sender check, `{ok:true,...}|{ok:false,code,message}`),
+  `src/entrypoints/background.ts` (combined listener: decisions first, provider fallback — no double
+  `sendResponse`; `productionHandlers`; `buildRunner` wired with BOTH `createPipelineAnalyzer` and
+  `createDuplicateScanner`; `resumeJobs` startup hook), `tests/unit/decisions-messages.test.ts`.
+- **Files changed:** `src/messages/decisions.ts`, `src/entrypoints/background.ts`,
+  `tests/unit/decisions-messages.test.ts`; fix also `src/decisions/{blocklist.ts,pipeline,rerank,duplicates}.ts`,
+  `src/jobs/runner.ts`, `src/net/send.ts` + tests.
+- **Commit:** `2f2ffe1` (worker `3706e6d9`, wt/p4-p3t4 `6be3248`) + fix `11ccd5f` (wt/p4-p3t4-fix1 `a33eddd`);
+  review APPROVED_WITH_CONCERNS → 1 fix round → re-review ALL FINDINGS ADDRESSED.
+- **Learnings:**
+  - **Ruling (privacy) — a user-configured control must actually be enforced on egress.** The user
+    blocklist was persisted and editable but never passed to `minimizeBookmark`/`isSensitiveUrl` anywhere,
+    so a user-blocklisted URL could still be sent. Fixed end-to-end: a shared reader
+    `src/decisions/blocklist.ts` (owns `DECISION_BLOCKLIST_KEY` + `readBlocklist`) avoids the
+    `background → pipeline → net/send` import cycle; the list is threaded through
+    `AnalyzeBookmarkOptions`/`RerankSearchOptions`/`ScanCommonOptions` and the runner adapters, AND enforced
+    at the gate (`admitsDecisionState`) as defense-in-depth before consent/permission/key reads.
+  - **Ruling (behavior) — resume only jobs interrupted by worker eviction.** `paused` is reachable ONLY via
+    an explicit user action (an MV3 eviction leaves a job `running`), so resuming `paused` silently
+    restarted egress/cost the user halted. `resumeJobs` now resumes `running`/`pending` only.
+  - **Pattern — the worker protocol is broader than the Options protocol.** `provider.ts` trusts only
+    `options.html`; `decisions.ts` trusts any same-origin extension page (popup, side panel, Options) via
+    `sender.url.startsWith(chrome.runtime.getURL(""))`. Same-origin is trusted; per-surface least privilege
+    is a possible future hardening (deferred).
+  - **Constraint carried into Task 4 (from Task 3b):** a `library_scan` fails closed without a
+    `scanDuplicates` dependency, so production `buildRunner` passes both analyzers.
+  - **Deferred minors:** `activeProvider` picks the first consented preset (no preference); "no provider"
+    relays `invalid_input` (no dedicated `not_enabled` code); `resolveWorkSet`/settings are read twice per
+    resumed job; trusted-sender breadth.
+
+---
+
 ## [2026-09-27 14:47] - Phase 3 Task 3b: Near-duplicate scan for library_scan (FR7 gap)
 - **Implemented:** `src/decisions/duplicates.ts` — `scanNearDuplicates` / `scanNearDuplicatePairs`:
   compute `nearDuplicatePairs`, minimize both sides, ONE `nearDuplicate` request per pair on

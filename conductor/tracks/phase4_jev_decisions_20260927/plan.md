@@ -190,12 +190,17 @@ all behind a new per-provider bookmark-data consent.
        Deferred: cap nearDuplicatePairs + fold pair count into the estimate (BookmarksManager-2qk);
        below-floor merge rows; mid-batch-resume duplicate rows. -->
 
-- [ ] Task 4: Worker messages and background wiring
+- [x] Task 4: Worker messages and background wiring
   <!-- files: src/messages/decisions.ts, src/entrypoints/background.ts, tests/unit/decisions-messages.test.ts -->
-  - [ ] Failing tests: Zod-validated intents (analyze, save-suggest, rerank, job start/pause/resume/cancel,
+  - [x] Failing tests: Zod-validated intents (analyze, save-suggest, rerank, job start/pause/resume/cancel,
         approve/reject/revert/bulk-approve, settings); total handlers; trusted-sender checks; job resume on
         worker startup; no key material crosses the boundary
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 2f2ffe1 + fix 11ccd5f (1 fix round). 14-intent Zod union; total handler; runner wired with
+       BOTH createPipelineAnalyzer + createDuplicateScanner; error mapper keys on .code. Fix enforced the
+       user blocklist end-to-end (new src/decisions/blocklist.ts + gate defense-in-depth) and made
+       resumeJobs resume running/pending only (a user-paused job stays paused). Deferred minors:
+       activeProvider preference; not_enabled code; resolveWorkSet double-read; trusted-sender breadth. -->
 
 - [ ] Task 5: `sentLog` retention cap and clear (closes `BookmarksManager-sd1`)
   <!-- files: src/net/sent-log.ts, src/net/send.ts, tests/unit/sent-log.test.ts -->
