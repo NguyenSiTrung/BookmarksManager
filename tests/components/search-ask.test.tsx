@@ -284,6 +284,29 @@ describe("Ask rerank", () => {
     expect(screen.getByTestId("ask-status").textContent).toMatch(/ranked/i);
   });
 
+  it("dispatches the trimmed query — trailing whitespace never reaches the provider", async () => {
+    await seedConsent();
+    renderSearchBar();
+
+    fireEvent.click(await askToggle());
+    replyFor = () => rankedReply([{ id: "b1", probability: 0.9 }]);
+
+    typeQuery("rust   ");
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    });
+    expect(sendMessage).toHaveBeenCalledWith({
+      type: "RERANK",
+      query: "rust",
+    });
+    // The note still answers the raw input (compared against its trimmed
+    // form), so the verdict keeps showing while the trailing space sits in
+    // the field.
+    await waitFor(() =>
+      expect(screen.getByTestId("ask-status").textContent).toMatch(/ranked/i),
+    );
+  });
+
   it("shows the no-match state (distinct from no results)", async () => {
     await seedConsent();
     const order = vi.fn();

@@ -115,6 +115,22 @@ async function activeProvider(): Promise<ActiveProvider | null> {
   return null;
 }
 
+/**
+ * The active provider, or a typed refusal. Every decisions handler that
+ * would egress starts with this gate — the panel renders the message
+ * verbatim, so the refusal says what to do, not what broke.
+ */
+async function requireActiveProvider(): Promise<ActiveProvider> {
+  const provider = await activeProvider();
+  if (provider === null) {
+    throw new DecisionPipelineError(
+      "invalid_input",
+      "No provider is enabled for decisions; enable one in Options first.",
+    );
+  }
+  return provider;
+}
+
 /** The persisted decision policy settings, or all-toggles-off when unset. */
 async function readDecisionSettings(): Promise<DecisionSettings> {
   try {
@@ -277,22 +293,34 @@ const SAVE_SUGGEST_SETTINGS: DecisionSettings = {
 };
 
 /**
+ * Injectable seams for the production handlers (the `ResumeJobsDeps`
+ * pattern): defaults are the real thing, tests substitute fakes.
+ */
+export interface ProductionHandlersDeps {
+  /**
+   * Relaunch a resumed job's runner. `resumeJob` flips the row to
+   * `running`, but the paused job's loop already returned at its batch
+   * boundary — without a relaunch nothing drives the row until the next
+   * worker restart. Injectable so the wiring is testable without a live
+   * provider.
+   */
+  readonly relaunchJob?: (jobId: string) => Promise<void>;
+}
+
+/**
  * The production decisions handlers: real services, the Jev-bound job runner,
  * and the settings/blocklist store. Keys and the Jev client never leave this
  * module — the protocol only ever sees these redacted results. Exported for
  * the worker-wiring tests; `defineBackground` below is the only runtime
  * caller.
  */
-export function productionHandlers(): DecisionsHandlers {
+export function productionHandlers(
+  deps: ProductionHandlersDeps = {},
+): DecisionsHandlers {
+  const relaunchJob = deps.relaunchJob ?? runPersistedJob;
   return {
     async analyzeById(bookmarkId) {
-      const provider = await activeProvider();
-      if (provider === null) {
-        throw new DecisionPipelineError(
-          "invalid_input",
-          "No provider is enabled for decisions; enable one in Options first.",
-        );
-      }
+      const provider = await requireActiveProvider();
       const [bookmark, context, userBlocklist] = await Promise.all([
         resolveBookmark(bookmarkId),
         loadAnalysisContext(),
@@ -307,13 +335,7 @@ export function productionHandlers(): DecisionsHandlers {
       });
     },
     async saveSuggest(bookmark) {
-      const provider = await activeProvider();
-      if (provider === null) {
-        throw new DecisionPipelineError(
-          "invalid_input",
-          "No provider is enabled for decisions; enable one in Options first.",
-        );
-      }
+      const provider = await requireActiveProvider();
       const [context, userBlocklist] = await Promise.all([
         loadAnalysisContext(),
         readBlocklist(),
@@ -331,13 +353,7 @@ export function productionHandlers(): DecisionsHandlers {
       });
     },
     async rerank(query) {
-      const provider = await activeProvider();
-      if (provider === null) {
-        throw new DecisionPipelineError(
-          "invalid_input",
-          "No provider is enabled for decisions; enable one in Options first.",
-        );
-      }
+      const provider = await requireActiveProvider();
       const handle = await loadSessionIndex();
       if (handle === null) return { sent: false, reason: "empty" };
       const { hits } = runQuery(handle.index, query, handle.ctx);
@@ -355,6 +371,11 @@ export function productionHandlers(): DecisionsHandlers {
     revert: (id) => revertDecision(id),
     bulkApprove: (ids) => bulkApprove([...ids]),
     async startJob(kind, bookmarkIds) {
+      // Refuse BEFORE enqueueing: `runPersistedJob` returns silently when
+      // no provider is active — right for a restart resume, wrong for an
+      // explicit user start, which would strand a "Queued" row forever
+      // with no error surfaced. The panel renders the refusal verbatim.
+      await requireActiveProvider();
       const job = await enqueueJob({ kind, bookmarkIds: [...bookmarkIds] });
       // Fire-and-forget: the row is the source of truth, so the UI can show
       // progress immediately and a restart resumes from the committed batch.
@@ -365,7 +386,16 @@ export function productionHandlers(): DecisionsHandlers {
       return job;
     },
     pauseJob: (id) => pauseJob(id),
-    resumeJob: (id) => resumeJob(id),
+    async resumeJob(id) {
+      const job = await resumeJob(id);
+      // The flipped row alone is not enough (see ProductionHandlersDeps):
+      // relaunch the runner, fire-and-forget exactly like startJob above.
+      void relaunchJob(job.id).catch(() => {
+        // The runner marks the job `failed` itself; a transport/context
+        // failure here leaves it for the next worker start to retry.
+      });
+      return job;
+    },
     cancelJob: (id) => cancelJob(id),
     getSettings: () => settingsSnapshot(),
     setSettings: (settings) => writeDecisionSettings(settings),

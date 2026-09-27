@@ -106,6 +106,18 @@ async function seed(over: Partial<JobDocument> = {}): Promise<JobDocument> {
 }
 
 /**
+ * Await Start's read gate: the button stays disabled until the first live
+ * read resolves (`undefined` = pending), then enables on a row-less library.
+ */
+async function awaitStartEnabled(): Promise<HTMLButtonElement> {
+  const start = (await screen.findByRole("button", {
+    name: "Start scan",
+  })) as HTMLButtonElement;
+  await waitFor(() => expect(start.disabled).toBe(false));
+  return start;
+}
+
+/**
  * The canned worker. Job intents perform the real queue writes (the same
  * bookkeeping the worker's runner performs) so the panel observes them
  * through the Dexie live query; a started job is flipped `pending → running`
@@ -209,7 +221,7 @@ describe("ScanPanel launcher", () => {
   it("Start sends JOB_START with the library_scan kind and the id set", async () => {
     render(<ScanPanel bookmarks={SCAN_BOOKMARKS} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
+    fireEvent.click(await awaitStartEnabled());
 
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
@@ -240,6 +252,21 @@ describe("ScanPanel launcher", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it("keeps Start disabled until the first live read resolves", async () => {
+    render(<ScanPanel bookmarks={SCAN_BOOKMARKS} />);
+
+    // No row is seeded, but Dexie has not answered yet either — a Start
+    // click in that window would race a still-running row the read has not
+    // surfaced, so the launcher must hold off until the read settles.
+    const start = screen.getByRole("button", {
+      name: "Start scan",
+    }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+
+    await waitFor(() => expect(start.disabled).toBe(false));
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("renders the worker's {ok:false} message verbatim and stays on the launcher", async () => {
     sendMessage.mockImplementation(async () => ({
       ok: false,
@@ -248,7 +275,7 @@ describe("ScanPanel launcher", () => {
     }));
 
     render(<ScanPanel bookmarks={SCAN_BOOKMARKS} />);
-    fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
+    fireEvent.click(await awaitStartEnabled());
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(
@@ -410,5 +437,30 @@ describe("ScanPanel terminal states", () => {
     expect(
       screen.getByRole("button", { name: "New scan" }),
     ).toBeTruthy();
+  });
+
+  it("a dismissed terminal row never dismisses a NEW later row", async () => {
+    await seed({
+      status: "completed",
+      progress: { totalBatches: 3, committedBatches: 3, processedCount: 12 },
+    });
+
+    render(<ScanPanel bookmarks={SCAN_BOOKMARKS} />);
+    await screen.findByRole("status");
+
+    // Reset away the completed row…
+    fireEvent.click(screen.getByRole("button", { name: "New scan" }));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+
+    // …then a different, LATER row lands (a start from elsewhere): the
+    // dismissal is keyed to the dismissed id, so the new row still shows.
+    await seed({
+      id: "2f7e0c4d-9b3a-4c5d-8e6f-4a3b2c1d0f5a",
+      status: "running",
+      createdAt: "2026-09-27T11:00:00.000Z",
+      updatedAt: "2026-09-27T11:00:00.000Z",
+    });
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toMatch(/running/i);
   });
 });

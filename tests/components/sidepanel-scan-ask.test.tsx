@@ -237,8 +237,14 @@ describe("side-panel scan + ask wiring", () => {
       within(dialog).getByText(/3 bookmarks · at least ~\d+ tokens/),
     ).toBeTruthy();
 
-    // Start sends ONE JOB_START with every bookmark id.
-    fireEvent.click(within(dialog).getByRole("button", { name: "Start scan" }));
+    // Start sends ONE JOB_START with every bookmark id — after the live
+    // read gate opens the button (no row exists, so it must resolve to
+    // "idle launcher", never stay disabled).
+    const start = within(dialog).getByRole("button", {
+      name: "Start scan",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(start.disabled).toBe(false));
+    fireEvent.click(start);
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
     expect(sendMessage).toHaveBeenCalledWith({
       type: "JOB_START",
@@ -299,5 +305,30 @@ describe("side-panel scan + ask wiring", () => {
       ]),
     );
     releaseReply?.();
+  });
+
+  it("a rerank reply with duplicate ids still yields a pure permutation", async () => {
+    // A malformed/duplicated verdict must not duplicate a row (and thereby
+    // drop an unranked one) — [b2, b2, b1] over [Alpha, Beta] is exactly
+    // [Beta, Alpha], never [Beta, Beta].
+    replyFor = () =>
+      rankedReply([
+        { id: "b2", probability: 0.9 },
+        { id: "b2", probability: 0.9 },
+        { id: "b1", probability: 0.6 },
+      ]);
+    await seedConsent();
+    await renderApp();
+
+    fireEvent.change(searchbox(), { target: { value: "notes" } });
+    await waitFor(() => expect(results().length).toBe(2));
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Ask" }));
+    await waitFor(() =>
+      expect(results().map((el) => el.textContent)).toEqual([
+        expect.stringContaining("Beta"),
+        expect.stringContaining("Alpha"),
+      ]),
+    );
   });
 });

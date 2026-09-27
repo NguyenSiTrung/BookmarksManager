@@ -177,6 +177,10 @@ function applyRerankOrder(
   const ranked: BookmarkItem[] = [];
   const rankedIds = new Set<string>();
   for (const id of order) {
+    // A repeated id ranks its item ONCE — pushing per occurrence would
+    // duplicate it and, via the filter below, drop an unranked result,
+    // breaking the pure-permutation contract.
+    if (rankedIds.has(id)) continue;
     const item = byId.get(id);
     if (item !== undefined) {
       ranked.push(item);
@@ -917,7 +921,8 @@ export function App() {
               <DialogTitle>Scan library</DialogTitle>
               <DialogDescription>
                 Analyze every bookmark with the consented provider and queue
-                the suggestions for review.
+                the suggestions for review. Closing this never stops a
+                running scan — reopen it to check progress.
               </DialogDescription>
             </DialogHeader>
             <ScanPanel

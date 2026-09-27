@@ -262,11 +262,14 @@ export function useAskSearch(
     }
     // A fresh query invalidates the previous order (it belongs to other
     // results) and every older in-flight reply; the debounced send below
-    // carries this run's id.
+    // carries this run's id. The dispatch carries the TRIMMED query — the
+    // provider never sees stray whitespace, and the reply is tagged with
+    // the same trimmed form the render-time note compares against.
     const requestId = ++requestRef.current;
+    const settled = query.trim();
     reportLocalOrder();
     const timer = setTimeout(() => {
-      void runRerank(query, requestId);
+      void runRerank(settled, requestId);
     }, ASK_DEBOUNCE_MS);
     return () => {
       clearTimeout(timer);
@@ -274,10 +277,12 @@ export function useAskSearch(
   }, [active, query, reportLocalOrder, runRerank]);
 
   // Derived (render-time) note: idle when inactive, the accepted reply's
-  // note while it still answers the current query, else "asking".
+  // note while it still answers the current query (compared TRIMMED — the
+  // raw input may hold trailing whitespace the dispatch never sent), else
+  // "asking".
   const note: AskNote = !active
     ? { kind: "idle" }
-    : replyNote !== null && replyNote.query === query
+    : replyNote !== null && replyNote.query === query.trim()
       ? replyNote.note
       : { kind: "asking" };
 

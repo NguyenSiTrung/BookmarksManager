@@ -106,16 +106,20 @@ function isTerminal(status: JobDocument["status"]): boolean {
 }
 
 /**
- * The latest `library_scan` row, by `createdAt`. The `.catch` keeps a failed
- * read from throwing the render: the panel degrades to the idle launcher
- * rather than blanking.
+ * The latest `library_scan` row, by `createdAt` — `null` when none exists
+ * (or the read failed). The `.catch` keeps a failed read from throwing the
+ * render: the panel degrades to the idle launcher rather than blanking.
+ * `undefined` never escapes this querier; `useLiveQuery`'s own initial
+ * `undefined` remains the only "first read still pending" signal, which is
+ * what the Start guard below keys off.
  */
-async function latestLibraryScanJob(): Promise<JobDocument | undefined> {
-  return db.jobs
+async function latestLibraryScanJob(): Promise<JobDocument | null> {
+  const row = await db.jobs
     .orderBy("createdAt")
     .filter((row) => row.kind === "library_scan")
     .last()
     .catch((): undefined => undefined);
+  return row ?? null;
 }
 
 /** The job-intent discriminators this panel sends (Start is separate). */
@@ -128,8 +132,16 @@ export function ScanPanel({
 }: ScanPanelProps) {
   /** Pure lower-bound estimate over the minimized `{title, url}` payloads. */
   const estimate = useMemo(() => estimateJobCost({ bookmarks }), [bookmarks]);
-  /** The live row — `undefined` until Dexie answers or when none exists. */
-  const job = useLiveQuery(latestLibraryScanJob, []);
+  /**
+   * The live row's read. `jobRead` is `undefined` ONLY until Dexie's first
+   * emission lands; `job` collapses that away so every consumer below sees
+   * exactly two states (`JobDocument | null`). The tristate matters for one
+   * thing: Start stays disabled while the read is pending, so a click can
+   * never race a live row the first read has not surfaced yet — a second
+   * start would strand the first job's rows mid-flight.
+   */
+  const jobRead = useLiveQuery(latestLibraryScanJob, []);
+  const job = jobRead ?? null;
 
   /**
    * A terminal row the user reset away. Local by design: the panel never
@@ -144,7 +156,7 @@ export function ScanPanel({
 
   const count = bookmarks.length;
   const showCard =
-    job !== undefined && (!isTerminal(job.status) || job.id !== dismissedJobId);
+    job !== null && (!isTerminal(job.status) || job.id !== dismissedJobId);
 
   /**
    * Send one job intent. Replies are validated by `DecisionMessageResult`
@@ -181,7 +193,7 @@ export function ScanPanel({
   };
 
   const handleControl = async (type: JobControlIntent): Promise<void> => {
-    if (busy || job === undefined) return;
+    if (busy || job === null) return;
     await runIntent(DecisionMessage.parse({ type, jobId: job.id }));
   };
 
@@ -201,7 +213,7 @@ export function ScanPanel({
         </p>
       </div>
 
-      {showCard && job !== undefined ? (
+      {showCard && job !== null ? (
         <div
           role="status"
           aria-label="Library scan status"
@@ -313,7 +325,7 @@ export function ScanPanel({
           <div>
             <button
               type="button"
-              disabled={busy || count === 0}
+              disabled={busy || count === 0 || jobRead === undefined}
               onClick={() => void handleStart()}
               className={startButtonClass}
             >
