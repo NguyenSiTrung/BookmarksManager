@@ -158,7 +158,10 @@ describe("disclosure", () => {
     const providerLink = view.getByRole("link", {
       name: /privacy policy/i,
     }) as HTMLAnchorElement;
-    expect(providerLink.href).toBe("https://typesafe.ai/privacy");
+    // Canonical policy URL — /privacy 308-redirects to /legal/privacy-policy.
+    expect(providerLink.href).toBe(
+      "https://typesafe.ai/legal/privacy-policy",
+    );
     // The draft policy is bundled — rendered with zero network requests.
     expect(
       screen.getByText(/Privacy Policy — Bookmarks Manager/, {
@@ -432,5 +435,99 @@ describe("persisted state and revocation", () => {
       screen.queryByText(/consent and browser access were removed/i),
     ).toBeNull();
     expect(screen.getByRole("button", { name: /enable/i })).toBeTruthy();
+  });
+});
+
+describe("model alias warning", () => {
+  it("warns under the picker while a moving alias is selected", async () => {
+    render(<ProviderSetup />);
+    // TypeSafe defaults to jev-latest — a moving alias — so the warning is
+    // up as soon as the form renders.
+    const warning = await screen.findByText(/moving alias/i);
+    expect(warning.getAttribute("role")).toBe("status");
+    // The warning names the selected model and is programmatically
+    // associated with the picker via aria-describedby.
+    expect(warning.textContent).toContain("jev-latest");
+    expect(warning.id).toBeTruthy();
+    expect(modelSelect().getAttribute("aria-describedby")).toBe(warning.id);
+    // Mount plus a picker render must never emit TEST_PROVIDER.
+    expect(nonStatusCalls()).toEqual([]);
+  });
+
+  it("shows the warning for the jev-preview alias too", async () => {
+    render(<ProviderSetup />);
+    await screen.findByText(/moving alias/i);
+    fireEvent.change(modelSelect(), { target: { value: "jev-preview" } });
+    const warning = await screen.findByText(/moving alias/i);
+    expect(warning.textContent).toContain("jev-preview");
+    expect(modelSelect().getAttribute("aria-describedby")).toBe(warning.id);
+  });
+
+  it("shows no warning for the pinned version id jev-1.13.0", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    fireEvent.change(modelSelect(), { target: { value: "jev-1.13.0" } });
+    expect(screen.queryByText(/moving alias/i)).toBeNull();
+    expect(modelSelect().getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("warns for OpenRouter's moving alias but not its pinned ids", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    // OpenRouter defaults to jev-latest — the warning follows the preset's
+    // own alias list.
+    const warning = await screen.findByText(/moving alias/i);
+    expect(warning.textContent).toContain("jev-latest");
+    for (const pinned of ["jev-1.13", "typesafe/jev-1.13"]) {
+      fireEvent.change(modelSelect(), { target: { value: pinned } });
+      expect(screen.queryByText(/moving alias/i)).toBeNull();
+      expect(modelSelect().getAttribute("aria-describedby")).toBeNull();
+    }
+    // Read-only interaction — still no TEST_PROVIDER traffic.
+    expect(nonStatusCalls()).toEqual([]);
+  });
+});
+
+describe("provider data notes and privacy link", () => {
+  it("shows TypeSafe's data note and a privacy link opened safely in a new tab", async () => {
+    render(<ProviderSetup />);
+    const disclosure = await screen.findByRole("region", {
+      name: /typesafe data disclosure/i,
+    });
+    const view = within(disclosure);
+    // The §8.5 step-7 provider data note is rendered verbatim.
+    expect(
+      view.getByText(/not trained on customer requests/i),
+    ).toBeTruthy();
+    const link = view.getByRole("link", {
+      name: /privacy policy/i,
+    }) as HTMLAnchorElement;
+    // Canonical URL verified at implementation time (/privacy 308-redirects
+    // to /legal/privacy-policy).
+    expect(link.href).toBe("https://typesafe.ai/legal/privacy-policy");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+    expect(link.rel).toContain("noreferrer");
+  });
+
+  it("shows OpenRouter's data note and privacy link after switching providers", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    const disclosure = await screen.findByRole("region", {
+      name: /openrouter data disclosure/i,
+    });
+    const view = within(disclosure);
+    expect(
+      view.getByText(/forwards Jev requests to TypeSafe/i),
+    ).toBeTruthy();
+    const link = view.getByRole("link", {
+      name: /privacy policy/i,
+    }) as HTMLAnchorElement;
+    expect(link.href).toBe("https://openrouter.ai/privacy");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+    expect(link.rel).toContain("noreferrer");
   });
 });

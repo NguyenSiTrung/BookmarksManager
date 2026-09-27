@@ -49,7 +49,9 @@ export const PROVIDER_DISCLOSURES = {
   typesafe: {
     name: "TypeSafe",
     origin: PRESETS.typesafe.origin,
-    privacyPolicyUrl: "https://typesafe.ai/privacy",
+    // Canonical policy URL — /privacy 308-redirects to /legal/privacy-policy
+    // (verified 2026-09-27).
+    privacyPolicyUrl: "https://typesafe.ai/legal/privacy-policy",
     dataNote:
       "TypeSafe states that Jev is not trained on customer requests; zero data retention is available on enterprise plans.",
   },

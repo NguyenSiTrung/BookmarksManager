@@ -13,6 +13,10 @@ import {
   type ProviderStatus,
 } from "../../messages/provider";
 import { PRESETS } from "../../net/presets";
+import {
+  MOVING_ALIAS_WARNING,
+  isMovingAlias,
+} from "../../net/provider-info";
 import { PRESET_MODELS, PresetId } from "../../schemas/provider";
 import { PrivacyDraft } from "./PrivacyDraft";
 
@@ -392,7 +396,7 @@ export function ProviderSetup() {
               <a
                 href={disclosure.privacyPolicyUrl}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="text-blue-700 underline"
               >
                 {disclosure.name} privacy policy
@@ -480,6 +484,11 @@ export function ProviderSetup() {
                 id="provider-model"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
+                aria-describedby={
+                  isMovingAlias(presetId, model)
+                    ? "provider-model-alias-warning"
+                    : undefined
+                }
                 className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
               >
                 {models.map((allowed) => (
@@ -488,6 +497,16 @@ export function ProviderSetup() {
                   </option>
                 ))}
               </select>
+              {isMovingAlias(presetId, model) && (
+                <p
+                  role="status"
+                  id="provider-model-alias-warning"
+                  className="mt-1 text-xs text-amber-700"
+                >
+                  <code className="rounded bg-gray-100 px-1">{model}</code>{" "}
+                  {MOVING_ALIAS_WARNING}
+                </p>
+              )}
             </div>
             <div>
               <label htmlFor="api-key" className="block text-sm font-medium">
