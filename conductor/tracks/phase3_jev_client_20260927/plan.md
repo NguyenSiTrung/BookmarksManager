@@ -57,12 +57,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         returned `confidence`
   - [x] Implement
 
-- [ ] Task 3: Retry policy and usage meter
+- [x] Task 3: Retry policy and usage meter
   <!-- files: src/jev/retry.ts, src/jev/usage.ts, tests/unit/jev-retry.test.ts, tests/unit/jev-usage.test.ts -->
-  - [ ] Failing tests: retryable set (429/529/5xx/timeout/transport) vs not (401/422/4xx/invalid/gate);
+  - [x] Failing tests: retryable set (429/529/5xx/timeout/transport) vs not (401/422/4xx/invalid/gate);
         full-jitter bounds with injected `random`; `retry-after` delta-seconds, HTTP-date, garbage, cap;
         `UsageMeter` sums tokens, sums cost only when reported, records models
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 4: Mock Jev HTTP server
   <!-- files: tests/mock-servers/jev.ts, tests/unit/mock-jev-server.test.ts -->

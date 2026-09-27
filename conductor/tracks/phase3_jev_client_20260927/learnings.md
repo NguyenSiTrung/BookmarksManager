@@ -30,3 +30,12 @@ the ones most relevant to this track:
   - Patterns: pure `src/jev/` modules take `import type { Answer } from "./wire"` only — no chrome/DOM/fetch.
   - Context: `answerConfidence` deliberately does NOT validate `threshold` for choice/score answers — the field is returned verbatim per spec; noul invalid-t propagates RangeError.
 ---
+
+## [2026-09-27 03:26] - Phase 1 Task 3: Retry policy and usage meter
+- **Implemented:** `src/jev/retry.ts` (`RetryableFailure` structural classification, `isRetryable`, `parseRetryAfter`, `retryDelay` full-jitter honoring retry-after capped at `DEFAULT_MAX_DELAY_MS`) and `src/jev/usage.ts` (`UsageMeter` — token/cost sums, unique model list; `costUsd` undefined when nothing reported, `costComplete` tracks all-reported).
+- **Files changed:** `src/jev/retry.ts`, `src/jev/usage.ts`, `tests/unit/jev-retry.test.ts` (20), `tests/unit/jev-usage.test.ts` (8)
+- **Commit:** `181543d` (landed from worktree `wt/p3-p1t3`, worker commit `0d0864e`)
+- **Learnings:**
+  - Gotchas: `Date.parse` leniently parses `"1.5"`, `"-5"`, `"+3"` as year-2001 dates — `parseRetryAfter` requires a letter before trying the HTTP-date branch or garbage silently becomes 0 ms.
+  - Patterns: `permanent: true` wins over any retryable signal in `isRetryable` (a 503 carrying an invalid-response verdict is not retried); `retry.ts`/`usage.ts` are import-free — client maps its own errors onto `RetryableFailure`, keeping `src/jev` decoupled from `src/net`.
+---
