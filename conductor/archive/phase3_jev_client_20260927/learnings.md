@@ -222,3 +222,11 @@ Full gate green at Phase 3 completion:
 - e2e: **13/13** incl. provider.spec.ts (consent→Test-connection→1 routed request→1 sentLog row;
   no-consent → zero requests, not_enabled)
 - test:live: 2 skipped as designed without TYPESAFE_API_KEY/OPENROUTER_API_KEY
+
+## Phase 5 — track close
+
+- User manual verification accepted 2026-09-27 ("manual ok") — the track closes with the full gate
+  green and all provider traffic still scoped to the synthetic `jev_test` request.
+- Deferred/follow-ups at close: real-endpoint smoke needs `TYPESAFE_API_KEY`/`OPENROUTER_API_KEY`;
+  `chrome.permissions.request` prompt uncovered by e2e (Beads follow-up); `delete-all.test.tsx`
+  parallel-worker flake documented in PROJECT_PLAN.md.

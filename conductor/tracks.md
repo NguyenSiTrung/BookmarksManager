@@ -16,5 +16,4 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Phase 3 — Jev client hardening and typed question builder (scoped gate, guards/split, retries, concurrency, usage, mock server, §8.4 builder, Options completion, live smoke)
-*Link: [./conductor/tracks/phase3_jev_client_20260927/](./conductor/tracks/phase3_jev_client_20260927/)*
+<!-- Archived: 2026-09-27 — Phase 3 Jev client completed: scoped sendConsented gate (frozen registry, jev_test synthetic-only), hardened client (token/size guards, greedy batching, full-jitter retry + retry-after, per-preset concurrency, response cross-checks, usage accounting), typed defineDecision builder with per-field confidence, scripted mock Jev server, Options moving-alias warnings + verified provider disclosures, provider e2e against a routed fake endpoint, and a key-gated live smoke suite — full gate green (1789 unit/component, 13 e2e) and user-accepted manual verification (see conductor/archive/phase3_jev_client_20260927/) -->
