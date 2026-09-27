@@ -39,3 +39,21 @@ the ones most relevant to this track:
   - Gotchas: `Date.parse` leniently parses `"1.5"`, `"-5"`, `"+3"` as year-2001 dates — `parseRetryAfter` requires a letter before trying the HTTP-date branch or garbage silently becomes 0 ms.
   - Patterns: `permanent: true` wins over any retryable signal in `isRetryable` (a 503 carrying an invalid-response verdict is not retried); `retry.ts`/`usage.ts` are import-free — client maps its own errors onto `RetryableFailure`, keeping `src/jev` decoupled from `src/net`.
 ---
+
+## [2026-09-27 03:29] - Phase 1 Task 1: Pre-send guards and batch planner
+- **Implemented:** `src/jev/budget.ts` — `estimateTokens` (JSON chars/4 × 1.25), `checkGuards` (typed `BudgetError`: `invalid_request` for empty/duplicate keys, non-record questions, choice <2/>255 options, score <2/>10 levels), `planBatches` (32k per-question `too_large`, greedy key-order packing ≤64k, empty questions → `[]`).
+- **Files changed:** `src/jev/budget.ts`, `tests/unit/jev-budget.test.ts` (37 tests)
+- **Commit:** `a0051ab` (landed from worktree `wt/p3-p1t1`, worker commit `5da1ace`)
+- **Learnings:**
+  - Patterns: BudgetError messages may name question *keys* (developer-chosen field names) but never instructions/criteria/state — those can carry bookmark content.
+  - Gotchas: `checkGuards` is total on un-parsed input (non-record questions/question values) — typed BudgetError, never raw ZodError/TypeError, since it's called before/without `SystemOneRequest.parse`.
+---
+
+## [2026-09-27 03:29] - Phase 1 Task 4: Mock Jev HTTP server
+- **Implemented:** `tests/mock-servers/jev.ts` — `startMockJevServer()` on 127.0.0.1:ephemeral; `POST /v1/systemone` + `/api/v1/systemone`; deterministic same-type default answers; FIFO `queue`/`setHandler` scripting (statuses, retry-after, delay, hang, malformed, omit/override answers, OpenRouter extras, model override); records every request; `close()` destroys sockets so hangs can't wedge it.
+- **Files changed:** `tests/mock-servers/jev.ts`, `tests/unit/mock-jev-server.test.ts` (29 tests)
+- **Commit:** `b61fee5` (landed from worktree `wt/p3-p1t4`, worker commit `5e7a7ca`)
+- **Learnings:**
+  - Context: mock default answers are deterministic (noul 0.9, choice first-key 0.75 confidence, score middle-level) so downstream tests assert stable values; `input_tokens` estimated from rawBody length.
+  - Gotchas: only valid POST calls consume the scripted queue (404s don't); `close()` is idempotent via `closeAllConnections()` + timer sweep.
+---

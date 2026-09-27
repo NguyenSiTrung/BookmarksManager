@@ -44,12 +44,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
 <!-- execution: parallel -->
 <!-- depends: -->
 
-- [ ] Task 1: Pre-send guards and batch planner
+- [x] Task 1: Pre-send guards and batch planner
   <!-- files: src/jev/budget.ts, tests/unit/jev-budget.test.ts -->
-  - [ ] Failing tests: token estimate formula; 1/2/255/256 options; 1/2/10/11 levels; empty/duplicate keys;
+  - [x] Failing tests: token estimate formula; 1/2/255/256 options; 1/2/10/11 levels; empty/duplicate keys;
         32k per-question boundary → `too_large`; greedy key-order packing under 64k; batches cover every
         question exactly once; single-batch fast path
-  - [ ] Implement
+  - [x] Implement
 
 - [x] Task 2: Noul margin and answer confidence
   <!-- files: src/jev/confidence.ts, tests/unit/jev-confidence.test.ts -->
@@ -64,12 +64,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         `UsageMeter` sums tokens, sums cost only when reported, records models
   - [x] Implement
 
-- [ ] Task 4: Mock Jev HTTP server
+- [x] Task 4: Mock Jev HTTP server
   <!-- files: tests/mock-servers/jev.ts, tests/unit/mock-jev-server.test.ts -->
-  - [ ] Failing self-tests: default answers per question type validate against `SystemOneResponse`;
+  - [x] Failing self-tests: default answers per question type validate against `SystemOneResponse`;
         scripted 401/422/429+retry-after/529/5xx/delay/malformed/missing/mismatched/OpenRouter extras/
         varying model; request recording; both endpoint paths; binds 127.0.0.1 on an ephemeral port
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
 
