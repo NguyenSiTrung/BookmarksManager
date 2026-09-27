@@ -132,12 +132,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         notes + link with `rel="noopener noreferrer"`
   - [x] Implement
 
-- [ ] Task 2: E2E provider setup and Test connection
+- [x] Task 2: E2E provider setup and Test connection
   <!-- files: tests/e2e/provider.spec.ts, tests/e2e/helpers/provider.ts -->
-  - [ ] Spec: routed fake TypeSafe endpoint → consent → Test connection shows model/latency and writes
+  - [x] Spec: routed fake TypeSafe endpoint → consent → Test connection shows model/latency and writes
         one sentLog row; without consent, zero requests. If Playwright cannot route the extension service
         worker's fetch, record it in `learnings.md` and file a Beads follow-up instead of weakening asserts
-  - [ ] Implement helpers
+  - [x] Implement helpers
 
 - [x] Task 3: Live smoke script
   <!-- files: tests/live/jev-smoke.test.ts, vitest.live.config.ts, package.json -->

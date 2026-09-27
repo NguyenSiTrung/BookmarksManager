@@ -195,3 +195,20 @@ Full gate green at Phase 3 completion:
   `https://openrouter.ai/privacy` resolves directly. Both dataNote claims verified against the
   actual policies (TypeSafe no-training clause + ZDR for enterprise; OpenRouter forwards inputs to
   the selected model provider).
+
+## Phase 4 — Task 2: e2e provider setup + Test connection (landed bb06919 (cherry-pick of worker 8263b54))
+
+- `context.route("https://api.typesafe.ai/**")` DOES intercept fetch issued by the extension's MV3
+  service worker — verified empirically. Real `sendConsented` → real `fetch` → routed fake response
+  works end to end; route handlers can assert method, headers, and parsed postData per call.
+- `chrome.permissions.request` NEVER RESOLVES under Playwright Chromium — promise pends forever in
+  every mode tried (headed under xvfb, headless, real click, page.evaluate, CDP Runtime.evaluate with
+  userGesture:true); no prompt window exists in the window tree, `permissions.contains` stays false.
+  CDP `Browser.grantPermissions` covers web permissions only, not extension host permissions.
+- Workaround that keeps the production path real: copy `.output/chrome-mv3` to a temp dir and promote
+  the provider pattern `optional_host_permissions` → `host_permissions` (granted silently at install).
+  The unchanged Enable handler then runs end-to-end — `permissions.request` resolves `true` for an
+  already-held permission, `ENABLE_PROVIDER` flows, worker re-checks `permissions.contains` for real.
+  Only the native prompt widget (browser-owned UI) is unexercised. Beads follow-up filed.
+- IndexedDB assertions in e2e use non-creating opens (`indexedDB.databases()` then `open()` guarded)
+  from an extension page context — reading `consents`/`sentLog` without creating a stray empty db.
