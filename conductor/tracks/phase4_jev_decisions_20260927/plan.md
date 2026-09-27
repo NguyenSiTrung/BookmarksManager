@@ -177,12 +177,18 @@ all behind a new per-provider bookmark-data consent.
        illegal_transition on a pause/cancel race. 29 jobs tests. Deferred minors: cursor semantics;
        usage double-write; partial-batch writes; tokens-only estimate. -->
 
-- [ ] Task 3b: Near-duplicate scan for library_scan (closes the FR7 gap found in the Task 3 review)
+- [x] Task 3b: Near-duplicate scan for library_scan (closes the FR7 gap found in the Task 3 review)
   <!-- files: src/decisions/duplicates.ts, src/jobs/queue.ts, src/jobs/runner.ts, tests/unit/decisions-duplicates.test.ts, tests/unit/jobs-runner.test.ts -->
-  - [ ] Failing tests: near-duplicate pairs each send one `jev_decisions` request (`{bookmark,pairPartner}`);
+  - [x] Failing tests: near-duplicate pairs each send one `jev_decisions` request (`{bookmark,pairPartner}`);
         level→confidence maps to the §10.2 `merge_duplicates` band (review ≥ 0.5, never auto-apply);
         blocklisted sides skipped; a `library_scan` job runs the pair phase and resumes without re-sending
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 0d2a609 + fix 142e17f (1 fix round). New src/decisions/duplicates.ts
+       (scanNearDuplicates; levelToConfidence 1→0/2→0.4/3→0.75/4→1.0; merge_duplicates policy, never
+       auto-apply; one usage per egress; keepId = pair a side). jobChecks(library_scan) signals
+       near_duplicate; the runner's pair phase fails closed without a scanDuplicates dependency.
+       Deferred: cap nearDuplicatePairs + fold pair count into the estimate (BookmarksManager-2qk);
+       below-floor merge rows; mid-batch-resume duplicate rows. -->
 
 - [ ] Task 4: Worker messages and background wiring
   <!-- files: src/messages/decisions.ts, src/entrypoints/background.ts, tests/unit/decisions-messages.test.ts -->

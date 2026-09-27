@@ -40,6 +40,41 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 14:47] - Phase 3 Task 3b: Near-duplicate scan for library_scan (FR7 gap)
+- **Implemented:** `src/decisions/duplicates.ts` — `scanNearDuplicates` / `scanNearDuplicatePairs`:
+  compute `nearDuplicatePairs`, minimize both sides, ONE `nearDuplicate` request per pair on
+  `jev_decisions` (state `{bookmark,pairPartner}`), cross-check the `same_content` 1–4 level, map
+  level→confidence (`1→0`, `2→0.4`, `3→0.75`, `4→1.0`), apply the §10.2 `merge_duplicates` policy
+  (review ≥ 0.5, never auto-apply), persist one `merge_duplicates` decision per pair (`keepId = a`),
+  one `usage` row per egress. `jobChecks("library_scan")` now signals `near_duplicate`; the runner gained
+  a batched pair phase with the same snapshot-then-mutate/pause/redaction discipline.
+- **Files changed:** `src/decisions/duplicates.ts`, `src/jobs/{queue,runner}.ts`,
+  `tests/unit/decisions-duplicates.test.ts`, `tests/unit/jobs-{queue,runner}.test.ts`.
+- **Commit:** `0d2a609` (worker `04ffc9ad`, wt/p4-p3t3b `0d60ce0`) + fix `142e17f` (wt/p4-p3t3b-fix1 `6d108ee`);
+  review APPROVED_WITH_CONCERNS → 1 fix round → re-review ALL FINDINGS ADDRESSED.
+- **Learnings:**
+  - **Ruling — an optional capability dependency is fail-open; make it fail closed.** `scanDuplicates` was
+    optional, so a `library_scan` with no scanner computed zero pair batches and reported `completed` while
+    silently omitting near-duplicate — the exact FR7 gap the task closed. Fix: `JobRunner.run` throws
+    `JobRunnerError("invalid_input")` BEFORE any status change when a `library_scan` has no scanner.
+    General rule: a dependency the job KIND requires must be enforced, not defaulted away.
+  - **Design — near-duplicate is inherently pairwise.** The per-bookmark batch loop cannot express it, so
+    it became a second phase. The pair list is recomputed from bookmark content each run and sliced by
+    `pairIndex`; resume is deterministic only while the work set's titles/urls are unchanged (documented).
+  - **Convention — one request per pair (no batching).** `nearDuplicate` state is `{bookmark,pairPartner}`,
+    so a pair cannot share a request; this makes request volume the pair count (see `BookmarksManager-2qk`).
+  - **Ruling — fixed level→confidence is deliberate.** §10.1 says to use a score answer's returned
+    `confidence`; here the fixed map is used and the returned confidence is intentionally not blended
+    (documented in code). Revisit if a level's confidence spread matters.
+  - **Worker cross-file edit:** the worker updated `tests/unit/jobs-queue.test.ts` (outside its stated
+    owned set) because its `jobChecks("library_scan")` assertion directly contradicted the new
+    requirement. Minimal and correct (strictly more coverage); a justified exception.
+  - **Deferred:** cap `nearDuplicatePairs` output + fold the pair count into `estimateJobCost`/enqueue
+    `totalBatches` (`BookmarksManager-2qk`); below-floor levels still persist an `unsure` merge proposal;
+    a mid-batch failure re-sends already-persisted pairs on resume (runner-wide, pre-existing).
+
+---
+
 ## [2026-09-27 14:28] - Phase 3 Task 3: Job queue
 - **Implemented:** `src/jobs/queue.ts` (enqueue, lifecycle transition table, per-job usage roll-up,
   `jobChecks`, `computeTotalBatches`), `src/jobs/runner.ts` (`JobRunner` batch loop + `createPipelineAnalyzer`),
