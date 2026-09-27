@@ -1,8 +1,11 @@
 import Dexie, { type Table } from "dexie";
+import type { AuditEvent } from "../schemas/audit";
 import type { Decision } from "../schemas/decision";
+import type { Job } from "../schemas/job";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
 import type { UndoSnapshot } from "../schemas/undo";
+import type { UsageRecord } from "../schemas/usage";
 
 /**
  * Settings row. `key` is a stable lookup string — ProviderSettings rows use
@@ -47,6 +50,9 @@ export class BookmarksManagerDB extends Dexie {
   declare bookmarkMeta: Table<BookmarkMeta, string>;
   declare tags: Table<TagDef, string>;
   declare undo: Table<UndoSnapshot, number>;
+  declare jobs: Table<Job, string>;
+  declare audit: Table<AuditEvent, number>;
+  declare usage: Table<UsageRecord, number>;
 
   constructor() {
     super("BookmarksManager");
@@ -72,6 +78,17 @@ export class BookmarksManagerDB extends Dexie {
       tags: "nameKey",
       // LIFO undo snapshots; ++id is the recency order, createdAt indexed.
       undo: "++id,createdAt",
+    });
+    this.version(3).stores({
+      // Persisted, resumable batch jobs (FR7); keyed by caller-generated
+      // uuid, with status indexed for the queue and createdAt for listing.
+      jobs: "id,status,createdAt",
+      // Append-only decision audit log (FR6): ++id is append order,
+      // decisionId gives per-decision history, changedAt is chronological.
+      audit: "++id,decisionId,changedAt",
+      // Per-request usage rows (FR8): ++id is append order, jobId rolls up
+      // per job, recordedAt is chronological.
+      usage: "++id,jobId,recordedAt",
     });
   }
 }

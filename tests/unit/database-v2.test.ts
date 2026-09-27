@@ -67,10 +67,10 @@ async function seedV1Database(): Promise<void> {
   v1.close();
 }
 
-describe("BookmarksManagerDB v1 → v2 migration", () => {
+describe("BookmarksManagerDB v1 → v3 migration", () => {
   beforeAll(async () => {
     await seedV1Database();
-    // Opening the real class on the same name must run the v1→v2 upgrade.
+    // Opening the real class on the same name must run the v1→v2→v3 upgrade.
     await db.open();
   });
 
@@ -78,20 +78,23 @@ describe("BookmarksManagerDB v1 → v2 migration", () => {
     db.close();
   });
 
-  it("opens at version 2 with all eight tables declared", () => {
-    expect(db.verno).toBe(2);
-    // Dexie stores version × 10 natively; 20 proves the class upgraded the
+  it("opens at version 3 with all eleven tables declared", () => {
+    expect(db.verno).toBe(3);
+    // Dexie stores version × 10 natively; 30 proves the class upgraded the
     // existing v1 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(20);
+    expect(db.backendDB()?.version).toBe(30);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
+      "audit",
       "bookmarkMeta",
       "consents",
       "decisions",
+      "jobs",
       "keyMaterials",
       "metadata",
       "sentLog",
       "tags",
       "undo",
+      "usage",
     ]);
   });
 

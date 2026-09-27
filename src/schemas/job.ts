@@ -1,0 +1,100 @@
+import { z } from "./z";
+
+/**
+ * A persisted, resumable batch job (spec FR7, PROJECT_PLAN.md §7). Jobs live
+ * in the Dexie `jobs` table so they survive an MV3 service-worker restart and
+ * can be paused or canceled from the UI. The row carries everything needed to
+ * resume: what to process (`bookmarkIds` and/or a `cursor`), how far it got
+ * (`progress`), and the tokens/cost it has spent so far (`usage`).
+ */
+
+/**
+ * The two job kinds: an ad-hoc selection analysis (categorize + tags) or a
+ * whole-library scan (categorize + tags, misfiled, near-duplicate).
+ */
+export const JobKind = z.enum(["analyze_selection", "library_scan"]);
+export type JobKind = z.infer<typeof JobKind>;
+
+/** The closed job lifecycle. */
+export const JobStatus = z.enum([
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "canceled",
+  "failed",
+]);
+export type JobStatus = z.infer<typeof JobStatus>;
+
+/**
+ * Committed-batch progress. `committedBatches` counts only batches whose
+ * results were durably written, so a restart resumes from the last commit
+ * rather than replaying a half-written batch. `processedCount` is the number
+ * of bookmarks the committed batches covered.
+ */
+export const JobProgress = z.strictObject({
+  totalBatches: z.number().int().min(0),
+  committedBatches: z.number().int().min(0),
+  processedCount: z.number().int().min(0),
+});
+export type JobProgress = z.infer<typeof JobProgress>;
+
+/**
+ * Per-job usage roll-up (FR8). Mirrors the `UsageMeter` totals: summed input
+ * and output tokens, the summed USD cost when the provider reported one
+ * (`costUsd` stays absent when no response did), and the number of requests
+ * folded in. The `usage` table keeps the per-request rows this summarises.
+ */
+export const JobUsage = z.strictObject({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  costUsd: z.number().min(0).optional(),
+  requests: z.number().int().min(0),
+});
+export type JobUsage = z.infer<typeof JobUsage>;
+
+/**
+ * One `jobs` row. `id` is a caller-generated uuid (the job service owns it);
+ * `bookmarkIds` is the explicit work set, while `cursor` is an opaque
+ * resumption offset for very large scans — at least one of the two must be
+ * present so a job is always resumable. `error` is populated only for a
+ * `failed` job. `createdAt`/`updatedAt` are ISO timestamps; `updatedAt` moves
+ * on every status/progress write.
+ */
+export const Job = z
+  .strictObject({
+    id: z.uuid(),
+    kind: JobKind,
+    status: JobStatus,
+    progress: JobProgress,
+    bookmarkIds: z.array(z.string().min(1)).optional(),
+    cursor: z.number().int().min(0).optional(),
+    usage: JobUsage,
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+    error: z.string().max(1_000).optional(),
+  })
+  .superRefine((job, ctx) => {
+    if (job.bookmarkIds === undefined && job.cursor === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["bookmarkIds"],
+        message: "a job must carry a bookmark id set or a cursor to resume from",
+      });
+    }
+    if (job.bookmarkIds !== undefined && job.bookmarkIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["bookmarkIds"],
+        message: "bookmarkIds must be non-empty when present",
+      });
+    }
+    if (job.progress.committedBatches > job.progress.totalBatches) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["progress", "committedBatches"],
+        message: "committedBatches must not exceed totalBatches",
+      });
+    }
+  });
+export type Job = z.infer<typeof Job>;

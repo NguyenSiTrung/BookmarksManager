@@ -20,19 +20,22 @@ afterAll(() => {
 });
 
 describe("BookmarksManager database", () => {
-  it("declares the version-1 tables alongside the version-2 additions", () => {
-    // `verno` reports the highest declared version: version(2) added
-    // bookmarkMeta/tags/undo for Phase 1 without touching the v1 stores.
-    expect(db.verno).toBe(2);
+  it("declares the version-1/2 tables alongside the version-3 additions", () => {
+    // `verno` reports the highest declared version: version(3) added
+    // jobs/audit/usage for Phase 2 without touching the v1/v2 stores.
+    expect(db.verno).toBe(3);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
+      "audit",
       "bookmarkMeta",
       "consents",
       "decisions",
+      "jobs",
       "keyMaterials",
       "metadata",
       "sentLog",
       "tags",
       "undo",
+      "usage",
     ]);
   });
 
