@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONSENT_VERSION,
+  grantConsent,
   grantTestConsent,
   revokeTestConsent,
 } from "../../src/consent/records";
@@ -517,6 +518,164 @@ describe("scoped sendConsented gate", () => {
       ),
     ).rejects.toMatchObject({ code: "unlisted_model" });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("jev_decisions gate", () => {
+  /** A DecisionState that passes the strict guard: one cleaned, non-sensitive
+   * bookmark whose `domain` matches its URL hostname. */
+  const validState = {
+    bookmark: {
+      title: "Hacker News",
+      url: "https://news.ycombinator.com/item",
+      domain: "news.ycombinator.com",
+    },
+  };
+
+  /** The full SystemOneRequest the gate sees — the state under test plus the
+   * fixed wire envelope. */
+  function decisionsRequest(state: unknown): unknown {
+    return {
+      model: "jev-latest",
+      state,
+      questions: { q: { type: "noul", instructions: "Is this a test?" } },
+    };
+  }
+
+  it("refuses an unknown state field before any consent, permission, or key read", async () => {
+    // No consent is granted: a `request_not_allowed` refusal (rather than
+    // `no_consent`) proves the guard runs before the consent read.
+    const withNotes = {
+      ...validState,
+      notes: "private notes that must never leave the device",
+    };
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest(withNotes),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it.each([
+    ["a query string", "https://news.ycombinator.com/item?id=1"],
+    ["a fragment", "https://news.ycombinator.com/item#top"],
+    ["userinfo", "https://user:pass@news.ycombinator.com/item"],
+  ])("refuses a bookmark URL carrying %s before key/permission reads", async (_label, url) => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest({
+        bookmark: { title: "T", url, domain: "news.ycombinator.com" },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a blocklisted bookmark URL as request_not_allowed", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest({
+        bookmark: {
+          title: "Inbox",
+          url: "https://mail.google.com/",
+          domain: "mail.google.com",
+        },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("validates the pairPartner URL, not just the primary bookmark", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest({
+        ...validState,
+        pairPartner: {
+          title: "Duplicate",
+          url: "https://gmail.com/",
+          domain: "gmail.com",
+        },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("validates every candidateBookmarks URL", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest({
+        ...validState,
+        candidateBookmarks: [
+          {
+            title: "Fine",
+            url: "https://news.ycombinator.com/other",
+            domain: "news.ycombinator.com",
+          },
+          {
+            title: "Dirty",
+            url: "https://news.ycombinator.com/other?id=2",
+            domain: "news.ycombinator.com",
+          },
+        ],
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("requires its own consent — a jev_test grant does not cover jev_decisions", async () => {
+    await grantTestConsent("typesafe");
+    const error = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest(validState),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("no_consent");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("admits a DecisionState-conforming request and logs the jev_decisions scope", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    fetchSpy.mockResolvedValue(okResponse());
+    const response = await sendConsented(
+      "jev_decisions",
+      "typesafe",
+      "jev-latest",
+      decisionsRequest(validState),
+    );
+    expect(response.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const rows = await db.sentLog.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.feature).toBe("jev_decisions");
   });
 });
 

@@ -1,6 +1,8 @@
 import { hasConsent, type ConsentScope } from "../consent/records";
 import { db } from "../db/database";
+import { isSensitiveUrl } from "../decisions/minimize";
 import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
+import { DecisionState } from "../schemas/decision-state";
 import type { PresetId } from "../schemas/provider";
 import { readProviderKey } from "../security/keys";
 import { resolvePreset, type PresetDestination } from "./presets";
@@ -13,8 +15,9 @@ import { resolvePreset, type PresetDestination } from "./presets";
  * Chrome host permission, and stored key material all check out — re-verified
  * on every call. The `jev_test` scope's guard admits nothing but the fixed
  * synthetic request, so test consent can never carry bookmark content; the
- * `jev_decisions` scope is registered fail-closed until Phase 2 Task 2 adds
- * its strict `DecisionState` guard.
+ * `jev_decisions` scope's guard strict-parses the request state against the
+ * closed `DecisionState` schema and refuses unknown fields, uncleaned URLs
+ * (query/fragment/userinfo), and blocklisted URLs.
  *
  * `chrome` is provided by the extension runtime; as in `security/keys.ts`,
  * only the used slice is declared so access stays lazy and
@@ -104,12 +107,53 @@ interface ScopeRegistration {
 }
 
 /**
+ * Every URL-bearing field of a parsed `DecisionState`, in a stable order, so
+ * the guard runs the blocklist over the whole state — not just the primary
+ * `bookmark`. `candidateBookmarks` may hold many; `pairPartner` carries the
+ * second bookmark of a near-duplicate pair.
+ */
+function decisionStateUrls(state: DecisionState): string[] {
+  const urls: string[] = [];
+  if (state.bookmark !== undefined) {
+    urls.push(state.bookmark.url);
+  }
+  if (state.pairPartner !== undefined) {
+    urls.push(state.pairPartner.url);
+  }
+  for (const candidate of state.candidateBookmarks ?? []) {
+    urls.push(candidate.url);
+  }
+  return urls;
+}
+
+/**
+ * The `jev_decisions` request guard: strict-parse the request's `state`
+ * against the closed `DecisionState` schema — refusing unknown fields and any
+ * URL that is not already cleaned (a query, fragment, or userinfo fails
+ * `CleanedUrl`) — then run every URL-bearing field through the sensitive-site
+ * blocklist. Fails closed: a non-object request, a missing/!DecisionState
+ * state, or any blocklisted URL is refused. Runs before the wire-schema
+ * parse and before any consent, permission, or key read.
+ */
+function admitsDecisionState(request: unknown): boolean {
+  if (typeof request !== "object" || request === null) {
+    return false;
+  }
+  const parsed = DecisionState.safeParse(
+    (request as { state?: unknown }).state,
+  );
+  if (!parsed.success) {
+    return false;
+  }
+  return decisionStateUrls(parsed.data).every((url) => !isSensitiveUrl(url));
+}
+
+/**
  * The frozen scope registry. `jev_test` admits exactly one payload: a
  * request deep-equal to `makeSyntheticRequest(model)`, so no caller-supplied
  * state, questions, or headers can leave under test consent. `jev_decisions`
- * is registered **fail-closed**: Phase 2 Task 2 replaces this placeholder
- * guard with the strict `DecisionState` guard, and until then no
- * `jev_decisions` request is admitted.
+ * admits only a request whose `state` strict-parses as a `DecisionState` and
+ * whose every URL is already cleaned and off the sensitive-site blocklist.
  */
 const SCOPES = Object.freeze({
   jev_test: Object.freeze({
@@ -120,10 +164,7 @@ const SCOPES = Object.freeze({
   } satisfies ScopeRegistration),
   jev_decisions: Object.freeze({
     scope: "jev_decisions" as ConsentScope,
-    // Phase 2 Task 2 replaces this with the strict DecisionState guard.
-    admits(): boolean {
-      return false;
-    },
+    admits: admitsDecisionState,
   } satisfies ScopeRegistration),
 } satisfies Record<ConsentScope, ScopeRegistration>);
 
