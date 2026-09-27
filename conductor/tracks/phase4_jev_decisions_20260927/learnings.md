@@ -40,6 +40,55 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 16:50] - Phase 4 Task 3: Side-panel Review view + Analyze actions
+
+- `ReviewView.tsx` (new) renders the pending-decision queue; `views.ts` gains a `review` kind whose
+  `resolveView` returns `[]` (its rows are `Decision`s, not `BookmarkItem`s); `App.tsx` branches
+  review→`ReviewView`, duplicates→`DuplicatesView`, else `BookmarkList` — the `DuplicatesView` precedent.
+  Returning `[]` also empties the shared selection so the bookmark `BulkBar` stays out of the pane.
+- Confidence bands are **pinned to the policy constants** (`AUTO_APPLY_THRESHOLD` 0.85 /
+  `REVIEW_FLOOR` 0.5), and rendered as a stripe + tint + a `High · 92%` chip — never color-only.
+- Actions gate on `isLegalTransition(status, …)` so the UI never offers an illegal move; bulk approve is
+  ONE `BULK_APPROVE` reporting `applied`/`failed`.
+- **Undo wiring (arm/disarm)**: `reportToast` disarms a stale revert target on EVERY toast;
+  `armDecisionRevert` re-arms after the approve toast is shown; the toast's Undo sends `REVERT_DECISION`
+  for the armed id else falls through to `toastCtl.undo()` (snapshot stack), so delete/merge/tag toasts
+  still work.
+- **Synthetic-id exclusion (cross-task fix)**: save-suggest persists `pending` rows keyed by a
+  `popup:<uuid>` id that never becomes a real bookmark. `reviewQueue()` drops any decision whose
+  `bookmarkIds` contain a `popup:`-prefixed placeholder (and the badge uses the same helper), with a
+  visible "· N waiting on an unsaved bookmark" count so nothing is hidden silently. Scoped to the
+  `popup:` namespace ONLY — a genuinely-gone REAL id still renders with a "Stale" affordance and stays
+  approvable (the worker's `assertFresh` guard refuses it).
+- Shared decision helpers (`sendDecisionMessage`/`analyzeOutcome`/`analyzeResultMessage`/`reviewQueue`/
+  `confidenceBand`) live in `ReviewView.tsx` and are imported by `BulkBar`/`App` (same precedent as
+  `BulkBar`'s delete helpers). Deferred: extract to a pure `decisions/panel.ts` if T4/T5 add more.
+
+## [2026-09-27 16:40] - Phase 4 Task 2: Popup save suggestions
+
+- `Suggestions.tsx` (new) + `App.tsx` wiring. The trigger is `SAVE_SUGGEST`; **the reply carries only
+  counts** (`AnalyzeSummary`), so the actual suggestions are read back from `db.decisions` filtered by the
+  synthetic `"popup:<uuid>"` `bookmarkIds` (status `pending` only — `listPending()`), and the popup
+  pre-selects the folder only at `≥ MOVE_PRESELECT_THRESHOLD` (0.7).
+- **Never override a user edit**: touched-flag refs (`folderTouchedRef` set synchronously in the picker's
+  onChange, even when re-picking the default) — stronger than default-value comparison, which can't detect
+  a re-pick of the same value.
+- **One-shot effect hygiene**: the SAVE_SUGGEST effect must depend on `[ready, suggestId]` (stable per
+  mount) and read `title`/`url`/`folderId` at send time from a ref — NOT close over them, or a keystroke
+  re-runs the effect, its cleanup sets `cancelled = true`, and the in-flight request/reply is torn down.
+  (A render-time ref assignment is rejected by `react-hooks/refs`; keep the ref in sync with a preceding
+  effect.)
+- **Worker-side fix (Important)**: `saveSuggest` ran the pipeline under the user's real `settings`, so a
+  toggled-on `add_tags`/`set_category` at ≥0.85 auto-applied to the nonexistent `popup:` id → the guarded
+  apply failed `bookmark_gone` → `apply_failed` → the whole suggestion was lost AND the row landed
+  `auto_applied` (not `pending`) so no chip showed. Fix: `saveSuggest` runs under
+  `SAVE_SUGGEST_SETTINGS` (a complete `DecisionSettings` with every toggle off) → policy can only return
+  `preselect`/`review`/`unsure`. The real `analyzeById`/library paths keep the user's settings (§10.2).
+- Consent gate is a local `hasConsent(DECISIONS_CONSENT_SCOPE, preset)` across presets — no `sendMessage`
+  at all without a `jev_decisions` grant. Blocklisted → a quiet `suggestions-not-sent` note, no chips.
+- Deferred: orphaned synthetic `popup:` rows accumulate (no `db.decisions` retention) —
+  `BookmarksManager-f7c`.
+
 ## [2026-09-27 16:30] - Phase 4 Task 1: Options decisions UI (consent, toggles, blocklist, sent log, cost)
 
 - `DecisionSettings.tsx` (consent screen + auto-apply toggles + blocklist) + `SentLog.tsx` (Data sent +

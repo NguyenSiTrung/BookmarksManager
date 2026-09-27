@@ -235,19 +235,37 @@ all behind a new per-provider bookmark-data consent.
        25 tests. Fix: retryable load-failure state (was a perpetual "Loading…") + preset-tagged consent
        read (no stale-panel flash across a provider switch). -->
 
-- [ ] Task 2: Popup save suggestions
+- [x] Task 2: Popup save suggestions
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Suggestions.tsx, tests/components/popup-suggestions.test.tsx -->
-  - [ ] Failing tests: the save form renders without waiting on Jev; the folder is pre-selected only at
+  - [x] Failing tests: the save form renders without waiting on Jev; the folder is pre-selected only at
         ≥ 0.7; tag and category chips are accepted by click; a user change is never overridden by a late
         suggestion; no request is made without consent; blocklisted pages show "not sent"
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 83ef212 (worker f89aade) + worker fix c6178f1 (9f09c43) + popup fix 57beb00 (d424577).
+       Review APPROVED_WITH_CONCERNS → fixes. Suggestions.tsx + App.tsx wiring; SAVE_SUGGEST gated on a
+       local hasConsent(jev_decisions); suggestions read back from db.decisions by the synthetic
+       "popup:<uuid>" id; folder pre-select only at ≥0.7 and only if untouched (touched-flag refs);
+       chips opt-in; "not sent" for blocklisted. Worker fix: saveSuggest now runs under
+       SAVE_SUGGEST_SETTINGS (auto-apply all-off) so the proposal flow never auto-applies to the
+       nonexistent synthetic id (red-check: previously apply_failed hid the chips). Popup fix: the
+       one-shot effect depends on [ready, suggestId] + reads payload from a ref so keystrokes don't tear
+       down the in-flight request. 13 tests. Deferred: orphaned popup: rows (BookmarksManager-f7c). -->
 
-- [ ] Task 3: Side-panel Review view and Analyze actions
+- [x] Task 3: Side-panel Review view and Analyze actions
   <!-- files: src/entrypoints/sidepanel/ReviewView.tsx, src/entrypoints/sidepanel/views.ts, src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/BulkBar.tsx, tests/components/review-view.test.tsx -->
-  - [ ] Failing tests: pending decisions listed with confidence shading and kind; approve, reject, and bulk
+  - [x] Failing tests: pending decisions listed with confidence shading and kind; approve, reject, and bulk
         approve; the undo toast reverts; Analyze per row and from the bulk bar; accessible names and
         keyboard operation
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 1715dbb (worker 9edba9b). Review APPROVED (18 tests). ReviewView.tsx (queue ordered by
+       createdAt; confidence bands pinned to AUTO_APPLY_THRESHOLD/REVIEW_FLOOR, never color-only;
+       approve/reject/revert gated by isLegalTransition; one BULK_APPROVE reporting applied/failed;
+       undo toast wired to REVERT_DECISION with arm/disarm) + views.ts review kind (resolveView → []) +
+       App.tsx nav/header + pane swap + per-row Analyze + BulkBar selection Analyze. reviewQueue()
+       EXCLUDES synthetic popup: ids (Risk B) with a visible "waiting on an unsaved bookmark" count; a
+       stale REAL id still renders/approves. Deferred minors: sidebar nav doesn't clear an active search;
+       failed-revert toast lacks retry; decisionRevertRef not disarmed on auto-hide; test-name nit;
+       optional panel-helper extraction. -->
 
 - [ ] Task 4: Library-scan launcher
   <!-- files: src/entrypoints/sidepanel/ScanPanel.tsx, tests/components/scan-panel.test.tsx -->
