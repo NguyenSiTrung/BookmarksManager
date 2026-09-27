@@ -13,3 +13,8 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-26 — Phase 2 Search completed: MiniSearch fuzzy index + query language (filters/negation/quotes/warnings), side-panel search bar with autocomplete, Ctrl/Cmd+K command palette with commands and per-result actions, popup search, and the `bm` omnibox keyword — all fully local with zero egress; full gate green (1591 unit/component, 11 e2e) and user-accepted manual verification (see conductor/archive/phase2_search_20260926/) -->
+
+---
+
+## [~] Track: Phase 3 — Jev client hardening and typed question builder (scoped gate, guards/split, retries, concurrency, usage, mock server, §8.4 builder, Options completion, live smoke)
+*Link: [./conductor/tracks/phase3_jev_client_20260927/](./conductor/tracks/phase3_jev_client_20260927/)*
