@@ -202,10 +202,15 @@ all behind a new per-provider bookmark-data consent.
        resumeJobs resume running/pending only (a user-paused job stays paused). Deferred minors:
        activeProvider preference; not_enabled code; resolveWorkSet double-read; trusted-sender breadth. -->
 
-- [ ] Task 5: `sentLog` retention cap and clear (closes `BookmarksManager-sd1`)
+- [x] Task 5: `sentLog` retention cap and clear (closes `BookmarksManager-sd1`)
   <!-- files: src/net/sent-log.ts, src/net/send.ts, tests/unit/sent-log.test.ts -->
-  - [ ] Failing tests: the cap trims the oldest rows; clear empties the log; rows never hold content
-  - [ ] Implement
+  - [x] Failing tests: the cap trims the oldest rows; clear empties the log; rows never hold content
+  - [x] Implement
+  <!-- landed 1fd4107 (review APPROVED). New src/net/sent-log.ts: SENT_LOG_RETENTION_CAP=500,
+       appendSentLog (add + index-bounded prune of the oldest excess in one rw transaction), clearSentLog
+       (returns removed count). send.ts routed through it (unchanged ordering/fields). 9 tests. Deferred
+       minors: a failed appendSentLog aborts the caller (pre-existing); cap not configurable; no
+       cap-is-positive-int test. Phase 4 must consume clearSentLog + the cap in the "Data sent" view. -->
 
 - [ ] Task 6: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
 

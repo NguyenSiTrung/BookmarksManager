@@ -40,6 +40,22 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 15:35] - Phase 3 Task 5: sentLog retention cap and clear (BookmarksManager-sd1)
+
+- `src/net/sent-log.ts` now owns sent-log writes: `SENT_LOG_RETENTION_CAP = 500`,
+  `appendSentLog` (add + index-bounded prune in one `rw` transaction), `clearSentLog` (returns
+  the removed count). `send.ts` routes through it at the same point with the same `fieldNames`.
+- Prune pattern: `count()` (IndexedDB aggregate, no materialization) + `orderBy(":id").limit(excess)
+  .primaryKeys()` → O(excess) work, ordered by insertion (`:id`), not unstable `sentAt` ties. The
+  single `rw` transaction makes concurrent appends safe (IndexedDB serializes overlapping rw txns).
+- `appendSentLog` rebuilds the row from only `sentAt`/`destination`/`feature`/`fieldNames`, so a
+  stray runtime prop can't persist — the metadata-only contract is enforced structurally, not by
+  test assertion alone.
+- Deferred minors: a rejected `appendSentLog` aborts the already-sent request's caller (pre-existing
+  `db.sentLog.add` behavior — consider a best-effort audit write later); the cap isn't configurable.
+- Phase 4 constraint: the Options "Data sent" view (FR10) must consume `clearSentLog` for Clear and
+  should display `SENT_LOG_RETENTION_CAP` so the messaging stays in sync with the enforced cap.
+
 ## [2026-09-27 15:13] - Phase 3 Task 4: Worker messages and background wiring
 - **Implemented:** `src/messages/decisions.ts` (14-intent Zod discriminated union, total
   `handleDecisionsMessage`, trusted-extension-sender check, `{ok:true,...}|{ok:false,code,message}`),
