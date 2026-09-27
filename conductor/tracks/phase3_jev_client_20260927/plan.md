@@ -85,14 +85,14 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         `sendConsentedTest`/`*TestConsent` wrappers unchanged
   - [x] Implement
 
-- [ ] Task 2: Hardened Jev client
+- [x] Task 2: Hardened Jev client
   <!-- files: src/jev/client.ts, tests/unit/jev-client.test.ts -->
-  - [ ] Failing tests (injected transport + mock server): parse/guard failures send nothing; split/merge
+  - [x] Failing tests (injected transport + mock server): parse/guard failures send nothing; split/merge
         exactness; cross-check → `answer_mismatch` (missing, wrong type, unrequested key); differing
         batch models → `model_mismatch`; retries honor `retry-after` and backoff, 401/422 not retried,
         retries exhausted → `retry_later`; timeout aborts; per-preset concurrency ≤ limit; usage summed
         across batches; redacted messages
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 3: Test connection through the client
   <!-- files: src/jev/connection.ts, src/messages/provider.ts, src/entrypoints/options/ProviderSetup.tsx, tests/unit/jev-connection.test.ts, tests/unit/connection-message.test.ts, tests/unit/provider-messages.test.ts, tests/components/test-connection.test.tsx -->

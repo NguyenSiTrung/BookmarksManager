@@ -81,3 +81,27 @@ the ones most relevant to this track:
   handles UX copy.
 - `hasConsent`/`grantConsent`/`revokeConsent` take `(scope, preset)`; the old `*TestConsent` wrappers are
   one-line forwarders — kept for existing call sites and tests.
+
+## Phase 2 — Task 2: Hardened Jev client
+
+- `createJevClient` composes `SystemOneRequest.safeParse` → model-equality check (`request.model` must
+  equal the configured client model, else `invalid_request`) → `planBatches` → per-batch send with retry
+  → `SystemOneResponse` + per-batch cross-check → merge. `BudgetError` codes relay verbatim (`too_large`,
+  `invalid_request`).
+- Error-code mapping on exhaustion: retryable HTTP status → `retry_later`; timeout → `timeout`; gate
+  `transport` → `transport`. Gate refusals relay their code (`no_consent`, …) and are never retried;
+  non-gate throws (e.g. `ProviderKeyError`) propagate unwrapped — same convention as `connection.ts`.
+- Per-preset concurrency is a module-level `Map<PresetId, {running, limit, queue}>` counting semaphore;
+  the first client created for a preset fixes the shared limit. Export a `resetJevClientPools()` test
+  hook or cross-test leakage makes limits sticky.
+- Response inspection returns a discriminated `SendOutcome` union (`{ok}`) rather than
+  `T | Failure` — `instanceof` does not work on interfaces and `in`-narrowing across a union was
+  brittle under `noUncheckedIndexedAccess`; the nominal union keeps TS honest.
+- Each send attempt gets its own `AbortController` + `setTimeout(timeoutMs)`; `controller.signal.aborted`
+  in the catch distinguishes our timeout (retryable `timeout`) from transport errors. The signal is
+  forwarded to the transport so the gate/fetch actually aborts.
+- To split a request into N batches under the 64k-token cap: questions of ~15.6k tokens each
+  (~50k chars of JSON at 4 chars/token × 1.25 margin) pack 4 per batch; `4*N - (N-1)` questions
+  yield exactly N batches. Deterministic without runtime probing.
+- `vi.fn<JevTransport>` with an unused trailing param trips `no-unused-vars` — drop the underscore
+  param entirely rather than naming it `_options` (the lint rule counts leading-underscore args too).
