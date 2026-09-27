@@ -40,6 +40,36 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 14:12] - Phase 3 Task 2: Rerank service
+- **Implemented:** `src/decisions/rerank.ts` — `rerankSearch({query,hits,preset,model,client?,transport?})`
+  → `{sent:false;reason:"empty"|"blocklisted"} | {sent:true;model;results:{id,probability}[];noMatch;usage}`.
+  Projects hits via `rerankCandidates` (cap 30), minimizes each to a `SentBookmark`, builds the `rerank`
+  set, sends ONE `jev_decisions` request, positionally cross-checks `candidate_<i>`, sorts by probability
+  desc, applies `isNoMatch`, records one `usage` row. Own `RerankError` (codes ⊂ `DecisionPipelineErrorCode`).
+- **Files changed:** `src/decisions/rerank.ts`, `tests/unit/decisions-rerank.test.ts`
+- **Commit:** `9d6d176` (worker `82bd48fc`, wt/p4-p3t2 `d114ea2`) + fix `ad0a81e` (wt/p4-p3t2-fix1 `5d77ea8`);
+  review APPROVED_WITH_CONCERNS → 1 fix round → re-review ALL FINDINGS ADDRESSED.
+- **Learnings:**
+  - **Ruling — per-service error classes are the convention; consumers must key on `.code`.** `RerankError`
+    (not `DecisionPipelineError`) matches `DecisionStoreError`/`DecisionApplyError`/`JevClientError`. Its
+    code set is a strict subset of the pipeline's, so the Task 4 message mapper must switch on `.code`,
+    never `instanceof DecisionPipelineError`, or rerank errors are mishandled.
+  - **Ruling — blocklisted-hit skipping + post-skip indexing is correct.** The `sent` (post-skip) array is
+    the single source of truth for `candidateBookmarks`, question keys, cross-check bounds, and the
+    probability lookup; raw shortlist indices are never used, so Chrome node ids stay local. Skipping is
+    right (matches the pipeline dropping blocklisted bookmarks) rather than aborting.
+  - **Test-quality gotcha — index-shift tests must place the blocklisted hit BEFORE the sendables.** With the
+    blocklisted hit last, a raw-index implementation produces identical keys and passes. Pin the boundary
+    with the blocklisted hit first and assert the exact key list (`["candidate_0","candidate_1"]`).
+  - **Test-quality gotcha — an equal-probability tie-break test does NOT guard an explicit tie-break clause**
+    because V8's `Array.prototype.sort` is stable. It characterizes the contract but would still pass if the
+    `|| a.index - b.index` clause were deleted. Recorded as a deferred minor (not blocking).
+  - **Deferred (filed `BookmarksManager-eov`):** neither `pipeline.ts` nor `rerank.ts` records `usage` when
+    the response egressed but failed the answer cross-check — running cost totals undercount by that
+    response. Cross-cutting (may need `client.ts` to expose accumulated usage on throw).
+
+---
+
 ## [2026-09-27 14:00] - Phase 3 Task 1: Analyze pipeline
 - **Implemented:** `src/decisions/pipeline.ts` — `analyzeBookmark(options)` orchestrates one bookmark:
   minimize → candidates → question sets → `jev_decisions` client → answer-ID cross-check → §10.2 policy →

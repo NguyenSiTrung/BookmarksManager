@@ -155,12 +155,16 @@ all behind a new per-provider bookmark-data consent.
        parameterized `approveDecision(id, actor, target)`; usage is recorded before persist (FR8);
        `analyzeBookmark` wraps all throws through `toPipelineError`. 13 pipeline tests. -->
 
-- [ ] Task 2: Rerank service
+- [x] Task 2: Rerank service
   <!-- files: src/decisions/rerank.ts, tests/unit/decisions-rerank.test.ts -->
-  - [ ] Failing tests: the shortlist of 30 is sent in one request; results are sorted by probability; the
+  - [x] Failing tests: the shortlist of 30 is sent in one request; results are sorted by probability; the
         no-match bar applies; the query is sent only as `DecisionState.query`; an empty or local-only result
         makes no request
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed 9d6d176 + fix ad0a81e (1 fix round). rerankSearch: rerankCandidates projection, one
+       jev_decisions request, positional post-skip cross-check, probability sort + isNoMatch, one usage
+       row per egress. Own RerankError (Task 4 mapper must key on .code). 16 tests. Deferred:
+       usage-on-answer_mismatch (BookmarksManager-eov); tie-break test is characterization-only. -->
 
 - [ ] Task 3: Job queue
   <!-- files: src/jobs/queue.ts, src/jobs/runner.ts, src/jobs/estimate.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts -->
