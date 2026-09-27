@@ -1,4 +1,11 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium, expect } from "@playwright/test";
@@ -55,6 +62,41 @@ export interface ProviderExtension {
   dispose(): void;
 }
 
+export interface ProviderLaunchOptions extends LaunchOptions {
+  /**
+   * Launch on this persistent profile directory instead of a Playwright
+   * temp profile. The directory SURVIVES `context.close()`, so a second
+   * launch on the same path restores the extension's IndexedDB (provider
+   * settings, consents, job rows) and the Chrome profile's bookmarks — how
+   * the decisions specs restart the browser mid-job. When set, the TypeSafe
+   * and OpenRouter origins are also mapped to an unroutable local address
+   * via `--host-resolver-rules`: a relaunched worker may boot and resume a
+   * job before the spec has registered its route, and a real DNS attempt
+   * would be genuine egress. The sink turns any pre-route attempt into an
+   * instant connection refusal, which the client classifies as a retryable
+   * transport error — its retries then land on the route (routes intercept
+   * before the resolver once registered).
+   */
+  profileDir?: string;
+  /**
+   * Reuse this directory as the patched-extension root across launches. The
+   * unpacked extension id derives from the load path, so a relaunch from the
+   * same root keeps the SAME extension id. The caller owns the directory's
+   * lifetime (`dispose()` will not remove it).
+   */
+  extensionRoot?: string;
+  /**
+   * Add the `"tabs"` permission to the patched manifest copy. The shipped
+   * build never holds it: production prefills the quick-save popup from the
+   * active tab via `activeTab`, which Playwright cannot grant (it needs a
+   * real action-icon click). The popup-prefill spec grants the equivalent
+   * tab visibility on its throwaway copy only — every later step (the
+   * `SAVE_SUGGEST` message, the worker's own consent/permission re-checks,
+   * the egress gate) runs unchanged.
+   */
+  grantTabsPermission?: boolean;
+}
+
 /**
  * Copy the built extension into a fresh temp dir with the TypeSafe host
  * pattern moved from `optional_host_permissions` to `host_permissions`, then
@@ -63,13 +105,21 @@ export interface ProviderExtension {
  * the returned `id`.
  */
 export async function launchProviderExtension(
-  options: LaunchOptions = {},
+  options: ProviderLaunchOptions = {},
 ): Promise<ProviderExtension> {
-  const root = mkdtempSync(path.join(tmpdir(), "bm-e2e-provider-"));
+  const callerRoot = options.extensionRoot;
+  const root =
+    callerRoot ?? mkdtempSync(path.join(tmpdir(), "bm-e2e-provider-"));
   try {
-    cpSync(EXTENSION_DIR, root, { recursive: true });
+    // `cpSync` nests the source when the destination is a non-empty
+    // directory, so a reused root is populated exactly once — the copied
+    // manifest doubles as the "copy complete" marker.
+    if (!existsSync(path.join(root, "manifest.json"))) {
+      cpSync(EXTENSION_DIR, root, { recursive: true });
+    }
     const manifestPath = path.join(root, "manifest.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      permissions?: string[];
       host_permissions?: string[];
       optional_host_permissions?: string[];
     };
@@ -77,27 +127,49 @@ export async function launchProviderExtension(
       ...(manifest.host_permissions ?? []),
       PRESETS.typesafe.permissionPattern,
     ];
+    if (options.grantTabsPermission === true) {
+      manifest.permissions = [...(manifest.permissions ?? []), "tabs"];
+    }
     manifest.optional_host_permissions = (
       manifest.optional_host_permissions ?? []
     ).filter((pattern) => pattern !== PRESETS.typesafe.permissionPattern);
     writeFileSync(manifestPath, JSON.stringify(manifest));
 
-    const context = await chromium.launchPersistentContext("", {
-      channel: "chromium",
-      headless: options.headless ?? headlessFromEnv(),
-      args: [
-        `--disable-extensions-except=${root}`,
-        `--load-extension=${root}`,
-      ],
-    });
+    const context = await chromium.launchPersistentContext(
+      options.profileDir ?? "",
+      {
+        channel: "chromium",
+        headless: options.headless ?? headlessFromEnv(),
+        args: [
+          `--disable-extensions-except=${root}`,
+          `--load-extension=${root}`,
+          ...(options.profileDir === undefined
+            ? []
+            : [
+                // See ProviderLaunchOptions.profileDir: a pre-route resume
+                // attempt must fail instantly and locally, never reach the
+                // network.
+                `--host-resolver-rules=MAP ${new URL(
+                  PRESETS.typesafe.origin,
+                ).host} 127.0.0.1, MAP ${new URL(PRESETS.openrouter.origin).host} 127.0.0.1`,
+              ]),
+        ],
+      },
+    );
     const id = await extensionId(context);
     return {
       context,
       id,
-      dispose: () => rmSync(root, { recursive: true, force: true }),
+      dispose: () => {
+        if (callerRoot === undefined) {
+          rmSync(root, { recursive: true, force: true });
+        }
+      },
     };
   } catch (cause) {
-    rmSync(root, { recursive: true, force: true });
+    if (callerRoot === undefined) {
+      rmSync(root, { recursive: true, force: true });
+    }
     throw cause;
   }
 }
@@ -117,7 +189,7 @@ export interface ProviderRouteLog {
   readonly requests: CapturedProviderRequest[];
 }
 
-function captureRequest(request: Request): CapturedProviderRequest {
+export function captureRequest(request: Request): CapturedProviderRequest {
   const raw = request.postData();
   let postData: unknown;
   if (raw !== null) {
@@ -258,8 +330,11 @@ export async function enableTypesafe(
  * Non-creating `getAll` over one object store of the extension's IndexedDB —
  * the same contract as `./db.ts`: returns `[]` without opening the database
  * when it does not exist, so reads never create a stray empty database.
+ * Exported for the decisions specs, which read the `decisions`,
+ * `bookmarkMeta`, and `jobs` stores the same way this module reads the
+ * provider tables.
  */
-async function readStoreRows<Row>(page: Page, store: string): Promise<Row[]> {
+export async function readStoreRows<Row>(page: Page, store: string): Promise<Row[]> {
   return page.evaluate(
     async ({ dbName, storeName }) => {
       const databases = await indexedDB.databases();
