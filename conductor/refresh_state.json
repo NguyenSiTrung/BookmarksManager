@@ -1,29 +1,37 @@
 {
-  "last_refresh": "2026-09-26",
+  "last_refresh": "2026-09-27",
   "previous_marker": "2026-09-26",
   "scope": "all",
   "files_updated": [
-    "product.md",
-    "tech-stack.md"
+    "patterns.md",
+    "refresh_state.json"
   ],
   "drift_resolved": {
-    "product.md": "Added Phase 2 search delivery entry (archived phase2_search_20260926); removed 'local fuzzy search (MiniSearch)' from the not-yet-built list — now shipped across side panel, palette, popup, and omnibox",
-    "tech-stack.md": "Re-based on Phase 2: minisearch 7.2.0 moved from [planned] to installed; added src/search/ module map (query/index/run/suggest/openable/omnibox), useSearchIndex, query-input.tsx, sync/tabs.ts openBookmarkUrl slice, and omnibox.keyword=\"bm\" in the manifest inventory",
-    "workflow.md": "no drift — gate sequence still matches package.json scripts and CI",
-    "tracks.md": "no drift — phase2 archive marker written at track close",
-    "patterns.md": "no drift — 10 phase2 patterns elevated at archive time (commit ea35b57)"
+    "product.md": "no drift — Phase 3 delivery entry already written at archive (2026-09-27)",
+    "tech-stack.md": "no drift — all dependency versions verified against node_modules; src/jev (8 files) and src/net (3 files) module maps match; [planned] items still absent",
+    "workflow.md": "no drift — gate sequence still matches package.json scripts and .github/workflows/ci.yml",
+    "tracks.md": "no drift — all 4 tracks archived, none active",
+    "patterns.md": "phase3 learnings consolidated — 10 entries elevated (2 cross-track merges + 8 new); the phase3 'Elevated' section already carried 10 bullets from archive time"
   },
   "beads": {
     "enabled": true,
-    "open_issues": 9,
-    "drift": "none — epic BookmarksManager-4b4 and all children closed; track archived; remaining 9 open issues are unrelated P3 follow-up backlog",
+    "open_issues": 10,
+    "drift": "none — no active tracks; 10 open issues are P2/P3 backlog follow-ups, incl. BookmarksManager-4fb (chrome.permissions.request e2e gap) filed at phase3 close",
     "note": "bd warns 'beads.role not configured (GH#2950)' — cosmetic, not blocking"
   },
   "learnings_consolidation": {
-    "tracks_scanned": ["phase0_foundation_20260925", "phase1_core_manager_20260926", "phase2_search_20260926"],
-    "new_patterns_elevated": 0,
-    "note": "phase2_search_20260926 patterns were elevated at archive time this session; nothing new recurred across tracks to consolidate"
+    "tracks_scanned": [
+      "phase0_foundation_20260925",
+      "phase1_core_manager_20260926",
+      "phase2_search_20260926",
+      "phase3_jev_client_20260927"
+    ],
+    "new_patterns_elevated": 10,
+    "note": "phase3 was the only unconsolidated track; recurring 'pure domain layer' (search+jev) and 'non-creating IndexedDB opens' (phase1+phase3) patterns merged cross-track"
   },
-  "untracked_files": [".beads/issues.jsonl", "conductor/*.md.bak"],
+  "untracked_files": [
+    ".beads/issues.jsonl",
+    "conductor/*.md.bak"
+  ],
   "active_tracks": []
 }

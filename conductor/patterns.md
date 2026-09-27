@@ -140,4 +140,17 @@ _Last refreshed: 2026-09-25_
 - **Verify test-suite exclusion with `vitest list --filesOnly`,** not a grep for the directory name — substring matches on "live"/"e2e" inside test names produce false positives.
 - **HTTP mock servers for provider tests:** bind `127.0.0.1` on an ephemeral port, script status/delay/malformed-body per call index, record every request, and drain/destroy sockets on `close()` so hanging replies can't leak across tests.
 
+## Elevated at refresh — track `phase3_jev_client_20260927` (refreshed 2026-09-27)
+
+- **Keep domain layers pure: `src/<domain>/` modules import no chrome/DOM/fetch and expose a typed contract.** `src/search/` ships `SearchIndexHandle` + `toSourceBookmark`/`ancestorsOf`; `src/jev/` takes `import type { Answer }` only and `client.ts` maps its own errors onto `RetryableFailure` so `retry.ts`/`usage.ts` stay import-free. Surfaces (views, popup, omnibox, tests) share the dependency-free layer. (from: phase2_search_20260926, phase3_jev_client_20260927)
+- **IndexedDB read-assertions must not create the db.** Applies to delete-checks AND e2e consent/sentLog probes from extension pages: `indexedDB.databases()` first, then a guarded `open()`. (from: phase1_core_manager_20260926, phase3_jev_client_20260927)
+- **Module-level shared state needs an exported reset hook.** A `Map<PresetId, {running, limit, queue}>` semaphore makes the first client's limit sticky across tests — export `reset*Pools()` for teardown or limits leak between cases. (from: phase3_jev_client_20260927)
+- **Abort has three observably different checkpoints:** pre-aborted signal, abort during the gate's async consent/permission/key reads, abort mid-flight. Test mid-flight with `vi.waitFor` until fetch is invoked, then abort — an immediate `controller.abort()` fires during DB reads and conflates pre-flight with in-flight. (from: phase3_jev_client_20260927)
+- **`Date.parse` leniently accepts `"1.5"`, `"-5"`, `"+3"` as year-2001 dates** — require a letter before attempting HTTP-date parsing or garbage silently becomes a 0 ms retry delay. (from: phase3_jev_client_20260927)
+- **`exactOptionalPropertyTypes`: conditionally spread optional fields** (`...(cond ? {k: v} : {})`) — never assign `undefined`. (from: phase3_jev_client_20260927)
+- **Definition-time validation throws `TypeError`** (programmer error, never crosses the wire); only run-time answer problems use the domain error taxonomy. Enforce the wire schema's bounds (choice 2–255 options, score 2–10 levels) at declaration too — same bounds, raised earlier. (from: phase3_jev_client_20260927)
+- **Parallel-worktree recipe:** one `.worktrees/` worktree per task with `cp -al` hardlinked `node_modules`/`.wxt`, disjoint file sets for clean cherry-picks, and a single coordinator serializing commits, notes, plan markers, and `bd` updates. Fix a lint-broken HEAD before branching or every worktree inherits it. (from: phase3_jev_client_20260927)
+- **Live-test suite convention:** standalone `vitest.live.config.ts` scoped to `tests/live/**` (the default config's `include` never collects it), `it.skipIf(key === undefined)` keeps it green keyless, keys from `process.env` only and never logged. (from: phase3_jev_client_20260927)
+- **`vi.fn` unused trailing params trip `no-unused-vars` even with a `_` prefix** — drop the param entirely rather than naming it `_options`. (from: phase3_jev_client_20260927)
+
 _Last refreshed: 2026-09-27_
