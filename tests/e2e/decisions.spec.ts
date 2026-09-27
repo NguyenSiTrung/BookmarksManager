@@ -4,6 +4,7 @@ import {
   assertEgressBodiesClean,
   bookmarkMetaRows,
   grantDecisionsConsent,
+  jobRows,
   restartableProvider,
   routeFakeDecisions,
   seedTags,
@@ -297,6 +298,11 @@ test("quick-save popup: prefill drives one minimized SAVE_SUGGEST", async () => 
   // …while exactly one egress left, carrying the cleaned URL only.
   expect(route.requests).toHaveLength(1);
   assertEgressBodiesClean(route.requests, ["utm_source", "notes"]);
+  // Exactly one audit row for the one request — the save path must never
+  // double-write.
+  const log = await sentLogRows(popup);
+  expect(log).toHaveLength(1);
+  expect(log[0]?.feature).toBe("jev_decisions");
 
   await ext.context.close();
   ext.dispose();
@@ -347,6 +353,10 @@ test("Ask reranks results by query and reports the no-match bar", async () => {
   expect(firstState?.query).toBe("rust async");
   const candidates = firstState?.candidateBookmarks ?? [];
   expect(candidates).toHaveLength(2);
+  // Pin the pre-rank order: MiniSearch ranks the guide above the cookbook
+  // (both terms in both titles, but only the guide's URL also contains
+  // "async"), so the scripted flip below is a real reorder, never a no-op.
+  expect(candidates[0]?.url).toBe(guide.url);
   const winner = candidates[1]?.url === cookbook.url ? cookbook : guide;
   await expect(sidepanel.locator("[data-bookmark-id]").first()).toHaveAttribute(
     "data-bookmark-id",
@@ -412,7 +422,9 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   // The runner is strictly sequential: one batch of 3, and with the valve
   // closed exactly the FIRST analysis is held mid-batch (the other two
   // have not been sent yet).
-  await expect.poll(() => route1.requests.length).toBe(1);
+  await expect
+    .poll(() => route1.requests.length, { timeout: 30_000 })
+    .toBe(1);
   await dialog1.getByRole("button", { name: "Pause" }).click();
   await expect(dialog1.getByText("Scan: Paused")).toBeVisible({
     timeout: 30_000,
@@ -439,7 +451,9 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   // JOB_RESUME → relaunch path. The relaunched runner re-enters the batch
   // sequentially, so its first analysis is held at the valve...
   await dialog2.getByRole("button", { name: "Resume" }).click();
-  await expect.poll(() => route2.requests.length).toBe(1);
+  await expect
+    .poll(() => route2.requests.length, { timeout: 30_000 })
+    .toBe(1);
   // ...then the valve opens: the held analysis completes and the remaining
   // two flow straight through to completion.
   route2.release();
@@ -452,6 +466,7 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   expect(await sentLogRows(sp2)).toHaveLength(3);
 
   await ext2.context.close();
+  provider.dispose();
 });
 
 test("a restart auto-resumes a running scan from the committed batch only", async () => {
@@ -503,6 +518,15 @@ test("a restart auto-resumes a running scan from the committed batch only", asyn
   await expect
     .poll(() => route2.requests.length, { timeout: 30_000 })
     .toBe(1);
+  // Device artifact: the persisted row relaunched from the committed batch —
+  // batch 1's commit survived the restart, and batch 2 (its first analysis
+  // still held at the valve) has not committed.
+  const scanJob = (await jobRows(sp2)).find(
+    (row) => row.kind === "library_scan",
+  );
+  expect(scanJob?.status).toBe("running");
+  expect(scanJob?.progress.committedBatches).toBe(1);
+  expect(scanJob?.progress.processedCount).toBe(5);
   route2.release();
   // ...then the rest flow through to completion.
   const dialog2 = await openScanDialog(sp2);
@@ -515,4 +539,5 @@ test("a restart auto-resumes a running scan from the committed batch only", asyn
   expect(await sentLogRows(sp2)).toHaveLength(8);
 
   await ext2.context.close();
+  provider.dispose();
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect } from "@playwright/test";
@@ -279,11 +279,6 @@ export interface JobRow {
   };
 }
 
-/** Every `decisions` row (pending/applied/…), straight from the store. */
-export function decisionsRows(page: Page): Promise<unknown[]> {
-  return readStoreRows<unknown>(page, "decisions");
-}
-
 /** Every `bookmarkMeta` row — the applied sidecar the specs assert on. */
 export function bookmarkMetaRows(page: Page): Promise<MetaRow[]> {
   return readStoreRows<MetaRow>(page, "bookmarkMeta");
@@ -365,6 +360,8 @@ export interface RestartableProvider {
   launch(
     options?: Omit<ProviderLaunchOptions, "extensionRoot" | "profileDir">,
   ): Promise<ProviderExtension>;
+  /** Remove the copied extension root and the Chromium profile for good. */
+  dispose(): void;
 }
 
 export function restartableProvider(): RestartableProvider {
@@ -375,5 +372,9 @@ export function restartableProvider(): RestartableProvider {
     profileDir,
     launch: (options = {}) =>
       launchProviderExtension({ extensionRoot, profileDir, ...options }),
+    dispose: () => {
+      rmSync(extensionRoot, { recursive: true, force: true });
+      rmSync(profileDir, { recursive: true, force: true });
+    },
   };
 }
