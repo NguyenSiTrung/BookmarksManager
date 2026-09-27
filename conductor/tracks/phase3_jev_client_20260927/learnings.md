@@ -124,3 +124,13 @@ the ones most relevant to this track:
   marker checks — instead of `cause === undefined` outright.
 - `ProviderErrorCode` must enumerate every relayed code (`timeout`, `unregistered_scope`,
   `request_not_allowed`, client-only codes) — `ProviderMessageResult` validates `code` against it.
+
+## Phase 2 — Task 4: checkpoint evidence
+
+Full gate green at Phase 2 completion:
+- `npm run lint` — 0 errors, 1 known `react-hooks/incompatible-library` warning (TanStack virtualizer).
+- `npm run typecheck` — clean.
+- `npm run test -- --run` — 67 files, 1767 tests, all pass (Phase 2 added 47 gate/consent + 40 client
+  tests; some gate tests were rewritten rather than net-new).
+- `npm run build` — clean; `check:manifest` OK; `check:bundle` OK.
+- `xvfb-run -a npm run test:e2e` — 11/11 pass.

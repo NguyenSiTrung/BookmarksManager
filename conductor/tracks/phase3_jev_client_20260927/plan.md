@@ -100,7 +100,7 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         message union and Options copy
   - [x] Implement
 
-- [ ] Task 4: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 4: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
 
 ## Phase 3: Typed question-set builder
 <!-- execution: sequential -->

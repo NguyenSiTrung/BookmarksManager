@@ -1,8 +1,8 @@
 {
-  "current_phase": "Phase 2: Scoped gate and hardened client",
-  "current_phase_index": 1,
-  "current_task_index": 1,
-  "completed_phases": ["Phase 1: Pure foundations"],
-  "last_updated": "2026-09-27T03:42:00Z",
+  "current_phase": "Phase 3: Typed question-set builder",
+  "current_phase_index": 2,
+  "current_task_index": 0,
+  "completed_phases": ["Phase 1: Pure foundations", "Phase 2: Scoped gate and hardened client"],
+  "last_updated": "2026-09-27T04:10:00Z",
   "status": "in_progress"
 }
