@@ -40,6 +40,42 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 14:28] - Phase 3 Task 3: Job queue
+- **Implemented:** `src/jobs/queue.ts` (enqueue, lifecycle transition table, per-job usage roll-up,
+  `jobChecks`, `computeTotalBatches`), `src/jobs/runner.ts` (`JobRunner` batch loop + `createPipelineAnalyzer`),
+  `src/jobs/estimate.ts` (pure `estimateJobCost` folding `estimateTokens`). The `jobs` row is the single
+  source of truth; progress/usage commit only after the batch's results are durable; pause/cancel observed
+  at batch boundaries; failures redacted to a code.
+- **Files changed:** `src/jobs/{queue,runner,estimate}.ts`, `tests/unit/jobs-{queue,runner}.test.ts`;
+  fix also `src/schemas/job.ts`.
+- **Commit:** `9b943ad` (worker `79045ae1`, wt/p4-p3t3 `57f405c`) + fix `60868e0` (wt/p4-p3t3-fix1 `449e416`);
+  review APPROVED_WITH_CONCERNS → 1 fix round → re-review ALL FINDINGS ADDRESSED.
+- **Learnings:**
+  - **Ruling — the resumption row must carry every parameter that affects slicing.** `batchSize` was not
+    persisted, so a resume with a different `batchSize` recomputed `totalBatches` and could mark a job
+    `completed` while skipping unprocessed bookmarks, or re-send a committed batch. Fix: persist
+    `batchSize` on the `Job` row (`src/schemas/job.ts`, `.default(DEFAULT_BATCH_SIZE)` so untouched
+    `satisfies z.input<typeof Job>` fixtures stay valid — a required field would have forced a 6th-file
+    fixture edit); the runner reads `job.batchSize` as authoritative and rejects a differing override
+    (`invalid_input`) fail-closed. General rule: anything that changes batch boundaries belongs in the row.
+  - **Ruling — a mid-batch failure must not race a pause/cancel into an `illegal_transition` throw.**
+    The `catch` re-reads the status and only marks `failed` when still `running`; otherwise it returns the
+    current row (`paused`/`canceled` wins). Keeps `run()`'s "throws only caller errors" contract.
+  - **Ruling — library_scan omitting near-duplicate is a real FR7 gap, not a Task 3 defect.** FR7 defines a
+    library scan as categorize + tags, misfiled, near-duplicate, but `jobChecks("library_scan")` returned
+    three checks and nothing in `src/` drives the `nearDuplicate` question set end-to-end. Near-duplicate is
+    inherently pairwise, which the per-bookmark batch loop cannot express, so it needs a second phase.
+    Filed `BookmarksManager-vl7` and added plan Task 3b.
+  - **Schema-add-without-migration:** adding a non-indexed field to a Dexie row type needs no `version()`
+    bump (only indexed fields appear in `stores()`); `.default()` materialises on the next write. A legacy
+    row predating the field would read as `undefined` — irrelevant here (no shipped DB) but backfill if ever.
+  - **Deferred minors:** `cursor` is accepted but never read/advanced (resumption is driven by
+    `committedBatches`); usage is written without `jobId` then `update`d by the runner (non-atomic orphan
+    risk on a crash); a mid-batch failure leaves partial decisions/usage (job is terminal, so harmless);
+    `estimateJobCost` is a token lower bound with no USD.
+
+---
+
 ## [2026-09-27 14:12] - Phase 3 Task 2: Rerank service
 - **Implemented:** `src/decisions/rerank.ts` — `rerankSearch({query,hits,preset,model,client?,transport?})`
   → `{sent:false;reason:"empty"|"blocklisted"} | {sent:true;model;results:{id,probability}[];noMatch;usage}`.

@@ -166,11 +166,22 @@ all behind a new per-provider bookmark-data consent.
        row per egress. Own RerankError (Task 4 mapper must key on .code). 16 tests. Deferred:
        usage-on-answer_mismatch (BookmarksManager-eov); tie-break test is characterization-only. -->
 
-- [ ] Task 3: Job queue
+- [x] Task 3: Job queue
   <!-- files: src/jobs/queue.ts, src/jobs/runner.ts, src/jobs/estimate.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts -->
-  - [ ] Failing tests: enqueue analyze-selection and library-scan jobs; batches persist progress; a simulated
+  - [x] Failing tests: enqueue analyze-selection and library-scan jobs; batches persist progress; a simulated
         worker restart resumes from the last committed batch without re-sending it; pause, resume, and
         cancel; the cost estimate comes from `estimateTokens`; per-job usage totals
+  - [x] Implement
+  <!-- landed 9b943ad + fix 60868e0 (1 fix round). `batchSize` is persisted on the Job row and is
+       authoritative on resume (a differing override fails closed). Mid-batch failure no longer throws
+       illegal_transition on a pause/cancel race. 29 jobs tests. Deferred minors: cursor semantics;
+       usage double-write; partial-batch writes; tokens-only estimate. -->
+
+- [ ] Task 3b: Near-duplicate scan for library_scan (closes the FR7 gap found in the Task 3 review)
+  <!-- files: src/decisions/duplicates.ts, src/jobs/queue.ts, src/jobs/runner.ts, tests/unit/decisions-duplicates.test.ts, tests/unit/jobs-runner.test.ts -->
+  - [ ] Failing tests: near-duplicate pairs each send one `jev_decisions` request (`{bookmark,pairPartner}`);
+        level→confidence maps to the §10.2 `merge_duplicates` band (review ≥ 0.5, never auto-apply);
+        blocklisted sides skipped; a `library_scan` job runs the pair phase and resumes without re-sending
   - [ ] Implement
 
 - [ ] Task 4: Worker messages and background wiring
