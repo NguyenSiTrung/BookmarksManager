@@ -140,6 +140,12 @@ describe("isSensitiveUrl — built-in list", () => {
     "https://myhealth.va.gov/",
     "https://healthy.kaiserpermanente.org/",
     "https://mail.aol.com/",
+    // Webmail front-door domains
+    "https://gmail.com/mail/u/0/",
+    "https://outlook.com/mail/",
+    "https://hotmail.com/",
+    "https://www.icloud.com/mail",
+    "https://aol.com/",
   ])("blocks sensitive site %j", (url) => {
     expect(isSensitiveUrl(url)).toBe(true);
   });
@@ -155,7 +161,8 @@ describe("isSensitiveUrl — built-in list", () => {
     "https://news.ycombinator.com/item?id=1",
     "https://github.com/user/repo",
     "http://8.8.8.8/dns",
-    "http://[2001:4860:4860::8888]/",
+    "http://[2001:4860:4860::8888]/", // public DNS, not Teredo/6to4/docs
+    "http://[2001:470::1]/", // public 6in4 tunnel address
     "https://chase.com.evil.net/", // look-alike suffix must not match
     "https://notpaypal.com/",
     "http://172.15.0.1/", // just outside 172.16.0.0/12
@@ -163,6 +170,9 @@ describe("isSensitiveUrl — built-in list", () => {
     "http://11.0.0.1/",
     "http://192.167.0.1/",
     "http://169.255.0.1/",
+    "http://192.0.1.1/", // just outside 192.0.0.0/24 and 192.0.2.0/24
+    "http://223.255.255.255/", // just below the multicast block
+    "http://192.169.0.1/", // just outside 192.168.0.0/16
   ])("does not block ordinary site %j", (url) => {
     expect(isSensitiveUrl(url)).toBe(false);
   });
@@ -193,6 +203,14 @@ describe("isSensitiveUrl — file, IP, and intranet rules", () => {
     "http://169.254.1.1/", // link-local
     "http://100.64.0.1/", // CGNAT
     "http://198.18.0.1/", // benchmarking range
+    "http://192.0.0.9/", // IETF protocol assignments 192.0.0.0/24
+    "http://192.0.2.1/", // RFC 5737 documentation
+    "http://198.51.100.1/", // RFC 5737 documentation
+    "http://203.0.113.1/", // RFC 5737 documentation
+    "http://224.0.0.1/", // multicast 224.0.0.0/4
+    "http://239.255.255.255/", // multicast upper bound
+    "http://240.0.0.1/", // reserved 240.0.0.0/4
+    "http://255.255.255.255/", // broadcast
   ])("blocks private/loopback IPv4 %j", (url) => {
     expect(isSensitiveUrl(url)).toBe(true);
   });
@@ -206,6 +224,12 @@ describe("isSensitiveUrl — file, IP, and intranet rules", () => {
     "http://[::ffff:127.0.0.1]/", // IPv4-mapped loopback
     "http://[::ffff:10.0.0.1]/", // IPv4-mapped private
     "http://[::ffff:c0a8:1]/", // IPv4-mapped 192.168.0.1
+    "http://[ff02::1]/", // multicast ff00::/8
+    "http://[2001:db8::1]/", // documentation 2001:db8::/32
+    "http://[2002::1]/", // 6to4 2002::/16
+    "http://[2002:c0a8:0101::1]/", // 6to4 wrapping 192.168.1.1
+    "http://[2001::1]/", // Teredo 2001::/32
+    "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/", // Teredo address
   ])("blocks private/loopback IPv6 %j", (url) => {
     expect(isSensitiveUrl(url)).toBe(true);
   });
@@ -234,9 +258,10 @@ describe("isSensitiveUrl — file, IP, and intranet rules", () => {
     "javascript:alert(1)",
     "data:text/html;base64,PGI+",
     "about:blank",
-    "chrome://extensions/",
+    "chrome://extensions/", // host "extensions" — caught by the dotless rule
+    "chrome-extension://abcdef/page.html",
     "blob:https://example.com/uuid",
-  ])("blocks hostless scheme %j", (url) => {
+  ])("blocks content-bearing or local scheme %j", (url) => {
     expect(isSensitiveUrl(url)).toBe(true);
   });
 
@@ -285,6 +310,43 @@ describe("isSensitiveUrl — user blocklist entries", () => {
   });
 });
 
+describe("isSensitiveUrl — opaque-scheme hosts are case-folded", () => {
+  // WHATWG lowercases hostnames only for special schemes; opaque-scheme hosts
+  // keep their raw spelling, so matching must fold case itself (regression:
+  // `foo://CHASE.COM/` used to fail open).
+  it.each([
+    "foo://CHASE.COM/",
+    "foo://Chase.Com/login",
+    "web+x://MYHOST.LOCAL/",
+    "foo://LOCALHOST/",
+    "foo://N A S/",
+    "foo://192.168.1.1/",
+    "foo://127.1/",
+    "foo://0x7f.1/", // opaque IPv4 shorthand must canonicalize too
+  ])("blocks opaque-scheme host %j", (url) => {
+    expect(isSensitiveUrl(url)).toBe(true);
+  });
+
+  it("still allows ordinary opaque-scheme hosts", () => {
+    expect(isSensitiveUrl("foo://EXAMPLE.COM/")).toBe(false);
+    expect(isSensitiveUrl("foo://example.com/path")).toBe(false);
+    expect(isSensitiveUrl("foo://tokio.rs/")).toBe(false);
+  });
+
+  it("matches a mixed-case user entry against a lowercase host", () => {
+    expect(normalizeBlocklistEntry("foo://MyCorp.IO")).toBe("mycorp.io");
+    expect(isSensitiveUrl("foo://mycorp.io/", ["MyCorp.IO"])).toBe(true);
+    expect(isSensitiveUrl("foo://MYCORP.IO/", ["mycorp.io"])).toBe(true);
+  });
+
+  it("round-trips a mixed-case entry through add then match", () => {
+    const entries = addBlocklistEntry([], "foo://MyCorp.IO");
+    expect(entries).toEqual(["mycorp.io"]);
+    expect(isSensitiveUrl("foo://mycorp.io/", entries)).toBe(true);
+    expect(isSensitiveUrl("https://mycorp.io/", entries)).toBe(true);
+  });
+});
+
 describe("BUILTIN_SENSITIVE_SITES", () => {
   it("is a frozen, non-empty list of lowercase host suffixes", () => {
     expect(Object.isFrozen(BUILTIN_SENSITIVE_SITES)).toBe(true);
@@ -308,6 +370,8 @@ describe("normalizeBlocklistEntry / add / remove", () => {
     ["[::1]", "::1"],
     ["::1", "::1"],
     ["::ffff:127.0.0.1", "::ffff:7f00:1"],
+    ["foo://MyCorp.IO", "mycorp.io"], // opaque-scheme host is case-folded
+    ["foo://B%C3%BCcher.de/", "xn--bcher-kva.de"], // …and percent-decoded/IDNA'd
   ])("normalizes %j to %j", (input, expected) => {
     expect(normalizeBlocklistEntry(input)).toBe(expected);
   });
@@ -377,6 +441,12 @@ describe("minimizeBookmark", () => {
     });
     expect(result?.title).toHaveLength(500);
     expect(SentBookmark.safeParse(result).success).toBe(true);
+  });
+
+  it("returns null when the cleaned URL exceeds the CleanedUrl bound", () => {
+    const url = `https://example.com/${"a".repeat(2_048)}`;
+    expect(url.length).toBeGreaterThan(2_048);
+    expect(minimizeBookmark({ title: "x", url })).toBeNull();
   });
 
   it.each([

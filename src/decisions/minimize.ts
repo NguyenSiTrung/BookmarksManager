@@ -22,6 +22,9 @@ import type { SentBookmark } from "../schemas/decision-state";
 /** Matches `SentBookmark.title`'s bound so minimized output always parses. */
 const TITLE_MAX = 500;
 
+/** Matches `CleanedUrl`'s bound so minimized output always parses. */
+const CLEANED_URL_MAX = 2_048;
+
 /**
  * Strip the parts of a URL that must never leave the device: query string,
  * fragment, and `user[:pass]@` credentials. Returns the canonical WHATWG
@@ -113,11 +116,15 @@ export const BUILTIN_SENSITIVE_SITES: readonly string[] = Object.freeze([
   "myuhc.com",
   "uhc.com",
   // Webmail
+  "aol.com",
   "fastmail.com",
+  "gmail.com",
   "gmx.com",
   "gmx.net",
   "hey.com",
+  "hotmail.com",
   "hushmail.com",
+  "icloud.com",
   "mail.aol.com",
   "mail.com",
   "mail.google.com",
@@ -127,6 +134,7 @@ export const BUILTIN_SENSITIVE_SITES: readonly string[] = Object.freeze([
   "mail.yandex.ru",
   "mail.zoho.com",
   "mailfence.com",
+  "outlook.com",
   "outlook.live.com",
   "outlook.office.com",
   "proton.me",
@@ -155,13 +163,50 @@ const INTRANET_SUFFIXES: readonly string[] = [
   "test",
 ];
 
-/** Canonical compare form for a hostname: unbracketed IPv6, no trailing dot. */
+/**
+ * WHATWG "special" schemes — only these get canonical (lowercased, IDNA,
+ * IPv4-normalized) hostnames from the URL parser. Everything else has an
+ * opaque host that keeps its raw spelling.
+ */
+const SPECIAL_SCHEMES: ReadonlySet<string> = new Set([
+  "ftp:",
+  "file:",
+  "http:",
+  "https:",
+  "ws:",
+  "wss:",
+]);
+
+/** Canonical compare form for a hostname: unbracketed IPv6, no trailing
+ * dot, lowercased (DNS matching is case-insensitive). */
 function canonicalHost(hostname: string): string {
   let host = hostname;
   if (host.startsWith("[") && host.endsWith("]")) {
     host = host.slice(1, -1);
   }
-  return host.replace(/\.+$/, "");
+  return host.replace(/\.+$/, "").toLowerCase();
+}
+
+/**
+ * Canonical compare form for `url.hostname`. Special-scheme hostnames are
+ * already canonical; opaque-scheme hosts keep case, percent-escapes, and
+ * IPv4 shorthand verbatim (`foo://0x7f.1/`, `foo://Bücher.de/`), so they are
+ * re-canonicalized through a `https://` parse — percent-decoding first — and
+ * the raw spelling is kept only when that fails.
+ */
+function canonicalUrlHost(url: URL): string {
+  let host = url.hostname;
+  if (host !== "" && !SPECIAL_SCHEMES.has(url.protocol)) {
+    try {
+      if (host.includes("%")) {
+        host = decodeURIComponent(host);
+      }
+      host = new URL(`https://${host}`).hostname;
+    } catch {
+      // keep the raw opaque form — matching below just won't find it
+    }
+  }
+  return canonicalHost(host);
 }
 
 /**
@@ -184,7 +229,7 @@ export function normalizeBlocklistEntry(raw: string): string | null {
   let hostname: string;
   try {
     if (text.includes("://")) {
-      hostname = new URL(text).hostname;
+      hostname = canonicalUrlHost(new URL(text));
     } else {
       if (/[\s/?#@]/.test(text)) {
         return null;
@@ -236,9 +281,12 @@ function parseIpv4(host: string): [number, number, number, number] | null {
 /**
  * Private or non-routable IPv4: 0/8 (this network), 10/8, 172.16/12,
  * 192.168/16 (RFC 1918), 127/8 (loopback), 169.254/16 (link-local),
- * 100.64/10 (CGNAT), 198.18/15 (benchmarking).
+ * 100.64/10 (CGNAT), 198.18/15 (benchmarking), 192.0.0.0/24 (IETF protocol
+ * assignments), 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (RFC 5737
+ * documentation ranges), and 224.0.0.0/4 + 240.0.0.0/4 (multicast and
+ * reserved, including 255.255.255.255 broadcast).
  */
-function isPrivateIpv4([a, b]: readonly [
+function isPrivateIpv4([a, b, c]: readonly [
   number,
   number,
   number,
@@ -250,9 +298,13 @@ function isPrivateIpv4([a, b]: readonly [
     a === 127 ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
     (a === 192 && b === 168) ||
     (a === 100 && b >= 64 && b <= 127) ||
-    (a === 198 && (b === 18 || b === 19))
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
   );
 }
 
@@ -325,7 +377,10 @@ function parseIpv6(address: string): Ipv6Groups | null {
  * Private or non-routable IPv6: `::` (unspecified) and `::1` (loopback),
  * `::ffff:0:0/96` IPv4-mapped and deprecated `::/96` IPv4-compatible (both
  * defer to the embedded address's IPv4 rules), NAT64 `64:ff9b::/96` ditto,
- * `fc00::/7` (ULA), `fe80::/10` and `fec0::/10` (link-local / site-local).
+ * `fc00::/7` (ULA), `fe80::/10` and `fec0::/10` (link-local / site-local),
+ * `ff00::/8` (multicast), `2001:db8::/32` (documentation), `2002::/16` (6to4)
+ * and `2001::/32` (Teredo) — the transition mechanisms embed a possibly-
+ * private IPv4 inside a public-looking address.
  */
 function isPrivateIpv6(g: Ipv6Groups): boolean {
   const embeddedV4 = (): [number, number, number, number] => [
@@ -348,6 +403,10 @@ function isPrivateIpv6(g: Ipv6Groups): boolean {
     return isPrivateIpv4(embeddedV4());
   }
   return (
+    (g[0] & 0xff00) === 0xff00 ||
+    (g[0] === 0x2001 && g[1] === 0) ||
+    (g[0] === 0x2001 && g[1] === 0x0db8) ||
+    g[0] === 0x2002 ||
     (g[0] & 0xfe00) === 0xfc00 ||
     (g[0] & 0xffc0) === 0xfe80 ||
     (g[0] & 0xffc0) === 0xfec0
@@ -374,10 +433,12 @@ export function isSensitiveUrl(
     return true;
   }
 
-  const host = canonicalHost(url.hostname);
+  const host = canonicalUrlHost(url);
   if (host === "") {
     // Hostless opaque schemes — mailto:, data:, javascript:, about:,
-    // chrome:, blob:, … — carry content or local targets, never a site.
+    // blob:, … — carry content or local targets, never a site. (Schemes
+    // that DO carry a bare host, like chrome://extensions/, are caught by
+    // the dotless-host rule below.)
     return true;
   }
 
@@ -461,7 +522,11 @@ export function minimizeBookmark(
   userBlocklist?: readonly string[],
 ): SentBookmark | null {
   const cleaned = cleanUrl(input.url);
-  if (cleaned === null || isSensitiveUrl(cleaned, userBlocklist)) {
+  if (
+    cleaned === null ||
+    cleaned.length > CLEANED_URL_MAX ||
+    isSensitiveUrl(cleaned, userBlocklist)
+  ) {
     return null;
   }
   // Unreachable today — isSensitiveUrl already rejected hostless schemes —

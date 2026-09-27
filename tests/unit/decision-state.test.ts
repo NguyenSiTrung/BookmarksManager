@@ -71,6 +71,12 @@ describe("CleanedUrl", () => {
     ["non-URL text", "not a url"],
     ["empty string", ""],
     ["query on a non-hierarchical scheme", "data:text/plain,x?y=1"],
+    ["literal tab (parser silently strips it)", "https://exa\tmple.com/"],
+    ["literal newline", "https://example.com/\n"],
+    ["literal carriage return", "https://example.com/\r"],
+    ["literal space in the path", "https://example.com/a b"],
+    ["literal NUL", "https://example.com/\u0000"],
+    ["literal DEL", "https://example.com/\u007f"],
   ])("rejects %s %j", (_label, url) => {
     expect(CleanedUrl.safeParse(url).success).toBe(false);
   });
@@ -262,6 +268,36 @@ describe("DecisionState", () => {
     );
     expect(
       CandidateFolder.safeParse({ id: "f", path: ["a"], notes: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("bounds candidate folder ids and path segments", () => {
+    expect(
+      CandidateFolder.safeParse({ id: "f".repeat(64), path: ["a"] }).success,
+    ).toBe(true);
+    expect(
+      CandidateFolder.safeParse({ id: "f".repeat(65), path: ["a"] }).success,
+    ).toBe(false);
+    expect(
+      CandidateFolder.safeParse({ id: "f", path: ["a".repeat(255)] }).success,
+    ).toBe(true);
+    expect(
+      CandidateFolder.safeParse({ id: "f", path: ["a".repeat(256)] }).success,
+    ).toBe(false);
+  });
+
+  it("bounds folderPath segments", () => {
+    expect(
+      DecisionState.safeParse({
+        bookmark: validBookmark,
+        folderPath: ["a".repeat(255)],
+      }).success,
+    ).toBe(true);
+    expect(
+      DecisionState.safeParse({
+        bookmark: validBookmark,
+        folderPath: ["a".repeat(256)],
+      }).success,
     ).toBe(false);
   });
 

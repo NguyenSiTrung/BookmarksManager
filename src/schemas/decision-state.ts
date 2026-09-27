@@ -20,7 +20,15 @@ import { z } from "./z";
  * as an absolute URL and carries no query string, no fragment, and no
  * `user[:pass]@` credentials — not even a bare trailing `?` or `#` (the
  * WHATWG parser records an empty `search`/`hash` for those spellings, so the
- * raw-string check rejects them).
+ * raw-string check rejects them). Literal ASCII whitespace/control bytes are
+ * also refused up front — the URL parser silently strips tab/newline, which
+ * would otherwise let `https://exa\tmple.com/` pass verbatim.
+ *
+ * Note the contract is *semantic* cleanliness, not byte-canonical form:
+ * `https://example.com` (no trailing slash) and `HTTPS://EXAMPLE.COM/x` are
+ * accepted because they carry no query/fragment/userinfo — `cleanUrl` always
+ * emits the canonical serialization, but the gate must refuse only dirty
+ * URLs, not unfamiliar spellings.
  */
 export const CleanedUrl = z
   .string()
@@ -28,7 +36,7 @@ export const CleanedUrl = z
   .max(2_048)
   .refine(
     (value) => {
-      if (/[?#]/.test(value)) {
+      if (/[?#]/.test(value) || /[\x00-\x20\x7f]/.test(value)) {
         return false;
       }
       // `.refine` still runs when an earlier check fails (Zod 4), so the
@@ -100,8 +108,8 @@ export type CandidateTag = z.infer<typeof CandidateTag>;
  * shown as the option's description (root-to-self order).
  */
 export const CandidateFolder = z.strictObject({
-  id: z.string().min(1),
-  path: z.array(z.string()).min(1).max(64),
+  id: z.string().min(1).max(64),
+  path: z.array(z.string().max(255)).min(1).max(64),
 });
 export type CandidateFolder = z.infer<typeof CandidateFolder>;
 
@@ -117,7 +125,7 @@ export type CandidateFolder = z.infer<typeof CandidateFolder>;
 export const DecisionState = z
   .strictObject({
     bookmark: SentBookmark.optional(),
-    folderPath: z.array(z.string()).max(64).optional(), // [] = lives at root
+    folderPath: z.array(z.string().max(255)).max(64).optional(), // [] = root
     candidateTags: z.array(CandidateTag).max(30).optional(),
     candidateFolders: z.array(CandidateFolder).max(50).optional(),
     candidateBookmarks: z.array(SentBookmark).max(30).optional(),
