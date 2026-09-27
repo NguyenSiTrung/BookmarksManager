@@ -96,37 +96,49 @@ all behind a new per-provider bookmark-data consent.
 <!-- execution: sequential -->
 <!-- depends: phase1 -->
 
-- [ ] Task 1: `jev_decisions` consent scope, `CONSENT_VERSION` 2, and store disclosures
+- [x] Task 1: `jev_decisions` consent scope, `CONSENT_VERSION` 2, and store disclosures — `2f1456c` + `e9f4a6a` + fix `3c17af0` (worker `wt/p4-p2t1`); review Approved after 1 fix round
   <!-- files: src/schemas/provider.ts, src/consent/records.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md, store/permissions.md, store/listing.md, store/reviewer-notes.md, tests/unit/consent.test.ts, tests/unit/consent-snapshot.test.ts -->
-  - [ ] Failing tests: grant/revoke/has per `(scope, origin)`; v1 records read as stale for both scopes;
+  - [x] Failing tests: grant/revoke/has per `(scope, origin)`; v1 records read as stale for both scopes;
         revoke removes both scopes; the disclosure constants list the exact `DecisionState` fields and
         triggers; the consent snapshot test fails when sent fields change without a version bump and
         matching `store/` text
-  - [ ] Implement; update the `store/` docs nearly verbatim from the disclosure constants
+  - [x] Implement; update the `store/` docs nearly verbatim from the disclosure constants
+  - Sanctioned cross-file edits: `src/net/send.ts` fail-closed `jev_decisions` placeholder (replaced by
+    Task 2); `src/messages/provider.ts` revoke/unwind via `revokeProviderConsents`; `tests/e2e/provider.spec.ts`
+    + `tests/unit/schemas.test.ts` consent-version literals
 
-- [ ] Task 2: Gate registration and strict state guard
+- [x] Task 2: Gate registration and strict state guard — `045391a` + fix `0abeebb` (worker `wt/p4-p2t2`); review Approved after 1 fix round
   <!-- files: src/net/send.ts, tests/unit/network-gate.test.ts -->
-  - [ ] Failing tests: `jev_decisions` admits only `DecisionState`-conforming requests; it refuses unknown
+  - [x] Failing tests: `jev_decisions` admits only `DecisionState`-conforming requests; it refuses unknown
         fields, dirty URLs, and blocklisted URLs with `request_not_allowed` before any consent, permission,
         or key read (spy counts); `jev_test` behavior is unchanged; `sentLog.feature` records the scope
-  - [ ] Implement
+  - [x] Implement
 
-- [ ] Task 3: Dexie v3 — `jobs`, `audit`, `usage`
+- [x] Task 3: Dexie v3 — `jobs`, `audit`, `usage` — `2552cb0` (worker `wt/p4-p2t3`); review Approved
   <!-- files: src/db/database.ts, src/schemas/job.ts, src/schemas/audit.ts, src/schemas/usage.ts, tests/unit/database-v3.test.ts, tests/fixtures/phase4.ts -->
-  - [ ] Failing tests: a genuine v2 → v3 migration preserves rows; valid/invalid fixtures per new schema;
+  - [x] Failing tests: a genuine v2 → v3 migration preserves rows; valid/invalid fixtures per new schema;
         delete-all still wipes the new tables; update the existing verno/table-list assertions in the same
         commit
-  - [ ] Implement
+  - [x] Implement
+  - Canonical names for downstream tasks: `JobKind` = `"analyze_selection" | "library_scan"` (snake_case,
+    matching `Decision` kinds); indexes `jobs: "id,status,createdAt"`, `audit: "++id,decisionId,changedAt"`,
+    `usage: "++id,jobId,recordedAt"`; audit timestamp `changedAt`, usage timestamp `recordedAt`
 
-- [ ] Task 4: Decision store, apply, and audit
+- [x] Task 4: Decision store, apply, and audit — `f776738` + fix `7026979` (worker `wt/p4-p2t4`); review Approved after 1 fix round
   <!-- files: src/decisions/store.ts, src/decisions/apply.ts, tests/unit/decisions-store.test.ts, tests/unit/decisions-apply.test.ts -->
-  - [ ] Failing tests: persist/list/pending queries; approve applies through tag ops, category ops, `moveNode`,
+  - [x] Failing tests: persist/list/pending queries; approve applies through tag ops, category ops, `moveNode`,
         or the duplicate merge, each with an undo snapshot; reject/revert transitions; an illegal transition
         is refused; bulk approve is per-row atomic; every transition writes one audit row with no content;
         a stale decision (bookmark gone or moved since) is refused
-  - [ ] Implement
+  - [x] Implement
+  - Ruling: `mark_dead`/`create_folder`/`rename` refused `unsupported` is correct (spec Out-of-Scope: 1.1 /
+    Phase 5); documented in the module header. Apply↔status atomicity closed via id-targeted compensating undo
+    + typed `state_unrecorded`.
 
-- [ ] Task 5: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 5: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
+  - Gate (main @ `7026979`): lint 0 errors (1 pre-existing TanStack warning) · typecheck clean ·
+    `npx vitest run` **77 files / 2260 tests pass** (+127 vs Phase 1) · build 1.10 MB ·
+    `check:manifest` OK · `check:bundle` OK · `xvfb-run -a npm run test:e2e` **13/13 pass**
 
 ## Phase 3: Worker pipeline
 <!-- execution: sequential -->

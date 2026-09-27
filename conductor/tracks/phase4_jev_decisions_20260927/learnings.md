@@ -40,6 +40,102 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 13:40] - Phase 2 Task 5: Automated checkpoint — FULL GATE GREEN
+- **Gate evidence (main @ `7026979`):** `npm run lint` 0 errors (1 known warning) · `npm run typecheck`
+  clean · `npx vitest run` **77 files / 2260 tests, all pass** (+127 vs Phase 1's 2133) · `npm run build`
+  1.10 MB · `check:manifest` OK · `check:bundle` OK · `xvfb-run -a npm run test:e2e` **13/13 pass**.
+- **Note:** the `search-perf.test.ts` wall-clock gate flaked under parallel worker load (workers reported
+  1–2 failures) but passes in the serialized full run — treat its failures as load artifacts, not
+  regressions, unless they reproduce in isolation.
+---
+
+## [2026-09-27 13:35] - Phase 2 Task 4: Decision store, apply, and audit
+- **Implemented:** `src/decisions/store.ts` (`persistDecision`/`listDecisions`/`listPending`/
+  `transitionStatus` — the single audit writer, in one tx with the status write; `DecisionRow` = §7
+  `Decision` + additive `guard`/`undoSnapshotId` sidecars) and `src/decisions/apply.ts` (approve/reject/
+  revert/bulk approve through `bulkAddTag`/`bulkSetCategory`/`moveNode`/`mergeGroup`, each with an undo
+  snapshot; stale + illegal-transition refusals; id-targeted compensating undo on status-write failure).
+- **Files changed:** `src/decisions/store.ts`, `src/decisions/apply.ts`, both unit test files
+- **Commit:** `f776738` + fix `7026979` (worker `wt/p4-p2t4`; review: Approved, 1 fix round)
+- **Learnings:**
+  - Patterns: the §7 `Decision` schema records no placement, so a `guard` sidecar (bookmark id →
+    decision-time `parentId`) is the only way to detect "moved since" — and because `db.decisions` stores
+    raw objects with no read-side parse, sidecars survive (a plain `z.object` would strip them on parse).
+    One transactional `transitionStatus` primitive is the only audit writer, so "exactly one content-free
+    audit row per change" is structural.
+  - Gotchas: **mutation and status/audit write are separate transactions** (services open their own) — a
+    failed status write could orphan an applied change; fix is an id-targeted compensating undo + typed
+    `state_unrecorded`. A true single IDB transaction is unsafe here (awaiting non-Dexie async auto-commits
+    it). `rollback()` must `discardById` the pushed snapshot, never `undoLatest`.
+  - Ruling: `mark_dead`/`create_folder`/`rename` are intentionally `unsupported` (spec Out-of-Scope:
+    1.1 / Phase 5) — documented in the module header, not an oversight.
+---
+
+## [2026-09-27 13:20] - Phase 2 Task 3: Dexie v3 — jobs, audit, usage
+
+- **Implemented:** `version(3)` adds `jobs` (`id,status,createdAt`), `audit` (`++id,decisionId,changedAt`),
+  `usage` (`++id,jobId,recordedAt`) + Zod schemas (`src/schemas/{job,audit,usage}.ts`) + `tests/fixtures/phase4.ts`
+  + a genuine v2→v3 migration test; delete-all coverage asserted via `indexedDB.databases()` absence.
+- **Files changed:** `src/db/database.ts`, `src/schemas/{job,audit,usage}.ts`, `tests/unit/database-v3.test.ts`,
+  `tests/fixtures/phase4.ts` (+ verno assertions in `database.test.ts` / `database-v2.test.ts`)
+- **Commit:** `2552cb0` (worker `wt/p4-p2t3`; review: Approved)
+- **Learnings:**
+  - Ruling: canonical `JobKind` literals are **snake_case** (`analyze_selection`, `library_scan`) — matches
+    the `Decision` kind convention (`set_category`, `add_tags`). Downstream job/UI tasks must use these.
+    Audit timestamp is `changedAt`; usage timestamp is `recordedAt` (downstream must use these names).
+  - Patterns: derive `DecisionStatus` from `Decision.options[0].shape.status` rather than duplicating the
+    union (the `Decision` union's options are a tuple type, so `options[0]` typechecks under
+    `noUncheckedIndexedAccess`). `audit` is `strictObject` and a negative fixture proves bookmark content
+    is rejected.
+  - Gotchas: a "delete-all wipes the new tables" test must assert each new table's rows existed before the
+    wipe (this task only asserted `jobs`). `cursor: undefined` in a fixture violates the conditional-spread
+    convention even though the repo tsconfig does not enable `exactOptionalPropertyTypes`.
+---
+
+## [2026-09-27 13:10] - Phase 2 Task 2: Gate registration and strict state guard
+
+- **Implemented:** replaced the fail-closed `jev_decisions` placeholder in `src/net/send.ts` with
+  `admitsDecisionState(request, model)` — pins `request.model === model` first, then strict-parses
+  `request.state` against `DecisionState`, then `isSensitiveUrl` over every URL field
+  (`decisionStateUrls` covers bookmark/pairPartner/candidateBookmarks). `request_not_allowed` before any
+  consent/permission/key read. 44 network-gate tests.
+- **Files changed:** `src/net/send.ts`, `tests/unit/network-gate.test.ts`
+- **Commit:** `045391a` + fix `0abeebb` (worker `wt/p4-p2t2`; review: 1 fix round)
+- **Learnings:**
+  - Gotchas: **the gate validated the `model` ARGUMENT against the preset allowlist but serialized
+    `request.model`** — for `jev_test` the deep-equal guard pinned them, so the gap was invisible until a
+    new scope reused the gate. Any scope guard must pin the body's model to the vetted argument, or the
+    documented allowlist stage is decorative. `SystemOneRequest.model` is a bare `z.string()` (no `.min(1)`).
+  - Patterns: guards are total and fail closed (non-object request, missing `state`, empty `{}` → refused).
+    Prove guard-before-sensitive-reads by asserting the *error code* (`request_not_allowed`, not
+    `no_consent`) plus `containsSpy`/`readKey`/`fetchSpy` call counts.
+  - Ruling: top-level unknown request keys are stripped (wire parse stays non-strict), not rejected — FR1's
+    "refuses unknown fields" is state-scoped and stripped keys never leave the device.
+---
+
+## [2026-09-27 13:00] - Phase 2 Task 1: jev_decisions consent scope, CONSENT_VERSION 2, store disclosures
+
+- **Implemented:** `src/schemas/provider.ts` (`CONSENT_SCOPES` union + `ConsentScope`), `records.ts`
+  (`revokeProviderConsents` deleting every scope via `allSettled` + typed `ConsentRevokeError`),
+  `disclosure.ts` (typed decisions sent/never-sent/purpose/trigger constants), the five `store/*.md` docs,
+  and `tests/unit/consent-snapshot.test.ts` (§13.12 tripwire binding sent fields to `CONSENT_VERSION`).
+- **Files changed:** provider schema, consent records/disclosure, 5 store docs, consent tests (+ sanctioned
+  edits to `src/net/send.ts` placeholder, `src/messages/provider.ts` revoke routing, e2e/unit version literals)
+- **Commit:** `2f1456c` + `e9f4a6a` + fix `3c17af0` (worker `wt/p4-p2t1`; review: 1 fix round)
+- **Learnings:**
+  - Gotchas: **bumping `CONSENT_VERSION` breaks every test that hard-codes the old literal** — including
+    e2e specs outside the task's owned files. Grep for `consentVersion` across `tests/` in the same task.
+    Widening `ConsentScope` breaks `src/net/send.ts`'s `satisfies Record<ConsentScope, …>` — a fail-closed
+    placeholder keeps the tree compiling until the real guard lands.
+  - Patterns: derive revoke/iterate from `CONSENT_SCOPES` so future scopes are auto-covered; the consent
+    snapshot test derives the field list from `DecisionState.shape` + disclosure constants so it can't
+    silently miss a field.
+  - Doc-drift discipline: §13.4 classifies bookmark title/URL/domain as **Web history** — the
+    privacy-practices "Not collected" list must not still name web history once jev_decisions ships.
+    Reviewer notes must not describe the strict guard as shipped while it is still a placeholder.
+---
+
+
 ## [2026-09-27 12:40] - Phase 1 Task 5: Automated checkpoint — FULL GATE GREEN
 - **Gate evidence (main @ `696c5e3`):** `npm run lint` 0 errors (1 known `react-hooks/incompatible-library`
   warning on the TanStack virtualizer call) · `npm run typecheck` clean · `npx vitest run` **73 files /
