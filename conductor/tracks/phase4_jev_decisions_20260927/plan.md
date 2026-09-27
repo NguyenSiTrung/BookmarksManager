@@ -144,13 +144,16 @@ all behind a new per-provider bookmark-data consent.
 <!-- execution: sequential -->
 <!-- depends: phase2 -->
 
-- [ ] Task 1: Analyze pipeline
+- [x] Task 1: Analyze pipeline
   <!-- files: src/decisions/pipeline.ts, tests/unit/decisions-pipeline.test.ts -->
-  - [ ] Failing tests against the mock Jev server: minimize → candidates → question sets → client
+  - [x] Failing tests against the mock Jev server: minimize → candidates → question sets → client
         (`jev_decisions`) → answer-ID check → policy → persisted decisions and usage; blocklisted bookmarks
         are skipped and never sent; auto-apply happens only with the toggle on; `source.model` comes from
         the response; typed failures are surfaced without content
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed f198780 + fix 64b6df3 (1 fix round). Auto-apply now records `auto_applied` via a
+       parameterized `approveDecision(id, actor, target)`; usage is recorded before persist (FR8);
+       `analyzeBookmark` wraps all throws through `toPipelineError`. 13 pipeline tests. -->
 
 - [ ] Task 2: Rerank service
   <!-- files: src/decisions/rerank.ts, tests/unit/decisions-rerank.test.ts -->

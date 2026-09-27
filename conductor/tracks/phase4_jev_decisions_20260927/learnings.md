@@ -40,6 +40,39 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 14:00] - Phase 3 Task 1: Analyze pipeline
+- **Implemented:** `src/decisions/pipeline.ts` — `analyzeBookmark(options)` orchestrates one bookmark:
+  minimize → candidates → question sets → `jev_decisions` client → answer-ID cross-check → §10.2 policy →
+  persist `Decision` rows + one `usage` row. All requested checks merge into ONE request/`DecisionState`
+  (§9.1 "one request, many questions"); one usage row per call.
+- **Files changed:** `src/decisions/pipeline.ts`, `tests/unit/decisions-pipeline.test.ts`
+- **Commit:** `f198780` (worker `079605c6`, wt/p4-p3t1 `201476a`) + fix `64b6df3` (wt/p4-p3t1-fix1 `035430c`);
+  review APPROVED_WITH_CONCERNS → 1 fix round → re-review ALL FINDINGS ADDRESSED.
+- **Learnings:**
+  - **Ruling — auto-apply status is `auto_applied`, not `applied`.** The schema, `store.ts`'s
+    `LEGAL_TRANSITIONS` (`pending → auto_applied`), the store test, and the `policyAuditEvent` fixture all
+    define policy-driven auto-apply as `pending → auto_applied` with `actor:"policy"`. `approveDecision`
+    hard-coded `applied`, so the dedicated transition was dead and status-based auto-applied queries were
+    impossible. Fix: `approveDecision(id, actor = "user", target: "applied"|"auto_applied" = "applied")`
+    (default preserves `bulkApprove`/user callers); the pipeline passes `"auto_applied"`. Downstream UI/
+    audit must key on this status, not on `actor`.
+  - **Record the `usage` row before persisting decisions.** The request has already left the device (cost
+    incurred) by the time persistence runs; a persist/apply failure must not drop per-request cost
+    accounting (FR8). But the FR2 answer-ID cross-check still runs FIRST, so an `answer_mismatch` writes
+    zero usage rows.
+  - **Wrap the orchestration entry point in `toPipelineError`.** Task builders throw raw `TypeError`s and
+    `mergeStates`/`DecisionState.parse` throw raw `ZodError` (whose `issues` can embed state values).
+    A single outer try/catch keeps the "typed, redacted" contract and never attaches `cause`/state.
+  - **Pattern — answer-ID validation is an independent value-level guard.** The client only type-checks
+    answers; `crossCheckAnswers` re-validates raw answers against the candidates actually sent (category ∈
+    sent `Category` values, folder choice ∈ sent ids ∪ `none`, every sent tag field answered `noul`).
+  - **Deferred minor:** the pipeline's hardcoded `TAG_THRESHOLD = 0.5` duplicates the `tags` task's noul
+    threshold; source it from the field if the task threshold ever changes.
+  - **Unit-level gap (expected):** the pipeline tests inject a transport that bypasses the gate, so
+    one-sentLog-row-per-egress is NOT exercised here — it belongs to the Phase 5 e2e.
+
+---
+
 ## [2026-09-27 13:40] - Phase 2 Task 5: Automated checkpoint — FULL GATE GREEN
 - **Gate evidence (main @ `7026979`):** `npm run lint` 0 errors (1 known warning) · `npm run typecheck`
   clean · `npx vitest run` **77 files / 2260 tests, all pass** (+127 vs Phase 1's 2133) · `npm run build`
