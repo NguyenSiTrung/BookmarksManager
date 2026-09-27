@@ -35,8 +35,33 @@ export const ProviderSettings = z
   });
 export type ProviderSettings = z.infer<typeof ProviderSettings>;
 
-/** The only consent scope this slice can grant: the synthetic Jev test call. */
+/**
+ * The synthetic Jev test-connection scope: a fixed probe that carries no
+ * bookmark content. Kept as its own scope so the `jev_test` guard can stay
+ * synthetic-only even after bookmark data starts flowing.
+ */
 export const CONSENT_SCOPE = "jev_test" as const;
+
+/**
+ * The per-provider bookmark-metadata consent scope (FR1). It covers every
+ * Phase 4 decision feature (categorize, tags, folder pre-select,
+ * near-duplicates, misfiled scan, search re-rank) under one grant per
+ * provider origin.
+ */
+export const DECISIONS_CONSENT_SCOPE = "jev_decisions" as const;
+
+/**
+ * Every consent scope this extension can hold, in a stable order. Scope
+ * unions are derived from this tuple so a new scope is added in exactly one
+ * place and every consumer (the `ConsentRecord` literal, the `SCOPES`
+ * registry in `src/net/send.ts`, and the `store/` disclosures) fails to
+ * compile until it is handled.
+ */
+export const CONSENT_SCOPES = [CONSENT_SCOPE, DECISIONS_CONSENT_SCOPE] as const;
+
+/** The union of every registered consent scope. */
+export const ConsentScope = z.enum([CONSENT_SCOPE, DECISIONS_CONSENT_SCOPE]);
+export type ConsentScope = z.infer<typeof ConsentScope>;
 
 /**
  * A canonical HTTPS origin such as "https://api.typesafe.ai" — no path,
@@ -56,7 +81,7 @@ const HttpsOrigin = z
   }, "origin must be a canonical https:// origin without path, query, or trailing slash");
 
 export const ConsentRecord = z.object({
-  scope: z.literal(CONSENT_SCOPE),
+  scope: ConsentScope,
   origin: HttpsOrigin,
   consentVersion: z.number().int().positive(),
   acceptedAt: z.iso.datetime(),

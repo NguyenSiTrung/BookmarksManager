@@ -25,11 +25,12 @@ previous slice:
   detection with keep-one merge.
 - Site icons through Chrome's built-in `_favicon` renderer.
 - "Delete all extension data".
-- An optional, consent-gated Test connection for the Jev AI providers TypeSafe
-  and OpenRouter.
+- An optional, consent-gated Jev provider flow: a synthetic Test connection
+  for TypeSafe and OpenRouter, plus a separate per-provider bookmark-data
+  consent (`jev_decisions`) for categorize, tag, folder pre-select,
+  near-duplicate, misfiled-scan, and Ask search decisions.
 
-Not in this release: the AI review queue, the link checker, cloud sync, and
-accounts.
+Not in this release: the link checker, cloud sync, and accounts.
 
 ## Testing without an API key
 
@@ -143,9 +144,39 @@ needs a real provider key:
   connection button is not available and no request can be made — the gate
   re-checks consent and permission before every send.
 - Revoking removes consent and the host permission (with an option to delete
-  the stored key) and stops all further requests.
+  the stored key) and stops all further requests. Revoking deletes every
+  consent scope the provider holds — the synthetic `jev_test` grant and the
+  bookmark-data `jev_decisions` grant.
 - _A temporary low-credit test key can be supplied at submission time and
   revoked after review — decide at release._
+
+## Testing bookmark decisions
+
+The bookmark-data flow is shipped behind a separate, per-provider
+`jev_decisions` consent; exercising it end to end needs a real provider key:
+
+- Open the options page → the provider's decisions consent screen. The
+  disclosure names the exact fields sent — the bookmark title, cleaned URL,
+  domain, and folder path; tag names and descriptions; candidate folder
+  paths; candidate bookmarks; the near-duplicate partner; and the Ask search
+  query — and states plainly that notes and page text are never sent. It
+  names the recipient and its literal origin
+  (`https://api.typesafe.ai` or `https://openrouter.ai`), the purpose
+  (categorize, tag, folder pre-select, near-duplicate check, misfiled scan,
+  search re-rank), the triggers (saving a bookmark, clicking Analyze,
+  starting a library scan, running an Ask search — user-started only, never
+  on install, on a timer, or in the background), and links the provider's
+  privacy policy and this extension's privacy policy.
+- The agree checkbox starts unchecked and Enable is a separate action. The
+  consent is versioned (`consentVersion`, currently 2); a stale v1 record
+  re-shows the disclosure before the next request.
+- Once consented, a decision request is sent only on a user-started action
+  and only to the chosen origin's System One endpoint over HTTPS with
+  `Authorization: Bearer <key>` — cookies omitted, redirects refused. No
+  request carries notes, query strings, fragments, userinfo, or blocklisted
+  URLs.
+- Revoking the provider deletes every `jev_decisions` grant for its origin,
+  removes its host permission, and offers to delete the stored key.
 
 ## Compliance checks in this repo
 
@@ -165,18 +196,20 @@ needs a real provider key:
 
 ## Notes
 
-- Consent records carry a `consentVersion` field under the `jev_test` scope
-  (`CONSENT_SCOPE`, `src/schemas/provider.ts`; currently version 1); the
-  design increases the version and re-shows the disclosure whenever sent
-  fields or recipients change, and stale-version grants fail the gate.
+- Consent records carry a `consentVersion` field per `(scope, origin)` —
+  the synthetic `jev_test` scope and the bookmark-data `jev_decisions` scope
+  (`CONSENT_SCOPE` / `DECISIONS_CONSENT_SCOPE`, `src/schemas/provider.ts`;
+  currently version 2). The design increases the version and re-shows the
+  disclosure whenever sent fields or recipients change, and stale-version
+  grants of either scope fail the gate.
 - API keys are stored encrypted at rest — an AES-GCM ciphertext envelope in
   `chrome.storage.local` with the non-extractable CryptoKey held in
   IndexedDB — and are never logged, exported, or shown in full; Options
   displays only a masked last-four hint.
 - A local data-sent log records metadata only for each request — time,
-  destination origin, feature `jev_test`, and the top-level field names
-  (`model`, `state`, `questions`) — never request contents, headers, keys,
-  or bookmark data.
+  destination origin, feature (the consent scope, `jev_test` or
+  `jev_decisions`), and the top-level field names sent — never request
+  contents, headers, keys, or bookmark data.
 - Bookmark metadata (tags, category, notes) and undo snapshots live only in
   the extension's IndexedDB, keyed by Chrome bookmark id; the native bookmark
   tree is the source of truth and "Delete all extension data" never touches

@@ -34,13 +34,14 @@ settings or from the provider's Revoke action in Options.
 
 | Pattern | Level | Used for |
 |---|---|---|
-| `https://api.typesafe.ai/*` | optional | Jev test connection to the TypeSafe provider, started by the user |
-| `https://openrouter.ai/*` | optional | Jev test connection to the OpenRouter provider, started by the user |
+| `https://api.typesafe.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the TypeSafe provider, started by the user |
+| `https://openrouter.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the OpenRouter provider, started by the user |
 
-_These two patterns back the shipped, consent-gated Test connection — the
-only feature that produces network traffic, and only on an explicit Test
-connection click. Any change here must update the manifest in the same
-change._
+_These two patterns back the shipped, consent-gated Jev provider flow — the
+synthetic Test connection and the bookmark-data `jev_decisions` flow — the
+only features that produce network traffic, and only on an explicit Test
+connection click or a user-started save, Analyze, library scan, or Ask search.
+Any change here must update the manifest in the same change._
 
 ## Declared but empty
 

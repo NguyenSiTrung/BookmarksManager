@@ -60,18 +60,24 @@ What you can do:
   only what the extension stored for itself; your native bookmarks are
   untouched.
 
-There is also an optional, off-by-default connection test for the Jev AI
-providers TypeSafe and OpenRouter, using your own API key: a clear disclosure
-naming the recipient, an unchecked consent checkbox, the browser's
-host-permission prompt, encrypted on-device key storage, and a Test connection
-button that sends one fixed synthetic payload — never your bookmarks — only
-when you click it. Revoke consent and access at any time from the options
-page. AI features are entirely optional; every feature above works without a
-key.
+There is also an optional, off-by-default AI connection for the Jev providers
+TypeSafe and OpenRouter, using your own API key: a clear disclosure naming the
+recipient, an unchecked consent checkbox, the browser's host-permission
+prompt, encrypted on-device key storage, and revoke-at-any-time control. A
+synthetic Test connection sends one fixed payload — never your bookmarks — only
+when you click it. A separate, off-by-default bookmark-data consent lets the
+providers categorize, tag, pre-select a folder, check for near-duplicates,
+scan for misfiled bookmarks, and re-rank an "Ask" search. It sends bookmark
+metadata only — title, cleaned URL, domain, folder path, tag names and
+descriptions, candidate folder paths, candidate bookmarks, the near-duplicate
+partner, and the Ask query — and only on a user-started action (saving a
+bookmark, clicking Analyze, starting a library scan, or running an Ask
+search); never on install, on a timer, or in the background. Your notes and
+page text are never sent. AI features are entirely optional; every feature
+above works without a key.
 
-Not in this release: the AI review queue, a link checker, cloud sync, and
-accounts. The extension requests no access to your browsing history or page
-content.
+Not in this release: a link checker, cloud sync, and accounts. The extension
+requests no access to your browsing history or page content.
 
 ## What's new
 
@@ -91,7 +97,10 @@ Version 0.1 — first release.
 - Site icons via the browser's built-in favicon renderer.
 - "Delete all extension data" with a confirmation that names what is removed
   and states that native bookmarks are untouched.
-- Optional, consent-gated connection test for the Jev AI providers.
+- Optional, consent-gated Jev provider flow: a synthetic Test connection, and
+  a separate bookmark-data consent for categorize, tag, folder pre-select,
+  near-duplicate, misfiled-scan, and Ask search decisions (metadata only —
+  never notes or page text).
 
 ## Category
 
@@ -120,8 +129,7 @@ English
   statements — no "100% private" or "best" claims.
 - The optional AI features are described as optional and key-based; the
   listing names providers once, in context, rather than as a keyword list.
-- The "Not in this release" list is kept truthful: the AI review queue, the
-  link checker, cloud sync, and accounts are not shipped, so they must not
-  be promised.
+- The "Not in this release" list is kept truthful: the link checker, cloud
+  sync, and accounts are not shipped, so they must not be promised.
 - As features land in later releases, extend the feature list and re-check it
   against `store/permissions.md` and the privacy policy in the same change.

@@ -1,11 +1,18 @@
 import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { hasTestConsent } from "../../src/consent/records";
+import {
+  grantConsent,
+  hasConsent,
+  hasTestConsent,
+} from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { handleProviderMessage } from "../../src/messages/provider";
 import { PRESETS } from "../../src/net/presets";
-import type { PresetId } from "../../src/schemas/provider";
-import { ProviderSettings } from "../../src/schemas/provider";
+import {
+  DECISIONS_CONSENT_SCOPE,
+  ProviderSettings,
+  type PresetId,
+} from "../../src/schemas/provider";
 import { deleteProviderKey, saveProviderKey } from "../../src/security/keys";
 
 /**
@@ -350,6 +357,24 @@ describe("REVOKE_PROVIDER", () => {
     });
     expect(deleteKey).toHaveBeenCalledWith("typesafe");
     expect(await storedSettings("typesafe")).toBeUndefined();
+  });
+
+  it("removes every consent scope the provider holds, not just jev_test", async () => {
+    await enableProvider();
+    // A bookmark-data grant at the same origin must come off with the
+    // provider revoke (FR1).
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(true);
+
+    const result = await handleProviderMessage(
+      { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: true },
+      optionsSender,
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
+    expect(await db.consents.count()).toBe(0);
   });
 
   it("keeps the encrypted key when deleteKey is false but removes consent and permission", async () => {

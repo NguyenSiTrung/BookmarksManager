@@ -11,9 +11,10 @@ import { resolvePreset, type PresetDestination } from "./presets";
  * (enforced by eslint). It reaches only the fixed `PRESETS` destinations, and
  * only after the scope's request guard, the versioned consent grant, the
  * Chrome host permission, and stored key material all check out — re-verified
- * on every call. The only registered scope today is `jev_test`, whose guard
- * admits nothing but the fixed synthetic request, so test consent can never
- * carry bookmark content.
+ * on every call. The `jev_test` scope's guard admits nothing but the fixed
+ * synthetic request, so test consent can never carry bookmark content; the
+ * `jev_decisions` scope is registered fail-closed until Phase 2 Task 2 adds
+ * its strict `DecisionState` guard.
  *
  * `chrome` is provided by the extension runtime; as in `security/keys.ts`,
  * only the used slice is declared so access stays lazy and
@@ -103,15 +104,25 @@ interface ScopeRegistration {
 }
 
 /**
- * The frozen scope registry — `jev_test` only. Its guard admits exactly one
- * payload: a request deep-equal to `makeSyntheticRequest(model)`, so no
- * caller-supplied state, questions, or headers can leave under test consent.
+ * The frozen scope registry. `jev_test` admits exactly one payload: a
+ * request deep-equal to `makeSyntheticRequest(model)`, so no caller-supplied
+ * state, questions, or headers can leave under test consent. `jev_decisions`
+ * is registered **fail-closed**: Phase 2 Task 2 replaces this placeholder
+ * guard with the strict `DecisionState` guard, and until then no
+ * `jev_decisions` request is admitted.
  */
 const SCOPES = Object.freeze({
   jev_test: Object.freeze({
     scope: "jev_test" as ConsentScope,
     admits(request: unknown, model: string): boolean {
       return deepEqual(request, makeSyntheticRequest(model));
+    },
+  } satisfies ScopeRegistration),
+  jev_decisions: Object.freeze({
+    scope: "jev_decisions" as ConsentScope,
+    // Phase 2 Task 2 replaces this with the strict DecisionState guard.
+    admits(): boolean {
+      return false;
     },
   } satisfies ScopeRegistration),
 } satisfies Record<ConsentScope, ScopeRegistration>);

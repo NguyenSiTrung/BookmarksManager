@@ -63,3 +63,69 @@ export const PROVIDER_DISCLOSURES = {
       "OpenRouter forwards Jev requests to TypeSafe; the data policy on the OpenRouter model page applies.",
   },
 } as const satisfies Record<PresetId, ProviderDisclosure>;
+
+// --- `jev_decisions` bookmark-metadata disclosure ------------------------
+// The per-provider consent that covers every Phase 4 decision feature
+// (PROJECT_PLAN.md §13.4/§13.5, spec FR1/FR11). These typed constants are the
+// single source of truth: `ProviderSetup` renders them, the store docs quote
+// them nearly verbatim, and `tests/unit/consent-snapshot.test.ts` pins them
+// (§13.12) so a change to the sent fields cannot ship without a
+// `CONSENT_VERSION` bump and matching `store/` edits.
+
+/**
+ * The exact bookmark facts a `jev_decisions` request may carry, in the order
+ * the disclosure lists them. Every label maps to a populated field of the
+ * closed `DecisionState` schema (`src/schemas/decision-state.ts`); the
+ * snapshot test fails if a `DecisionState` field has no label here.
+ */
+export const DECISIONS_SENT_FIELDS = [
+  "bookmark title",
+  "cleaned URL",
+  "domain",
+  "folder path",
+  "tag names and descriptions",
+  "candidate folder paths",
+  "candidate bookmarks",
+  "near-duplicate partner",
+  "Ask search query",
+] as const;
+
+/**
+ * Content that is never sent under any scope. Named explicitly so the
+ * disclosure states the negative as plainly as the positive (plan §13.4:
+ * notes and page text never leave the device).
+ */
+export const DECISIONS_NEVER_SENT_FIELDS = ["notes", "page text"] as const;
+
+/** Why bookmark metadata is sent — the reasons disclosed before consent. */
+export const DECISIONS_PURPOSES = [
+  "categorize",
+  "tag",
+  "folder pre-select",
+  "near-duplicate check",
+  "misfiled scan",
+  "search re-rank",
+] as const;
+
+/**
+ * The user actions that may start a `jev_decisions` request. Every trigger is
+ * user-started; nothing runs on install, on a timer, or in the background.
+ */
+export const DECISIONS_TRIGGERS = [
+  "saving a bookmark",
+  "clicking Analyze",
+  "starting a library scan",
+  "running an Ask search",
+] as const;
+
+/** The user-started-only guarantee, stated in full for the disclosure. */
+export const DECISIONS_TRIGGER_NOTE =
+  "only when you start them — never on install, on a timer, or in the background";
+
+/** What the `jev_decisions` request is made of — disclosed before consent. */
+export const DECISIONS_DESCRIPTION =
+  "bookmark metadata only — no notes and no page text, which are never sent under any scope";
+
+/** How the extension's own privacy policy is referenced before a public URL exists. */
+export const EXTENSION_PRIVACY_POLICY_REFERENCE =
+  "this extension's privacy policy";

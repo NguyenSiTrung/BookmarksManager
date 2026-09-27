@@ -7,12 +7,14 @@ import {
   hasConsent,
   hasTestConsent,
   revokeConsent,
+  revokeProviderConsents,
   revokeTestConsent,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { PRESETS } from "../../src/net/presets";
 import {
   CONSENT_SCOPE,
+  DECISIONS_CONSENT_SCOPE,
   ConsentRecord,
   type PresetId,
 } from "../../src/schemas/provider";
@@ -47,8 +49,8 @@ function consentRow(
 }
 
 describe("versioned consent records", () => {
-  it("pins CONSENT_VERSION to 1", () => {
-    expect(CONSENT_VERSION).toBe(1);
+  it("pins CONSENT_VERSION to 2", () => {
+    expect(CONSENT_VERSION).toBe(2);
   });
 
   it("reports no consent before any grant", async () => {
@@ -207,5 +209,83 @@ describe("scoped consent helpers", () => {
     expect(await hasConsent("jev_test", "openrouter")).toBe(true);
     await revokeTestConsent("openrouter");
     expect(await hasConsent("jev_test", "openrouter")).toBe(false);
+  });
+});
+
+describe("jev_decisions scope", () => {
+  it("grants/has/revokes per (scope, origin)", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(true);
+    // Per origin — the other preset is not implied.
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "openrouter")).toBe(false);
+    // Per scope — a jev_decisions grant is not a jev_test grant.
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    await revokeConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
+  });
+
+  it("stores the jev_decisions literal and still refuses a foreign scope", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    const stored = await db.consents.get([
+      DECISIONS_CONSENT_SCOPE,
+      PRESETS.typesafe.origin,
+    ]);
+    expect(stored?.scope).toBe("jev_decisions");
+    expect(() => ConsentRecord.parse(stored)).not.toThrow();
+    expect(
+      ConsentRecord.safeParse({ ...stored, scope: "bookmark_analysis" }).success,
+    ).toBe(false);
+  });
+
+  it("keeps one row per (scope, origin) — the two scopes coexist", async () => {
+    await grantConsent(CONSENT_SCOPE, "typesafe");
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    expect(await db.consents.count()).toBe(2);
+    expect(await hasConsent(CONSENT_SCOPE, "typesafe")).toBe(true);
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(true);
+  });
+});
+
+describe("stale v1 records after the CONSENT_VERSION 2 bump", () => {
+  it("a v1 jev_test row fails hasConsent", async () => {
+    await db.consents.put(
+      consentRow({ scope: "jev_test", consentVersion: 1 }),
+    );
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+    expect(await hasTestConsent("typesafe")).toBe(false);
+  });
+
+  it("a v1 jev_decisions row fails hasConsent", async () => {
+    await db.consents.put(
+      consentRow({ scope: "jev_decisions", consentVersion: 1 }),
+    );
+    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
+  });
+
+  it("a fresh v2 grant passes for both scopes", async () => {
+    await grantConsent("jev_test", "typesafe");
+    await grantConsent("jev_decisions", "typesafe");
+    expect(await hasConsent("jev_test", "typesafe")).toBe(true);
+    expect(await hasConsent("jev_decisions", "typesafe")).toBe(true);
+  });
+});
+
+describe("revokeProviderConsents", () => {
+  it("deletes every scope at the preset's origin and leaves other origins alone", async () => {
+    await grantConsent("jev_test", "typesafe");
+    await grantConsent("jev_decisions", "typesafe");
+    await grantConsent("jev_test", "openrouter");
+
+    await revokeProviderConsents("typesafe");
+
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+    expect(await hasConsent("jev_decisions", "typesafe")).toBe(false);
+    // The other provider's grant is untouched.
+    expect(await hasConsent("jev_test", "openrouter")).toBe(true);
+    expect(await db.consents.count()).toBe(1);
+  });
+
+  it("is safe when the provider holds no grants", async () => {
+    await expect(revokeProviderConsents("openrouter")).resolves.toBeUndefined();
   });
 });

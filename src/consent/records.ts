@@ -1,27 +1,24 @@
 import { db } from "../db/database";
 import { resolvePreset } from "../net/presets";
 import {
+  CONSENT_SCOPES,
   CONSENT_SCOPE,
   type ConsentRecord,
+  type ConsentScope,
   type PresetId,
 } from "../schemas/provider";
 
-/**
- * Version of the `jev_test` consent grant. Bump this whenever the synthetic
- * test fields or the set of recipients change (plan §Global Constraints):
- * rows recorded under older versions then fail `hasConsent` and the user
- * must re-accept the disclosure.
- */
-export const CONSENT_VERSION = 1;
+export type { ConsentScope };
 
 /**
- * The consent scopes this extension can hold. Only `jev_test` exists today —
- * the synthetic connection test that carries no bookmark content. New scopes
- * (e.g. a bookmark-analysis scope in Phase 4) are added here, in the
- * `ConsentRecord` schema's `scope` literal, and in `src/net/send.ts`'s
- * `SCOPES` registry, always together.
+ * Version of the consent grant, shared by every scope. Bump this whenever the
+ * set of sent fields or the set of recipients changes (plan §Global
+ * Constraints): rows recorded under older versions then fail `hasConsent`
+ * and the user must re-accept the disclosure. Version 2 introduces the
+ * `jev_decisions` bookmark-metadata scope, so a stale v1 `jev_test` record
+ * is re-disclosed too.
  */
-export type ConsentScope = typeof CONSENT_SCOPE;
+export const CONSENT_VERSION = 2;
 
 /**
  * Record the user's affirmative consent for a scope at a preset's origin.
@@ -74,7 +71,7 @@ export async function hasConsent(
 
 // --- `jev_test` convenience wrappers -------------------------------------
 // Thin aliases kept for existing callers; they forward to the scoped
-// helpers under the only registered scope.
+// helpers under the synthetic test scope.
 
 export function grantTestConsent(preset: PresetId): Promise<void> {
   return grantConsent(CONSENT_SCOPE, preset);
@@ -86,4 +83,14 @@ export function revokeTestConsent(preset: PresetId): Promise<void> {
 
 export function hasTestConsent(preset: PresetId): Promise<boolean> {
   return hasConsent(CONSENT_SCOPE, preset);
+}
+
+/**
+ * Delete every consent row a provider holds at its origin — one per
+ * registered scope — so revoking a provider can never leave a stale grant
+ * behind (FR1). Iterates `CONSENT_SCOPES` rather than naming scopes so a
+ * scope added later is revoked automatically. Safe when rows are absent.
+ */
+export async function revokeProviderConsents(preset: PresetId): Promise<void> {
+  await Promise.all(CONSENT_SCOPES.map((scope) => revokeConsent(scope, preset)));
 }

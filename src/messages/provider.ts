@@ -1,7 +1,7 @@
 import {
   grantTestConsent,
   hasTestConsent,
-  revokeTestConsent,
+  revokeProviderConsents,
 } from "../consent/records";
 import { db } from "../db/database";
 import { JevConnectionError, testJevConnection } from "../jev/connection";
@@ -233,7 +233,7 @@ async function readStatus(preset: PresetId): Promise<ProviderStatus> {
  */
 async function unwindEnable(preset: PresetId): Promise<void> {
   await Promise.allSettled([
-    revokeTestConsent(preset),
+    revokeProviderConsents(preset),
     deleteProviderKey(preset),
     db.metadata.delete(preset),
   ]);
@@ -292,9 +292,11 @@ async function revokeProvider(message: {
   const destination = resolvePreset(message.preset);
 
   // Consent comes off first: if permission removal then fails, the gate still
-  // blocks every request because no current consent row remains.
+  // blocks every request because no current consent row remains. Revoking
+  // deletes every scope the provider holds (`jev_test` and `jev_decisions`),
+  // not just the synthetic test grant.
   try {
-    await revokeTestConsent(message.preset);
+    await revokeProviderConsents(message.preset);
   } catch {
     return failure(
       "revoke_failed",

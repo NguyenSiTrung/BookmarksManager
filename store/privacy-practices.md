@@ -10,9 +10,10 @@
 > This version describes the **shipped core manager**: bookmark management
 > (quick save, side panel, fully local search with the `bm` address-bar
 > keyword, tags, categories, notes, drag and drop, import and export,
-> duplicate detection, `_favicon` icons, delete all data), plus the
-> optional, consent-gated synthetic Jev test-connection flow. Every local
-> feature works with no account and no key.
+> duplicate detection, `_favicon` icons, delete all data), plus the optional,
+> consent-gated Jev provider flow — the synthetic test connection and the
+> bookmark-data `jev_decisions` flow. Every local feature works with no
+> account and no key.
 
 ## Single purpose
 
@@ -22,8 +23,10 @@
 > keyboard shortcut, or the right-click menu; fully on-device search across
 > the side panel, a command palette, the popup, and the `bm` address-bar
 > keyword; drag and drop; and local import/export and duplicate detection.
-> An optional connection test for an AI provider you configure with your own
-> API key sends only a fixed synthetic payload — never your bookmarks.
+> An optional connection to an AI provider you configure with your own
+> API key: a synthetic test sends a fixed payload and never your bookmarks,
+> and the separate, off-by-default bookmark-data consent sends bookmark
+> metadata only — never notes or page text — on a user-started action.
 
 ## Permission justifications
 
@@ -44,15 +47,19 @@ Use the justification column of `store/permissions.md` verbatim; CI
 - `sidePanel` — Show the Bookmarks Manager UI in Chrome's side panel.
 - `storage` — Store encrypted provider API-key envelopes in
   chrome.storage.local; plaintext keys are never persisted.
-- `https://api.typesafe.ai/*` (optional) — Jev test connection to the TypeSafe
-  provider, started by the user.
-- `https://openrouter.ai/*` (optional) — Jev test connection to the OpenRouter
-  provider, started by the user.
+- `https://api.typesafe.ai/*` (optional) — Jev provider connection (Test
+  connection and bookmark decisions) to the TypeSafe provider, started by the
+  user.
+- `https://openrouter.ai/*` (optional) — Jev provider connection (Test
+  connection and bookmark decisions) to the OpenRouter provider, started by
+  the user.
 
-(The two optional patterns back the shipped, consent-gated Test connection —
-the only feature that produces network traffic, and only on an explicit Test
-connection click. The extension requests no host access at install time and
-reads no page content on any site.)
+(The two optional patterns back the shipped, consent-gated Jev provider flow —
+the synthetic Test connection and the bookmark-data `jev_decisions` flow — the
+only features that produce network traffic, and only on an explicit Test
+connection click or a user-started save, Analyze, library scan, or Ask search.
+The extension requests no host access at install time and reads no page content
+on any site.)
 
 ## Remote code
 
@@ -68,23 +75,44 @@ Conservative declaration — under-declaring is the risky direction:
 - **Authentication information: yes, only if you set up the optional AI
   provider.** The user's own API key is stored encrypted on the device and sent
   only to the provider that issued it, in the `Authorization: Bearer` header,
-  when the user runs a Test connection — never on install, page load, in the
-  background, or on enable. Users who never configure a provider store and send
-  no key.
-- **Bookmark data stays on the device.** Titles, URLs, folder structure, tags,
-  categories, and notes are read from and written to Chrome's own bookmarks and
-  the extension's local IndexedDB. They are never transmitted anywhere. Imports
-  and exports are local file reads and downloads.
+  when the user runs a Test connection or starts a bookmark decision — never
+  on install, page load, in the background, or on enable. Users who never
+  configure a provider store and send no key.
+- **Bookmark data stays on the device by default.** Titles, URLs, folder
+  structure, tags, categories, and notes are read from and written to Chrome's
+  own bookmarks and the extension's local IndexedDB. They are never
+  transmitted anywhere unless you enable the optional `jev_decisions`
+  bookmark-data flow described below. Imports and exports are local file reads
+  and downloads.
 - **Search queries are never stored or sent.** All search — the side-panel
   bar, command palette, popup, and `bm` omnibox keyword — runs against an
-  in-memory local index; typing produces zero network requests.
+  in-memory local index; typing produces zero network requests. Only an
+  explicit Ask search, under `jev_decisions` consent, sends its query.
+- **Bookmark decisions (`jev_decisions`), only if enabled:** the separate
+  bookmark-data consent scope sends bookmark metadata to the chosen provider
+  to categorize, tag, folder pre-select, run a near-duplicate check, run a
+  misfiled scan, and search re-rank. What is sent is metadata only — the
+  bookmark title, cleaned URL, domain, and folder path; tag names and
+  descriptions; candidate folder paths; candidate bookmarks; the
+  near-duplicate partner; and the Ask search query. Your notes and page text
+  are **never** sent under any scope. It runs only on a user-started action —
+  saving a bookmark, clicking Analyze, starting a library scan, or running an
+  Ask search — and only when you start them — never on install, on a timer, or
+  in the background. To whom: exactly one provider origin you chose —
+  `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
+  Links: the provider's privacy policy (`https://typesafe.ai/legal/privacy-policy`
+  or `https://openrouter.ai/privacy`) and this extension's privacy policy. The
+  consent is versioned (`consentVersion`, currently 2); revoking a provider
+  deletes every `jev_decisions` grant for its origin along with its synthetic
+  `jev_test` grant, removes its host permission, and offers to delete its key.
 - **Everything else: not collected.** The only other transmission is the test
   connection's fixed synthetic payload (`model`, `state`, `questions`), which
   contains no user data.
 - Not collected: personally identifiable information, health information,
   financial and payment information, personal communications, location, web
   history, user activity, website content. (No click or keystroke monitoring;
-  no bookmark, tag, note, or page content leaves the device.)
+  no page text leaves the device, and no bookmark, tag, or note leaves it
+  outside the `jev_decisions` flow above.)
 
 Before any future feature sends bookmark, page, or activity data, update this
 declaration, `store/privacy-policy.md`, and the in-product consent screen in
