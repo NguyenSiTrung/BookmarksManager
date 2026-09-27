@@ -1,5 +1,4 @@
 import { hasConsent, type ConsentScope } from "../consent/records";
-import { db } from "../db/database";
 import { readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
@@ -7,6 +6,7 @@ import { DecisionState } from "../schemas/decision-state";
 import type { PresetId } from "../schemas/provider";
 import { readProviderKey } from "../security/keys";
 import { resolvePreset, type PresetDestination } from "./presets";
+import { appendSentLog } from "./sent-log";
 
 /**
  * The extension's single consented egress point (PROJECT_PLAN.md §Global
@@ -368,7 +368,8 @@ export async function sendConsented(
 
   // The request left the extension — record the audit row before inspecting
   // the response. Only metadata is stored: never bodies, headers, or keys.
-  await db.sentLog.add({
+  // `appendSentLog` also enforces the retention cap (see `./sent-log.ts`).
+  await appendSentLog({
     sentAt: new Date().toISOString(),
     destination: destination.origin,
     feature: scopeEntry.scope,
