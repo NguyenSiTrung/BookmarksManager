@@ -38,7 +38,16 @@ import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
 import { CommandPalette } from "./CommandPalette";
+import { ScanPanel } from "./ScanPanel";
+import type { ScanBookmark } from "./ScanPanel";
 import { SearchBar } from "./SearchBar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../ui/components/dialog";
 
 import {
   clearPendingEditId,
@@ -154,6 +163,29 @@ function makeView(kind: SidePanelView["kind"]): SidePanelView {
   }
 }
 
+/**
+ * Reorder search results by the Ask-reranked id order (probability desc,
+ * P4.T5): ranked ids that resolve in the current results come first; every
+ * unranked result keeps its local relevance order behind them. A pure
+ * permutation of the input — no result is added or dropped.
+ */
+function applyRerankOrder(
+  items: readonly BookmarkItem[],
+  order: readonly string[],
+): BookmarkItem[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const ranked: BookmarkItem[] = [];
+  const rankedIds = new Set<string>();
+  for (const id of order) {
+    const item = byId.get(id);
+    if (item !== undefined) {
+      ranked.push(item);
+      rankedIds.add(id);
+    }
+  }
+  return [...ranked, ...items.filter((item) => !rankedIds.has(item.id))];
+}
+
 export function App() {
   const tree = useBookmarkTree();
   // liveQuery emits fresh rows on any write to the touched tables; a missing
@@ -183,9 +215,28 @@ export function App() {
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * The Ask-reranked result order for the query it answered (P4.T5), or
+   * `null` while the local relevance order applies. Keyed by query so an
+   * order can only ever permute the results of the exact query the rerank
+   * answered — a new query renders local order until its own reply lands.
+   */
+  const [rerankOrder, setRerankOrder] = useState<{
+    query: string;
+    ids: readonly string[];
+  } | null>(null);
+  /**
+   * SearchBar's `onRerankOrder` sink: a non-null order is tagged with the
+   * query the hook dispatched it for (the reply is already stale-guarded,
+   * so at report time `searchQuery` is the query that was answered).
+   */
+  const handleRerankOrder = (ids: readonly string[] | null): void => {
+    setRerankOrder(ids === null ? null : { query: searchQuery, ids });
+  };
   /**
    * The live search index: built after mount, diff-updated as tree/metas/
    * tagDefs change. `null` until the first build lands.
@@ -201,9 +252,33 @@ export function App() {
       searchQuery === "" ? view : { kind: "search", query: searchQuery },
     [searchQuery, view],
   );
-  const items = useMemo(
-    () => resolveView(activeView, tree, metas, search),
-    [activeView, tree, metas, search],
+  const items = useMemo(() => {
+    const resolved = resolveView(activeView, tree, metas, search);
+    // Only the query the rerank answered may be permuted by its order —
+    // anything else (Ask off, new query pending its reply, non-search
+    // views) renders the local order.
+    if (
+      activeView.kind !== "search" ||
+      rerankOrder === null ||
+      rerankOrder.query !== activeView.query
+    ) {
+      return resolved;
+    }
+    return applyRerankOrder(resolved, rerankOrder.ids);
+  }, [activeView, tree, metas, search, rerankOrder]);
+  /**
+   * The scan work set as minimized rows — `{id, title, url}` per bookmark,
+   * exactly what `estimateJobCost` folds and `JOB_START` sends. Notes and
+   * every other meta field stay out by construction (P4.T4).
+   */
+  const scanBookmarks = useMemo<readonly ScanBookmark[]>(
+    () =>
+      [...tree.bookmarks.values()].map(({ id, title, url }) => ({
+        id,
+        title,
+        url,
+      })),
+    [tree],
   );
   const orderedIds = useMemo(() => items.map((item) => item.id), [items]);
   const selection = useBookmarkSelection(orderedIds);
@@ -634,6 +709,15 @@ export function App() {
                       Manage tags…
                     </button>
                   </section>
+                  <section aria-label="Library scan">
+                    <button
+                      type="button"
+                      onClick={() => setScanOpen(true)}
+                      className={navButtonClass}
+                    >
+                      Scan library…
+                    </button>
+                  </section>
                   {tagDefs.length > 0 && (
                     <section aria-label="Tags">
                       <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
@@ -725,6 +809,7 @@ export function App() {
                   ref={searchInputRef}
                   value={searchQuery}
                   onChange={setSearchQuery}
+                  onRerankOrder={handleRerankOrder}
                   resultCount={
                     searchQuery === ""
                       ? null
@@ -819,6 +904,32 @@ export function App() {
             })
           }
         />
+        {/*
+          P4.T4 launcher: the dialog is a window onto the live `jobs` row —
+          closing it never stops the scan (the worker's runner owns it), and
+          reopening renders the running/paused state straight from Dexie.
+          "View results" lands on the Review queue, clearing any active
+          search so the queue is actually shown.
+        */}
+        <Dialog open={scanOpen} onOpenChange={setScanOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Scan library</DialogTitle>
+              <DialogDescription>
+                Analyze every bookmark with the consented provider and queue
+                the suggestions for review.
+              </DialogDescription>
+            </DialogHeader>
+            <ScanPanel
+              bookmarks={scanBookmarks}
+              onOpenReview={() => {
+                setScanOpen(false);
+                setSearchQuery("");
+                setView({ kind: "review" });
+              }}
+            />
+          </DialogContent>
+        </Dialog>
         <ImportDialog
           open={importOpen}
           onOpenChange={setImportOpen}
