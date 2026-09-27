@@ -183,6 +183,20 @@ export function App() {
    * clobber a folder the user already chose.
    */
   const folderTouchedRef = useRef(false);
+  /**
+   * Always holds the latest form values. The SAVE_SUGGEST effect is one-shot
+   * per popup open (`suggestAttemptedRef`), so it must not depend on
+   * `title`/`url`/`folderId`: a keystroke would re-run the effect, tear down
+   * the in-flight request via its cleanup, and drop the reply. Instead the
+   * effect reads the payload here at send time, so it still reflects the
+   * current values without re-subscribing to their state. Kept in sync by an
+   * effect (declared before the SAVE_SUGGEST effect so it always runs first)
+   * rather than during render, which React forbids.
+   */
+  const latestInputRef = useRef({ title, url, folderId });
+  useEffect(() => {
+    latestInputRef.current = { title, url, folderId };
+  }, [title, url, folderId]);
 
   // Answer the Options page's "delete all extension data" broadcast by closing
   // this page's Dexie connection; an open connection would block the drop.
@@ -240,6 +254,11 @@ export function App() {
   // nothing; the form is never gated on this. `sent:false` with the
   // "blocklisted" reason is the one outcome with a visible note. The reply
   // carries counts only; suggested values arrive as `db.decisions` rows.
+  //
+  // Deps are `[ready, suggestId]` only — `suggestId` is stable per mount, and
+  // `title`/`url`/`folderId` are read at send time from `latestInputRef`. The
+  // effect must NOT re-run on edits: its cleanup would cancel an in-flight
+  // request and drop the reply, defeating the `suggestAttemptedRef` one-shot.
   useEffect(() => {
     if (!ready || suggestAttemptedRef.current) return;
     suggestAttemptedRef.current = true;
@@ -260,7 +279,9 @@ export function App() {
         consented = false;
       }
       if (cancelled) return;
-      const trimmedUrl = url.trim();
+      const { title: currentTitle, url: currentUrl, folderId: currentFolderId } =
+        latestInputRef.current;
+      const trimmedUrl = currentUrl.trim();
       if (!consented || trimmedUrl === "") {
         setSuggestionStatus("unavailable");
         return;
@@ -273,9 +294,9 @@ export function App() {
             type: "SAVE_SUGGEST",
             bookmark: {
               id: suggestId,
-              title: title.trim(),
+              title: currentTitle.trim(),
               url: trimmedUrl,
-              parentId: folderId,
+              parentId: currentFolderId,
             },
           }),
         );
@@ -304,7 +325,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [ready, suggestId, title, url, folderId]);
+  }, [ready, suggestId]);
 
   const search = useSearchIndex(tree, metas, tagDefs);
 

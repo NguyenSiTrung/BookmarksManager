@@ -216,6 +216,76 @@ describe("PopupApp — save suggestions", () => {
     await screen.findByTestId("save-confirmation");
   });
 
+  it("does not tear down the in-flight SAVE_SUGGEST when the title/URL are edited", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    // Hold the reply so we can edit the form while the request is in flight.
+    let resolveReply: (value: unknown) => void = () => {};
+    sendMessage.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReply = resolve;
+        }),
+    );
+    await renderPopup();
+    await waitForSuggestRequest();
+
+    // The user edits Title and URL mid-flight. The one-shot effect must not
+    // re-run (and thus must not cancel the request or drop the reply).
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Renamed" },
+    });
+    fireEvent.change(screen.getByLabelText("URL"), {
+      target: { value: "https://example.com/edited" },
+    });
+
+    await act(async () => {
+      resolveReply({
+        ok: true,
+        code: "analyze_ok",
+        result: { sent: false, reason: "blocklisted", decisionCount: 0 },
+      });
+      await Promise.resolve();
+    });
+
+    // The reply is honoured: the "not sent" note renders. Under the old
+    // title/url-dependent effect this reply was dropped and the note missing.
+    const note = await screen.findByTestId("suggestions-not-sent");
+    expect(note.textContent ?? "").toMatch(/not sent/i);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("still renders streamed suggestions when the reply lands after a mid-flight edit", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    let resolveReply: (value: unknown) => void = () => {};
+    sendMessage.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReply = resolve;
+        }),
+    );
+    await renderPopup();
+    const { id } = await waitForSuggestRequest();
+
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Renamed" },
+    });
+
+    await act(async () => {
+      resolveReply({
+        ok: true,
+        code: "analyze_ok",
+        result: { sent: true, decisionCount: 1 },
+      });
+      await Promise.resolve();
+    });
+
+    // Suggestions arrive as persisted rows correlated by the synthetic id and
+    // render despite the edit; the request was sent exactly once.
+    await putTagsDecision({ bookmarkId: id, tags: ["reading"] });
+    await screen.findByRole("button", { name: "Add suggested tag reading" });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("sends SAVE_SUGGEST once with a synthetic popup id and no notes field", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     await renderPopup();
