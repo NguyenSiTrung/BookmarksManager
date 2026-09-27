@@ -64,7 +64,8 @@ export type ProviderMessage = z.infer<typeof ProviderMessage>;
 /** Machine-readable failure codes for the provider protocol. The `JevConnectionError`
  * surface — `auth`/`incompatible`/`retry_later`/`invalid_response`/`http_error`
  * plus the `NetworkGateError` codes it relays (`https_only`, `unlisted_origin`,
- * `no_consent`, `no_permission`, `no_key`, `transport`, `unlisted_model`) — and
+ * `no_consent`, `no_permission`, `no_key`, `transport`, `unlisted_model`,
+ * `unregistered_scope`, `request_not_allowed`, `timeout`) — and
  * `ProviderKeyError`'s `reconnect` reach the page verbatim. */
 export const ProviderErrorCode = z.enum([
   "untrusted_sender",
@@ -77,8 +78,11 @@ export const ProviderErrorCode = z.enum([
   "auth",
   "incompatible",
   "retry_later",
+  "timeout",
   "invalid_response",
   "http_error",
+  "unregistered_scope",
+  "request_not_allowed",
   "https_only",
   "unlisted_origin",
   "no_consent",

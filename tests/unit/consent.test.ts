@@ -2,8 +2,11 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   CONSENT_VERSION,
+  grantConsent,
   grantTestConsent,
+  hasConsent,
   hasTestConsent,
+  revokeConsent,
   revokeTestConsent,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
@@ -155,5 +158,54 @@ describe("versioned consent records", () => {
     await expect(revokeTestConsent(bogus)).rejects.toThrow();
     // A failed grant must not leave a row behind.
     expect(await db.consents.count()).toBe(0);
+  });
+});
+
+describe("scoped consent helpers", () => {
+  it("grantConsent/hasConsent/revokeConsent round-trip under an explicit scope", async () => {
+    await grantConsent("jev_test", "typesafe");
+    expect(await hasConsent("jev_test", "typesafe")).toBe(true);
+    expect(await hasTestConsent("typesafe")).toBe(true);
+    await revokeConsent("jev_test", "typesafe");
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+  });
+
+  it("hasConsent checks scope, origin, and version on the row", async () => {
+    await grantConsent("jev_test", "typesafe");
+    // Origin mismatch — an openrouter read must not see typesafe's row.
+    expect(await hasConsent("jev_test", "openrouter")).toBe(false);
+    // Stale version on the row fails the check.
+    await db.consents.put(
+      consentRow({ consentVersion: CONSENT_VERSION + 1 }),
+    );
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+    // A row under a foreign scope never satisfies a jev_test read.
+    await db.consents.put(
+      consentRow({ scope: "bookmark_analysis" as never }),
+    );
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+  });
+
+  it("a foreign-scope row only answers its own scope", async () => {
+    const foreign = "bookmark_analysis";
+    await db.consents.put(consentRow({ scope: foreign as never }));
+    // Read through the scoped helper cast to a registered-looking scope:
+    // the helper compares the stored scope string, so a different scope name
+    // on the row at [jev_test, origin] is still refused…
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+    // …and the foreign row is only visible at its own [scope, origin] key.
+    expect(await hasConsent(foreign as never, "typesafe")).toBe(true);
+  });
+
+  it("the TestConsent wrappers are thin aliases over the scoped helpers", async () => {
+    await grantTestConsent("openrouter");
+    const stored = await db.consents.get([
+      CONSENT_SCOPE,
+      PRESETS.openrouter.origin,
+    ]);
+    expect(stored?.scope).toBe("jev_test");
+    expect(await hasConsent("jev_test", "openrouter")).toBe(true);
+    await revokeTestConsent("openrouter");
+    expect(await hasConsent("jev_test", "openrouter")).toBe(false);
   });
 });

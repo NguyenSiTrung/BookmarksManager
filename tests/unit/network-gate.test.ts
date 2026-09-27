@@ -6,8 +6,9 @@ import {
   revokeTestConsent,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
+import { makeSyntheticRequest } from "../../src/jev/wire";
 import { PRESETS } from "../../src/net/presets";
-import { NetworkGateError, sendConsentedTest } from "../../src/net/send";
+import { NetworkGateError, sendConsented, sendConsentedTest } from "../../src/net/send";
 import {
   CONSENT_SCOPE,
   type ConsentRecord,
@@ -341,6 +342,181 @@ describe("sendConsentedTest gate", () => {
     // The revoked call produced no second fetch and no second log row.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(await db.sentLog.count()).toBe(1);
+  });
+});
+
+describe("scoped sendConsented gate", () => {
+  const synthetic = () => makeSyntheticRequest("jev-latest");
+
+  it("rejects an unregistered scope before any consent, permission, key, or fetch read", async () => {
+    await grantTestConsent("typesafe");
+    const error = await sendConsented(
+      "bookmark_analysis",
+      "typesafe",
+      "jev-latest",
+      synthetic(),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("unregistered_scope");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("rejects a non-synthetic jev_test request as request_not_allowed before key/permission reads", async () => {
+    await grantTestConsent("typesafe");
+    const realContentRequest = {
+      model: "jev-latest",
+      state: { bookmark: { title: "real user bookmark", url: "https://x.test" } },
+      questions: { test: { type: "noul", instructions: "Is this a synthetic connection test?" } },
+    };
+    const error = await sendConsented(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      realContentRequest,
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("rejects a request differing from the synthetic only in state text", async () => {
+    await grantTestConsent("typesafe");
+    const drifted = {
+      ...synthetic(),
+      state: "This is a synthetic connection test with bookmark content.",
+    };
+    await expect(
+      sendConsented("jev_test", "typesafe", "jev-latest", drifted),
+    ).rejects.toMatchObject({ name: "NetworkGateError", code: "request_not_allowed" });
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a synthetic request built for a different model than the model arg", async () => {
+    await grantTestConsent("typesafe");
+    await expect(
+      sendConsented(
+        "jev_test",
+        "typesafe",
+        "jev-latest",
+        makeSyntheticRequest("jev-preview"),
+      ),
+    ).rejects.toMatchObject({ code: "request_not_allowed" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends the admitted request and resolves with the raw Response", async () => {
+    await grantTestConsent("typesafe");
+    fetchSpy.mockResolvedValue(okResponse());
+    const response = await sendConsented(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      synthetic(),
+    );
+    expect(response.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(PRESETS.typesafe.url);
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.state).toBe(
+      "This is a synthetic connection test with no bookmark content.",
+    );
+    expect(await db.sentLog.count()).toBe(1);
+  });
+
+  it("sendConsentedTest stays a thin wrapper over the scoped send", async () => {
+    await grantTestConsent("typesafe");
+    fetchSpy.mockResolvedValue(okResponse());
+    await sendConsentedTest("typesafe", "jev-latest");
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["model", "questions", "state"]);
+  });
+
+  it("maps a mid-flight fetch abort to timeout and writes no sentLog row", async () => {
+    await grantTestConsent("typesafe");
+    fetchSpy.mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    });
+    const controller = new AbortController();
+    const pending = sendConsented(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      synthetic(),
+      { signal: controller.signal },
+    );
+    // Abort only once the request is actually in flight — the gate's async
+    // consent/permission/key reads must resolve first.
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+    controller.abort();
+    const error = await pending.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("timeout");
+    // The request never completed, so nothing "left" — no sentLog row.
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("maps an abort raised during the gate's async checks to timeout", async () => {
+    await grantTestConsent("typesafe");
+    const controller = new AbortController();
+    const pending = sendConsented(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      synthetic(),
+      { signal: controller.signal },
+    );
+    controller.abort();
+    const error = await pending.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("timeout");
+    // Aborted before fetch — nothing left the extension.
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("refuses a pre-aborted signal as timeout without calling fetch", async () => {
+    await grantTestConsent("typesafe");
+    const controller = new AbortController();
+    controller.abort();
+    const error = await sendConsented(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      synthetic(),
+      { signal: controller.signal },
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("timeout");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("still applies the model allowlist under the scoped entry point", async () => {
+    await grantTestConsent("typesafe");
+    await expect(
+      sendConsented(
+        "jev_test",
+        "typesafe",
+        "gpt-4o",
+        makeSyntheticRequest("gpt-4o"),
+      ),
+    ).rejects.toMatchObject({ code: "unlisted_model" });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

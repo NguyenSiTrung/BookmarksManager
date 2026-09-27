@@ -71,19 +71,19 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         varying model; request recording; both endpoint paths; binds 127.0.0.1 on an ephemeral port
   - [x] Implement
 
-- [ ] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
 
 ## Phase 2: Scoped gate and hardened client
 <!-- execution: sequential -->
 <!-- depends: phase1 -->
 
-- [ ] Task 1: Scoped consent gate
+- [x] Task 1: Scoped consent gate
   <!-- files: src/net/send.ts, src/consent/records.ts, tests/unit/network-gate.test.ts, tests/unit/consent.test.ts -->
-  - [ ] Failing tests: unknown scope → `unregistered_scope`, non-synthetic `jev_test` request →
+  - [x] Failing tests: unknown scope → `unregistered_scope`, non-synthetic `jev_test` request →
         `request_not_allowed`, both before key/permission reads (spy counts); `hasConsent(scope, preset)`
         scope/origin/version checks; signal abort → `timeout` with no sentLog row; existing
         `sendConsentedTest`/`*TestConsent` wrappers unchanged
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 2: Hardened Jev client
   <!-- files: src/jev/client.ts, tests/unit/jev-client.test.ts -->

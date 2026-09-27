@@ -57,3 +57,27 @@ the ones most relevant to this track:
   - Context: mock default answers are deterministic (noul 0.9, choice first-key 0.75 confidence, score middle-level) so downstream tests assert stable values; `input_tokens` estimated from rawBody length.
   - Gotchas: only valid POST calls consume the scripted queue (404s don't); `close()` is idempotent via `closeAllConnections()` + timer sweep.
 ---
+
+## [2026-09-27 03:32] - Phase 1 Task 5: Automated checkpoint — FULL GATE GREEN
+- **Gate evidence:** `npm run lint` 0 errors (1 known `react-hooks/incompatible-library` warning on the TanStack virtualizer call) · `npm run typecheck` clean · `npx vitest run` **66 files / 1703 tests, all pass** (+112 vs Phase 2 baseline 1591) · `npm run build` 1.08 MB · `check:manifest` OK · `check:bundle` OK · `xvfb-run -a npm run test:e2e` **11/11 pass**.
+- **Parallel execution notes:** 4 workers in `.worktrees/p3-p1t{1..4}` on `wt/p3-p1tN` branches with `cp -al` hardlinked `node_modules`/`.wxt`; disjoint file sets meant clean cherry-picks; coordinator (this session) serialized commits, notes, plan markers, and all `bd` updates.
+---
+
+## Phase 2 — Task 1: Scoped consent gate
+
+- `sendConsented(scope, preset, model, request, {signal})` gate order: scope registry → preset → model
+  allowlist → HTTPS/origin → per-scope `admits(request, model)` guard → wire-schema parse → consent →
+  permission → key → fetch. `SCOPE_REGISTRY` is a frozen `ReadonlyMap`; `jev_test` admits only requests
+  structurally equal to `makeSyntheticRequest(model)` (key-order-insensitive deep equal, values must match).
+- Abort handling has three observably different checkpoints: pre-aborted signal → `timeout` before any
+  fetch; abort during the gate's async consent/permission/key reads → `timeout`, fetch never called; abort
+  mid-flight → `timeout` after fetch was invoked. `sentLog` is written only when `fetch` resolves (incl.
+  HTTP errors) — a real "bytes left" boundary, not "fetch was called".
+- Testing mid-flight abort: an immediate `controller.abort()` fires while the gate is still in async DB
+  reads, so `fetchSpy` stays at 0. Use `vi.waitFor` until fetch is invoked, then abort — otherwise the test
+  conflates pre-flight and in-flight abort.
+- Adding gate error codes ripples typecheck failures into `src/messages/provider.ts`: `ProviderErrorCode`
+  is the crossing-boundary union and must enumerate every code the gate can emit, even if a later task
+  handles UX copy.
+- `hasConsent`/`grantConsent`/`revokeConsent` take `(scope, preset)`; the old `*TestConsent` wrappers are
+  one-line forwarders — kept for existing call sites and tests.
