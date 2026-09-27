@@ -258,11 +258,32 @@ async function runPersistedJob(jobId: string): Promise<void> {
 }
 
 /**
+ * Save-suggest runs the pipeline as a PROPOSAL-only flow (plan §9.1/FR10):
+ * the analyzed "bookmark" is a not-yet-saved page behind a synthetic
+ * `popup:` id with no tree node to mutate, and its
+ * `set_category`/`add_tags`/`move` outputs are chips the user accepts in the
+ * popup — never auto-applied actions. Running under the user's real
+ * settings would let `evaluatePolicy` return `auto_apply`, and the guarded
+ * apply would then fail `stale`/`bookmark_gone` on the synthetic id,
+ * turning the whole suggestion into `apply_failed` and hiding the chips.
+ * The full `DecisionSettings` value with every toggle off forces the policy
+ * into `preselect`/`review`/`unsure`, so `persistDraft` always lands the
+ * rows `pending`/`unsure` and never reaches `approveDecision`. The real
+ * analyze path (`analyzeById`, library jobs) keeps the user's settings and
+ * still auto-applies per §10.2.
+ */
+const SAVE_SUGGEST_SETTINGS: DecisionSettings = {
+  autoApply: { add_tags: false, set_category: false },
+};
+
+/**
  * The production decisions handlers: real services, the Jev-bound job runner,
  * and the settings/blocklist store. Keys and the Jev client never leave this
- * module — the protocol only ever sees these redacted results.
+ * module — the protocol only ever sees these redacted results. Exported for
+ * the worker-wiring tests; `defineBackground` below is the only runtime
+ * caller.
  */
-function productionHandlers(): DecisionsHandlers {
+export function productionHandlers(): DecisionsHandlers {
   return {
     async analyzeById(bookmarkId) {
       const provider = await activeProvider();
@@ -297,10 +318,12 @@ function productionHandlers(): DecisionsHandlers {
         loadAnalysisContext(),
         readBlocklist(),
       ]);
-      // Save-suggest also asks for a folder placement (plan §9.1/FR10).
+      // Save-suggest also asks for a folder placement (plan §9.1/FR10) — and
+      // always under the proposal-only settings, so the user's auto-apply
+      // toggles can never fire against the synthetic `popup:` id.
       return analyzeBookmark({
         bookmark,
-        context,
+        context: { ...context, settings: SAVE_SUGGEST_SETTINGS },
         preset: provider.preset,
         model: provider.model,
         checks: ["categorize", "tags", "placement"],
