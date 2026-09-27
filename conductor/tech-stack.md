@@ -1,8 +1,9 @@
-<!-- Last refreshed: 2026-09-26 -->
+<!-- Last refreshed: 2026-09-27 -->
 
 # Technology Stack
 
 The stack below reflects the **installed dependencies in `package.json`** as of the
+Phase 3 Jev client track (`phase3_jev_client_20260927`), after the archived
 Phase 2 search track (`phase2_search_20260926`, archived 2026-09-26),
 built on the Phase 1 core manager (`phase1_core_manager_20260926`) and the
 Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
@@ -75,24 +76,39 @@ Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
 
 ## AI and Networking
 
-- Thin TypeScript client for Jev's `/v1/systemone` wire format: `src/jev/wire.ts`
-  (request/response schemas, `makeSyntheticRequest`) and `src/jev/connection.ts`
-  (`testJevConnection` with coded, redacted errors).
-- Presets in `src/net/presets.ts`: TypeSafe and OpenRouter model allowlists.
-- Network gate `src/net/send.ts` re-verifies
-  preset→model→https→origin→consent→host-permission→key on every send; consent
-  records and disclosure strings live in `src/consent/`.
+- Jev provider layer in `src/jev/` (added Phase 3): `wire.ts`
+  (request/response schemas, `makeSyntheticRequest`), `budget.ts` (token
+  estimation, 32k/64k guards, greedy batch planning), `retry.ts`
+  (full-jitter backoff honoring `retry-after`), `usage.ts` (per-request
+  token/cost totals), `confidence.ts` (§10.1 per-field confidence),
+  `client.ts` (`createJevClient` — batching, retry, per-preset concurrency,
+  response cross-checks, typed redacted `JevClientError`s), `connection.ts`
+  (`testJevConnection` runs through the client on the `jev_test` scope), and
+  `define.ts` (`defineDecision`/`noul`/`choice`/`score` — a Pydantic-style
+  typed question-set builder with `build()` and typed `run()`).
+- Presets in `src/net/presets.ts`: TypeSafe and OpenRouter model allowlists;
+  `src/net/provider-info.ts` holds per-preset UI metadata including the
+  frozen moving-alias registry (`jev-latest`, `jev-preview`).
+- Network gate `src/net/send.ts` is the only `fetch` site: scoped
+  `sendConsented(scope, …)` re-verifies
+  preset→model→https→origin→consent→host-permission→key on every send
+  against a frozen scope registry (`jev_test` admits only the deep-equal
+  synthetic request); consent records and disclosure strings live in
+  `src/consent/`.
 - Message layer `src/messages/provider.ts`: total `runtime.onMessage` handlers
   returning `{ok:true,…} | {ok:false,code,message}` Zod-validated unions.
 - **[planned]** Optional OpenAI-compatible LLM client for generation and
-  second opinions. Pydantic AI informs the typed question-builder design but is
-  not a runtime dependency.
+  second opinions.
 
 ## Quality and Delivery
 
 - **Vitest 5** + Testing Library (`@testing-library/react` 16, jsdom 30,
   fake-indexeddb 6.2.5) — `tests/unit`, `tests/components`, `tests/fixtures`,
   and `tests/fakes` (in-memory `chrome.bookmarks` fake with fixed roots).
+  `tests/mock-servers/jev.ts` is a scripted HTTP fake of the System One
+  endpoint; `tests/live/` is a key-gated smoke suite run only via
+  `npm run test:live` (separate `vitest.live.config.ts`, excluded from the
+  default run and CI).
 - **Playwright 1.63** headed persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
 - **ESLint 9 flat config** (`eslint.config.mjs`) with typescript-eslint and

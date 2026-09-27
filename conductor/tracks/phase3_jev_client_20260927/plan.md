@@ -153,7 +153,7 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
 <!-- execution: sequential -->
 <!-- depends: phase3, phase4 -->
 
-- [ ] Task 1: Docs sync — `PROJECT_PLAN.md` §1.1/§15/§18 Phase 3 status (after asking about its uncommitted
+- [x] Task 1: Docs sync — `PROJECT_PLAN.md` §1.1/§15/§18 Phase 3 status (after asking about its uncommitted
       edits), `conductor/tech-stack.md`, `conductor/product.md`; confirm `store/` needs no data-flow change
 - [ ] Task 2: Final full gate (+ `npm run test:live` if keys are available) and elevate learnings to `patterns.md`
 - [ ] Task 3: Conductor - User Manual Verification 'Phase 3 Jev Client track' (Protocol in workflow.md)

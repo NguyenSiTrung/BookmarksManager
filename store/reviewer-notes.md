@@ -119,7 +119,10 @@ needs a real provider key:
 - Open the options page → "AI provider connection". The disclosure names the
   recipient and its literal origin, the exact synthetic fields (`model`,
   `state`, `questions`), the `Authorization` header, the purpose, the
-  trigger, and links the provider's privacy policy.
+  trigger, and links the provider's privacy policy; each preset also shows a
+  short provider-specific data-handling note, and moving model aliases
+  (`jev-latest`, `jev-preview`) show an inline warning that confidence
+  thresholds tuned on one model version may not carry over.
 - Check the unchecked consent box, choose a model, enter the key, and click
   Enable — Chrome's optional host-permission prompt for the single chosen
   origin appears from that same click. Denying it leaves the provider off
@@ -131,8 +134,9 @@ needs a real provider key:
   `Authorization: Bearer <key>` — cookies omitted, redirects refused.
   Success shows the returned model id and latency (plus the reported cost
   for OpenRouter); failures show a redacted code (`auth`, `incompatible`,
-  `retry_later`, `invalid_response`, `http_error`, the consent gate's own
-  refusal codes such as `no_key`/`no_consent`/`no_permission`, `reconnect`
+  `retry_later`, `timeout`, `invalid_response`, `http_error`, the consent
+  gate's own refusal codes such as `no_key`/`no_consent`/`no_permission`/
+  `unlisted_model`/`unregistered_scope`/`request_not_allowed`, `reconnect`
   for an unreadable stored key, `not_enabled`, `internal_error`) — never
   keys or response bodies.
 - Until consent, host permission, and a stored key are all in place the Test
