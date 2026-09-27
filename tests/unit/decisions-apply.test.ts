@@ -208,6 +208,39 @@ describe("approveDecision — merge_duplicates", () => {
 });
 
 // ---------------------------------------------------------------------------
+// approve — auto_applied target (policy auto-apply)
+// ---------------------------------------------------------------------------
+
+describe("approveDecision — auto_applied target", () => {
+  it("records the auto_applied status and audit row for the policy actor", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    const row = await approveDecision(d.id, "policy", "auto_applied");
+    expect(row.status).toBe("auto_applied");
+    expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
+    const audit = await db.audit.toArray();
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({
+      decisionId: d.id,
+      from: "pending",
+      to: "auto_applied",
+      actor: "policy",
+    });
+  });
+
+  it("reverts an auto_applied row via its recorded snapshot", async () => {
+    const d = await persistDecision(
+      decision({ kind: "set_category", bookmarkIds: ["bm-a"], category: "docs" }),
+    );
+    await approveDecision(d.id, "policy", "auto_applied");
+    const row = await revertDecision(d.id);
+    expect(row.status).toBe("reverted");
+    expect(await getMeta("bm-a")).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // reject
 // ---------------------------------------------------------------------------
 

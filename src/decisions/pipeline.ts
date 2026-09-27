@@ -660,7 +660,7 @@ async function persistDraft(
   }
   if (outcome !== "auto_apply") return row;
   try {
-    return await approveDecision(row.id, "policy");
+    return await approveDecision(row.id, "policy", "auto_applied");
   } catch (cause) {
     if (cause instanceof DecisionApplyError) {
       throw new DecisionPipelineError(
@@ -706,6 +706,22 @@ async function recordUsage(result: JevRunResult): Promise<UsageRecord> {
 export async function analyzeBookmark(
   options: AnalyzeBookmarkOptions,
 ): Promise<AnalyzeBookmarkResult> {
+  // Outer boundary: task builders can throw raw `TypeError`s and
+  // `DecisionState.parse`/`mergeStates` can throw a raw `ZodError` (whose
+  // `issues` may embed state values). Map EVERY throw through
+  // `toPipelineError` so callers only ever see typed, redacted errors — an
+  // already-typed `DecisionPipelineError` is preserved, anything else becomes a
+  // generic content-free `provider` error. No `cause` or state is attached.
+  try {
+    return await runAnalysis(options);
+  } catch (cause) {
+    throw toPipelineError(cause);
+  }
+}
+
+async function runAnalysis(
+  options: AnalyzeBookmarkOptions,
+): Promise<AnalyzeBookmarkResult> {
   const checks = options.checks ?? DEFAULT_CHECKS;
   validateChecks(checks);
 
@@ -746,11 +762,14 @@ export async function analyzeBookmark(
   crossCheckAnswers(built, answers);
 
   const drafts = interpret(built, answers);
+  // Record the usage row BEFORE persisting decisions: the request already left
+  // the device (cost incurred), so a decision that fails to persist/apply must
+  // not drop the per-request cost accounting. Exactly one row per call.
+  const usage = await recordUsage(result);
   const decisions: DecisionRow[] = [];
   for (const draft of drafts) {
     decisions.push(await persistDraft(draft, options, result.model));
   }
-  const usage = await recordUsage(result);
 
   return { sent: true, model: result.model, decisions, usage };
 }

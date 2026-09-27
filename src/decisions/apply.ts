@@ -370,8 +370,11 @@ async function transition(
 
 /**
  * Approve decision `id`: apply its action through the guarded services behind
- * an undo snapshot, then move the row to `applied` and record the snapshot id.
- * Rejects `illegal_transition` for a status that cannot be applied,
+ * an undo snapshot, then move the row to its target terminal status and record
+ * the snapshot id. `target` defaults to `applied` (a user approval); the
+ * auto-apply path passes `auto_applied` so the policy-driven terminal status
+ * matches the schema and the `pending → auto_applied` legal transition. Rejects
+ * `illegal_transition` for a status that cannot be moved to `target`,
  * `unsupported` for a kind with no apply path, `stale` when a bookmark is gone
  * or has moved since the decision was made, and the underlying service's typed
  * error when the mutation itself fails. No audit row is written unless the
@@ -385,9 +388,10 @@ async function transition(
 export async function approveDecision(
   id: string,
   actor: AuditActor = "user",
+  target: "applied" | "auto_applied" = "applied",
 ): Promise<DecisionRow> {
   const row = await requireRow(id);
-  if (!isLegalTransition(row.status, "applied")) {
+  if (!isLegalTransition(row.status, target)) {
     throw new DecisionApplyError(
       "illegal_transition",
       `Cannot approve decision "${id}" from "${row.status}".`,
@@ -396,7 +400,7 @@ export async function approveDecision(
   await assertFresh(row);
   const snapshotId = await applyAction(row);
   try {
-    return await transition(id, "applied", actor, snapshotId);
+    return await transition(id, target, actor, snapshotId);
   } catch (cause) {
     // The mutation succeeded but the row could not record it — undo the
     // mutation so nothing is left applied-but-untracked.

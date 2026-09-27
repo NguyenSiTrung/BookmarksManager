@@ -245,7 +245,7 @@ describe("analyzeBookmark", () => {
     expect(result.sent).toBe(true);
     const decisions = await db.decisions.toArray();
     expect(decisions).toHaveLength(2);
-    expect(decisions.every((d) => d.status === "applied")).toBe(true);
+    expect(decisions.every((d) => d.status === "auto_applied")).toBe(true);
 
     // The guarded apply path ran: meta rows and audit rows exist.
     const meta = await db.bookmarkMeta.get("bm-1");
@@ -254,6 +254,45 @@ describe("analyzeBookmark", () => {
     const audit = await db.audit.toArray();
     expect(audit).toHaveLength(2);
     expect(audit.every((a) => a.actor === "policy")).toBe(true);
+    // Auto-apply is `pending → auto_applied`, not the user-approval `applied`.
+    expect(audit.every((a) => a.to === "auto_applied")).toBe(true);
+  });
+
+  it("records the usage row even when persisting a decision fails", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+    const putSpy = vi
+      .spyOn(db.decisions, "put")
+      .mockRejectedValue(new Error("write failed"));
+
+    const error = await analyzeBookmark(options()).catch(
+      (caught: unknown) => caught,
+    );
+    putSpy.mockRestore();
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("persist_failed");
+    // The request left the device, so its cost is still accounted for.
+    expect(await db.usage.count()).toBe(1);
+  });
+
+  it("records the usage row even when auto-applying a decision fails", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
+    const settings = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+    const auditSpy = vi
+      .spyOn(db.audit, "add")
+      .mockRejectedValue(new Error("audit write failed"));
+
+    const error = await analyzeBookmark(
+      options({ context: { tagDefs, corpus, tree, settings } }),
+    ).catch((caught: unknown) => caught);
+    auditSpy.mockRestore();
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("apply_failed");
+    // The request left the device, so its cost is still accounted for.
+    expect(await db.usage.count()).toBe(1);
   });
 
   it("leaves decisions pending and mutates nothing when toggles are off", async () => {
