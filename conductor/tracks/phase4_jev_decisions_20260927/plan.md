@@ -309,7 +309,11 @@ all behind a new per-provider bookmark-data consent.
        tests; the default relaunch (real runPersistedJob with a live provider) is seam-tested only —
        Phase 5 Task 1's e2e must exercise the resume relaunch end to end (re-review Minor 7). -->
 
-- [ ] Task 6: Phase 4 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 6: Phase 4 automated checkpoint — full gate green, evidence in `learnings.md`
+  <!-- landed 31eb12b. Gate at 31eb12b: lint 0 errors (1 pre-existing TanStack warning) · typecheck
+       clean · vitest 92 files / 2466 tests · build 1.20 MB · check:manifest OK · check:bundle OK ·
+       e2e 13/13 (after fixing a PRE-EXISTING P4.T1 strict-mode locator ambiguity the checkpoint
+       surfaced — getByLabel("Provider") also matched the Data-sent-to-providers section). -->
 
 ## Phase 5: End-to-end, live, and docs
 <!-- execution: sequential -->

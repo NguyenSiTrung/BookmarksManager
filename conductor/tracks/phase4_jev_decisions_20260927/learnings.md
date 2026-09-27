@@ -40,6 +40,19 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 18:40] - Phase 4 Task 6: automated checkpoint
+
+- **Gate (main @ `31eb12b`)**: lint 0 errors (1 pre-existing TanStack warning) · typecheck clean ·
+  `npx vitest run` **92 files / 2466 tests pass** · build 1.20 MB · `check:manifest` OK ·
+  `check:bundle` OK · `xvfb-run -a npm run test:e2e` **13/13 pass**.
+- The checkpoint (first e2e run since Phase 3) caught a **pre-existing** strict-mode ambiguity from
+  P4.T1: `getByLabel("Provider")` substring-matches BOTH the "AI provider connection" region and the
+  new "Data sent to providers" section. Lesson: when a page gains a second section whose accessible
+  name contains an existing section's label word, substring-based `getByLabel` locators break in
+  strict mode — prefer `getByRole("region", { name })` with the full name (fixed in `31eb12b`).
+- `tests/unit/search-perf.test.ts` remains a wall-clock flake under full parallel load (613 ms vs the
+  500 ms budget observed once this session; passes isolated). Pre-documented; not a regression.
+
 ## [2026-09-27 18:15] - Phase 4 Tasks 4-5 fix rounds: job-intent wiring at the worker boundary
 
 - **A panel that renders the row must never race the row's first read.** `useLiveQuery`'s initial
