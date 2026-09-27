@@ -22,7 +22,7 @@ import { getMeta, putMeta } from "../../src/db/meta";
 import { Decision } from "../../src/schemas/decision";
 import { get } from "../../src/sync/chrome-bookmarks";
 import { moveNode } from "../../src/sync/mutations";
-import { peekLatest } from "../../src/undo/snapshot";
+import { peekLatest, pushSnapshot } from "../../src/undo/snapshot";
 import { decisionBase } from "../fixtures/base-records";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
@@ -276,6 +276,31 @@ describe("revertDecision", () => {
     await expectApplyError(() => revertDecision(d.id), "illegal_transition");
   });
 
+  it("refuses with undo_conflict when its snapshot is not the stack head", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    await approveDecision(d.id);
+    // An unrelated snapshot pushed on top of the decision's own snapshot.
+    await pushSnapshot({ kind: "delete", nodes: [], meta: [] });
+    await expectApplyError(() => revertDecision(d.id), "undo_conflict");
+    // The unrelated snapshot is untouched and the change is still applied.
+    expect((await peekLatest())?.meta).toEqual([]);
+    expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
+  });
+
+  it("refuses with invalid when the row has no recorded snapshot", async () => {
+    const d = await persistDecision(
+      decision({
+        kind: "add_tags",
+        bookmarkIds: ["bm-a"],
+        tags: ["x"],
+        status: "applied",
+      }),
+    );
+    await expectApplyError(() => revertDecision(d.id), "invalid");
+  });
+
   it("writes an audit row for the revert transition", async () => {
     const d = await persistDecision(
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
@@ -339,6 +364,59 @@ describe("stale decisions", () => {
     const err = await expectApplyError(() => approveDecision(d.id), "stale");
     expect(err.staleReason).toBe("bookmark_moved");
     expect((await get("bm-b"))[0]?.parentId).toBe("2"); // not applied blindly
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rollback / compensation
+// ---------------------------------------------------------------------------
+
+describe("apply rollback and compensation", () => {
+  it("discards the pushed snapshot by id when the first tag op fails", async () => {
+    // A blank tag normalizes to an empty nameKey → bulkAddTag fails invalid_tag
+    // before anything was applied, so there is nothing to restore.
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["   "] }),
+    );
+    await expectApplyError(() => approveDecision(d.id), "invalid_tag");
+    expect(await peekLatest()).toBeUndefined(); // snapshot discarded
+    expect(await getMeta("bm-a")).toBeUndefined();
+    expect((await db.decisions.get(d.id))?.status).toBe("pending");
+    expect(await db.audit.toArray()).toEqual([]);
+  });
+
+  it("undoes the tags already applied when a later tag op fails mid-way", async () => {
+    await putMeta("bm-a", { tags: ["old"] });
+    const d = await persistDecision(
+      decision({
+        kind: "add_tags",
+        bookmarkIds: ["bm-a"],
+        tags: ["one", "   "], // second fails after the first is applied
+      }),
+    );
+    await expectApplyError(() => approveDecision(d.id), "invalid_tag");
+    // The partially-applied change is compensated, not left orphaned.
+    expect((await getMeta("bm-a"))?.tags).toEqual(["old"]);
+    expect(await peekLatest()).toBeUndefined(); // snapshot replayed and popped
+    expect((await db.decisions.get(d.id))?.status).toBe("pending");
+    expect(await db.audit.toArray()).toEqual([]);
+  });
+
+  it("undoes the mutation when the status/audit write fails afterwards", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    const addSpy = vi
+      .spyOn(db.audit, "add")
+      .mockRejectedValue(new Error("audit write failed"));
+    await expectApplyError(() => approveDecision(d.id), "api");
+    addSpy.mockRestore();
+    // No orphaned, un-revertable mutation: the tag is undone and the row
+    // stays pending with no audit row.
+    expect(await getMeta("bm-a")).toBeUndefined();
+    expect(await peekLatest()).toBeUndefined();
+    expect((await db.decisions.get(d.id))?.status).toBe("pending");
+    expect(await db.audit.toArray()).toEqual([]);
   });
 });
 

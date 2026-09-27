@@ -10,7 +10,7 @@ import { MutationError, moveNode } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
 import { bulkAddTag, bulkSetCategory } from "../sync/tag-ops";
 import type { TagOpsErrorCode } from "../sync/tag-ops";
-import { undoLatest } from "../undo/restore";
+import { discardById, undoLatest } from "../undo/restore";
 import type { UndoFailureCode } from "../undo/restore";
 import { captureNodes, peekLatest, pushSnapshot } from "../undo/snapshot";
 import type { UndoMeta } from "../schemas/undo";
@@ -41,8 +41,29 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   replays the row's recorded snapshot and records `reverted`.
  * - **Supported kinds.** `add_tags`, `set_category`, `move`, and
  *   `merge_duplicates` apply. `mark_dead`, `rename`, and `create_folder` are
- *   refused `unsupported` — the spec's FR6 apply paths name only the former
- *   four, and the undo stack has no replay kind for a rename/create/mark.
+ *   refused `unsupported` **by design, not by oversight**: the track spec's
+ *   "Out of Scope" section defers `mark_dead` to release 1.1 and
+ *   `create_folder`/`rename` to Phase 5 (the LLM layer), and the undo stack
+ *   has no replay kind for any of them. They gain an apply path only when
+ *   those releases land.
+ * - **Apply/status atomicity (compensating undo).** The mutation
+ *   (`chrome.bookmarks` / Dexie metadata) and the status+audit write cannot
+ *   share one IndexedDB transaction: the mutation awaits non-Dexie async work,
+ *   which auto-commits a surrounding Dexie transaction, so a "single
+ *   transaction" would silently not be atomic. Instead the apply is two-phase
+ *   with compensation: after a successful mutation the status transition runs;
+ *   if THAT throws, the mutation is undone via the snapshot just pushed
+ *   (targeted by id) and a typed error is rethrown — a failed status write can
+ *   never leave an orphaned, un-revertable mutation. `revertDecision` applies
+ *   the same reasoning in reverse: if the row cannot be marked `reverted`
+ *   after the undo popped, it reports `state_unrecorded` rather than leaving
+ *   the row silently inconsistent.
+ * - **Compensation is targeted by id, never "latest".** Both the
+ *   mutation-failure rollback and the transition-failure compensation name the
+ *   exact snapshot id they pushed: `discardById` drops it when there is
+ *   nothing to restore, and a replay only runs when that id is verifiably the
+ *   stack head (the only replay primitive `restore.ts` exposes), so an
+ *   unrelated snapshot is never popped.
  * - **Meta undo via the `delete` kind.** The undo system has no dedicated
  *   "metadata changed" snapshot; the `delete`/`merge` replay writes every
  *   `meta` row whose id is NOT in `nodes` back onto its surviving bookmark
@@ -58,8 +79,7 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   Nothing is written and no audit row is added.
  * - **Revert targets its own snapshot.** A revert only runs when the row's
  *   recorded `undoSnapshotId` is the current stack head; otherwise it reports
- *   `undo_conflict` rather than blindly popping an unrelated snapshot. A
- *   failed apply best-effort reverts the partial change before rethrowing.
+ *   `undo_conflict` rather than blindly popping an unrelated snapshot.
  * - **Bulk approve is per-row atomic.** Each id is approved in its own
  *   try/catch; one row's failure (e.g. stale) never affects the others, and
  *   the result reports the applied rows and the per-row failures.
@@ -85,7 +105,9 @@ export type DecisionApplyErrorCode =
   /** The decision kind has no apply path (mark_dead / rename / create_folder). */
   | "unsupported"
   /** The recorded undo snapshot is not the top of the stack. */
-  | "undo_conflict";
+  | "undo_conflict"
+  /** A change was made (or undone) but its row state could not be recorded. */
+  | "state_unrecorded";
 
 /** Why a decision is stale. */
 export type StaleReason = "bookmark_gone" | "bookmark_moved";
@@ -203,12 +225,37 @@ async function pushMetaUndo(ids: readonly string[]): Promise<number> {
   return pushSnapshot({ kind: "delete", nodes: [], meta });
 }
 
-/** Best-effort rollback of a partially-applied change via the undo stack. */
-async function rollback(): Promise<void> {
+/**
+ * Drop snapshot `snapshotId` WITHOUT replaying it — the "nothing to restore"
+ * branch of compensation, for a failed single service call that rolled itself
+ * back. Targets the row BY ID (`discardById`), never the stack head, so a
+ * concurrent snapshot is never touched. Best-effort: never masks the original
+ * failure.
+ */
+async function rollback(snapshotId: number): Promise<void> {
   try {
-    await undoLatest();
+    await discardById(snapshotId);
   } catch {
     // Never mask the original failure.
+  }
+}
+
+/**
+ * Replay snapshot `snapshotId` to compensate a change that must be undone
+ * (a partially-applied multi-op, or a mutation whose status write failed).
+ * `restore.ts` exposes no id-targeted replay, so this verifies `snapshotId`
+ * is the stack head before replaying and refuses otherwise — an unrelated
+ * snapshot is never popped. Returns whether the replay ran and succeeded;
+ * best-effort, never throws.
+ */
+async function compensate(snapshotId: number): Promise<boolean> {
+  try {
+    const head = await peekLatest();
+    if (head?.id !== snapshotId) return false;
+    const result = await undoLatest();
+    return result.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -216,12 +263,17 @@ async function applyTags(
   row: Extract<DecisionDocument, { kind: "add_tags" }>,
 ): Promise<number> {
   const snapshotId = await pushMetaUndo(row.bookmarkIds);
+  let appliedAny = false;
   for (const tag of row.tags) {
     const result = await bulkAddTag(row.bookmarkIds, tag);
     if (!result.ok) {
-      await rollback();
+      // A later tag failing must undo the tags already applied; if none
+      // applied yet the failed call rolled itself back, so drop the snapshot.
+      if (appliedAny) await compensate(snapshotId);
+      else await rollback(snapshotId);
       throw new DecisionApplyError(result.code, result.message);
     }
+    appliedAny = true;
   }
   return snapshotId;
 }
@@ -232,7 +284,8 @@ async function applyCategory(
   const snapshotId = await pushMetaUndo(row.bookmarkIds);
   const result = await bulkSetCategory(row.bookmarkIds, row.category);
   if (!result.ok) {
-    await rollback();
+    // One transactional call — a failure leaves no net change to restore.
+    await rollback(snapshotId);
     throw new DecisionApplyError(result.code, result.message);
   }
   return snapshotId;
@@ -243,12 +296,16 @@ async function applyMove(
 ): Promise<number> {
   const { nodes, meta } = await captureNodes(row.bookmarkIds);
   const snapshotId = await pushSnapshot({ kind: "bulk_move", nodes, meta });
+  let movedAny = false;
   try {
     for (const id of row.bookmarkIds) {
       await moveNode(id, { parentId: row.targetFolderId });
+      movedAny = true;
     }
   } catch (cause) {
-    await rollback();
+    // Undo moves already made; a first-move failure needs no replay.
+    if (movedAny) await compensate(snapshotId);
+    else await rollback(snapshotId);
     throw toApplyError(cause);
   }
   return snapshotId;
@@ -319,6 +376,11 @@ async function transition(
  * or has moved since the decision was made, and the underlying service's typed
  * error when the mutation itself fails. No audit row is written unless the
  * transition succeeds.
+ *
+ * If the status/audit write fails AFTER the mutation succeeded, the mutation is
+ * undone via the snapshot just pushed (targeted by id) before the typed error
+ * is rethrown, so a failed status write never leaves an orphaned change. If the
+ * change could not be compensated either, the error reports `state_unrecorded`.
  */
 export async function approveDecision(
   id: string,
@@ -333,7 +395,22 @@ export async function approveDecision(
   }
   await assertFresh(row);
   const snapshotId = await applyAction(row);
-  return transition(id, "applied", actor, snapshotId);
+  try {
+    return await transition(id, "applied", actor, snapshotId);
+  } catch (cause) {
+    // The mutation succeeded but the row could not record it — undo the
+    // mutation so nothing is left applied-but-untracked.
+    const compensated =
+      snapshotId === undefined ? true : await compensate(snapshotId);
+    if (!compensated) {
+      throw new DecisionApplyError(
+        "state_unrecorded",
+        `Decision "${id}" was applied but its status could not be recorded, ` +
+          `and the change could not be compensated.`,
+      );
+    }
+    throw toApplyError(cause);
+  }
 }
 
 /**
@@ -361,6 +438,10 @@ export async function rejectDecision(
  * an applied state, `invalid` when it has no recorded snapshot, and
  * `undo_conflict` when that snapshot is not the current stack head (so an
  * unrelated snapshot is never popped by mistake).
+ *
+ * If the row cannot be marked `reverted` after the undo popped, the revert has
+ * already happened and the error reports `state_unrecorded` rather than leaving
+ * the row silently inconsistent.
  */
 export async function revertDecision(
   id: string,
@@ -391,7 +472,18 @@ export async function revertDecision(
   if (!undone.ok) {
     throw new DecisionApplyError(undone.code, undone.message);
   }
-  return transition(id, "reverted", actor);
+  try {
+    return await transition(id, "reverted", actor);
+  } catch (cause) {
+    // The undo already ran — the change is reverted but the row could not be
+    // marked so. Surface a typed error instead of leaving it inconsistent.
+    const detail = cause instanceof Error ? `: ${cause.message}` : "";
+    throw new DecisionApplyError(
+      "state_unrecorded",
+      `Decision "${id}" was reverted but its status could not be recorded` +
+        `${detail}.`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
