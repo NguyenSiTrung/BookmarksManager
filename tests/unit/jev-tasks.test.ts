@@ -336,6 +336,45 @@ describe("placement", () => {
     expect(result.values.folder).toBe("f_12");
     expect(result.confidence.folder).toBe(0.8);
   });
+
+  it("maps answers by option key, not by position (integer-like ids reorder)", async () => {
+    // Chrome folder ids are integer-like strings; JS sorts integer-like
+    // object keys ascending, so the criteria record is unordered. The
+    // ordered state.candidateFolders array carries the model-facing order,
+    // and an answer is looked up by key.
+    const reordered = placement({
+      bookmark: BOOKMARK,
+      folders: [
+        { id: "10", path: ["Ten"] },
+        { id: "2", path: ["Two"] },
+        { id: "1", path: ["One"] },
+      ],
+    });
+    const request = reordered.decision.build(reordered.state, MODEL);
+    expect(reordered.state.candidateFolders?.map((c) => c.id)).toEqual([
+      "10",
+      "2",
+      "1",
+    ]);
+    const folder = request.questions["folder"];
+    if (folder?.type === "choice") {
+      expect(Object.keys(folder.criteria)).toEqual(["1", "2", "10", "none"]);
+    } else {
+      expect.unreachable("folder is a choice question");
+    }
+    const result = await reordered.decision.run(
+      fakeClient({
+        folder: {
+          type: "choice",
+          choice: "10",
+          probabilities: { "10": 0.9, "2": 0.05, "1": 0.05, none: 0 },
+          confidence: 0.9,
+        },
+      }),
+      reordered.state,
+    );
+    expect(result.values.folder).toBe("10");
+  });
 });
 
 describe("misfiled", () => {
@@ -557,10 +596,17 @@ describe("shared invariants", () => {
   });
 
   it("every question refers to named state fields (or a locally defined field) in backticks", () => {
-    // `tag`/`bookmark` are defined inside the question text itself for the
-    // per-candidate noul sets; everything else must name a state field.
-    const localRefs = new Set(["tag", "bookmark"]);
+    // Only two sets reference a field the state does not carry: `tags`
+    // defines `tag` and `rerank` defines `bookmark`, each inside the question
+    // text itself. Every other set must reference real state fields only.
+    const localRefsBySet: Record<string, readonly string[]> = {
+      "tags-v1": ["tag"],
+      "rerank-v1": ["bookmark"],
+    };
     for (const task of tasks) {
+      const allowedLocalRefs = new Set(
+        localRefsBySet[task.questionSetVersion] ?? [],
+      );
       const stateKeys = new Set(
         Object.keys(task.state).filter(
           (key) => (task.state as Record<string, unknown>)[key] !== undefined,
@@ -572,10 +618,15 @@ describe("shared invariants", () => {
         const refs = backtickRefs(text);
         expect(refs.length).toBeGreaterThan(0);
         for (const ref of refs) {
+          if (stateKeys.has(ref)) {
+            continue;
+          }
           expect(
-            stateKeys.has(ref) || localRefs.has(ref),
-            `${task.questionSetVersion} references \`${ref}\` which is neither a state field nor locally defined`,
+            allowedLocalRefs.has(ref),
+            `${task.questionSetVersion} references \`${ref}\` which is neither a state field nor a locally defined field`,
           ).toBe(true);
+          // A whitelisted local ref must actually be defined in the question.
+          expect(text).toContain(`\`${ref}\` is`);
         }
       }
     }
@@ -650,9 +701,18 @@ describe("guards at the candidate caps", () => {
       ],
     });
     const request = task.decision.build(task.state, MODEL);
+    // The state must hold all 51 folders (50 ranked + the guaranteed current
+    // one) — DecisionState.candidateFolders is capped at 51 for exactly this.
+    expect(task.state.candidateFolders).toHaveLength(51);
+    expect(DecisionState.safeParse(task.state).success).toBe(true);
     const folder = request.questions["folder"];
     if (folder?.type === "choice") {
+      // 51 folder options + `none`.
       expect(Object.keys(folder.criteria)).toHaveLength(52);
+      expect(Object.keys(folder.criteria)).toContain("f_current");
+      expect(Object.keys(folder.criteria)).toContain("none");
+    } else {
+      expect.unreachable("folder is a choice question");
     }
     expect(() => checkGuards(request)).not.toThrow();
     expect(

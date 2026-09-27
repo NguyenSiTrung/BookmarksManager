@@ -57,9 +57,15 @@ export function toCandidateFolder(folder: FolderRef): CandidateFolder {
 }
 
 /**
- * The choice options for a folder question: `{folderId: "A / B / C", …}`
- * ranked order preserved, then the `none` option. The current folder's
- * description carries a " (current folder)" marker.
+ * The choice options for a folder question: `{folderId: "A / B / C", …}` plus
+ * the `none` option. The current folder's description carries a
+ * " (current folder)" marker.
+ *
+ * **The criteria record is unordered.** Chrome folder ids are integer-like
+ * strings, and JS reorders integer-like object keys ascending, so insertion
+ * (rank) order is *not* preserved in the wire `criteria` record. The
+ * model-facing order is carried by the ordered `state.candidateFolders`
+ * array; answers map back by option *key*, never by position.
  *
  * Throws `TypeError` when a folder id is empty or collides with `none`, or
  * when two candidates share an id.
