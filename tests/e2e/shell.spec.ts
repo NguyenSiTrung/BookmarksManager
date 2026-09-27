@@ -90,7 +90,12 @@ test("extension loads, renders all three surfaces, and sends no requests", async
     await expect(
       options.getByRole("heading", { name: "Bookmarks Manager Options" }),
     ).toBeVisible();
-    await expect(options.getByLabel("Provider")).toBeVisible();
+    // By region name, not label substring: the Data-sent-to-providers
+    // section (P4.T1) also contains "provider", so getByLabel("Provider")
+    // is a strict-mode ambiguity.
+    await expect(
+      options.getByRole("region", { name: "AI provider connection" }),
+    ).toBeVisible();
 
     // Give any deferred startup work (timers, microtasks in the worker or
     // pages) a quiet window in which it would fire a request.
