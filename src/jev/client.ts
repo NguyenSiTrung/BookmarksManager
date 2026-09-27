@@ -101,6 +101,8 @@ export interface JevClientOptions {
 }
 
 export interface JevClient {
+  /** The configured model id — every run request must carry it. */
+  readonly model: string;
   run(request: unknown): Promise<JevRunResult>;
 }
 
@@ -385,6 +387,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
   }
 
   return {
+    model,
     async run(request: unknown): Promise<JevRunResult> {
       const parsed = SystemOneRequest.safeParse(request);
       if (!parsed.success) {

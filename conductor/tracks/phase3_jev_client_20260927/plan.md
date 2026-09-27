@@ -112,12 +112,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         `instructions` = `{ goal, question }` always present; invalid field names/option sets rejected
   - [x] Implement
 
-- [ ] Task 2: Typed `run()` results
+- [x] Task 2: Typed `run()` results
   <!-- files: src/jev/define.ts, tests/unit/jev-define.test.ts -->
-  - [ ] Failing tests (mock server): choice value typed as option-key union, noul → boolean at threshold,
+  - [x] Failing tests (mock server): choice value typed as option-key union, noul → boolean at threshold,
         score → number; per-field confidence via `answerConfidence`; probabilities, model, usage carried
         through; client errors propagate unchanged
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 3: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
 

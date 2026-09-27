@@ -1,3 +1,6 @@
+import { JevClientError } from "./client";
+import type { JevClient, JevRunResult } from "./client";
+import { answerConfidence } from "./confidence";
 import type { NoulQuestion, Question, SystemOneRequest } from "./wire";
 
 /**
@@ -121,11 +124,47 @@ export function score(
   return { kind: "score", question, levels };
 }
 
+/**
+ * The typed value a field maps an answer to: a choice field yields the
+ * literal union of its option keys, a noul field a boolean at its threshold,
+ * and a score field the level number.
+ */
+export type FieldValue<F> = F extends ChoiceField<infer O>
+  ? Extract<keyof O, string>
+  : F extends NoulField
+    ? boolean
+    : F extends ScoreField
+      ? number
+      : never;
+
+/**
+ * What `decision.run` returns: typed `values`, per-field `confidence` (§10.1
+ * — noul margin for noul answers, the API's `confidence` otherwise), the raw
+ * `probabilities` records (noul exposed as `{ true: p, false: 1 − p }`), and
+ * the client's `model`/`usage` carried through unchanged.
+ */
+export interface DecisionResult<F extends Fields> {
+  readonly values: { [K in keyof F]: FieldValue<F[K]> };
+  readonly confidence: { [K in keyof F]: number };
+  readonly probabilities: { [K in keyof F]: Record<string, number> };
+  readonly model: string;
+  readonly usage: JevRunResult["usage"];
+}
+
 export interface Decision<F extends Fields> {
   readonly goal: string;
   readonly fields: F;
   /** Build the System One request for `state` under `model`. */
   build(state: InstructionsText, model: string): SystemOneRequest;
+  /**
+   * Build, send, and interpret: runs the request through `client` (the
+   * client's own model — `client.model` — is the request's model), maps each
+   * answer to its typed value, and attaches §10.1 confidence plus the raw
+   * probabilities. Client errors propagate unchanged; an answer that lands
+   * outside its declared options or level range throws
+   * `JevClientError("answer_mismatch")`.
+   */
+  run(client: JevClient, state: InstructionsText): Promise<DecisionResult<F>>;
 }
 
 /**
@@ -190,5 +229,87 @@ export function defineDecision<F extends Fields>(definition: {
     return { model, state, questions };
   }
 
-  return { goal, fields, build };
+  async function run(
+    client: JevClient,
+    state: InstructionsText,
+  ): Promise<DecisionResult<F>> {
+    const result = await client.run(build(state, client.model));
+    const values: Record<string, unknown> = {};
+    const confidence: Record<string, number> = {};
+    const probabilities: Record<string, Record<string, number>> = {};
+    for (const name of names) {
+      const field = fields[name] as Field;
+      // The client cross-checked coverage and answer type already; these
+      // branches re-verify before casting to the typed value.
+      const answer = result.answers[name];
+      switch (field.kind) {
+        case "noul": {
+          if (answer?.type !== "noul") {
+            throw mismatch(name, "noul", answer?.type);
+          }
+          const p = answer.noul;
+          values[name] = p >= field.threshold;
+          confidence[name] = answerConfidence(answer, field.threshold);
+          probabilities[name] = { true: p, false: 1 - p };
+          break;
+        }
+        case "choice": {
+          if (answer?.type !== "choice") {
+            throw mismatch(name, "choice", answer?.type);
+          }
+          if (!(answer.choice in field.options)) {
+            throw new JevClientError(
+              "answer_mismatch",
+              `The answer for question ${JSON.stringify(name)} chose ${JSON.stringify(answer.choice)}, which is not a declared option.`,
+            );
+          }
+          values[name] = answer.choice;
+          confidence[name] = answerConfidence(answer);
+          probabilities[name] = answer.probabilities;
+          break;
+        }
+        case "score": {
+          if (answer?.type !== "score") {
+            throw mismatch(name, "score", answer?.type);
+          }
+          const value = answer.score;
+          if (
+            !Number.isInteger(value) ||
+            value < 1 ||
+            value > field.levels.length
+          ) {
+            throw new JevClientError(
+              "answer_mismatch",
+              `The answer for question ${JSON.stringify(name)} scored ${value}, outside the declared 1–${field.levels.length} levels.`,
+            );
+          }
+          values[name] = value;
+          confidence[name] = answerConfidence(answer);
+          probabilities[name] = answer.probabilities;
+          break;
+        }
+      }
+    }
+    return {
+      values: values as DecisionResult<F>["values"],
+      confidence: confidence as DecisionResult<F>["confidence"],
+      probabilities: probabilities as DecisionResult<F>["probabilities"],
+      model: result.model,
+      usage: result.usage,
+    };
+  }
+
+  return { goal, fields, build, run };
+}
+
+/** Unreachable under a conforming client — the cross-check guards types. */
+function mismatch(
+  name: string,
+  expected: string,
+  actual: string | undefined,
+): JevClientError {
+  return new JevClientError(
+    "answer_mismatch",
+    `The answer for question ${JSON.stringify(name)} has type ${JSON.stringify(actual)} but the field is "${expected}".`,
+  );
 }

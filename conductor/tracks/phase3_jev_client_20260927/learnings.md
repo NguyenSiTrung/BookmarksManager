@@ -144,3 +144,18 @@ Full gate green at Phase 2 completion:
 - `instructions` is always the `{ goal, question }` object (never a bare string) — §8.4 pins this so
   the goal rides with every question; noul `criteria` is omitted entirely when undeclared
   (`exactOptionalPropertyTypes`: conditionally spread, don't assign `undefined`).
+
+## Phase 3 — Task 2: typed run() results
+
+- `run(client, state)` builds with `client.model` — so `JevClient` now exposes `readonly model` (the
+  configured id, not the responding one). The client's model-equality check makes this airtight.
+- Typed values come from a mapped conditional: `ChoiceField<infer O>` → `Extract<keyof O, string>`,
+  noul → boolean at `field.threshold`, score → number. Result objects are built as plain records and
+  cast once — mapped-type construction can't be assigned incrementally under `noUncheckedIndexedAccess`.
+- `run` re-validates semantic ranges the wire schema can't know: choice value must be a declared
+  option key, score must be an integer in 1..levels — violations throw `JevClientError("answer_mismatch")`,
+  keeping the single error taxonomy.
+- Noul "probabilities" are exposed as `{ true: p, false: 1 - p }` so every field's probabilities record
+  shares the option→probability shape; the raw p is recoverable exactly.
+- Floating-point note: `1 - 0.9 === 0.09999999999999998` — assert with `toBeCloseTo` or the exact IEEE
+  literal; `toEqual(0.1)` fails.
