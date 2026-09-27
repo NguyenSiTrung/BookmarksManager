@@ -20,5 +20,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Phase 4 — Jev decisions (PROJECT_PLAN.md §15): metadata-only categorize, tags, folder pre-select, near-duplicates, misfiled scan, and search re-rank behind a per-provider bookmark-data consent (CONSENT_VERSION 2), with the §10.2 confidence policy, review queue, audit log, undo, resumable job queue, cost tracking, and the "Data sent" log
+## [~] Track: Phase 4 — Jev decisions (PROJECT_PLAN.md §15): metadata-only categorize, tags, folder pre-select, near-duplicates, misfiled scan, and search re-rank behind a per-provider bookmark-data consent (CONSENT_VERSION 2), with the §10.2 confidence policy, review queue, audit log, undo, resumable job queue, cost tracking, and the "Data sent" log
 *Link: [./conductor/tracks/phase4_jev_decisions_20260927/](./conductor/tracks/phase4_jev_decisions_20260927/)*

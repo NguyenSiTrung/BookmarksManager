@@ -53,41 +53,44 @@ all behind a new per-provider bookmark-data consent.
 <!-- execution: parallel -->
 <!-- depends: -->
 
-- [ ] Task 1: `DecisionState` schema and data minimization
+- [x] Task 1: `DecisionState` schema and data minimization — `4f2c5d4` + fix `7716a29` (worker `wt/p4-p1t1` `4c0541d`,`c0cd218`); review Approved after 1 fix round
   <!-- files: src/schemas/decision-state.ts, src/decisions/minimize.ts, tests/unit/decision-state.test.ts, tests/unit/decisions-minimize.test.ts -->
-  - [ ] Failing tests: valid/invalid `DecisionState` fixtures (strict: unknown keys rejected); URL cleaning
+  - [x] Failing tests: valid/invalid `DecisionState` fixtures (strict: unknown keys rejected); URL cleaning
         strips query, fragment, and userinfo (IDN, ports, trailing `?`/`#` cases); the blocklist matches
         banking/health/webmail samples, `file://`, private and loopback IPv4/IPv6, and dotless hosts; user
         entries are added and removed; notes are never present in a minimized state
-  - [ ] Implement
+  - [x] Implement
 
-- [ ] Task 2: Candidate pre-filters
+- [x] Task 2: Candidate pre-filters — `fcd902d` (worker `wt/p4-p1t2` `c5f4be8`); review Approved
   <!-- files: src/decisions/candidates.ts, tests/unit/decisions-candidates.test.ts -->
-  - [ ] Failing tests: the tag shortlist is capped at 30 and ranked by keyword/domain overlap
+  - [x] Failing tests: the tag shortlist is capped at 30 and ranked by keyword/domain overlap
         deterministically; the folder shortlist is capped at 50, plus `none`, and always includes the
         current folder for misfiled; near-duplicate pairs require the same domain and a similar title and
         exclude URL-normalized duplicates; the rerank shortlist takes the top 30 from `runQuery`; stable
         ordering; empty-library cases
-  - [ ] Implement
+  - [x] Implement
 
-- [ ] Task 3: Confidence policy
+- [x] Task 3: Confidence policy — `da4f2f9` (worker `wt/p4-p1t3` `25c1825`); review Approved
   <!-- files: src/decisions/policy.ts, tests/unit/decisions-policy.test.ts -->
-  - [ ] Failing tests: every §10.2 band boundary (0.5, 0.7, 0.85, inclusive/exclusive); auto-apply toggles
+  - [x] Failing tests: every §10.2 band boundary (0.5, 0.7, 0.85, inclusive/exclusive); auto-apply toggles
         default to off; `move`/`merge_duplicates` never auto-apply at any confidence; pre-select at ≥ 0.7
         only; the no-match bar; the escalation stub returns `unsure`; the settings schema rejects unknown
         kinds
-  - [ ] Implement
+  - [x] Implement
 
-- [ ] Task 4: Question sets
+- [x] Task 4: Question sets — `2b07995` + fix `9e7c1bd` (worker `wt/p4-p1t4` `4ad98a9`,`df8754e`); review Approved after 1 fix round
   <!-- files: src/jev/tasks/categorize.ts, src/jev/tasks/tags.ts, src/jev/tasks/placement.ts, src/jev/tasks/misfiled.ts, src/jev/tasks/near-duplicate.ts, src/jev/tasks/rerank.ts, src/jev/tasks/index.ts, tests/unit/jev-tasks.test.ts -->
   <!-- depends: task1 -->
-  - [ ] Failing tests: JSON snapshots of `build()` for each set; `instructions` always present; questions
+  - [x] Failing tests: JSON snapshots of `build()` for each set; `instructions` always present; questions
         refer to state fields in backticks; option keys equal the candidate IDs; each set exports a
         `questionSetVersion`; typed `run()` against a fake client maps values and confidence; the 255-option
         and 64k guards hold at the candidate caps
-  - [ ] Implement
+  - [x] Implement
 
-- [ ] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 5: Phase 1 automated checkpoint — full gate green, evidence in `learnings.md`
+  - Gate (main @ `696c5e3`): lint 0 errors (1 pre-existing TanStack warning) · typecheck clean ·
+    `npx vitest run` **73 files / 2133 tests pass** (+344 vs Phase 3 baseline 1789) · build 1.09 MB ·
+    `check:manifest` OK · `check:bundle` OK · `xvfb-run -a npm run test:e2e` **13/13 pass**
 
 ## Phase 2: Consent, gate, and persistence
 <!-- execution: sequential -->
