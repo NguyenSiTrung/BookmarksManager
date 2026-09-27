@@ -40,6 +40,27 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 16:30] - Phase 4 Task 1: Options decisions UI (consent, toggles, blocklist, sent log, cost)
+
+- `DecisionSettings.tsx` (consent screen + auto-apply toggles + blocklist) + `SentLog.tsx` (Data sent +
+  clear + cost totals), mounted from `options/main.tsx`. Landed `ea647ae`, fix `9e6bed8`.
+- **Consent grants go through direct Dexie, not a message.** There is no consent intent in
+  `messages/decisions.ts`; the Options page writes `db.consents` with
+  `grantConsent`/`revokeConsent`/`hasConsent` (scope `jev_decisions`), and the worker's gate re-verifies
+  on every send. Read it via `useLiveQuery(() => hasConsent(...))` so grant/revoke re-render live; a
+  stale `consentVersion` row reads as `false` → the re-disclosure is just the un-consented screen again.
+- **Toggles/blocklist are worker-owned**: read via `GET_SETTINGS`, write via `SET_SETTINGS` (whole
+  `DecisionSettings`) / `SET_BLOCKLIST` (full normalized array); the UI re-renders from the echoed
+  `settings_ok` snapshot. Only `add_tags`/`set_category` have toggles (§10.2).
+- **Sent log + cost are pure Dexie reads** (`db.sentLog` metadata-only, `db.usage` tokens/cost where
+  reported) — no message needed; `clearSentLog()` + `SENT_LOG_RETENTION_CAP` are the FR10 bindings.
+- **Pattern — dexie-react-hooks retains the prior result across dep changes.** A `useLiveQuery` keyed on
+  a changing arg (the provider radio) briefly renders the OLD arg's result. Fix: have the query emit a
+  `{arg, value}` tuple and treat a mismatched `arg` as pending. Also: a failed settings read must render
+  a retryable failure state, not a perpetual "Loading…" (distinguish in-flight from settled-empty).
+- Radio-group `name` collisions across two components mounted on the same page merge their inputs — the
+  decisions provider group is `name="decisions-provider"` (vs ProviderSetup's `name="provider"`).
+
 ## [2026-09-27 15:40] - Phase 3 Task 6: Automated checkpoint — FULL GATE GREEN
 
 - Gate on main @ `bafdd3f` (all Phase 3 tasks landed): **lint** 0 errors (1 pre-existing TanStack

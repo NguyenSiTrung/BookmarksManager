@@ -221,12 +221,19 @@ all behind a new per-provider bookmark-data consent.
 <!-- execution: parallel -->
 <!-- depends: phase3 -->
 
-- [ ] Task 1: Options — decisions consent, auto-apply toggles, blocklist editor, Data sent log, cost totals
+- [x] Task 1: Options — decisions consent, auto-apply toggles, blocklist editor, Data sent log, cost totals
   <!-- files: src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/DecisionSettings.tsx, src/entrypoints/options/SentLog.tsx, src/entrypoints/options/main.tsx, tests/components/options-decisions.test.tsx -->
-  - [ ] Failing tests: the decisions disclosure renders every field, trigger, and link, with the checkbox
+  - [x] Failing tests: the decisions disclosure renders every field, trigger, and link, with the checkbox
         unchecked; Enable is disabled until the box is checked; the v1→v2 re-disclosure shows; toggles
         persist and default to off; blocklist add/remove; the sent log shows metadata only; clear
-  - [ ] Implement
+  - [x] Implement
+  <!-- landed ea647ae (worker 636a4b0) + fix 9e6bed8 (worker 981f3d9). Review APPROVED_WITH_CONCERNS
+       → fix → re-review APPROVED. DecisionSettings.tsx (consent screen via direct Dexie
+       grantConsent/revokeConsent/hasConsent on the jev_decisions scope; auto-apply toggles via
+       SET_SETTINGS; blocklist via SET_BLOCKLIST + read-only BUILTIN_SENSITIVE_SITES) + SentLog.tsx
+       (db.sentLog metadata-only + clearSentLog + SENT_LOG_RETENTION_CAP note; db.usage cost totals).
+       25 tests. Fix: retryable load-failure state (was a perpetual "Loading…") + preset-tagged consent
+       read (no stale-panel flash across a provider switch). -->
 
 - [ ] Task 2: Popup save suggestions
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Suggestions.tsx, tests/components/popup-suggestions.test.tsx -->
