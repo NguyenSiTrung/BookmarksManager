@@ -106,11 +106,11 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
 <!-- execution: sequential -->
 <!-- depends: phase2 -->
 
-- [ ] Task 1: `defineDecision` and request building
+- [x] Task 1: `defineDecision` and request building
   <!-- files: src/jev/define.ts, tests/unit/jev-define.test.ts -->
-  - [ ] Failing snapshot tests: exact JSON for noul (with/without criteria), choice, score;
+  - [x] Failing snapshot tests: exact JSON for noul (with/without criteria), choice, score;
         `instructions` = `{ goal, question }` always present; invalid field names/option sets rejected
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 2: Typed `run()` results
   <!-- files: src/jev/define.ts, tests/unit/jev-define.test.ts -->

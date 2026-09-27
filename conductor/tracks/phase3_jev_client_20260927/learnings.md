@@ -134,3 +134,13 @@ Full gate green at Phase 2 completion:
   tests; some gate tests were rewritten rather than net-new).
 - `npm run build` — clean; `check:manifest` OK; `check:bundle` OK.
 - `xvfb-run -a npm run test:e2e` — 11/11 pass.
+
+## Phase 3 — Task 1: defineDecision + build
+
+- Definition-time validation throws `TypeError` (programmer error, never crosses the wire); only
+  run-time answer problems use `JevClientError`. Field names/questions/goals are trimmed-nonempty;
+  choice options 2–255 with non-empty keys; score levels 2–10 — same bounds the wire schema and
+  `checkGuards` enforce, but raised earlier at declaration.
+- `instructions` is always the `{ goal, question }` object (never a bare string) — §8.4 pins this so
+  the goal rides with every question; noul `criteria` is omitted entirely when undeclared
+  (`exactOptionalPropertyTypes`: conditionally spread, don't assign `undefined`).
