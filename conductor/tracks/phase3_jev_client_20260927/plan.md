@@ -51,11 +51,11 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         question exactly once; single-batch fast path
   - [ ] Implement
 
-- [ ] Task 2: Noul margin and answer confidence
+- [x] Task 2: Noul margin and answer confidence
   <!-- files: src/jev/confidence.ts, tests/unit/jev-confidence.test.ts -->
-  - [ ] Failing tests: §10.1 formula at p = 0, t, 1 and custom t; invalid p/t rejected; choice/score use
+  - [x] Failing tests: §10.1 formula at p = 0, t, 1 and custom t; invalid p/t rejected; choice/score use
         returned `confidence`
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 3: Retry policy and usage meter
   <!-- files: src/jev/retry.ts, src/jev/usage.ts, tests/unit/jev-retry.test.ts, tests/unit/jev-usage.test.ts -->

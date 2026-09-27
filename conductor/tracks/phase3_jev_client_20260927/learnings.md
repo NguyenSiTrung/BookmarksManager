@@ -21,3 +21,12 @@ the ones most relevant to this track:
 ---
 
 <!-- Learnings from implementation will be appended below -->
+
+## [2026-09-27 03:22] - Phase 1 Task 2: Noul margin and answer confidence
+- **Implemented:** `src/jev/confidence.ts` — `noulMargin(p, t=0.5)` per §10.1 `(p−t)/(1−t)` / `(t−p)/t` with RangeError bounds (0≤p≤1, 0<t<1, NaN rejected); `answerConfidence` uses `answer.confidence` for choice/score.
+- **Files changed:** `src/jev/confidence.ts`, `tests/unit/jev-confidence.test.ts` (18 tests)
+- **Commit:** `4216692` (landed from worktree `wt/p3-p1t2`, worker commit `677a7fa`)
+- **Learnings:**
+  - Patterns: pure `src/jev/` modules take `import type { Answer } from "./wire"` only — no chrome/DOM/fetch.
+  - Context: `answerConfidence` deliberately does NOT validate `threshold` for choice/score answers — the field is returned verbatim per spec; noul invalid-t propagates RangeError.
+---
