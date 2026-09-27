@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hasConsent } from "../../consent/records";
 import { listMeta, listTags, patchMeta } from "../../db/meta";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { normalizeUrl } from "../../duplicates/normalize";
+import {
+  DecisionMessage,
+  DecisionMessageResult,
+} from "../../messages/decisions";
 import type { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
+import {
+  DECISIONS_CONSENT_SCOPE,
+  PresetId,
+} from "../../schemas/provider";
 import { getTree, ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../../sync/chrome-bookmarks";
 import {
@@ -23,6 +32,8 @@ import { openBookmarkUrl } from "../../sync/tabs";
 import type { OpenUrlDisposition } from "../../sync/tabs";
 import { openSidePanel, queryActiveTab, setPendingEditId } from "./chrome";
 import { PopupSearch } from "./Search";
+import { Suggestions } from "./Suggestions";
+import type { SuggestionStatus } from "./Suggestions";
 
 /**
  * Quick-save popup (spec §3).
@@ -60,7 +71,30 @@ import { PopupSearch } from "./Search";
  * While open, the popup also answers the Options page's "delete all extension
  * data" release broadcast (`registerDbReleaseListener`) by closing its shared
  * Dexie connection, so the popup cannot block the database drop.
+ *
+ * Jev save suggestions (FR10) ride on top of the same form without ever
+ * blocking it: once the prefill settles, one `SAVE_SUGGEST` message goes out
+ * under a synthetic `popup:<uuid>` bookmark id — but only when some provider
+ * already holds a `jev_decisions` consent grant (a cheap local check; the
+ * worker refuses `ok:false` anyway, which reads the same in the UI). The
+ * reply carries only counts; the suggestions themselves are persisted
+ * `db.decisions` rows correlated by that id, which `./Suggestions.tsx`
+ * live-queries. Nothing arrives synchronously and nothing applies without a
+ * click — except a `move` decision at confidence ≥ 0.7, which pre-selects the
+ * folder ONLY while the picker is untouched (`folderTouchedRef`): a folder
+ * the user already chose is never overridden by a late suggestion.
  */
+
+/**
+ * The popup's one addition to the lazy-chrome surface: `runtime.sendMessage`
+ * for the SAVE_SUGGEST intent. Declared locally (house pattern) so the module
+ * loads before any `vi.stubGlobal` and degrades when the surface is absent.
+ */
+declare const chrome: {
+  runtime?: {
+    sendMessage(message: unknown): Promise<unknown>;
+  };
+};
 
 const EMPTY_TREE: FlattenedTree = { folders: new Map(), bookmarks: new Map() };
 
@@ -130,6 +164,26 @@ export function App() {
   const [metas, setMetas] = useState<readonly BookmarkMeta[]>([]);
   const [tagDefs, setTagDefs] = useState<readonly TagDef[]>([]);
 
+  /**
+   * Correlation id for this popup's SAVE_SUGGEST round-trip: the worker keys
+   * the decision rows it persists on `bookmarkIds: [id]`, and `<Suggestions>`
+   * reads them back by the same id. The `"popup:"` + uuid scheme is synthetic
+   * (a not-yet-saved bookmark has no Chrome node id), collision-safe across
+   * popup opens, and can never alias a real bookmark.
+   */
+  const [suggestId] = useState(() => `popup:${crypto.randomUUID()}`);
+  /** Outcome of the suggestion request, for `<Suggestions>`' quiet notes. */
+  const [suggestionStatus, setSuggestionStatus] =
+    useState<SuggestionStatus>("idle");
+  /** Single-shot guard: SAVE_SUGGEST goes out exactly once per popup open. */
+  const suggestAttemptedRef = useRef(false);
+  /**
+   * True once the user changes the folder picker. A late `move` suggestion is
+   * then suppressed by `handleFolderSuggestion`, so a pre-select can never
+   * clobber a folder the user already chose.
+   */
+  const folderTouchedRef = useRef(false);
+
   // Answer the Options page's "delete all extension data" broadcast by closing
   // this page's Dexie connection; an open connection would block the drop.
   useEffect(() => registerDbReleaseListener(), []);
@@ -179,6 +233,79 @@ export function App() {
     };
   }, [ready]);
 
+  // --- Jev save suggestions (FR10): fire-and-forget -------------------------
+  // Exactly once per popup open, off the render path. A refusal at any step —
+  // no consent grant, an absent runtime surface, a rejection, a malformed or
+  // `ok:false` reply — collapses to "unavailable" and the UI simply renders
+  // nothing; the form is never gated on this. `sent:false` with the
+  // "blocklisted" reason is the one outcome with a visible note. The reply
+  // carries counts only; suggested values arrive as `db.decisions` rows.
+  useEffect(() => {
+    if (!ready || suggestAttemptedRef.current) return;
+    suggestAttemptedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      // Cheap local gate: skip the worker round-trip entirely when no
+      // provider holds a current `jev_decisions` grant — the worker would
+      // refuse `ok:false` anyway, so the outcome in the UI is identical.
+      let consented = false;
+      try {
+        for (const preset of PresetId.options) {
+          if (await hasConsent(DECISIONS_CONSENT_SCOPE, preset)) {
+            consented = true;
+            break;
+          }
+        }
+      } catch {
+        consented = false;
+      }
+      if (cancelled) return;
+      const trimmedUrl = url.trim();
+      if (!consented || trimmedUrl === "") {
+        setSuggestionStatus("unavailable");
+        return;
+      }
+      try {
+        // `notes` is deliberately omitted: the protocol accepts it but the
+        // popup never sends it — notes stay on the device.
+        const raw = await chrome.runtime?.sendMessage(
+          DecisionMessage.parse({
+            type: "SAVE_SUGGEST",
+            bookmark: {
+              id: suggestId,
+              title: title.trim(),
+              url: trimmedUrl,
+              parentId: folderId,
+            },
+          }),
+        );
+        if (cancelled) return;
+        const parsed = DecisionMessageResult.safeParse(raw);
+        if (
+          !parsed.success ||
+          !parsed.data.ok ||
+          parsed.data.code !== "analyze_ok"
+        ) {
+          setSuggestionStatus("unavailable");
+          return;
+        }
+        const summary = parsed.data.result;
+        if (!summary.sent) {
+          setSuggestionStatus(
+            summary.reason === "blocklisted" ? "blocklisted" : "unavailable",
+          );
+        } else {
+          setSuggestionStatus("sent");
+        }
+      } catch {
+        if (!cancelled) setSuggestionStatus("unavailable");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, suggestId, title, url, folderId]);
+
   const search = useSearchIndex(tree, metas, tagDefs);
 
   const destinations = useMemo(() => folderOptions(tree), [tree]);
@@ -203,6 +330,51 @@ export function App() {
 
   const removeChip = (key: string): void => {
     setChips(chips.filter((chip) => chip.key !== key));
+  };
+
+  /** Tag nameKeys already staged — matching suggestions hide themselves. */
+  const appliedTagKeys = useMemo(
+    () => new Set(chips.map((chip) => chip.key)),
+    [chips],
+  );
+
+  /** User picked a folder: mark it touched, then apply the choice. */
+  const handleFolderChange = (next: string): void => {
+    folderTouchedRef.current = true;
+    setFolderId(next);
+  };
+
+  /**
+   * A ≥0.7 `move` suggestion asking for the picker. Suppressed when the user
+   * already chose a folder (`folderTouchedRef`), and dropped when the target
+   * is no longer a pickable folder (gone or the synthetic root) so the select
+   * never lands on an option it does not render.
+   */
+  const handleFolderSuggestion = useCallback(
+    (targetFolderId: string): void => {
+      if (folderTouchedRef.current) return;
+      if (targetFolderId === ROOT_NODE_ID) return;
+      if (!tree.folders.has(targetFolderId)) return;
+      setFolderId(targetFolderId);
+    },
+    [tree],
+  );
+
+  /** Merge one clicked suggested tag into the staged chips (deduped by key). */
+  const handleAcceptTag = (label: string): void => {
+    const trimmed = label.trim();
+    const key = tagNameKey(trimmed);
+    if (key === "") return;
+    setChips((current) =>
+      current.some((chip) => chip.key === key)
+        ? current
+        : [...current, { key, label: trimmed }],
+    );
+  };
+
+  /** Apply a clicked category suggestion. */
+  const handleAcceptCategory = (next: Category): void => {
+    setCategory(next);
   };
 
   /**
@@ -345,7 +517,7 @@ export function App() {
             <select
               id="popup-folder"
               value={folderId}
-              onChange={(event) => setFolderId(event.target.value)}
+              onChange={(event) => handleFolderChange(event.target.value)}
               className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
             >
               {destinations.map((destination) => (
@@ -410,6 +582,15 @@ export function App() {
             label="Category"
             value={category === "" ? null : category}
             onChange={(next) => setCategory(next ?? "")}
+          />
+          <Suggestions
+            bookmarkId={suggestId}
+            status={suggestionStatus}
+            appliedTagKeys={appliedTagKeys}
+            category={category}
+            onFolderSuggestion={handleFolderSuggestion}
+            onAcceptTag={handleAcceptTag}
+            onAcceptCategory={handleAcceptCategory}
           />
           <div className="space-y-1">
             <label htmlFor="popup-notes" className="text-sm font-medium">
