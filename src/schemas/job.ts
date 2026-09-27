@@ -1,11 +1,14 @@
 import { z } from "./z";
+import { DEFAULT_BATCH_SIZE } from "../jobs/estimate";
 
 /**
  * A persisted, resumable batch job (spec FR7, PROJECT_PLAN.md §7). Jobs live
  * in the Dexie `jobs` table so they survive an MV3 service-worker restart and
  * can be paused or canceled from the UI. The row carries everything needed to
  * resume: what to process (`bookmarkIds` and/or a `cursor`), how far it got
- * (`progress`), and the tokens/cost it has spent so far (`usage`).
+ * (`progress`), the tokens/cost it has spent so far (`usage`), and the
+ * `batchSize` the job was enqueued with — so a resume slices the work set
+ * exactly as the original run did and can neither skip nor re-send a batch.
  */
 
 /**
@@ -57,9 +60,11 @@ export type JobUsage = z.infer<typeof JobUsage>;
  * One `jobs` row. `id` is a caller-generated uuid (the job service owns it);
  * `bookmarkIds` is the explicit work set, while `cursor` is an opaque
  * resumption offset for very large scans — at least one of the two must be
- * present so a job is always resumable. `error` is populated only for a
- * `failed` job. `createdAt`/`updatedAt` are ISO timestamps; `updatedAt` moves
- * on every status/progress write.
+ * present so a job is always resumable. `batchSize` is the bookmark batch size
+ * the job was enqueued with; it is the single source of truth a resume slices
+ * by, so it can never re-send or skip a committed batch. `error` is populated
+ * only for a `failed` job. `createdAt`/`updatedAt` are ISO timestamps;
+ * `updatedAt` moves on every status/progress write.
  */
 export const Job = z
   .strictObject({
@@ -67,6 +72,7 @@ export const Job = z
     kind: JobKind,
     status: JobStatus,
     progress: JobProgress,
+    batchSize: z.number().int().positive().default(DEFAULT_BATCH_SIZE),
     bookmarkIds: z.array(z.string().min(1)).optional(),
     cursor: z.number().int().min(0).optional(),
     usage: JobUsage,

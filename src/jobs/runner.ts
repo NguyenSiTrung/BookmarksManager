@@ -9,7 +9,6 @@ import { db } from "../db/database";
 import type { Job } from "../schemas/job";
 import type { PresetId } from "../schemas/provider";
 import type { UsageRecord } from "../schemas/usage";
-import { DEFAULT_BATCH_SIZE } from "./estimate";
 import {
   commitJobProgress,
   computeTotalBatches,
@@ -32,7 +31,9 @@ import {
  * row before each batch and stops when the status is no longer `running`.
  * A batch that throws is not committed; the job is marked `failed` with a
  * redacted, content-free error (only the failure's `code`, never its message
- * or any bookmark content).
+ * or any bookmark content) — but only when the job is still `running`, so a
+ * pause/cancel that landed during the same batch wins and no illegal
+ * transition is attempted.
  *
  * The per-bookmark work is an injected `JobAnalyzeFn`; `createPipelineAnalyzer`
  * adapts the real `analyzeBookmark` pipeline, and tests inject a fake.
@@ -72,7 +73,13 @@ export type JobAnalyzeFn = (
 export interface RunJobOptions {
   /** The resolved, ordered work set (ids must match `job.bookmarkIds`). */
   readonly bookmarks: readonly AnalysisBookmark[];
-  /** Batch size; must match the size used to enqueue the job. */
+  /**
+   * Optional assertion of the batch size. The job's persisted `batchSize` is
+   * authoritative — the runner slices and computes `totalBatches` from it — so
+   * this is only accepted when it equals that value; a mismatch is rejected
+   * with `invalid_input` (fail closed) rather than silently re-slicing, which
+   * could skip or re-send a committed batch.
+   */
   readonly batchSize?: number;
 }
 
@@ -172,7 +179,16 @@ export class JobRunner {
       }
     }
 
-    const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
+    // The persisted `batchSize` is authoritative: a resume must slice the work
+    // set exactly as the original run did, so it can never skip or re-send a
+    // committed batch. A differing override is rejected rather than honoured.
+    const batchSize = job.batchSize;
+    if (options.batchSize !== undefined && options.batchSize !== batchSize) {
+      throw new JobRunnerError(
+        "invalid_input",
+        "The supplied batchSize does not match the job's persisted batchSize.",
+      );
+    }
     const totalBatches = computeTotalBatches(bookmarks.length, batchSize);
     const startBatch = job.progress.committedBatches;
     if (startBatch > totalBatches) {
@@ -205,6 +221,13 @@ export class JobRunner {
           await attachUsageToJob(result.sent ? result.usage : null, jobId);
         }
       } catch (cause) {
+        // A pause/cancel may have landed during this batch. Only a job that is
+        // still `running` may move to `failed`; otherwise that transition is
+        // illegal, so return the current row unchanged (redaction preserved).
+        const latest = await getJob(jobId);
+        if (latest === undefined || latest.status !== "running") {
+          return latest ?? job;
+        }
         return await setJobStatus(
           jobId,
           "failed",

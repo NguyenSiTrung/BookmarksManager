@@ -6,6 +6,7 @@ import { UsageRecord } from "../../src/schemas/usage";
 import { estimateTokens } from "../../src/jev/budget";
 import { estimateJobCost } from "../../src/jobs/estimate";
 import {
+  DEFAULT_BATCH_SIZE,
   JobQueueError,
   cancelJob,
   computeTotalBatches,
@@ -57,6 +58,8 @@ describe("enqueueJob", () => {
       processedCount: 0,
     });
     expect(job.bookmarkIds).toEqual(["bm-1", "bm-2", "bm-3"]);
+    // The resolved batch size is persisted on the row (the resume authority).
+    expect(job.batchSize).toBe(2);
     expect(job.usage).toEqual({
       inputTokens: 0,
       outputTokens: 0,
@@ -66,6 +69,16 @@ describe("enqueueJob", () => {
     expect(job.updatedAt).toBe(NOW);
     // It is a valid Job row and is really persisted.
     expect(Job.safeParse(job).success).toBe(true);
+    expect(await db.jobs.get(job.id)).toEqual(job);
+  });
+
+  it("persists the default batchSize when none is given", async () => {
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1", "bm-2", "bm-3"],
+      now,
+    });
+    expect(job.batchSize).toBe(DEFAULT_BATCH_SIZE);
     expect(await db.jobs.get(job.id)).toEqual(job);
   });
 

@@ -7,6 +7,7 @@ import { UsageRecord } from "../../src/schemas/usage";
 import type { AnalyzeBookmarkResult } from "../../src/decisions/pipeline";
 import {
   JobRunner,
+  JobRunnerError,
   type JobAnalyzeFn,
 } from "../../src/jobs/runner";
 import { cancelJob, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
@@ -161,6 +162,109 @@ describe("JobRunner.run", () => {
     expect(await db.usage.count()).toBe(6);
   });
 
+  it("rejects a resume whose batchSize differs, without skipping unprocessed work", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3", "bm-4", "bm-5"];
+    // Enqueued at batchSize 2 → 3 batches: [0,1] [2,3] [4,5].
+    const job = await runningJob(ids, 2);
+
+    // Commit the first two batches, then pause at the batch boundary.
+    const first = makeAnalyzer({
+      onCall: async (bookmark) => {
+        if (bookmark.id === "bm-3") await pauseJob(job.id, now);
+      },
+    });
+    const stopped = await new JobRunner({ analyze: first.analyze, now }).run(
+      job.id,
+      { bookmarks: bookmarks(6), batchSize: 2 },
+    );
+    expect(stopped.status).toBe("paused");
+    expect(stopped.progress.committedBatches).toBe(2);
+    expect(first.calls).toEqual(["bm-0", "bm-1", "bm-2", "bm-3"]);
+
+    // Resume with a DIFFERENT batchSize (3). It must not silently re-slice,
+    // which would mark the job completed while skipping bm-4/bm-5.
+    const second = makeAnalyzer();
+    await resumeJob(job.id, now);
+    const error = await new JobRunner({ analyze: second.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(6), batchSize: 3 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(JobRunnerError);
+    expect((error as JobRunnerError).code).toBe("invalid_input");
+    // No work was sent, and the job was neither completed nor advanced.
+    expect(second.calls).toEqual([]);
+    const after = await db.jobs.get(job.id);
+    expect(after?.status).toBe("running");
+    expect(after?.progress).toEqual({
+      totalBatches: 3,
+      committedBatches: 2,
+      processedCount: 4,
+    });
+  });
+
+  it("does not re-send a committed batch when resumed with a smaller batchSize", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3", "bm-4", "bm-5"];
+    // Enqueued at batchSize 3 → 2 batches: [0,1,2] [3,4,5].
+    const job = await runningJob(ids, 3);
+
+    // Commit the first batch, then pause at the boundary.
+    const first = makeAnalyzer({
+      onCall: async (bookmark) => {
+        if (bookmark.id === "bm-2") await pauseJob(job.id, now);
+      },
+    });
+    const stopped = await new JobRunner({ analyze: first.analyze, now }).run(
+      job.id,
+      { bookmarks: bookmarks(6), batchSize: 3 },
+    );
+    expect(stopped.status).toBe("paused");
+    expect(stopped.progress.committedBatches).toBe(1);
+    expect(first.calls).toEqual(["bm-0", "bm-1", "bm-2"]);
+
+    // Resume with batchSize 2 would re-slice batch 0 as [0,1] and re-send
+    // bm-2 (already committed) — reject instead.
+    const second = makeAnalyzer();
+    await resumeJob(job.id, now);
+    const error = await new JobRunner({ analyze: second.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(6), batchSize: 2 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(JobRunnerError);
+    expect((error as JobRunnerError).code).toBe("invalid_input");
+    // The already-committed batch is never re-sent.
+    expect(second.calls).toEqual([]);
+    expect((await db.jobs.get(job.id))?.progress.committedBatches).toBe(1);
+  });
+
+  it("resumes normally when the supplied batchSize matches the persisted one", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+
+    const first = makeAnalyzer({
+      onCall: async (bookmark) => {
+        if (bookmark.id === "bm-1") await pauseJob(job.id, now);
+      },
+    });
+    const paused = await new JobRunner({ analyze: first.analyze, now }).run(
+      job.id,
+      { bookmarks: bookmarks(4), batchSize: 2 },
+    );
+    expect(paused.status).toBe("paused");
+    expect(paused.progress.committedBatches).toBe(1);
+
+    // A fresh runner that re-asserts the SAME persisted size resumes from the
+    // last committed batch.
+    const second = makeAnalyzer();
+    await resumeJob(job.id, now);
+    const finished = await new JobRunner({ analyze: second.analyze, now }).run(
+      job.id,
+      { bookmarks: bookmarks(4), batchSize: 2 },
+    );
+    expect(second.calls).toEqual(["bm-2", "bm-3"]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress.committedBatches).toBe(2);
+  });
+
   it("stops at a batch boundary on cancel and marks the job canceled", async () => {
     const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
     const job = await runningJob(ids, 2);
@@ -241,6 +345,38 @@ describe("JobRunner.run", () => {
     // The batch that failed was not committed.
     expect(finished.progress.committedBatches).toBe(1);
     expect((await db.jobs.get(job.id))?.status).toBe("failed");
+  });
+
+  it("does not throw illegal_transition when a pause lands during a failing batch", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    const analyze: JobAnalyzeFn = async ({ bookmark }) => {
+      if (bookmark.id === "bm-2") {
+        // A pause lands mid-batch, then the batch throws. Marking the job
+        // `failed` would be an illegal paused→failed transition.
+        await pauseJob(job.id, now);
+        throw new DecisionPipelineError("provider", "boom");
+      }
+      const record = UsageRecord.parse({
+        model: "jev-1",
+        inputTokens: 10,
+        outputTokens: 2,
+        recordedAt: NOW,
+      });
+      const id = await db.usage.add(record);
+      return { sent: true, model: "jev-1", decisions: [], usage: { ...record, id } };
+    };
+
+    const finished = await new JobRunner({ analyze, now }).run(job.id, {
+      bookmarks: bookmarks(4),
+      batchSize: 2,
+    });
+
+    // The pause wins; no failure is recorded and no error escapes run().
+    expect(finished.status).toBe("paused");
+    expect(finished.error).toBeUndefined();
+    expect(finished.progress.committedBatches).toBe(1);
+    expect((await db.jobs.get(job.id))?.status).toBe("paused");
   });
 
   it("accumulates per-job usage across batches with mixed costs", async () => {

@@ -105,7 +105,7 @@ export interface EnqueueJobOptions {
   readonly bookmarkIds?: readonly string[];
   /** Opaque resumption offset for very large scans. */
   readonly cursor?: number;
-  /** Batch size used to seed `progress.totalBatches`. */
+  /** Batch size persisted on the row and used to seed `progress.totalBatches`. */
   readonly batchSize?: number;
   /** Caller-supplied uuid (defaults to `crypto.randomUUID()`). */
   readonly id?: string;
@@ -114,11 +114,12 @@ export interface EnqueueJobOptions {
 }
 
 /**
- * Create and persist a `pending` job. `progress.totalBatches` is computed
- * from the work set and `batchSize`; a cursor-only job starts at zero batches
- * (the runner fills it in once the work set is resolved). The caller must
- * pass a non-empty `bookmarkIds` or a `cursor`, otherwise the row could not
- * resume.
+ * Create and persist a `pending` job. The resolved `batchSize` is stored on
+ * the row (the single source of truth a resume slices by) and
+ * `progress.totalBatches` is computed from the work set and that size; a
+ * cursor-only job starts at zero batches (the runner fills it in once the work
+ * set is resolved). The caller must pass a non-empty `bookmarkIds` or a
+ * `cursor`, otherwise the row could not resume.
  */
 export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
@@ -146,6 +147,7 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
       kind: options.kind,
       status: "pending",
       progress: { totalBatches, committedBatches: 0, processedCount: 0 },
+      batchSize,
       ...(options.bookmarkIds === undefined
         ? {}
         : { bookmarkIds: [...options.bookmarkIds] }),
