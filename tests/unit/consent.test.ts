@@ -1,7 +1,8 @@
 import "fake-indexeddb/auto";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONSENT_VERSION,
+  ConsentRevokeError,
   grantConsent,
   grantTestConsent,
   hasConsent,
@@ -287,5 +288,24 @@ describe("revokeProviderConsents", () => {
 
   it("is safe when the provider holds no grants", async () => {
     await expect(revokeProviderConsents("openrouter")).resolves.toBeUndefined();
+  });
+
+  it("throws a typed failure when a scope deletion rejects, still deleting the rest", async () => {
+    await grantConsent("jev_test", "typesafe");
+    await grantConsent("jev_decisions", "typesafe");
+    // First deletion (CONSENT_SCOPES order: jev_test) rejects.
+    const deleteSpy = vi
+      .spyOn(db.consents, "delete")
+      .mockRejectedValueOnce(new Error("indexeddb unavailable"));
+
+    await expect(revokeProviderConsents("typesafe")).rejects.toBeInstanceOf(
+      ConsentRevokeError,
+    );
+    deleteSpy.mockRestore();
+
+    // allSettled: the other scope's row was still deleted, so the failure is
+    // surfaced rather than hidden — and no scope silently survives unnoticed.
+    expect(await hasConsent("jev_test", "typesafe")).toBe(true);
+    expect(await hasConsent("jev_decisions", "typesafe")).toBe(false);
   });
 });

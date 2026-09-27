@@ -79,7 +79,7 @@ export interface JevClientOptions {
   readonly preset: PresetId;
   /** The model id sent in every batch and checked against the allowlist. */
   readonly model: string;
-  /** Registered consent scope; today only `"jev_test"` exists. */
+  /** Registered consent scope; `"jev_test"` and `"jev_decisions"` exist. */
   readonly scope: string;
   readonly transport?: JevTransport;
   /** Per-attempt send timeout; the signal is forwarded to the transport. */

@@ -108,11 +108,19 @@ Conservative declaration — under-declaring is the risky direction:
 - **Everything else: not collected.** The only other transmission is the test
   connection's fixed synthetic payload (`model`, `state`, `questions`), which
   contains no user data.
+- **Web history: only if `jev_decisions` is enabled.** Bookmark titles and
+  cleaned URLs are the Web history category, and the `jev_decisions` flow
+  sends them to the user-chosen AI provider when AI features are on — the
+  bookmark title, cleaned URL, domain, and folder path; tag names and
+  descriptions; candidate folder paths; candidate bookmarks; the
+  near-duplicate partner; and the Ask search query. Nothing is sent until you
+  enable `jev_decisions` and start a save, Analyze, library scan, or Ask
+  search.
 - Not collected: personally identifiable information, health information,
-  financial and payment information, personal communications, location, web
-  history, user activity, website content. (No click or keystroke monitoring;
-  no page text leaves the device, and no bookmark, tag, or note leaves it
-  outside the `jev_decisions` flow above.)
+  financial and payment information, personal communications, location, user
+  activity, website content. (No click or keystroke monitoring; no page text
+  leaves the device, and no bookmark, tag, or note leaves it outside the
+  `jev_decisions` flow above.)
 
 Before any future feature sends bookmark, page, or activity data, update this
 declaration, `store/privacy-policy.md`, and the in-product consent screen in

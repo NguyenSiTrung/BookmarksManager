@@ -86,11 +86,38 @@ export function hasTestConsent(preset: PresetId): Promise<boolean> {
 }
 
 /**
+ * Raised when a provider revoke could not delete every consent scope at its
+ * origin. Callers treat the revoke as failed (a grant may remain and the gate
+ * will keep blocking), while every deletion that did succeed stays applied.
+ */
+export class ConsentRevokeError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ConsentRevokeError";
+  }
+}
+
+/**
  * Delete every consent row a provider holds at its origin — one per
  * registered scope — so revoking a provider can never leave a stale grant
  * behind (FR1). Iterates `CONSENT_SCOPES` rather than naming scopes so a
- * scope added later is revoked automatically. Safe when rows are absent.
+ * scope added later is revoked automatically, and uses `allSettled` so one
+ * failing deletion cannot silently abandon the rest; if any deletion rejects,
+ * it throws a `ConsentRevokeError` after the others have run. Safe when rows
+ * are absent.
  */
 export async function revokeProviderConsents(preset: PresetId): Promise<void> {
-  await Promise.all(CONSENT_SCOPES.map((scope) => revokeConsent(scope, preset)));
+  const { origin } = resolvePreset(preset);
+  const results = await Promise.allSettled(
+    CONSENT_SCOPES.map((scope) => revokeConsent(scope, preset)),
+  );
+  const rejected = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (rejected.length > 0) {
+    throw new ConsentRevokeError(
+      `Could not delete ${rejected.length} consent scope(s) at ${origin}.`,
+      { cause: rejected[0]?.reason },
+    );
+  }
 }

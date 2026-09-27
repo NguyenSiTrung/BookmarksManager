@@ -172,9 +172,10 @@ The bookmark-data flow is shipped behind a separate, per-provider
   re-shows the disclosure before the next request.
 - Once consented, a decision request is sent only on a user-started action
   and only to the chosen origin's System One endpoint over HTTPS with
-  `Authorization: Bearer <key>` — cookies omitted, redirects refused. No
-  request carries notes, query strings, fragments, userinfo, or blocklisted
-  URLs.
+  `Authorization: Bearer <key>` — cookies omitted, redirects refused. Only the
+  disclosed metadata fields are sent; notes and page text are never included.
+  Every request is re-checked by the single network gate (registered scope,
+  current consent, live host permission, and stored key) before it leaves.
 - Revoking the provider deletes every `jev_decisions` grant for its origin,
   removes its host permission, and offers to delete the stored key.
 
