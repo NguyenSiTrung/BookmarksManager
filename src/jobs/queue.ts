@@ -56,11 +56,48 @@ export function canTransition(from: JobStatus, to: JobStatus): boolean {
   return LEGAL_TRANSITIONS[from].includes(to);
 }
 
-/** The question sets a job kind asks (see `ANALYSIS_CHECKS` in pipeline.ts). */
-export function jobChecks(kind: JobKind): readonly AnalysisCheck[] {
+/**
+ * The library-wide near-duplicate pair-phase marker (spec FR7: a library scan
+ * is "categorize + tags, misfiled, near-duplicate"). It is NOT an
+ * `AnalysisCheck` — it is not a per-bookmark question set — so it is kept
+ * separate from the per-bookmark checks in {@link bookmarkChecks}.
+ */
+export const NEAR_DUPLICATE_CHECK = "near_duplicate" as const;
+
+/**
+ * A job kind's phases: the per-bookmark `AnalysisCheck`s (see
+ * `ANALYSIS_CHECKS` in pipeline.ts) plus, for a library scan, the library-wide
+ * {@link NEAR_DUPLICATE_CHECK} pair phase.
+ */
+export type JobCheck = AnalysisCheck | typeof NEAR_DUPLICATE_CHECK;
+
+/**
+ * The checks a job kind asks for. An `analyze_selection` runs categorize +
+ * tags; a `library_scan` also runs the misfiled per-bookmark check AND the
+ * near-duplicate pair phase (FR7).
+ */
+export function jobChecks(kind: JobKind): readonly JobCheck[] {
   return kind === "library_scan"
-    ? ["categorize", "tags", "misfiled"]
+    ? ["categorize", "tags", "misfiled", NEAR_DUPLICATE_CHECK]
     : ["categorize", "tags"];
+}
+
+/**
+ * The per-bookmark `AnalysisCheck`s among `checks` — drops the library-wide
+ * {@link NEAR_DUPLICATE_CHECK} marker so the per-bookmark pipeline only ever
+ * receives the question sets it knows.
+ */
+export function bookmarkChecks(
+  checks: readonly JobCheck[],
+): readonly AnalysisCheck[] {
+  return checks.filter(
+    (check): check is AnalysisCheck => check !== NEAR_DUPLICATE_CHECK,
+  );
+}
+
+/** True when `kind`'s phases include the near-duplicate pair phase. */
+export function jobRunsNearDuplicate(kind: JobKind): boolean {
+  return jobChecks(kind).includes(NEAR_DUPLICATE_CHECK);
 }
 
 /**

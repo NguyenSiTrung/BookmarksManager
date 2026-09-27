@@ -9,8 +9,10 @@ import {
   JobRunner,
   JobRunnerError,
   type JobAnalyzeFn,
+  type JobScanDuplicatesFn,
 } from "../../src/jobs/runner";
 import { cancelJob, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
+import type { NearDuplicatePair } from "../../src/decisions/candidates";
 
 /**
  * Job runner (spec FR7): a persisted, resumable batch job is processed one
@@ -420,5 +422,217 @@ describe("JobRunner.run", () => {
         batchSize: 2,
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+});
+
+/**
+ * The near-duplicate pair phase of a `library_scan` (spec FR7): after the
+ * per-bookmark batches the runner drives the library-wide pair scan in the
+ * same snapshot-then-mutate discipline, observing pause/cancel at a batch
+ * boundary. An `analyze_selection` never runs the pair phase.
+ */
+
+/** Four bookmarks forming two same-domain, identical-title pairs. */
+function pairBookmarks(): AnalysisBookmark[] {
+  return [
+    {
+      id: "bm-0",
+      title: "Rust Async Guide",
+      url: "https://docs.rs/async",
+      parentId: "f-dev",
+    },
+    {
+      id: "bm-1",
+      title: "Rust Async Guide",
+      url: "https://docs.rs/async-old",
+      parentId: "f-dev",
+    },
+    {
+      id: "bm-2",
+      title: "Tokio Tutorial",
+      url: "https://tokio.rs/tutorial",
+      parentId: "f-dev",
+    },
+    {
+      id: "bm-3",
+      title: "Tokio Tutorial",
+      url: "https://tokio.rs/tutorial-v1",
+      parentId: "f-dev",
+    },
+  ];
+}
+
+interface ScannerOptions {
+  readonly onCall?: (
+    pairs: readonly NearDuplicatePair[],
+  ) => Promise<void> | void;
+}
+
+/**
+ * A stand-in for the near-duplicate scan service: records each pair batch it
+ * receives and persists one `usage` row per pair (without a `jobId` — the
+ * runner attaches it), mirroring the real service's one-row-per-egress.
+ */
+function makeScanner(options: ScannerOptions = {}): {
+  scanDuplicates: JobScanDuplicatesFn;
+  calls: string[][];
+} {
+  const calls: string[][] = [];
+  const scanDuplicates: JobScanDuplicatesFn = async ({ pairs }) => {
+    calls.push(pairs.map((pair) => `${pair.a.id}|${pair.b.id}`));
+    await options.onCall?.(pairs);
+    const usage: UsageRecord[] = [];
+    for (let index = 0; index < pairs.length; index += 1) {
+      const record = UsageRecord.parse({
+        model: "jev-1",
+        inputTokens: 3,
+        outputTokens: 1,
+        recordedAt: NOW,
+      });
+      const id = await db.usage.add(record);
+      usage.push({ ...record, id });
+    }
+    return { sent: true, pairs: pairs.length, skipped: 0, results: [], usage };
+  };
+  return { scanDuplicates, calls };
+}
+
+describe("JobRunner library_scan pair phase", () => {
+  it("runs the per-bookmark phase and then the near-duplicate pair phase", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 2,
+      now,
+    });
+    const events: string[] = [];
+    const { analyze, calls } = makeAnalyzer({
+      onCall: (bookmark) => {
+        events.push(`analyze:${bookmark.id}`);
+      },
+    });
+    const { scanDuplicates, calls: pairCalls } = makeScanner({
+      onCall: (pairs) => {
+        events.push(`scan:${pairs.length}`);
+      },
+    });
+
+    const finished = await new JobRunner({ analyze, scanDuplicates, now }).run(
+      job.id,
+      { bookmarks: bms, batchSize: 2 },
+    );
+
+    expect(calls).toEqual(["bm-0", "bm-1", "bm-2", "bm-3"]);
+    // One pair batch (2 pairs) after the two bookmark batches.
+    expect(pairCalls).toEqual([["bm-0|bm-1", "bm-2|bm-3"]]);
+    expect(events).toEqual([
+      "analyze:bm-0",
+      "analyze:bm-1",
+      "analyze:bm-2",
+      "analyze:bm-3",
+      "scan:2",
+    ]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress).toEqual({
+      totalBatches: 3,
+      committedBatches: 3,
+      processedCount: 4,
+    });
+    // One usage row per bookmark request plus one per pair egress.
+    const rows = await db.usage.toArray();
+    expect(rows).toHaveLength(6);
+    expect(rows.every((row) => row.jobId === job.id)).toBe(true);
+  });
+
+  it("does not run the pair phase for an analyze_selection", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 2,
+      now,
+    });
+    const { analyze } = makeAnalyzer();
+    const { scanDuplicates, calls: pairCalls } = makeScanner();
+
+    const finished = await new JobRunner({ analyze, scanDuplicates, now }).run(
+      job.id,
+      { bookmarks: bms, batchSize: 2 },
+    );
+
+    expect(pairCalls).toEqual([]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress.totalBatches).toBe(2);
+  });
+
+  it("resumes the pair phase without re-sending committed pair batches", async () => {
+    const bms = pairBookmarks();
+    // batchSize 1 → 4 bookmark batches + 2 pair batches = 6.
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 1,
+      now,
+    });
+
+    // Pause during the first pair batch; it commits, then the boundary stops.
+    const first = makeAnalyzer();
+    const firstScan = makeScanner({
+      onCall: async () => {
+        await pauseJob(job.id, now);
+      },
+    });
+    const stopped = await new JobRunner({
+      analyze: first.analyze,
+      scanDuplicates: firstScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: bms, batchSize: 1 });
+
+    expect(stopped.status).toBe("paused");
+    expect(stopped.progress.committedBatches).toBe(5); // 4 bookmark + 1 pair
+    expect(first.calls).toEqual(["bm-0", "bm-1", "bm-2", "bm-3"]);
+    expect(firstScan.calls).toEqual([["bm-0|bm-1"]]);
+
+    // A fresh runner resumes at the uncommitted pair batch only.
+    const second = makeAnalyzer();
+    const secondScan = makeScanner();
+    await resumeJob(job.id, now);
+    const finished = await new JobRunner({
+      analyze: second.analyze,
+      scanDuplicates: secondScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: bms, batchSize: 1 });
+
+    // Committed bookmark batches are never re-sent, and the committed pair
+    // batch is not re-sent either.
+    expect(second.calls).toEqual([]);
+    expect(secondScan.calls).toEqual([["bm-2|bm-3"]]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress).toEqual({
+      totalBatches: 6,
+      committedBatches: 6,
+      processedCount: 4,
+    });
+  });
+
+  it("skips the pair phase when no scanner dependency is supplied", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 2,
+      now,
+    });
+    const { analyze, calls } = makeAnalyzer();
+
+    const finished = await new JobRunner({ analyze, now }).run(job.id, {
+      bookmarks: bms,
+      batchSize: 2,
+    });
+
+    expect(calls).toEqual(["bm-0", "bm-1", "bm-2", "bm-3"]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress.totalBatches).toBe(2);
   });
 });

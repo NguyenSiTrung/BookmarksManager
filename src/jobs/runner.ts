@@ -1,3 +1,7 @@
+import { nearDuplicatePairs } from "../decisions/candidates";
+import type { NearDuplicatePair } from "../decisions/candidates";
+import { scanNearDuplicatePairs } from "../decisions/duplicates";
+import type { DuplicateScanResult } from "../decisions/duplicates";
 import { analyzeBookmark } from "../decisions/pipeline";
 import type {
   AnalysisBookmark,
@@ -10,10 +14,12 @@ import type { Job } from "../schemas/job";
 import type { PresetId } from "../schemas/provider";
 import type { UsageRecord } from "../schemas/usage";
 import {
+  bookmarkChecks,
   commitJobProgress,
   computeTotalBatches,
   getJob,
   jobChecks,
+  jobRunsNearDuplicate,
   jobUsageRollup,
   setJobStatus,
 } from "./queue";
@@ -35,8 +41,17 @@ import {
  * pause/cancel that landed during the same batch wins and no illegal
  * transition is attempted.
  *
+ * A `library_scan` runs a SECOND phase after its per-bookmark batches: the
+ * library-wide near-duplicate pair scan (FR7). The runner computes the pairs
+ * (`nearDuplicatePairs`) and drives them in `batchSize`-sized pair batches
+ * through an injected `JobScanDuplicatesFn`, under the same
+ * snapshot-then-mutate commit discipline — so a resume slices the pairs
+ * deterministically and never re-sends a committed pair batch. An
+ * `analyze_selection` never runs this phase.
+ *
  * The per-bookmark work is an injected `JobAnalyzeFn`; `createPipelineAnalyzer`
- * adapts the real `analyzeBookmark` pipeline, and tests inject a fake.
+ * adapts the real `analyzeBookmark` pipeline, `createDuplicateScanner` adapts
+ * the real near-duplicate scan, and tests inject fakes.
  */
 
 /** The `code` values on a runner failure. */
@@ -69,6 +84,18 @@ export interface JobAnalyzeInput {
 export type JobAnalyzeFn = (
   input: JobAnalyzeInput,
 ) => Promise<AnalyzeBookmarkResult>;
+
+/** One pair batch's near-duplicate scan request, plus its job context. */
+export interface JobScanDuplicatesInput {
+  /** The pair batch to scan (a deterministic slice of the library's pairs). */
+  readonly pairs: readonly NearDuplicatePair[];
+  readonly job: Job;
+}
+
+/** Scan one batch of near-duplicate pairs on behalf of a job. */
+export type JobScanDuplicatesFn = (
+  input: JobScanDuplicatesInput,
+) => Promise<DuplicateScanResult>;
 
 export interface RunJobOptions {
   /** The resolved, ordered work set (ids must match `job.bookmarkIds`). */
@@ -109,6 +136,22 @@ async function attachUsageToJob(
   await db.usage.update(id, { jobId });
 }
 
+/**
+ * Link every `usage` row a scan persisted to the job. The near-duplicate
+ * service writes one row per pair egress without a `jobId` (it does not know
+ * the job); the runner links each. Rows without an id (a custom scanner) are
+ * added fresh.
+ */
+async function attachScanUsageToJob(
+  result: DuplicateScanResult,
+  jobId: string,
+): Promise<void> {
+  if (!result.sent) return;
+  for (const row of result.usage) {
+    await attachUsageToJob(row, jobId);
+  }
+}
+
 /** Extract a content-free failure code from a thrown cause, if any. */
 function failureCode(cause: unknown): string | undefined {
   if (typeof cause === "object" && cause !== null && "code" in cause) {
@@ -134,10 +177,17 @@ function redactFailure(cause: unknown): string {
  */
 export class JobRunner {
   readonly #analyze: JobAnalyzeFn;
+  readonly #scanDuplicates: JobScanDuplicatesFn | undefined;
   readonly #now: (() => string) | undefined;
 
-  constructor(deps: { readonly analyze: JobAnalyzeFn; readonly now?: () => string }) {
+  constructor(deps: {
+    readonly analyze: JobAnalyzeFn;
+    /** The near-duplicate pair-phase dependency; a library_scan needs it. */
+    readonly scanDuplicates?: JobScanDuplicatesFn;
+    readonly now?: () => string;
+  }) {
     this.#analyze = deps.analyze;
+    this.#scanDuplicates = deps.scanDuplicates;
     this.#now = deps.now;
   }
 
@@ -189,7 +239,18 @@ export class JobRunner {
         "The supplied batchSize does not match the job's persisted batchSize.",
       );
     }
-    const totalBatches = computeTotalBatches(bookmarks.length, batchSize);
+    // The per-bookmark batches come first, then the library-wide near-duplicate
+    // pair batches (a `library_scan` only). Pairs are computed from the stable
+    // work set, so a resume slices them exactly as the original run did.
+    const bookmarkBatchCount = computeTotalBatches(bookmarks.length, batchSize);
+    const scanDuplicates = this.#scanDuplicates;
+    const pairs =
+      jobRunsNearDuplicate(job.kind) && scanDuplicates !== undefined
+        ? nearDuplicatePairs(bookmarks)
+        : [];
+    const pairBatchCount = computeTotalBatches(pairs.length, batchSize);
+    const totalBatches = bookmarkBatchCount + pairBatchCount;
+
     const startBatch = job.progress.committedBatches;
     if (startBatch > totalBatches) {
       throw new JobRunnerError(
@@ -204,7 +265,7 @@ export class JobRunner {
       { progress: { ...job.progress, totalBatches } },
       this.#now,
     );
-    const checks = jobChecks(job.kind);
+    const checks = bookmarkChecks(jobChecks(job.kind));
 
     for (let index = startBatch; index < totalBatches; index += 1) {
       // Batch boundary: a pause/cancel that landed during the previous batch
@@ -214,11 +275,28 @@ export class JobRunner {
         return current ?? job;
       }
 
-      const batch = bookmarks.slice(index * batchSize, (index + 1) * batchSize);
       try {
-        for (const bookmark of batch) {
-          const result = await this.#analyze({ bookmark, job: current, checks });
-          await attachUsageToJob(result.sent ? result.usage : null, jobId);
+        if (index < bookmarkBatchCount) {
+          const batch = bookmarks.slice(
+            index * batchSize,
+            (index + 1) * batchSize,
+          );
+          for (const bookmark of batch) {
+            const result = await this.#analyze({
+              bookmark,
+              job: current,
+              checks,
+            });
+            await attachUsageToJob(result.sent ? result.usage : null, jobId);
+          }
+        } else if (scanDuplicates !== undefined) {
+          const pairIndex = index - bookmarkBatchCount;
+          const batch = pairs.slice(
+            pairIndex * batchSize,
+            (pairIndex + 1) * batchSize,
+          );
+          const result = await scanDuplicates({ pairs: batch, job: current });
+          await attachScanUsageToJob(result, jobId);
         }
       } catch (cause) {
         // A pause/cancel may have landed during this batch. Only a job that is
@@ -236,12 +314,22 @@ export class JobRunner {
         );
       }
 
-      // Every result in the batch is durable now — commit the progress.
+      // Every result in the batch is durable now — commit the progress. The
+      // processed count tracks the bookmarks the committed per-bookmark
+      // batches covered, so it saturates at the work-set size once the pair
+      // phase begins.
       const committedBatches = index + 1;
+      const committedBookmarkBatches = Math.min(
+        committedBatches,
+        bookmarkBatchCount,
+      );
       const progress = {
         totalBatches,
         committedBatches,
-        processedCount: Math.min(committedBatches * batchSize, bookmarks.length),
+        processedCount: Math.min(
+          committedBookmarkBatches * batchSize,
+          bookmarks.length,
+        ),
       };
       const usage = await jobUsageRollup(jobId);
       job = await commitJobProgress(jobId, progress, usage, this.#now);
@@ -272,11 +360,15 @@ export function runJob(
   jobId: string,
   options: RunJobOptions & {
     readonly analyze: JobAnalyzeFn;
+    readonly scanDuplicates?: JobScanDuplicatesFn;
     readonly now?: () => string;
   },
 ): Promise<Job> {
   return new JobRunner({
     analyze: options.analyze,
+    ...(options.scanDuplicates === undefined
+      ? {}
+      : { scanDuplicates: options.scanDuplicates }),
     ...(options.now === undefined ? {} : { now: options.now }),
   }).run(jobId, options);
 }
@@ -289,8 +381,10 @@ export interface PipelineAnalyzerOptions {
 
 /**
  * Adapt the real `analyzeBookmark` pipeline into a {@link JobAnalyzeFn}: each
- * bookmark is analyzed with the job kind's checks (categorize + tags for an
- * analyze-selection; + misfiled for a library scan).
+ * bookmark is analyzed with the job kind's per-bookmark checks (categorize +
+ * tags for an analyze-selection; + misfiled for a library scan). The
+ * library-wide near-duplicate pair phase is a separate dependency
+ * ({@link createDuplicateScanner}).
  */
 export function createPipelineAnalyzer(
   options: PipelineAnalyzerOptions,
@@ -302,5 +396,27 @@ export function createPipelineAnalyzer(
       preset: options.preset,
       model: options.model,
       checks,
+    });
+}
+
+export interface DuplicateScannerOptions {
+  readonly preset: PresetId;
+  readonly model: string;
+}
+
+/**
+ * Adapt the real near-duplicate scan service (`scanNearDuplicatePairs`) into a
+ * {@link JobScanDuplicatesFn}: the runner slices the library's pairs and this
+ * scans one batch — one `jev_decisions` request per pair, one
+ * `merge_duplicates` decision and one `usage` row per sendable pair.
+ */
+export function createDuplicateScanner(
+  options: DuplicateScannerOptions,
+): JobScanDuplicatesFn {
+  return ({ pairs }) =>
+    scanNearDuplicatePairs({
+      pairs,
+      preset: options.preset,
+      model: options.model,
     });
 }

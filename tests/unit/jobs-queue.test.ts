@@ -8,11 +8,14 @@ import { estimateJobCost } from "../../src/jobs/estimate";
 import {
   DEFAULT_BATCH_SIZE,
   JobQueueError,
+  NEAR_DUPLICATE_CHECK,
+  bookmarkChecks,
   cancelJob,
   computeTotalBatches,
   enqueueJob,
   getJob,
   jobChecks,
+  jobRunsNearDuplicate,
   jobUsageRollup,
   pauseJob,
   resumeJob,
@@ -178,12 +181,30 @@ describe("jobChecks", () => {
     expect(jobChecks("analyze_selection")).toEqual(["categorize", "tags"]);
   });
 
-  it("maps library_scan to categorize + tags + misfiled", () => {
+  it("maps library_scan to categorize + tags + misfiled + near-duplicate", () => {
     expect(jobChecks("library_scan")).toEqual([
       "categorize",
       "tags",
       "misfiled",
+      NEAR_DUPLICATE_CHECK,
     ]);
+  });
+
+  it("drops the library-wide near-duplicate marker from the per-bookmark checks", () => {
+    expect(bookmarkChecks(jobChecks("library_scan"))).toEqual([
+      "categorize",
+      "tags",
+      "misfiled",
+    ]);
+    expect(bookmarkChecks(jobChecks("analyze_selection"))).toEqual([
+      "categorize",
+      "tags",
+    ]);
+  });
+
+  it("reports which kinds run the near-duplicate pair phase", () => {
+    expect(jobRunsNearDuplicate("library_scan")).toBe(true);
+    expect(jobRunsNearDuplicate("analyze_selection")).toBe(false);
   });
 });
 
