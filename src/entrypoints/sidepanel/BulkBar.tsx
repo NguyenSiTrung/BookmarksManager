@@ -27,6 +27,8 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/components/dropdown-menu";
 import { useSelection } from "./BookmarkList";
+import { analyzeOutcome, sendDecisionMessage } from "./ReviewView";
+import { DecisionMessage } from "../../messages/decisions";
 import { errorMessage, useToast } from "./UndoToast";
 
 /**
@@ -43,10 +45,13 @@ import { errorMessage, useToast } from "./UndoToast";
  *    the snapshot again — nothing to undo.
  *  - Bar actions run the corresponding mutation/tag-op over the selected
  *    ids and report the `{affected}` count in the toast: Move to… (dialog
- *    owned by the shell), Delete, Add tag, Remove tag, Set category, Clear
- *    selection. Delete and Move are greyed out when NO selected row is
- *    mutable (every selected id is managed, per the optional `tree` prop) —
- *    the policy wall the mutation service would reject anyway.
+ *    owned by the shell), Delete, Analyze (one ANALYZE_BOOKMARK intent per
+ *    selected id — the decisions protocol has no bulk analyze — reporting
+ *    an analyzed/blocklisted/failed tally), Add tag, Remove tag, Set
+ *    category, Clear selection. Delete and Move are greyed out when NO
+ *    selected row is mutable (every selected id is managed, per the
+ *    optional `tree` prop) — the policy wall the mutation service would
+ *    reject anyway.
  *  - Selection policy (documented): Delete and Move CLEAR the selection —
  *    deleted ids leave every view, and a move may leave the current view
  *    too; tag/category ops PRESERVE it so the user can chain edits. "Clear
@@ -196,6 +201,44 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
     if (result.deleted > 0) selection.clear();
   };
 
+  /**
+   * P4.T3 analyze action: there is no bulk intent in the decisions
+   * protocol, so the bar loops one ANALYZE_BOOKMARK per selected id and
+   * reports the tally — "N analyzed, M blocklisted, K failed" — with the
+   * first redacted failure message appended verbatim. Selection is
+   * preserved (analysis changes nothing in the tree).
+   */
+  const handleAnalyze = async (): Promise<void> => {
+    setBusy(true);
+    let sent = 0;
+    let blocklisted = 0;
+    let failed = 0;
+    let firstError: string | undefined;
+    for (const id of ids) {
+      const outcome = analyzeOutcome(
+        await sendDecisionMessage(
+          DecisionMessage.parse({ type: "ANALYZE_BOOKMARK", bookmarkId: id }),
+        ),
+      );
+      if (outcome.kind === "sent") sent += 1;
+      else if (outcome.kind === "skipped") blocklisted += 1;
+      else {
+        failed += 1;
+        firstError ??= outcome.message;
+      }
+    }
+    setBusy(false);
+    const parts = [`${sent} analyzed`];
+    if (blocklisted > 0) parts.push(`${blocklisted} blocklisted`);
+    if (failed > 0) parts.push(`${failed} failed`);
+    toast.showToast({
+      message:
+        parts.join(", ") +
+        (firstError === undefined ? "" : ` — ${firstError}`),
+      error: failed > 0,
+    });
+  };
+
   const handleSetCategory = async (
     category: Category | null,
   ): Promise<void> => {
@@ -239,6 +282,14 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
         className={barButtonClass}
       >
         Delete
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void handleAnalyze()}
+        className={barButtonClass}
+      >
+        Analyze
       </button>
       <button
         type="button"

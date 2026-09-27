@@ -46,8 +46,18 @@ import {
   readPendingEditId,
 } from "../popup/chrome";
 import { registerDbReleaseListener } from "../../security/delete-all";
+import { listPending } from "../../decisions/store";
+import type { DecisionRow } from "../../decisions/store";
+import { DecisionMessage } from "../../messages/decisions";
 import { TagManager } from "./TagManager";
+import {
+  ReviewView,
+  analyzeResultMessage,
+  reviewQueue,
+  sendDecisionMessage,
+} from "./ReviewView";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
+import type { ToastApi, ToastState } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
 
@@ -92,6 +102,7 @@ function openOptionsPage(): void {
 /** Stable empty fallbacks — `?? []` inline would make memo deps churn. */
 const EMPTY_METAS: readonly BookmarkMeta[] = [];
 const EMPTY_TAG_DEFS: readonly TagDef[] = [];
+const EMPTY_DECISIONS: readonly DecisionRow[] = [];
 
 /** First-class views in the nav (tags/categories/folders generate theirs). */
 const FIXED_VIEWS: { kind: SidePanelView["kind"]; label: string }[] = [
@@ -99,6 +110,7 @@ const FIXED_VIEWS: { kind: SidePanelView["kind"]; label: string }[] = [
   { kind: "recent", label: "Recently saved" },
   { kind: "untagged", label: "Untagged" },
   { kind: "duplicates", label: "Duplicates" },
+  { kind: "review", label: "Review" },
 ];
 
 const navButtonClass =
@@ -135,6 +147,8 @@ function makeView(kind: SidePanelView["kind"]): SidePanelView {
       return { kind: "untagged" };
     case "duplicates":
       return { kind: "duplicates" };
+    case "review":
+      return { kind: "review" };
     default:
       return { kind: "all" };
   }
@@ -151,6 +165,19 @@ export function App() {
   const tagDefs =
     useLiveQuery(() => listTags().catch((): TagDef[] => []), []) ??
     EMPTY_TAG_DEFS;
+  // The review queue: pending `Decision` rows stream straight from Dexie
+  // (same degrade-to-[] rule as metas/tagDefs) — the header badge and the
+  // ReviewView pane both read this.
+  const pendingDecisions =
+    useLiveQuery(() => listPending().catch((): DecisionRow[] => []), []) ??
+    EMPTY_DECISIONS;
+  // The badge mirrors ReviewView's ACTIONABLE queue — save-suggest
+  // placeholder (`popup:`) decisions are withheld there, so counting them
+  // here would advertise rows the queue never shows.
+  const pendingCount = useMemo(
+    () => reviewQueue(pendingDecisions).length,
+    [pendingDecisions],
+  );
 
   const [view, setView] = useState<SidePanelView>({ kind: "all" });
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
@@ -211,6 +238,60 @@ export function App() {
   // Undo affordance; dialog targets are plain state so every row menu, the
   // bulk bar, and the keyboard all funnel into the same flows.
   const toastCtl = useUndoToastController();
+  /**
+   * When the visible toast is an applied-decision toast, this ref holds the
+   * decision id its Undo button reverts via REVERT_DECISION; `null` means
+   * the toast belongs to a snapshot-stack action (delete/move/tag ops) and
+   * Undo goes through the controller's `undoLatest`. `reportToast` disarms
+   * it on every new toast — ReviewView arms it via `armDecisionRevert`
+   * AFTER its own toast is up (the arming must follow the disarm).
+   */
+  const decisionRevertRef = useRef<string | null>(null);
+  /** Every toast goes through here so a new message disarms a stale revert. */
+  const reportToast = useCallback(
+    (next: ToastState): void => {
+      decisionRevertRef.current = null;
+      toastCtl.showToast(next);
+    },
+    [toastCtl],
+  );
+  const armDecisionRevert = useCallback((decisionId: string): void => {
+    decisionRevertRef.current = decisionId;
+  }, []);
+  /**
+   * The toast's Undo button, dispatched: a decision toast sends
+   * REVERT_DECISION for the armed id (the worker replays the snapshot it
+   * recorded on that row); anything else pops the snapshot stack.
+   */
+  const handleToastUndo = useCallback(async (): Promise<void> => {
+    const decisionId = decisionRevertRef.current;
+    decisionRevertRef.current = null;
+    if (decisionId === null) {
+      await toastCtl.undo();
+      return;
+    }
+    const result = await sendDecisionMessage(
+      DecisionMessage.parse({ type: "REVERT_DECISION", decisionId }),
+    );
+    reportToast(
+      result.ok
+        ? { message: "Reverted the suggestion." }
+        : { message: result.message, error: true },
+    );
+  }, [reportToast, toastCtl]);
+  const dismissToast = useCallback(() => {
+    decisionRevertRef.current = null;
+    toastCtl.dismiss();
+  }, [toastCtl]);
+  /**
+   * The ToastContext value: identical API to `toastCtl`, but `showToast`
+   * runs through `reportToast` so a deeper component's toast also disarms a
+   * stale decision-revert target.
+   */
+  const providerToast = useMemo<ToastApi>(
+    () => ({ showToast: reportToast }),
+    [reportToast],
+  );
   const [editTarget, setEditTarget] = useState<TreeEntry | null>(null);
   const [moveIds, setMoveIds] = useState<readonly string[] | null>(null);
   const [folderRequest, setFolderRequest] = useState<FolderActionRequest | null>(
@@ -337,7 +418,7 @@ export function App() {
     void openBookmarkUrl(url, active ? "foreground" : "background").then(
       (result) => {
         if (!result.ok) {
-          toastCtl.showToast({ message: result.message, error: true });
+          reportToast({ message: result.message, error: true });
         }
       },
     );
@@ -350,7 +431,7 @@ export function App() {
    */
   const handleDeleteIds = async (ids: readonly string[]): Promise<void> => {
     const result = await deleteNodesWithUndo(ids);
-    toastCtl.showToast({
+    reportToast({
       message: deleteResultMessage(result),
       undoable: result.deleted > 0,
       error: result.deleted === 0,
@@ -367,6 +448,25 @@ export function App() {
       return;
     }
     setFolderRequest({ kind, node });
+  };
+
+  /**
+   * P4.T3 row action: one ANALYZE_BOOKMARK intent for this bookmark — the
+   * worker runs the decision pipeline and persists any suggestions; the
+   * reply (suggestion count, a quiet blocklist skip, or the redacted
+   * failure) is toasted verbatim.
+   */
+  const handleAnalyzeItem = async (item: BookmarkItem): Promise<void> => {
+    const result = await sendDecisionMessage(
+      DecisionMessage.parse({
+        type: "ANALYZE_BOOKMARK",
+        bookmarkId: item.id,
+      }),
+    );
+    reportToast({
+      message: analyzeResultMessage(itemLabel(item), result),
+      error: !result.ok,
+    });
   };
 
   const itemActionEntries = (
@@ -390,6 +490,14 @@ export function App() {
       label: "Move to…",
       disabled: item.isManaged,
       onSelect: () => setMoveIds([item.id]),
+    },
+    {
+      // Analyze is a suggestion request, not a bookmark mutation — managed
+      // rows keep it (policy gates writes, not reads/analysis).
+      key: "analyze",
+      label: "Analyze",
+      disabled: false,
+      onSelect: () => void handleAnalyzeItem(item),
     },
     {
       key: "delete",
@@ -451,7 +559,7 @@ export function App() {
 
   return (
     <SelectionContext.Provider value={selection}>
-      <ToastProvider controller={toastCtl}>
+      <ToastProvider controller={providerToast}>
         <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
           <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
             <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
@@ -471,11 +579,29 @@ export function App() {
             </button>
             <button
               type="button"
-              disabled
-              title="The review queue arrives in a later phase"
-              className="rounded-sm border border-border px-2 py-1 text-xs text-muted-foreground"
+              aria-pressed={view.kind === "review"}
+              aria-label={
+                pendingCount > 0
+                  ? `Review suggestions, ${pendingCount} pending`
+                  : undefined
+              }
+              onClick={() => {
+                // A view switch clears any active search (same rule as a
+                // palette jump) so the queue is actually shown.
+                setSearchQuery("");
+                setView({ kind: "review" });
+              }}
+              className={navButtonClass}
             >
               Review suggestions
+              {pendingCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="ml-1 rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground"
+                >
+                  {pendingCount}
+                </span>
+              )}
             </button>
           </header>
           <DndProvider tree={tree} selection={selection}>
@@ -619,11 +745,21 @@ export function App() {
                     loading={tree.folders.size === 0}
                     onActivateItem={openItem}
                     onRequestUndo={() =>
-                      toastCtl.showToast({
+                      reportToast({
                         message: "Duplicates merged.",
                         undoable: true,
                       })
                     }
+                    className="flex-1"
+                  />
+                ) : activeView.kind === "review" ? (
+                  // The pending-decisions queue replaces BookmarkList the
+                  // same way DuplicatesView does — its rows are Decision
+                  // rows from Dexie, not bookmarks.
+                  <ReviewView
+                    decisions={pendingDecisions}
+                    tree={tree}
+                    onApplied={armDecisionRevert}
                     className="flex-1"
                   />
                 ) : (
@@ -677,7 +813,7 @@ export function App() {
           open={tagManagerOpen}
           onOpenChange={setTagManagerOpen}
           onRequestUndo={(info) =>
-            toastCtl.showToast({
+            reportToast({
               message: `Deleted tag "${info.tag.name}" from ${info.affected} bookmark(s).`,
               undoable: true,
             })
@@ -730,10 +866,10 @@ export function App() {
               void navigator.clipboard
                 .writeText(item.url)
                 .then(() =>
-                  toastCtl.showToast({ message: "Copied URL" }),
+                  reportToast({ message: "Copied URL" }),
                 )
                 .catch((cause: unknown) =>
-                  toastCtl.showToast({
+                  reportToast({
                     message:
                       cause instanceof Error
                         ? cause.message
@@ -758,7 +894,7 @@ export function App() {
                 setFolderRequest({ kind: "create", node });
               }
             } else if (command === "undo") {
-              void toastCtl.undo();
+              void handleToastUndo();
             } else {
               openOptionsPage();
             }
@@ -766,8 +902,8 @@ export function App() {
         />
         <UndoToast
           toast={toastCtl.toast}
-          onUndo={() => void toastCtl.undo()}
-          onDismiss={toastCtl.dismiss}
+          onUndo={() => void handleToastUndo()}
+          onDismiss={dismissToast}
         />
       </ToastProvider>
     </SelectionContext.Provider>

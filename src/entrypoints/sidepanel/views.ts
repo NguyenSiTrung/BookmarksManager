@@ -27,6 +27,11 @@ import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
  *  - `duplicates` — every id appearing in a `groupDuplicates` group of any
  *                   kind; order is group order (exact groups first, then
  *                   normalized), first occurrence wins.
+ *  - `review`     — the pending-decisions queue (P4.T3). Its rows are
+ *                   `Decision` documents, not bookmarks, so it resolves to
+ *                   an empty bookmark list; the shell renders `ReviewView`
+ *                   in place of `BookmarkList`, the same swap `duplicates`
+ *                   makes.
  *  - `recent`     — all bookmarks sorted by `dateAdded` descending, capped
  *                   at {@link RECENT_VIEW_LIMIT}.
  *  - `search`     — results of `runQuery` over the whole library for the
@@ -44,6 +49,7 @@ export type SidePanelView =
   | { kind: "category"; category: Category }
   | { kind: "untagged" }
   | { kind: "duplicates" }
+  | { kind: "review" }
   | { kind: "recent" }
   | { kind: "search"; query: string };
 
@@ -176,6 +182,12 @@ export function resolveView(
     }
     case "duplicates":
       return duplicateBookmarkItems(tree);
+    case "review":
+      // The review pane renders `ReviewView` — its rows are Decision rows
+      // read from Dexie, not bookmarks — so there is no bookmark list to
+      // resolve. Empty also means the shared selection empties, which keeps
+      // the bookmark bulk bar out of the review pane.
+      return [];
     case "recent": {
       return [...tree.bookmarks.values()]
         .sort(
@@ -228,6 +240,8 @@ export function viewTitle(
       return "Untagged";
     case "duplicates":
       return "Duplicates";
+    case "review":
+      return "Review suggestions";
     case "recent":
       return "Recently saved";
     case "search": {
