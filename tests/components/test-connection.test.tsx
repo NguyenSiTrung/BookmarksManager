@@ -279,6 +279,7 @@ describe("Test connection results", () => {
       "retry_later",
       "The provider is rate limiting requests (HTTP 429). Try again later.",
     ],
+    ["timeout", "The jev_test request timed out after 10000 ms."],
     [
       "invalid_response",
       "The provider returned a body that is not a valid System One response.",

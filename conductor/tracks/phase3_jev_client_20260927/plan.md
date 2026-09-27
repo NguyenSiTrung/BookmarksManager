@@ -94,11 +94,11 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         across batches; redacted messages
   - [x] Implement
 
-- [ ] Task 3: Test connection through the client
+- [x] Task 3: Test connection through the client
   <!-- files: src/jev/connection.ts, src/messages/provider.ts, src/entrypoints/options/ProviderSetup.tsx, tests/unit/jev-connection.test.ts, tests/unit/connection-message.test.ts, tests/unit/provider-messages.test.ts, tests/components/test-connection.test.tsx -->
-  - [ ] Failing tests: `maxRetries: 0`; existing codes/messages preserved; new `timeout` code through the
+  - [x] Failing tests: `maxRetries: 0`; existing codes/messages preserved; new `timeout` code through the
         message union and Options copy
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 4: Phase 2 automated checkpoint — full gate green, evidence in `learnings.md`
 

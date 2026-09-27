@@ -1,7 +1,9 @@
 import { inspect } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { JevClientError } from "../../src/jev/client";
 import { JevConnectionError, testJevConnection } from "../../src/jev/connection";
-import { NetworkGateError, sendConsentedTest } from "../../src/net/send";
+import { makeSyntheticRequest } from "../../src/jev/wire";
+import { NetworkGateError, sendConsented } from "../../src/net/send";
 import { ProviderKeyError } from "../../src/security/keys";
 import {
   responseMissingTestAnswer,
@@ -12,18 +14,18 @@ import {
 } from "../fixtures/jev-responses";
 
 /**
- * `sendConsentedTest` is mocked so the connection test never touches consent,
- * keys, permissions, or fetch — the gate keeps sole ownership of transport.
- * `NetworkGateError` stays real so gate-code relay is asserted against the
- * genuine class (same pattern as network-gate.test.ts).
+ * `sendConsented` — the scoped gate the client's default transport resolves
+ * to — is mocked so the connection test never touches consent, keys,
+ * permissions, or fetch. `NetworkGateError` stays real so gate-code relay is
+ * asserted against the genuine class (same pattern as network-gate.test.ts).
  */
 vi.mock("../../src/net/send", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../src/net/send")>();
-  return { ...actual, sendConsentedTest: vi.fn() };
+  return { ...actual, sendConsented: vi.fn() };
 });
 
-const send = vi.mocked(sendConsentedTest);
+const send = vi.mocked(sendConsented);
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -56,7 +58,15 @@ describe("testJevConnection", () => {
     const result = await testJevConnection("typesafe", "jev-latest");
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("typesafe", "jev-latest");
+    // The client sends through the scoped gate: scope, preset, model, the
+    // exact synthetic request, and an AbortSignal for the attempt timeout.
+    expect(send).toHaveBeenCalledWith(
+      "jev_test",
+      "typesafe",
+      "jev-latest",
+      makeSyntheticRequest("jev-latest"),
+      { signal: expect.any(AbortSignal) },
+    );
     expect(result.model).toBe("jev-1.13.0");
     expect(Number.isFinite(result.latencyMs)).toBe(true);
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
@@ -69,7 +79,13 @@ describe("testJevConnection", () => {
 
     const result = await testJevConnection("openrouter", "typesafe/jev-1.13");
 
-    expect(send).toHaveBeenCalledWith("openrouter", "typesafe/jev-1.13");
+    expect(send).toHaveBeenCalledWith(
+      "jev_test",
+      "openrouter",
+      "typesafe/jev-1.13",
+      makeSyntheticRequest("typesafe/jev-1.13"),
+      { signal: expect.any(AbortSignal) },
+    );
     expect(result.model).toBe("typesafe/jev-1.13");
     expect(result.cost).toBe(0.000041);
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
@@ -92,31 +108,47 @@ describe("testJevConnection", () => {
     expect(error.message).not.toContain("unknown field");
   });
 
-  it.each([429, 529])(
-    "maps HTTP %i to retry-later guidance",
+  it.each([429, 503, 529])(
+    "maps retryable HTTP %i to retry-later guidance without retrying",
     async (status) => {
+      // maxRetries: 0 — a test connection never retries; the retryable
+      // status collapses to retry_later after the single attempt.
       await expectConnectionFailure(jsonResponse({}, status), "retry_later");
+      expect(send).toHaveBeenCalledTimes(1);
     },
   );
 
   it("maps other non-2xx statuses to http_error naming only the status", async () => {
     const error = await expectConnectionFailure(
-      new Response("server exploded with stack trace", { status: 503 }),
+      new Response("forbidden by policy stack trace", { status: 403 }),
       "http_error",
     );
-    expect(error.message).toContain("503");
+    expect(error.message).toContain("403");
     expect(error.message).not.toContain("stack trace");
   });
 
+  it("maps a gate timeout to the timeout code", async () => {
+    send.mockRejectedValue(
+      new NetworkGateError("timeout", "The request was aborted."),
+    );
+    const error = await testJevConnection("typesafe", "jev-latest").catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(JevConnectionError);
+    expect((error as JevConnectionError).code).toBe("timeout");
+  });
+
   it("maps malformed JSON bodies to invalid_response without leaking body fragments", async () => {
-    // A V8 SyntaxError embeds a body snippet in its message — the error must
-    // carry no `cause` (and nothing serializable) derived from the response.
+    // A V8 SyntaxError embeds a body snippet in its message — neither the
+    // connection error nor the client error it wraps may carry a `cause`
+    // (or anything serializable) derived from the response.
     const marker = "provider-body-fragment-9x2";
     const error = await expectConnectionFailure(
       new Response(`this is not json ${marker} {`, { status: 200 }),
       "invalid_response",
     );
-    expect(error.cause).toBeUndefined();
+    expect(error.cause).toBeInstanceOf(JevClientError);
+    expect((error.cause as JevClientError).cause).toBeUndefined();
     expect(error.message).not.toContain(marker);
     expect(JSON.stringify(error)).not.toContain(marker);
     // util.inspect walks the cause chain, like console.error/devtools.
@@ -129,7 +161,8 @@ describe("testJevConnection", () => {
       jsonResponse(responseMissingUsage),
       "invalid_response",
     );
-    expect(error.cause).toBeUndefined();
+    expect(error.cause).toBeInstanceOf(JevClientError);
+    expect((error.cause as JevClientError).cause).toBeUndefined();
     expect(error.message).not.toContain("jev-1.13.0");
     expect(JSON.stringify(error)).not.toContain("jev-1.13.0");
     expect(inspect(error, { depth: null })).not.toContain("jev-1.13.0");

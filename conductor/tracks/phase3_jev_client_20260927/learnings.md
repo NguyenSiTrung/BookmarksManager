@@ -105,3 +105,22 @@ the ones most relevant to this track:
   yield exactly N batches. Deterministic without runtime probing.
 - `vi.fn<JevTransport>` with an unused trailing param trips `no-unused-vars` — drop the underscore
   param entirely rather than naming it `_options` (the lint rule counts leading-underscore args too).
+
+## Phase 2 — Task 3: Test connection through the client
+
+- `testJevConnection` now delegates to `createJevClient({scope: "jev_test", maxRetries: 0})` — the
+  transport boundary moves from `sendConsentedTest` to `sendConsented`, so tests mock
+  `sendConsented` (scope, preset, model, request, `{signal}`) rather than the thin wrapper.
+- Contract preservation detail: the client's `answer_mismatch`/`model_mismatch` fold into
+  `invalid_response` in `testJevConnection` so the Options/API surface keeps its established codes.
+  `JevConnectionErrorCode = JevClientErrorCode`; the four client-only codes stay in the union for
+  totality even though mismatches are remapped and `too_large`/`invalid_request` are unreachable
+  for the fixed synthetic request.
+- Semantic change worth noting: 503 (any retryable 5xx) now maps to `retry_later` even at
+  `maxRetries: 0` — a retryable status with an exhausted budget is `retry_later`, not `http_error`.
+  The pre-retry mapping expected `http_error`; the old fixture was switched to 403 for that test.
+- Cause-chain redaction: `JevConnectionError` now wraps the `JevClientError`, so tests assert
+  `cause` is a `JevClientError` whose own `cause` is `undefined` — plus `JSON.stringify`/`inspect`
+  marker checks — instead of `cause === undefined` outright.
+- `ProviderErrorCode` must enumerate every relayed code (`timeout`, `unregistered_scope`,
+  `request_not_allowed`, client-only codes) — `ProviderMessageResult` validates `code` against it.

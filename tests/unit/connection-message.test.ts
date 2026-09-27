@@ -263,6 +263,7 @@ describe("TEST_PROVIDER failure mapping", () => {
     "auth",
     "incompatible",
     "retry_later",
+    "timeout",
     "invalid_response",
     "http_error",
     "unlisted_model",
@@ -272,6 +273,12 @@ describe("TEST_PROVIDER failure mapping", () => {
     "no_permission",
     "no_key",
     "transport",
+    "unregistered_scope",
+    "request_not_allowed",
+    "answer_mismatch",
+    "model_mismatch",
+    "too_large",
+    "invalid_request",
   ] as const satisfies readonly JevConnectionErrorCode[])(
     "maps JevConnectionError code %s with its redacted message verbatim",
     async (code) => {
