@@ -1,0 +1,300 @@
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { chromium, expect } from "@playwright/test";
+import type { BrowserContext, Page, Request } from "@playwright/test";
+import type { ConsentRecord } from "../../../src/schemas/provider";
+import type { SentLogEntry } from "../../../src/db/database";
+import type { SystemOneResponse } from "../../../src/jev/wire";
+import { PRESETS } from "../../../src/net/presets";
+import { DB_NAME } from "./db";
+import {
+  EXTENSION_DIR,
+  extensionId,
+  headlessFromEnv,
+} from "./extension";
+import type { LaunchOptions } from "./extension";
+
+/**
+ * Provider-setup e2e plumbing (Phase 4 Task 2): a scriptable Playwright route
+ * standing in for the TypeSafe System One endpoint, a launch helper whose
+ * manifest variant grants the host permission at install time, a Chrome
+ * messaging bridge for the provider protocol, and non-creating IndexedDB
+ * readers for the provider tables.
+ *
+ * Two Playwright/Chromium realities shape this module (verified empirically
+ * against the Playwright-bundled Chromium build):
+ *
+ * 1. `browserContext.route()` DOES intercept `fetch` issued by the extension's
+ *    MV3 service worker — the routed fake answers the real gate's real fetch,
+ *    so the consented-send path in `src/net/send.ts` runs end to end.
+ * 2. `chrome.permissions.request()` NEVER resolves under Playwright's
+ *    Chromium — headed under xvfb or headless, real click or CDP
+ *    `Runtime.evaluate` with `userGesture: true`: the promise pends forever
+ *    and no prompt window ever appears, so the real Enable click cannot get
+ *    past the browser's own dialog. CDP `Browser.grantPermissions` only
+ *    covers web permission types (geolocation, notifications, …), not
+ *    extension host permissions.
+ *
+ * The workaround that keeps the click path REAL: copy `.output/chrome-mv3`
+ * into a temp dir and promote the TypeSafe pattern from
+ * `optional_host_permissions` to `host_permissions`, which Chrome grants
+ * silently at install. The unchanged production click handler then calls
+ * `chrome.permissions.request`, which resolves `true` immediately for an
+ * already-held permission (no prompt needed), and the worker's own
+ * `permissions.contains` re-check in `enableProvider` still passes for real.
+ * The only production behavior not exercised is the native prompt widget —
+ * which belongs to the browser, not the extension.
+ */
+
+/** A persistent context running a manifest-patched copy of the extension. */
+export interface ProviderExtension {
+  context: BrowserContext;
+  id: string;
+  /** Remove the patched extension directory (call after context.close()). */
+  dispose(): void;
+}
+
+/**
+ * Copy the built extension into a fresh temp dir with the TypeSafe host
+ * pattern moved from `optional_host_permissions` to `host_permissions`, then
+ * launch it in a persistent context. The unpacked extension id is derived
+ * from the load path, so it differs from a stock-build launch — always use
+ * the returned `id`.
+ */
+export async function launchProviderExtension(
+  options: LaunchOptions = {},
+): Promise<ProviderExtension> {
+  const root = mkdtempSync(path.join(tmpdir(), "bm-e2e-provider-"));
+  try {
+    cpSync(EXTENSION_DIR, root, { recursive: true });
+    const manifestPath = path.join(root, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      host_permissions?: string[];
+      optional_host_permissions?: string[];
+    };
+    manifest.host_permissions = [
+      ...(manifest.host_permissions ?? []),
+      PRESETS.typesafe.permissionPattern,
+    ];
+    manifest.optional_host_permissions = (
+      manifest.optional_host_permissions ?? []
+    ).filter((pattern) => pattern !== PRESETS.typesafe.permissionPattern);
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    const context = await chromium.launchPersistentContext("", {
+      channel: "chromium",
+      headless: options.headless ?? headlessFromEnv(),
+      args: [
+        `--disable-extensions-except=${root}`,
+        `--load-extension=${root}`,
+      ],
+    });
+    const id = await extensionId(context);
+    return {
+      context,
+      id,
+      dispose: () => rmSync(root, { recursive: true, force: true }),
+    };
+  } catch (cause) {
+    rmSync(root, { recursive: true, force: true });
+    throw cause;
+  }
+}
+
+/** One request observed at the routed fake endpoint. */
+export interface CapturedProviderRequest {
+  readonly method: string;
+  readonly url: string;
+  /** Header names lowercased for case-insensitive lookup. */
+  readonly headers: Record<string, string>;
+  /** JSON-parsed request body, the raw string when not JSON, or undefined. */
+  readonly postData: unknown;
+}
+
+/** Live log of requests observed at the routed provider endpoint. */
+export interface ProviderRouteLog {
+  readonly requests: CapturedProviderRequest[];
+}
+
+function captureRequest(request: Request): CapturedProviderRequest {
+  const raw = request.postData();
+  let postData: unknown;
+  if (raw !== null) {
+    try {
+      postData = JSON.parse(raw);
+    } catch {
+      postData = raw;
+    }
+  }
+  return {
+    method: request.method(),
+    url: request.url(),
+    headers: Object.fromEntries(
+      Object.entries(request.headers()).map(([key, value]) => [
+        key.toLowerCase(),
+        value,
+      ]),
+    ),
+    postData,
+  };
+}
+
+/** Scriptable fields of the fake endpoint's `SystemOneResponse`. */
+export interface FakeProviderReply {
+  /** Versioned model id the fake claims answered; default "jev-1.13.0". */
+  model?: string;
+  /** `usage.cost` to report — the spec scripts this to cover the UI's cost branch. */
+  cost?: number;
+}
+
+/**
+ * Route every request to the TypeSafe origin (`context.route` intercepts the
+ * service worker's `fetch`, not just page requests) and answer with a
+ * schema-valid `SystemOneResponse`: a `noul` answer for the synthetic
+ * `test` question and deterministic usage numbers. Returns the live capture
+ * log — the spec asserts on its exact contents.
+ */
+export async function routeFakeTypesafe(
+  context: BrowserContext,
+  reply: FakeProviderReply = {},
+): Promise<ProviderRouteLog> {
+  const requests: CapturedProviderRequest[] = [];
+  await context.route(`${PRESETS.typesafe.origin}/**`, async (route) => {
+    requests.push(captureRequest(route.request()));
+    const usage: SystemOneResponse["usage"] = {
+      input_tokens: 128,
+      output_tokens: 8,
+      ...(reply.cost !== undefined ? { cost: reply.cost } : {}),
+    };
+    const body: SystemOneResponse = {
+      model: reply.model ?? "jev-1.13.0",
+      answers: { test: { type: "noul", noul: 1 } },
+      usage,
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  });
+  return { requests };
+}
+
+/**
+ * Route the TypeSafe origin to a RECORDING BLACK HOLE: every attempted
+ * request is captured and aborted, so a privacy regression can neither
+ * escape to the network nor go unnoticed. The "no consent" leg asserts the
+ * returned log stays empty.
+ */
+export async function abortProviderRequests(
+  context: BrowserContext,
+): Promise<ProviderRouteLog> {
+  const requests: CapturedProviderRequest[] = [];
+  await context.route(`${PRESETS.typesafe.origin}/**`, async (route) => {
+    requests.push(captureRequest(route.request()));
+    await route.abort();
+  });
+  return { requests };
+}
+
+/**
+ * The `chrome` slice the provider helpers call from inside extension pages.
+ * Same house pattern as `src/`: only the used surface is declared; the
+ * evaluated callback runs where the real `chrome` exists.
+ */
+declare const chrome: {
+  runtime: {
+    sendMessage(message: unknown): Promise<unknown>;
+  };
+};
+
+/**
+ * Send one provider-protocol message from an extension page and return the
+ * worker's raw reply. The reply path is trusted only when `sender.url` is
+ * the built `options.html`, so callers must evaluate this from the Options
+ * page — that is also what makes it the real production entry point.
+ */
+export async function sendProviderMessage(
+  page: Page,
+  message: unknown,
+): Promise<unknown> {
+  return page.evaluate((payload) => chrome.runtime.sendMessage(payload), message);
+}
+
+/** Wait for the Options provider panel's initial PROVIDER_STATUS round trip. */
+export async function waitForProviderStatus(page: Page): Promise<void> {
+  await expect(
+    page.getByText("Checking the current provider status"),
+  ).toHaveCount(0, { timeout: 15_000 });
+}
+
+/**
+ * Drive the real enable flow on the Options page: pick the model, fill the
+ * API key, check the affirmative-consent box, click Enable, and wait for the
+ * enabled panel — the synchronous `chrome.permissions.request` resolves
+ * immediately on the install-time grant (see module doc), so this exercises
+ * the unchanged production click handler and the worker's own re-verification.
+ */
+export async function enableTypesafe(
+  page: Page,
+  details: { key: string; model?: string },
+): Promise<void> {
+  await waitForProviderStatus(page);
+  if (details.model !== undefined) {
+    await page.getByLabel("Model").selectOption(details.model);
+  }
+  await page.getByLabel("API key").fill(details.key);
+  await page.getByLabel(/agree to enable/).check();
+  const enable = page.getByRole("button", { name: "Enable TypeSafe" });
+  await expect(enable).toBeEnabled();
+  await enable.click();
+  await expect(
+    page.getByRole("group", { name: "TypeSafe enabled provider" }),
+  ).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * Non-creating `getAll` over one object store of the extension's IndexedDB —
+ * the same contract as `./db.ts`: returns `[]` without opening the database
+ * when it does not exist, so reads never create a stray empty database.
+ */
+async function readStoreRows<Row>(page: Page, store: string): Promise<Row[]> {
+  return page.evaluate(
+    async ({ dbName, storeName }) => {
+      const databases = await indexedDB.databases();
+      if (!databases.some((info) => info.name === dbName)) return [];
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        if (!database.objectStoreNames.contains(storeName)) return [];
+        return await new Promise<Row[]>((resolve, reject) => {
+          const transaction = database.transaction(storeName, "readonly");
+          const getAll = transaction.objectStore(storeName).getAll();
+          getAll.onsuccess = () => resolve(getAll.result as Row[]);
+          getAll.onerror = () => reject(getAll.error);
+        });
+      } finally {
+        database.close();
+      }
+    },
+    { dbName: DB_NAME, storeName: store },
+  );
+}
+
+/**
+ * Every `sentLog` audit row — the gate appends one row per request that
+ * actually left the device (`src/net/send.ts`). The spec's "exactly one row"
+ * assertion reads the real table the real worker wrote.
+ */
+export async function sentLogRows(page: Page): Promise<SentLogEntry[]> {
+  return readStoreRows<SentLogEntry>(page, "sentLog");
+}
+
+/** Every consent record, keyed `[scope+origin]` — what Enable persists. */
+export async function consentRows(page: Page): Promise<ConsentRecord[]> {
+  return readStoreRows<ConsentRecord>(page, "consents");
+}
