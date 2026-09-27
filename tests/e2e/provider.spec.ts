@@ -77,7 +77,7 @@ test("Options consent flow enables TypeSafe and Test connection sends exactly on
       expect.objectContaining({
         scope: "jev_test",
         origin: PRESETS.typesafe.origin,
-        consentVersion: 1,
+        consentVersion: 2,
       }),
     ]);
 

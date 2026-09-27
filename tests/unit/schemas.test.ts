@@ -248,7 +248,7 @@ describe("ConsentRecord", () => {
     expect(ConsentRecord.safeParse(validConsent).success).toBe(true);
   });
 
-  it("is scoped to jev_test only", () => {
+  it("is scoped to the jev_test and jev_decisions scopes only", () => {
     expect(CONSENT_SCOPE).toBe("jev_test");
     expect(
       ConsentRecord.safeParse({
