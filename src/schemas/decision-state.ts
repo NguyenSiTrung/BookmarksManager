@@ -116,10 +116,14 @@ export type CandidateFolder = z.infer<typeof CandidateFolder>;
 /**
  * The closed state object. Every field is optional — a question set includes
  * only the fields its questions name — but the state must not be empty.
- * Array caps mirror the candidate pre-filter limits (FR3): 30 tags, 50
- * folders, 30 rerank candidates. `pairPartner` carries the second bookmark
- * of a near-duplicate pair; `candidateBookmarks` carries the rerank
- * shortlist so every URL in the state is `CleanedUrl`-checked;
+ * Array caps mirror the candidate pre-filter limits (FR3): 30 tags, 30
+ * rerank candidates, and 51 folders — the misfiled scan's 50 ranked folder
+ * candidates PLUS the bookmark's current folder, which FR3 guarantees is
+ * always included so Jev can answer "keep it where it is" even when the
+ * current folder falls outside the top 50. (The extra candidate still sits
+ * far under the wire format's 255-option guard.) `pairPartner` carries the
+ * second bookmark of a near-duplicate pair; `candidateBookmarks` carries the
+ * rerank shortlist so every URL in the state is `CleanedUrl`-checked;
  * `query` is the "Ask" search string.
  */
 export const DecisionState = z
@@ -127,7 +131,7 @@ export const DecisionState = z
     bookmark: SentBookmark.optional(),
     folderPath: z.array(z.string().max(255)).max(64).optional(), // [] = root
     candidateTags: z.array(CandidateTag).max(30).optional(),
-    candidateFolders: z.array(CandidateFolder).max(50).optional(),
+    candidateFolders: z.array(CandidateFolder).max(51).optional(),
     candidateBookmarks: z.array(SentBookmark).max(30).optional(),
     pairPartner: SentBookmark.optional(),
     query: z.string().min(1).max(1_000).optional(),

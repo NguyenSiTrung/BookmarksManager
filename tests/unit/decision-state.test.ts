@@ -234,11 +234,20 @@ describe("DecisionState", () => {
     ).toBe(true);
   });
 
-  it("rejects candidateFolders over the 50-candidate cap", () => {
-    const folders = Array.from({ length: 51 }, (_v, i) => ({
+  it("accepts 51 folder candidates and rejects 52 (50 ranked + guaranteed current)", () => {
+    // FR3's misfiled scan sends the top 50 folders plus the bookmark's
+    // current folder when that falls outside the top 50, so the bound is 51
+    // — not the 50 of the ranked shortlist alone.
+    const folders = Array.from({ length: 52 }, (_v, i) => ({
       id: `f_${i}`,
       path: ["a"],
     }));
+    expect(
+      DecisionState.safeParse({
+        bookmark: validBookmark,
+        candidateFolders: folders.slice(0, 51),
+      }).success,
+    ).toBe(true);
     expect(
       DecisionState.safeParse({
         bookmark: validBookmark,
