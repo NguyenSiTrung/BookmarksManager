@@ -1,0 +1,550 @@
+import { describe, expect, it } from "vitest";
+import {
+  FOLDER_CANDIDATE_LIMIT,
+  NEAR_DUPLICATE_TITLE_THRESHOLD,
+  NONE_FOLDER_OPTION,
+  RERANK_CANDIDATE_LIMIT,
+  TAG_CANDIDATE_LIMIT,
+  folderCandidates,
+  misfiledCandidates,
+  nearDuplicatePairs,
+  rerankCandidates,
+  tagCandidates,
+} from "../../src/decisions/candidates";
+import { tagNameKey } from "../../src/schemas/meta";
+import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
+import { buildSearchHandle, runQuery } from "../../src/search/run";
+import type { SearchHit } from "../../src/search/index";
+import type {
+  BookmarkItem,
+  FlattenedTree,
+  FolderNode,
+} from "../../src/sync/tree";
+
+/**
+ * Coverage for `src/decisions/candidates.ts` — the pure pre-filters that
+ * shortlist tags, folders, near-duplicate pairs, and rerank candidates for
+ * Jev question sets (spec FR3, plan §9.1). Everything here runs on plain
+ * data; no `chrome` is involved.
+ */
+
+const NOW = "2026-09-27T00:00:00.000Z";
+
+// ---------------------------------------------------------------------------
+// Builders
+// ---------------------------------------------------------------------------
+
+function tag(name: string, description?: string): TagDef {
+  return {
+    name,
+    nameKey: tagNameKey(name),
+    ...(description === undefined ? {} : { description }),
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+}
+
+function metaRow(id: string, tags: string[]): BookmarkMeta {
+  return { id, tags, updatedAt: NOW };
+}
+
+function folder(
+  id: string,
+  title: string,
+  path: string[] = [],
+  over: Partial<FolderNode> = {},
+): FolderNode {
+  return {
+    id,
+    title,
+    path,
+    kind: "folder",
+    childIds: [],
+    isRoot: false,
+    isManaged: false,
+    depth: path.length,
+    ...over,
+  };
+}
+
+function bm(
+  id: string,
+  title: string,
+  url: string,
+  parentId?: string,
+): BookmarkItem {
+  return {
+    id,
+    title,
+    url,
+    ...(parentId === undefined ? {} : { parentId }),
+    path: [],
+    kind: "bookmark",
+    isRoot: false,
+    isManaged: false,
+    depth: 1,
+  };
+}
+
+function treeOf(
+  folders: FolderNode[],
+  bookmarks: BookmarkItem[] = [],
+): FlattenedTree {
+  return {
+    folders: new Map(folders.map((f) => [f.id, f])),
+    bookmarks: new Map(bookmarks.map((b) => [b.id, b])),
+  };
+}
+
+const noUsage = { bookmarks: [], metas: [] };
+
+// ---------------------------------------------------------------------------
+// tagCandidates
+// ---------------------------------------------------------------------------
+
+describe("tagCandidates", () => {
+  const subject = {
+    title: "Async Rust patterns",
+    url: "https://github.com/rust/async-book",
+  };
+
+  it("returns [] when the library defines no tags", () => {
+    expect(tagCandidates(subject, [], noUsage)).toEqual([]);
+  });
+
+  it("still keyword-matches when the usage corpus is empty", () => {
+    const out = tagCandidates(subject, [tag("Rust")], noUsage);
+    expect(out.map((c) => c.nameKey)).toEqual(["rust"]);
+  });
+
+  it("ranks tags whose name tokens appear in the title first", () => {
+    const out = tagCandidates(
+      subject,
+      [tag("Cooking"), tag("Rust"), tag("Gardening")],
+      noUsage,
+    );
+    expect(out[0]?.nameKey).toBe("rust");
+    expect(out[0]?.score).toBeGreaterThan(out[1]?.score ?? -1);
+  });
+
+  it("counts URL path and domain tokens as keywords", () => {
+    // Title shares nothing with the tag names; the URL still picks them out.
+    const out = tagCandidates(
+      { title: "totally different words", url: "https://github.com/rust/x" },
+      [tag("aaa"), tag("GitHub"), tag("Rust")],
+      noUsage,
+    );
+    expect(out.map((c) => c.nameKey).slice(0, 2)).toEqual([
+      "github",
+      "rust",
+    ]);
+  });
+
+  it("matches tag description tokens, not just names", () => {
+    const out = tagCandidates(
+      { title: "Bread baking basics", url: "https://x.example/" },
+      [tag("Cooking", "bread and pastry recipes"), tag("Cars")],
+      noUsage,
+    );
+    expect(out[0]?.nameKey).toBe("cooking");
+  });
+
+  it("boosts tags already used on the subject's domain", () => {
+    const usage = {
+      bookmarks: [
+        { id: "x1", url: "https://github.com/a" },
+        { id: "x2", url: "https://github.com/b" },
+        { id: "y1", url: "https://recipes.io/c" },
+      ],
+      metas: [
+        metaRow("x1", ["oss"]),
+        metaRow("x2", ["oss"]),
+        metaRow("y1", ["recipes"]),
+      ],
+    };
+    const out = tagCandidates(
+      { title: "unrelated words here", url: "https://github.com/z" },
+      [tag("oss"), tag("recipes"), tag("github")],
+      usage,
+    );
+    // github: 1 domain-token keyword hit. oss: 2 same-domain uses.
+    // recipes: used only on another domain → no domain overlap.
+    expect(out[0]?.nameKey).toBe("oss");
+    expect(out[0]?.score).toBe(2);
+  });
+
+  it("breaks ties by nameKey so output is input-order independent", () => {
+    const defs = [tag("zebra"), tag("apple"), tag("mango")];
+    const a = tagCandidates(subject, defs, noUsage).map((c) => c.nameKey);
+    const b = tagCandidates(
+      subject,
+      [...defs].reverse(),
+      noUsage,
+    ).map((c) => c.nameKey);
+    expect(a).toEqual(["apple", "mango", "zebra"]);
+    expect(b).toEqual(a);
+  });
+
+  it("caps the shortlist at 30, keeping the strongest overlap", () => {
+    const defs = [tag("rust")].concat(
+      Array.from({ length: 40 }, (_, i) => tag(`t${String(i).padStart(2, "0")}`)),
+    );
+    const out = tagCandidates(subject, defs, noUsage);
+    expect(out).toHaveLength(TAG_CANDIDATE_LIMIT);
+    expect(out[0]?.nameKey).toBe("rust");
+    // The remaining slots fall back to nameKey order — deterministic.
+    const tail = out.slice(1).map((c) => c.nameKey);
+    expect(tail).toEqual([...tail].sort());
+  });
+
+  it("still returns zero-overlap tags when the pool is under the cap", () => {
+    const out = tagCandidates(
+      subject,
+      [tag("unrelated-one"), tag("unrelated-two")],
+      noUsage,
+    );
+    expect(out.map((c) => c.nameKey)).toEqual([
+      "unrelated-one",
+      "unrelated-two",
+    ]);
+    expect(out.every((c) => c.score === 0)).toBe(true);
+  });
+
+  it("carries name, nameKey, and description through for the question set", () => {
+    const out = tagCandidates(subject, [tag("Rust", "The Rust language")], noUsage);
+    expect(out[0]).toMatchObject({
+      nameKey: "rust",
+      name: "Rust",
+      description: "The Rust language",
+    });
+  });
+
+  it("dedupes defs that share a nameKey", () => {
+    const out = tagCandidates(
+      subject,
+      [tag("Rust"), tag("rust")], // same nameKey
+      noUsage,
+    );
+    expect(out).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// folderCandidates
+// ---------------------------------------------------------------------------
+
+describe("folderCandidates", () => {
+  const subject = {
+    title: "Rust borrow checker",
+    url: "https://github.com/rust/rfcs",
+  };
+  const folders = [
+    folder("f-food", "Recipes", ["Bookmarks bar"]),
+    folder("f-rust", "Rust", ["Bookmarks bar", "Dev"]),
+    folder("f-misc", "Misc", []),
+  ];
+
+  it("returns an empty ranked list plus the none option on an empty tree", () => {
+    const set = folderCandidates(subject, treeOf([]));
+    expect(set.candidates).toEqual([]);
+    expect(set.none).toBe(NONE_FOLDER_OPTION);
+  });
+
+  it("ranks folders by path-token overlap with the bookmark", () => {
+    const set = folderCandidates(subject, treeOf(folders));
+    expect(set.candidates[0]?.id).toBe("f-rust");
+    expect(set.candidates[0]?.path).toEqual([
+      "Bookmarks bar",
+      "Dev",
+      "Rust",
+    ]);
+    expect(set.none).toBe("none");
+  });
+
+  it("keeps zero-overlap folders when under the cap (top-N, not a filter)", () => {
+    const set = folderCandidates(subject, treeOf(folders));
+    expect(set.candidates.map((c) => c.id)).toContain("f-misc");
+    expect(set.candidates.map((c) => c.id)).toContain("f-food");
+  });
+
+  it("excludes the synthetic root and managed folders", () => {
+    const set = folderCandidates(
+      subject,
+      treeOf([
+        folder("0", "", [], { isRoot: true }),
+        folder("f-managed", "Rust managed stuff", ["Bookmarks bar"], {
+          isManaged: true,
+        }),
+        folder("f-ok", "Ok", ["Bookmarks bar"]),
+      ]),
+    );
+    expect(set.candidates.map((c) => c.id)).toEqual(["f-ok"]);
+  });
+
+  it("caps at 50 folders deterministically", () => {
+    const many = Array.from({ length: 60 }, (_, i) =>
+      folder(
+        `f${String(i).padStart(3, "0")}`,
+        `Folder ${String(i).padStart(3, "0")}`,
+        ["Bookmarks bar"],
+      ),
+    );
+    const set = folderCandidates(subject, treeOf(many));
+    expect(set.candidates).toHaveLength(FOLDER_CANDIDATE_LIMIT);
+    // All score the same → path tie-break → insertion-independent ids.
+    expect(set.candidates.map((c) => c.id)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `f${String(i).padStart(3, "0")}`),
+    );
+  });
+
+  it("breaks score ties by path then id", () => {
+    const set = folderCandidates(
+      { title: "zzz", url: "https://z.example/" },
+      treeOf([
+        folder("b", "Beta", ["Root"]),
+        folder("a", "Alpha", ["Root"]),
+      ]),
+    );
+    expect(set.candidates.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// misfiledCandidates
+// ---------------------------------------------------------------------------
+
+describe("misfiledCandidates", () => {
+  const item = bm("i1", "Rust borrow checker", "https://github.com/x", "f-misc");
+
+  it("always includes the current folder, marked, when it ranked", () => {
+    const set = misfiledCandidates(
+      item,
+      treeOf([
+        folder("f-misc", "Misc", ["Bookmarks bar"]),
+        folder("f-rust", "Rust", ["Bookmarks bar", "Dev"]),
+      ]),
+    );
+    const current = set.candidates.find((c) => c.id === "f-misc");
+    expect(current?.current).toBe(true);
+    // Ranked folder is still there and unmarked.
+    const rust = set.candidates.find((c) => c.id === "f-rust");
+    expect(rust).toBeDefined();
+    expect(rust?.current).toBeUndefined();
+    expect(set.none).toBe("none");
+  });
+
+  it("appends the current folder beyond the cap when it did not rank", () => {
+    const crowded = Array.from({ length: FOLDER_CANDIDATE_LIMIT }, (_, i) =>
+      folder(`r${i}`, `Rust ${i}`, ["Bookmarks bar"]),
+    );
+    const set = misfiledCandidates(
+      item, // parent f-misc, scores 0 against a "rust"-themed subject
+      treeOf([folder("f-misc", "Misc", ["Bookmarks bar"]), ...crowded]),
+    );
+    expect(set.candidates).toHaveLength(FOLDER_CANDIDATE_LIMIT + 1);
+    const last = set.candidates[set.candidates.length - 1];
+    expect(last?.id).toBe("f-misc");
+    expect(last?.current).toBe(true);
+  });
+
+  it("includes a managed current folder — it is the status quo, not a target", () => {
+    const managedItem = bm("i2", "Anything", "https://a.example/", "f-m");
+    const set = misfiledCandidates(
+      managedItem,
+      treeOf([
+        folder("f-m", "Managed home", ["Bookmarks bar"], { isManaged: true }),
+        folder("f-other", "Other", ["Bookmarks bar"]),
+      ]),
+    );
+    const current = set.candidates.find((c) => c.id === "f-m");
+    expect(current?.current).toBe(true);
+    // …but a managed folder never appears as a *ranked* suggestion.
+    expect(set.candidates[0]?.id).toBe("f-other");
+    expect(set.candidates[0]?.current).toBeUndefined();
+  });
+
+  it("degrades to the plain folder set when the parent is unknown", () => {
+    const orphan = bm("i3", "Rust", "https://r.example/", "missing");
+    const set = misfiledCandidates(orphan, treeOf([folder("f-a", "A", [])]));
+    expect(set.candidates.every((c) => c.current !== true)).toBe(true);
+    expect(set.none).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nearDuplicatePairs
+// ---------------------------------------------------------------------------
+
+describe("nearDuplicatePairs", () => {
+  const near = (id: string, title: string, url: string) => ({
+    id,
+    title,
+    url,
+  });
+
+  it("returns [] on empty input", () => {
+    expect(nearDuplicatePairs([])).toEqual([]);
+  });
+
+  it("pairs same-domain bookmarks with similar titles", () => {
+    const out = nearDuplicatePairs([
+      near("a", "Rust tutorial part 1", "https://example.com/a"),
+      near("b", "Rust tutorial part 1", "https://example.com/b"),
+      near("c", "Completely different", "https://example.com/c"),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.a.id).toBe("a");
+    expect(out[0]?.b.id).toBe("b");
+    expect(out[0]?.a.domain).toBe("example.com");
+    expect(out[0]?.b.url).toBe("https://example.com/b");
+    expect(out[0]?.titleSimilarity).toBe(1);
+  });
+
+  it("does not pair the same title across different domains", () => {
+    const out = nearDuplicatePairs([
+      near("a", "Identical title", "https://one.example/x"),
+      near("b", "Identical title", "https://two.example/y"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("applies the title-similarity threshold inclusively at 0.5", () => {
+    const out = nearDuplicatePairs([
+      // {guide, rust, tutorial} ∩ {handbook, rust, tutorial} = 2/4 = 0.5
+      near("a", "Rust tutorial guide", "https://example.com/a"),
+      near("b", "Rust tutorial handbook", "https://example.com/b"),
+      // {cookbook, rust} ∩ {rust, tutorial} = 1/3 < 0.5
+      near("c", "Rust cookbook", "https://example.com/c"),
+      near("d", "Rust tutorial", "https://example.com/d"),
+    ]);
+    const ids = out.map((p) => `${p.a.id}+${p.b.id}`);
+    expect(ids).toContain("a+b");
+    expect(ids).not.toContain("c+d");
+    expect(NEAR_DUPLICATE_TITLE_THRESHOLD).toBe(0.5);
+  });
+
+  it("excludes pairs the local detector already catches as exact dupes", () => {
+    const out = nearDuplicatePairs([
+      near("a", "Same title", "https://example.com/x"),
+      near("b", "Same title", "https://example.com/x"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("excludes pairs the local detector catches as normalized dupes", () => {
+    const out = nearDuplicatePairs([
+      near("a", "Same title", "http://www.example.com/x?utm_source=y"),
+      near("b", "Same title", "https://example.com/x"),
+      near("c", "Same title", "https://example.com/different"),
+    ]);
+    // a+b is a normalized group → excluded. a+c / b+c differ on path so they
+    // are not locally grouped — but "Same title" is identical → they pair.
+    const ids = out.map((p) => `${p.a.id}+${p.b.id}`).sort();
+    expect(ids).toEqual(["a+c", "b+c"]);
+  });
+
+  it("excludes every intra-pair of a 3-member duplicate group", () => {
+    const out = nearDuplicatePairs([
+      near("a", "Same page", "https://example.com/x"),
+      near("b", "Same page", "https://example.com/x"),
+      near("c", "Same page", "https://example.com/x"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("ignores URLs with no real domain", () => {
+    const out = nearDuplicatePairs([
+      // Distinct raw URLs — no exact group; opaque scheme → no domain →
+      // the "same domain" precondition can never hold.
+      near("a", "Same title", "javascript:alert(1)"),
+      near("b", "Same title", "javascript:alert(2)"),
+    ]);
+    expect(out).toEqual([]);
+  });
+
+  it("orders pairs by similarity then id, canonically oriented", () => {
+    const out = nearDuplicatePairs([
+      near("z2", "Rust tutorial", "https://e.example/2"),
+      near("z1", "Rust tutorial", "https://e.example/1"),
+      near("m", "Beta gamma delta", "https://e.example/m"),
+      near("n", "Beta gamma epsilon", "https://e.example/n"),
+    ]);
+    // identical titles (sim 1) first; "m+n" scores 2/4 = 0.5 second.
+    expect(out.map((p) => `${p.a.id}+${p.b.id}`)).toEqual(["z1+z2", "m+n"]);
+    // …and pair orientation is canonical (z1 before z2 by id, not input).
+    expect(out[0]?.a.id).toBe("z1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// rerankCandidates
+// ---------------------------------------------------------------------------
+
+describe("rerankCandidates", () => {
+  const hit = (id: string | number, over: Partial<SearchHit> = {}): SearchHit =>
+    ({
+      id,
+      title: `title-${id}`,
+      url: `https://hits.example/${id}`,
+      domain: "hits.example",
+      folderIds: [],
+      folderTitles: [],
+      tagKeys: [],
+      score: 1,
+      terms: [],
+      queryTerms: [],
+      match: {},
+      ...over,
+    }) as SearchHit;
+
+  it("returns [] for no hits", () => {
+    expect(rerankCandidates([])).toEqual([]);
+  });
+
+  it("takes the top 30 hits in the order runQuery produced them", () => {
+    const hits = Array.from({ length: 35 }, (_, i) => hit(`h${i}`));
+    const out = rerankCandidates(hits);
+    expect(out).toHaveLength(RERANK_CANDIDATE_LIMIT);
+    expect(out.map((c) => c.id)).toEqual(
+      Array.from({ length: 30 }, (_, i) => `h${i}`),
+    );
+  });
+
+  it("maps each hit to {id, title, url, domain}", () => {
+    const out = rerankCandidates([
+      hit("k", {
+        title: "Kept",
+        url: "https://k.example/?q=1",
+        domain: "k.example",
+      }),
+    ]);
+    expect(out).toEqual([
+      {
+        id: "k",
+        title: "Kept",
+        url: "https://k.example/?q=1",
+        domain: "k.example",
+      },
+    ]);
+  });
+
+  it("normalizes non-string hit ids to strings", () => {
+    const out = rerankCandidates([hit(7)]);
+    expect(out[0]?.id).toBe("7");
+  });
+
+  it("consumes real runQuery hits end to end", () => {
+    const tree = treeOf(
+      [folder("f-dev", "Dev", ["Bookmarks bar"])],
+      [
+        bm("b1", "Rust async book", "https://github.com/rust/async", "f-dev"),
+        bm("b2", "Banana bread", "https://baking.example/bread", "f-dev"),
+      ],
+    );
+    const handle = buildSearchHandle(tree, [], []);
+    const result = runQuery(handle.index, "rust", handle.ctx);
+    const out = rerankCandidates(result.hits);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ id: "b1", domain: "github.com" });
+  });
+});
