@@ -125,12 +125,12 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
 <!-- execution: parallel -->
 <!-- depends: phase2 -->
 
-- [ ] Task 1: Alias warning and provider data notes
+- [x] Task 1: Alias warning and provider data notes
   <!-- files: src/net/provider-info.ts, src/entrypoints/options/ProviderSetup.tsx, tests/components/provider-setup.test.tsx -->
-  - [ ] Verify provider privacy-policy URLs and data-note wording (firecrawl) before writing constants
-  - [ ] Failing component tests: warning for `jev-latest`/`jev-preview`, none for pinned ids; per-preset
+  - [x] Verify provider privacy-policy URLs and data-note wording (firecrawl) before writing constants
+  - [x] Failing component tests: warning for `jev-latest`/`jev-preview`, none for pinned ids; per-preset
         notes + link with `rel="noopener noreferrer"`
-  - [ ] Implement
+  - [x] Implement
 
 - [ ] Task 2: E2E provider setup and Test connection
   <!-- files: tests/e2e/provider.spec.ts, tests/e2e/helpers/provider.ts -->

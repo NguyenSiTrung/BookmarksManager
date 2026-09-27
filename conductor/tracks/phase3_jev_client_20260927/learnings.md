@@ -181,3 +181,17 @@ Full gate green at Phase 3 completion:
 - Housekeeping: HEAD was lint-broken on a clean checkout — the unused `findBookmarkByTitle` import in
   tests/e2e/search.spec.ts (documented in PROJECT_PLAN.md §Gate notes) was only fixed in the working
   tree. Committed as b2cde90 so worktrees branched at HEAD lint-clean.
+
+## Phase 4 — Task 1: alias warning + provider data notes (landed 04545bb)
+
+- `src/net/provider-info.ts` holds a frozen per-preset `MOVING_MODEL_ALIASES` registry
+  (typesafe: jev-latest, jev-preview; openrouter: jev-latest) plus the warning copy; the model
+  picker warns via a `role="status"` region wired to the select with `aria-describedby` only while
+  the alias is moving — pinned ids render nothing.
+- Privacy-link hardening: `rel="noreferrer"` → `rel="noopener noreferrer"`. The noreferrer keyword
+  already implies noopener on modern Chrome, but FR7 names the explicit pair — write both.
+- URL verification caught real drift: `https://typesafe.ai/privacy` 308-redirects to
+  `https://typesafe.ai/legal/privacy-policy` — now canonical in `PROVIDER_DISCLOSURES`.
+  `https://openrouter.ai/privacy` resolves directly. Both dataNote claims verified against the
+  actual policies (TypeSafe no-training clause + ZDR for enterprise; OpenRouter forwards inputs to
+  the selected model provider).
