@@ -16,6 +16,22 @@ import { z } from "./z";
  */
 
 /**
+ * True when the string contains any literal ASCII whitespace/control byte —
+ * a code point at or below U+0020, or DEL (U+007F). A loop rather than a
+ * character-class regex: ESLint's `no-control-regex` bans `\x00`-style
+ * escapes in regex literals, and this is clearer anyway.
+ */
+function hasAsciiWhitespaceOrControl(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * A URL already cleaned by `src/decisions/minimize.ts` `cleanUrl`: it parses
  * as an absolute URL and carries no query string, no fragment, and no
  * `user[:pass]@` credentials — not even a bare trailing `?` or `#` (the
@@ -36,7 +52,7 @@ export const CleanedUrl = z
   .max(2_048)
   .refine(
     (value) => {
-      if (/[?#]/.test(value) || /[\x00-\x20\x7f]/.test(value)) {
+      if (/[?#]/.test(value) || hasAsciiWhitespaceOrControl(value)) {
         return false;
       }
       // `.refine` still runs when an earlier check fails (Zod 4), so the
