@@ -387,6 +387,9 @@ async function runPairs(
       { type: string; score?: number; probabilities?: Record<string, number> }
     >;
     const level = crossCheckLevel(answers);
+    // Deliberate §10.2-sound divergence from §10.1: the confidence is a fixed
+    // map of the level ({@link levelToConfidence}); the answer's returned
+    // `confidence`, when present, is intentionally NOT blended in.
     const confidence = levelToConfidence(level);
 
     // The request left the device, so record its cost. This runs AFTER the

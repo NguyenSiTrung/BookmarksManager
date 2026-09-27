@@ -239,15 +239,27 @@ export class JobRunner {
         "The supplied batchSize does not match the job's persisted batchSize.",
       );
     }
+    // A `library_scan` runs the near-duplicate pair phase (FR7); with no
+    // injected scanner it could only compute zero pair batches and complete as
+    // if the scan were whole — silently reintroducing the very FR7 gap this
+    // phase exists to close. Fail closed BEFORE any status change or work is
+    // sent. An `analyze_selection` never runs the pair phase, so it is
+    // unaffected.
+    const scanDuplicates = this.#scanDuplicates;
+    if (jobRunsNearDuplicate(job.kind) && scanDuplicates === undefined) {
+      throw new JobRunnerError(
+        "invalid_input",
+        "A library_scan requires a scanDuplicates dependency.",
+      );
+    }
+
     // The per-bookmark batches come first, then the library-wide near-duplicate
     // pair batches (a `library_scan` only). Pairs are computed from the stable
     // work set, so a resume slices them exactly as the original run did.
     const bookmarkBatchCount = computeTotalBatches(bookmarks.length, batchSize);
-    const scanDuplicates = this.#scanDuplicates;
-    const pairs =
-      jobRunsNearDuplicate(job.kind) && scanDuplicates !== undefined
-        ? nearDuplicatePairs(bookmarks)
-        : [];
+    const pairs = jobRunsNearDuplicate(job.kind)
+      ? nearDuplicatePairs(bookmarks)
+      : [];
     const pairBatchCount = computeTotalBatches(pairs.length, batchSize);
     const totalBatches = bookmarkBatchCount + pairBatchCount;
 

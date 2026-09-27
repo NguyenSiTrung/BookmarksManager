@@ -616,7 +616,7 @@ describe("JobRunner library_scan pair phase", () => {
     });
   });
 
-  it("skips the pair phase when no scanner dependency is supplied", async () => {
+  it("fails closed when a library_scan has no scanner dependency", async () => {
     const bms = pairBookmarks();
     const job = await enqueueJob({
       kind: "library_scan",
@@ -626,13 +626,24 @@ describe("JobRunner library_scan pair phase", () => {
     });
     const { analyze, calls } = makeAnalyzer();
 
-    const finished = await new JobRunner({ analyze, now }).run(job.id, {
-      bookmarks: bms,
-      batchSize: 2,
-    });
+    // Without an injected scanner the runner could only compute zero pair
+    // batches and complete as if the scan were whole — it must instead reject
+    // before any status change or work is sent.
+    const error = await new JobRunner({ analyze, now })
+      .run(job.id, { bookmarks: bms, batchSize: 2 })
+      .catch((caught: unknown) => caught);
 
-    expect(calls).toEqual(["bm-0", "bm-1", "bm-2", "bm-3"]);
-    expect(finished.status).toBe("completed");
-    expect(finished.progress.totalBatches).toBe(2);
+    expect(error).toBeInstanceOf(JobRunnerError);
+    expect((error as JobRunnerError).code).toBe("invalid_input");
+    expect((error as JobRunnerError).message).toContain("scanDuplicates");
+    // No work was sent and the job was neither advanced nor marked failed.
+    expect(calls).toEqual([]);
+    const after = await db.jobs.get(job.id);
+    expect(after?.status).toBe("pending");
+    expect(after?.progress).toEqual({
+      totalBatches: 2,
+      committedBatches: 0,
+      processedCount: 0,
+    });
   });
 });
