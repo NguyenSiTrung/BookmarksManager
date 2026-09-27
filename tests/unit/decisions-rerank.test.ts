@@ -200,6 +200,71 @@ describe("rerankSearch", () => {
     expect(result.noMatch).toBe(false);
   });
 
+  it("keys questions by the SENT (post-skip) index when a blocklisted hit precedes sendable hits", async () => {
+    server.queue({
+      kind: "answer",
+      answerOverrides: {
+        candidate_0: { type: "noul", noul: 0.9 },
+        candidate_1: { type: "noul", noul: 0.1 },
+      },
+    });
+
+    // The blocklisted webmail hit sits BEFORE the two sendable hits, so a
+    // raw-shortlist-index implementation would key the sendables as
+    // candidate_1/candidate_2. The positional keys must instead be built from
+    // the sent (post-skip) list.
+    const result = await rerankSearch(
+      options({
+        hits: [
+          hit("bm-mail", "Inbox", WEBMAIL_URL, "mail.google.com"),
+          hit("bm-1", "Rust async book", GITHUB_URL, "github.com"),
+          hit("bm-2", "Tokio async runtime", TOKIO_URL, "tokio.rs"),
+        ],
+      }),
+    );
+
+    expect(result.sent).toBe(true);
+    const body = firstRequest();
+    // Only the two sendable bookmarks were sent, in shortlist order.
+    expect(body.state.candidateBookmarks).toEqual([
+      { title: "Rust async book", url: GITHUB_URL, domain: "github.com" },
+      { title: "Tokio async runtime", url: TOKIO_URL, domain: "tokio.rs" },
+    ]);
+    // The keys are the post-skip indices 0 and 1, never 1 and 2.
+    expect(Object.keys(body.questions)).toEqual(["candidate_0", "candidate_1"]);
+    // The blocklisted URL/domain never left the device.
+    const raw = server.requests[0]?.rawBody ?? "";
+    expect(raw).not.toContain(WEBMAIL_URL);
+    expect(raw).not.toContain("mail.google.com");
+
+    if (!result.sent) throw new Error("expected a sent result");
+    // The answers map back to the two sendable ids in the correct order.
+    expect(result.results).toEqual([
+      { id: "bm-1", probability: 0.9 },
+      { id: "bm-2", probability: 0.1 },
+    ]);
+  });
+
+  it("keeps shortlist order for candidates with equal probability", async () => {
+    server.queue({
+      kind: "answer",
+      answerOverrides: {
+        candidate_0: { type: "noul", noul: 0.8 },
+        candidate_1: { type: "noul", noul: 0.8 },
+      },
+    });
+
+    const result = await rerankSearch(options());
+
+    if (!result.sent) throw new Error("expected a sent result");
+    // Ties preserve the shortlist's own (relevance) order: bm-1 then bm-2.
+    expect(result.results).toEqual([
+      { id: "bm-1", probability: 0.8 },
+      { id: "bm-2", probability: 0.8 },
+    ]);
+    expect(result.noMatch).toBe(false);
+  });
+
   it("reports no match when every probability is below the bar", async () => {
     server.queue({
       kind: "answer",

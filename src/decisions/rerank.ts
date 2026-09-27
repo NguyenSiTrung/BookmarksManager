@@ -277,8 +277,10 @@ async function runRerank(
   >;
   crossCheckAnswers(answers, sent.length);
 
-  // The request left the device, so record its cost before anything else can
-  // fail. Exactly one row per call.
+  // The request left the device, so record its cost. This runs AFTER the
+  // answer cross-check above: an `answer_mismatch` throws before reaching
+  // here, so it writes no usage row (matching the analyze pipeline). Exactly
+  // one row per completed call.
   const usage = await recordUsage(result);
 
   const ranked = sent.map((entry, index) => ({
