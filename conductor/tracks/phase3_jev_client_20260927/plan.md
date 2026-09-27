@@ -119,7 +119,7 @@ the §8.5 Options completion, e2e Test connection, and a live smoke script.
         through; client errors propagate unchanged
   - [x] Implement
 
-- [ ] Task 3: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 3: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
 
 ## Phase 4: Options completion, e2e, live smoke
 <!-- execution: parallel -->

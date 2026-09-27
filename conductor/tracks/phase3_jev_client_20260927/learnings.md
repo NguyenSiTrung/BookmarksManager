@@ -159,3 +159,12 @@ Full gate green at Phase 2 completion:
   shares the option→probability shape; the raw p is recoverable exactly.
 - Floating-point note: `1 - 0.9 === 0.09999999999999998` — assert with `toBeCloseTo` or the exact IEEE
   literal; `toEqual(0.1)` fails.
+
+## Phase 3 — Task 3: checkpoint evidence
+
+Full gate green at Phase 3 completion:
+- `npm run lint` — 0 errors, 1 known virtualizer warning.
+- `npm run typecheck` — clean.
+- `npm run test -- --run` — 68 files, 1783 tests, all pass (+16 define tests).
+- `npm run build` — clean (1.09 MB); `check:manifest` OK; `check:bundle` OK.
+- `xvfb-run -a npm run test:e2e` — 11/11 pass.
