@@ -212,7 +212,10 @@ all behind a new per-provider bookmark-data consent.
        minors: a failed appendSentLog aborts the caller (pre-existing); cap not configurable; no
        cap-is-positive-int test. Phase 4 must consume clearSentLog + the cap in the "Data sent" view. -->
 
-- [ ] Task 6: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 6: Phase 3 automated checkpoint — full gate green, evidence in `learnings.md`
+  - Gate (main @ `bafdd3f`): lint 0 errors (1 pre-existing TanStack warning) · typecheck clean ·
+    `npx vitest run` **84 files / 2373 tests pass** · build 1.16 MB · `check:manifest` OK ·
+    `check:bundle` OK · `xvfb-run -a npm run test:e2e` **13/13 pass**
 
 ## Phase 4: UI surfaces
 <!-- execution: parallel -->

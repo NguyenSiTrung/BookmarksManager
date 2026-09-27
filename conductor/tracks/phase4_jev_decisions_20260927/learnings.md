@@ -40,6 +40,21 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 
 <!-- Learnings from implementation will be appended below -->
 
+## [2026-09-27 15:40] - Phase 3 Task 6: Automated checkpoint — FULL GATE GREEN
+
+- Gate on main @ `bafdd3f` (all Phase 3 tasks landed): **lint** 0 errors (1 pre-existing TanStack
+  `useVirtualizer` warning) · **typecheck** clean · **unit** `npx vitest run` 84 files / **2373 tests
+  pass** · **build** 1.16 MB · **`check:manifest`** OK · **`check:bundle`** OK · **e2e**
+  `xvfb-run -a npm run test:e2e` **13/13 pass**.
+- Phase 3 delivered the worker-side Jev decision stack: analyze pipeline (`decisions/pipeline.ts`),
+  rerank (`decisions/rerank.ts`), near-duplicate scan (`decisions/duplicates.ts`), resumable job
+  queue + runner (`src/jobs/`), total worker message protocol (`messages/decisions.ts` +
+  `background.ts` wiring + startup resume), user-blocklist enforcement (`decisions/blocklist.ts`),
+  and sentLog retention (`net/sent-log.ts`). 2373 tests = +113 over the 2260 Phase-2 baseline.
+- Phase 4 must consume these worker APIs: `clearSentLog` + `SENT_LOG_RETENTION_CAP` in the Options
+  "Data sent" view; job start/pause/resume/cancel + review-queue approve/reject/revert messages;
+  analyze/rerank entry points; blocklist + settings writes.
+
 ## [2026-09-27 15:35] - Phase 3 Task 5: sentLog retention cap and clear (BookmarksManager-sd1)
 
 - `src/net/sent-log.ts` now owns sent-log writes: `SENT_LOG_RETENTION_CAP = 500`,
