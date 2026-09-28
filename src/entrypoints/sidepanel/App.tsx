@@ -16,6 +16,7 @@ import {
 import { useBookmarkTree } from "../../ui/hooks/useBookmarkTree";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
 import { openBookmarkUrl } from "../../sync/tabs";
+import { isOpenableUrl } from "../../search/openable";
 import {
   BookmarkList,
   SelectionContext,
@@ -501,13 +502,13 @@ export function App(props?: { askDebounceMs?: number }) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const openItem = (item: BookmarkItem): void => {
-    window.open(item.url, "_blank", "noopener,noreferrer");
-  };
-
   /**
-   * Palette opens go through the typed tabs slice (`openBookmarkUrl`) — a
-   * typed failure becomes an error toast instead of a silent no-op.
+   * All opens go through the typed tabs slice (`openBookmarkUrl`) — it
+   * applies the shared `isOpenableUrl` denylist (`javascript:`/`data:`
+   * refused before reaching `chrome.tabs`) and a typed failure becomes an
+   * error toast instead of a silent no-op. Every activation path — Enter,
+   * the row "Open" action, DuplicatesView rows, and palette background
+   * opens — shares this one guard.
    */
   const openViaTabs = (url: string, active: boolean): void => {
     void openBookmarkUrl(url, active ? "foreground" : "background").then(
@@ -517,6 +518,11 @@ export function App(props?: { askDebounceMs?: number }) {
         }
       },
     );
+  };
+
+  /** Foreground activate: tree rows, DuplicatesView rows, the "Open" action. */
+  const openItem = (item: BookmarkItem): void => {
+    openViaTabs(item.url, true);
   };
 
   /**
@@ -606,7 +612,12 @@ export function App(props?: { askDebounceMs?: number }) {
     destructive?: boolean;
     onSelect: () => void;
   }[] => [
-    { key: "open", label: "Open", disabled: false, onSelect: () => openItem(item) },
+    {
+      key: "open",
+      label: "Open",
+      disabled: !isOpenableUrl(item.url),
+      onSelect: () => openItem(item),
+    },
     {
       key: "edit",
       label: "Edit…",

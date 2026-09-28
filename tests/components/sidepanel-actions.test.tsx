@@ -58,6 +58,7 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
  */
 
 let fake: FakeBookmarksApi;
+let tabsCreate: ReturnType<typeof vi.fn>;
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -109,8 +110,10 @@ beforeEach(async () => {
       { id: "f20", title: "Archive", children: [] },
     ],
   });
+  tabsCreate = vi.fn(async () => ({ id: 1, windowId: 1, url: "" }));
   vi.stubGlobal("chrome", {
     bookmarks: fake,
+    tabs: { create: tabsCreate },
     runtime: {
       getURL: (path: string) =>
         `chrome-extension://test-extension-id/${path}`,
@@ -703,6 +706,43 @@ describe("item actions", () => {
         "aria-disabled",
       ),
     ).not.toBe("true");
+  });
+
+  it("opens a row through chrome.tabs.create in the foreground", async () => {
+    await renderApp();
+
+    await openItemMenu("Gamma");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open" }));
+
+    await waitFor(() =>
+      expect(tabsCreate).toHaveBeenCalledWith({
+        url: "https://g.example/",
+        active: true,
+      }),
+    );
+  });
+
+  it("disables Open on a javascript: bookmark and never calls tabs", async () => {
+    await fake.create({
+      parentId: "1",
+      title: "Scripted",
+      url: "javascript:alert(1)",
+    });
+    await renderApp();
+
+    await openItemMenu("Scripted");
+    const openEntry = screen.getByRole("menuitem", { name: "Open" });
+    expect(openEntry.getAttribute("aria-disabled")).toBe("true");
+    // A disabled menuitem is a no-op — it neither opens a tab nor closes
+    // the menu (Radix keeps the menu open on disabled clicks).
+    fireEvent.click(openEntry);
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem")).toBeNull(),
+    );
+    expect(tabsCreate).not.toHaveBeenCalled();
   });
 });
 
