@@ -1,7 +1,10 @@
 import "fake-indexeddb/auto";
 import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { grantConsentAtOrigin } from "../../src/consent/records";
+import {
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+} from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { setBookmarkSummary, getMeta } from "../../src/db/meta";
 import { handleSummarizeMessage } from "../../src/messages/summaries";
@@ -213,13 +216,22 @@ describe("handleSummarizeMessage", () => {
     expect(reply).toMatchObject({ ok: false, code: "no_provider" });
   });
 
-  it("answers no_consent before touching the network", async () => {
+  it("grants both consents at the click, then hits the cost gate", async () => {
     await seedProvider();
     const reply = await handleSummarizeMessage(
       { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID },
       TRUSTED,
     );
-    expect(reply).toMatchObject({ ok: false, code: "no_consent" });
+    // The Summarize click IS the consent trigger (spec FR3): both
+    // origin-scoped grants are written before the gated send, and the
+    // unpriced model stops on confirmation_required — never no_consent.
+    await expect(
+      hasConsentAtOrigin("llm_summary", LLM_ORIGIN),
+    ).resolves.toBe(true);
+    await expect(
+      hasConsentAtOrigin("jev_summary_verify", JEV_ORIGIN),
+    ).resolves.toBe(true);
+    expect(reply).toMatchObject({ ok: false, code: "confirmation_required" });
     expect(server.requests).toHaveLength(0);
   });
 

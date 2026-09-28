@@ -1,3 +1,4 @@
+import { grantConsentAtOrigin } from "../consent/records";
 import { db } from "../db/database";
 import { monthlyBudgetSnapshot } from "../llm/budget";
 import type { MonthlyBudgetSnapshot } from "../llm/budget";
@@ -234,10 +235,12 @@ function mapError(cause: unknown): LlmFeatureMessageResult {
 /** Compose the escalation status: settings + whether its provider exists. */
 async function escalationStatus(): Promise<LlmFeatureMessageResult> {
   const settings = await readLlmEscalationSettings();
+  // SET resolves the active provider when none is stored — the status
+  // read does the same so the toggle's `providerConfigured`/cap checks
+  // reflect the provider enabling would actually use.
+  const providerId = settings.providerId ?? (await readActiveLlmProvider())?.providerId;
   const record =
-    settings.providerId === undefined
-      ? null
-      : await readLlmProvider(settings.providerId);
+    providerId === undefined ? null : await readLlmProvider(providerId);
   const escalation: LlmEscalationStatusResult = {
     enabled: settings.enabled,
     providerConfigured: record !== null,
@@ -329,6 +332,12 @@ async function explain(message: {
   if (active === null) {
     return failure("no_provider", "No LLM provider is configured.");
   }
+  // The Explain click is the consent trigger for `llm_explain` — write the
+  // grant at the provider's origin before the gated send.
+  await grantConsentAtOrigin(
+    "llm_explain",
+    resolveLlmDestination(active.provider).origin,
+  );
   const result = await explainDecision(
     message.decisionId,
     active.providerId,

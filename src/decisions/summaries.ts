@@ -6,7 +6,10 @@ import { verifySummaryRun } from "../jev/tasks/verify-summary";
 import { createJevClient, type JevTransport } from "../jev/client";
 import { SummaryVerificationState } from "../schemas/summary-verification";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
-import { hasConsentAtOrigin } from "../consent/records";
+import {
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+} from "../consent/records";
 import {
   JEV_SUMMARY_VERIFY_SCOPE,
   LLM_SUMMARY_SCOPE,
@@ -199,6 +202,11 @@ export async function summarizeExtracted(
     };
   }
   const llmOrigin = resolveLlmDestination(provider.provider).origin;
+  // The Summarize click is the consent trigger for both page-text scopes —
+  // write the grants so the per-scope checks below pass.
+  const jevOriginForConsent = resolvePreset("typesafe").origin;
+  await grantConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin);
+  await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOriginForConsent);
   if (
     !(await hasConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin).catch(
       () => false,
@@ -212,7 +220,7 @@ export async function summarizeExtracted(
       message: `Page text has not been consented for ${llmOrigin}.`,
     };
   }
-  const jevOrigin = resolvePreset("typesafe").origin;
+  const jevOrigin = jevOriginForConsent;
   if (
     !(await hasConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOrigin).catch(
       () => false,

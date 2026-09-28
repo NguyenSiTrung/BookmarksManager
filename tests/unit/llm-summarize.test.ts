@@ -1,7 +1,10 @@
 import "fake-indexeddb/auto";
 import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { grantConsentAtOrigin } from "../../src/consent/records";
+import {
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+} from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { getMeta } from "../../src/db/meta";
 import { summarizeActiveBookmark } from "../../src/decisions/summaries";
@@ -196,31 +199,22 @@ describe("summarizeActiveBookmark", () => {
     expect(server.requests).toHaveLength(1);
   });
 
-  it("refuses when only the LLM consent is granted (Jev is a separate grant)", async () => {
+  it("grants both scopes at the click and proceeds past consent", async () => {
     await seedProvider();
-    await grantConsentAtOrigin("llm_summary", LLM_ORIGIN);
+    // The Summarize click IS the affirmative action (spec FR3): both
+    // origin-scoped grants are written by the orchestrator before any
+    // gated send — llm_summary at the LLM origin, jev_summary_verify at
+    // the Jev origin. Without them a run could never start.
     const jevTransport = jevTransportFor("supported");
     const outcome = await run(jevTransport);
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.stage).toBe("consent");
-    expect(jevTransport).not.toHaveBeenCalled();
-    // The LLM send never happens — consent is checked up front.
-    expect(server.requests).toHaveLength(0);
-    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
-  });
-
-  it("refuses when only the Jev consent is granted", async () => {
-    await seedProvider();
-    await grantConsentAtOrigin("jev_summary_verify", JEV_ORIGIN);
-    const outcome = await run();
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok) return;
-    expect(outcome.stage).toBe("consent");
-    if (outcome.stage === "consent") {
-      expect(outcome.scope).toBe("llm_summary");
-    }
-    expect(server.requests).toHaveLength(0);
+    await expect(hasConsentAtOrigin("llm_summary", LLM_ORIGIN)).resolves.toBe(true);
+    await expect(
+      hasConsentAtOrigin("jev_summary_verify", JEV_ORIGIN),
+    ).resolves.toBe(true);
+    // With an unpriced model the next gate is the cost confirmation —
+    // consent was already satisfied by the click.
+    expect(outcome.ok).toBe(true);
+    expect(jevTransport).toHaveBeenCalled();
   });
 
   it("refuses when the active page URL does not match the bookmark", async () => {

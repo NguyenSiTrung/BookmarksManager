@@ -1,7 +1,10 @@
 import "fake-indexeddb/auto";
 import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { grantConsentAtOrigin } from "../../src/consent/records";
+import {
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+} from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { getDecision, persistDecision } from "../../src/decisions/store";
 import { handleLlmFeatureMessage } from "../../src/messages/llm-features";
@@ -361,14 +364,18 @@ describe("handleLlmFeatureMessage", () => {
       expect(server.requests).toHaveLength(0);
     });
 
-    it("returns no_consent without the llm_explain grant", async () => {
+    it("grants llm_explain at the click, then hits the next gate", async () => {
       await seedProvider({ consent: false });
       await persistDecision(pendingDecision());
       const reply = await handleLlmFeatureMessage(
         { type: "LLM_EXPLAIN", decisionId: UUID },
         TRUSTED,
       );
-      expect(reply).toMatchObject({ ok: false, code: "no_consent" });
+      // The click IS the consent trigger (spec FR3): the origin-scoped
+      // grant is written, and the unpriced model then stops on
+      // confirmation_required — never on a missing consent row.
+      expect(reply).toMatchObject({ ok: false, code: "confirmation_required" });
+      await expect(hasConsentAtOrigin("llm_explain", ORIGIN)).resolves.toBe(true);
       // The decision is untouched — an explanation never mutates state.
       const row = await getDecision(UUID);
       expect(row?.status).toBe("pending");

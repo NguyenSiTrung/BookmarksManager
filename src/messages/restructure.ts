@@ -10,6 +10,7 @@ import {
 } from "../jobs/queue";
 import type { Job } from "../schemas/job";
 import { LlmHttpError } from "../llm/client";
+import { grantConsentAtOrigin } from "../consent/records";
 import { resolveLlmDestination } from "../llm/providers";
 import { readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
@@ -265,6 +266,12 @@ async function startRestructure(
   }
   const synopsis = buildLibrarySynopsis(tree, metas);
   try {
+    // The affirmative "Propose a layout" click is the consent trigger for
+    // this scope — write the grant so the gate's per-scope check passes.
+    await grantConsentAtOrigin(
+      "llm_restructure",
+      resolveLlmDestination(record.provider).origin,
+    );
     const { proposal } = await proposeLayout(providerId, synopsis, {
       ...(unknownCostConfirmed !== undefined ? { unknownCostConfirmed } : {}),
     });

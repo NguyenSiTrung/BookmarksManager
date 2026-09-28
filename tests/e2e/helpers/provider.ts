@@ -313,12 +313,15 @@ export async function enableTypesafe(
   details: { key: string; model?: string },
 ): Promise<void> {
   await waitForProviderStatus(page);
+  // Scope to the Jev section — Options also hosts the LLM provider form,
+  // whose "Model"/"API key"/consent labels collide with these.
+  const region = page.getByRole("region", { name: "AI provider connection" });
   if (details.model !== undefined) {
-    await page.getByLabel("Model").selectOption(details.model);
+    await region.getByLabel("Model").selectOption(details.model);
   }
-  await page.getByLabel("API key").fill(details.key);
-  await page.getByLabel(/agree to enable/).check();
-  const enable = page.getByRole("button", { name: "Enable TypeSafe" });
+  await region.getByLabel("API key").fill(details.key);
+  await region.getByLabel(/agree to enable/).check();
+  const enable = region.getByRole("button", { name: "Enable TypeSafe" });
   await expect(enable).toBeEnabled();
   await enable.click();
   await expect(

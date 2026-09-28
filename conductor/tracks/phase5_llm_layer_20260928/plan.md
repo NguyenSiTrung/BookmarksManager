@@ -376,7 +376,7 @@ reservations protect every egress path.
 ## Phase 6: Integration hardening and release documentation
 <!-- execution: parallel -->
 
-- [ ] Task 1: End-to-end LLM suite
+- [x] Task 1: End-to-end LLM suite
   <!-- files: tests/mock-servers/openai.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Cover fresh-install/no-consent zero egress, exact-origin custom setup, all
     output tiers, Explain, automatic escalation, budget exhaustion, revoke,

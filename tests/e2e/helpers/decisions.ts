@@ -197,7 +197,11 @@ export async function routeFakeDecisions(
  * gate re-verifies it on every send, so this is the real production path.
  */
 export async function grantDecisionsConsent(page: Page): Promise<void> {
-  const checkbox = page.getByLabel(/I have read the disclosure above and agree/);
+  // "agree to send bookmark metadata" uniquely names the Jev consent — the
+  // LLM provider section has its own near-identical disclosure checkbox.
+  const checkbox = page.getByLabel(
+    /I have read the disclosure above and agree to send bookmark metadata/,
+  );
   await expect(checkbox).toBeVisible({ timeout: 15_000 });
   await checkbox.check();
   const allow = page.getByRole("button", {

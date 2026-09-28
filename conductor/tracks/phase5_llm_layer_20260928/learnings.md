@@ -461,3 +461,43 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
 - The shell toast's Undo calls `undoLatest` — `undoable: true` alone wires
   restructure undo; no custom callback needed.
 - Job status is spelled `canceled` (single l).
+
+
+## Phase 6 Task 1 — e2e LLM suite
+
+- Feature consent scopes (`llm_restructure`, `llm_summary`, `llm_explain`,
+  `jev_summary_verify`) were NEVER granted anywhere before this task —
+  every Phase 3–5 feature would have failed `no_consent` in production.
+  Fixed by writing each scope's origin-scoped grant at its affirmative
+  click (the click IS the consent trigger, mirroring `llm_test` at
+  enable and `llm_escalate` at the Options toggle), then re-checking
+  `hasConsentAtOrigin` before the gated send. The four old-semantics
+  unit tests ("refuses without the grant") now assert the grant is
+  written and the flow proceeds to the next gate.
+- `escalationStatus()` resolved `providerConfigured`/`monthlyBudgetUsd`
+  only from a STORED providerId, but the only writer of that field was
+  the toggle the status gates — a first-time deadlock that made the
+  escalation toggle unreachable. It now falls back to the active
+  provider record, matching `setEscalation`'s own default.
+- Playwright realities, documented in the spec header:
+  `chrome.permissions.request` never resolves (install-time host grant
+  workaround in `launchLlmExtension`); install-time host permissions
+  are not removable (`permissions.remove` fails — revoke test accepts
+  either notice and asserts post-revoke refusal); a parked routed
+  fetch aborts on `context.close()` and the runner's failure write can
+  race `paused` — `release()` before close.
+- `routeFakeDecisions` `autoRelease: N` counts REQUESTS, not batches —
+  batch 1 of a 7-bookmark job is 5 calls.
+- `routeFakeOpenAi` takes an optional `origin` — a custom provider's
+  wire is on its own origin, not api.openai.com.
+- `LLM_ESCALATION_SET`'s consent lives in the Options UI (disclosure
+  checkbox → "Allow second opinions" → `grantConsentAtOrigin`), not the
+  message; the toggle is a controlled checkbox that only re-checks after
+  the SET roundtrip — use `click()` + polled `toBeChecked`, not
+  `check()`.
+- `.test` and `example` are in the built-in unsendable-TLD list — the
+  summarize fixture uses a normal `.io` host.
+- `LLM_SUMMARIZE` needs a real navigable tab: `context.newPage()` +
+  `context.route` fixture HTML + `chrome.tabs.query` for the tabId;
+  `chrome.scripting` is covered by the install-time host grant for the
+  fixture origin.
