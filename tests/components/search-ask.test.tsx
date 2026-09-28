@@ -168,7 +168,7 @@ function typeQuery(text: string): void {
 }
 
 /** Wait out the rerank debounce (real timers; the wait is the assertion). */
-async function settle(ms = 600): Promise<void> {
+async function settle(ms = 360): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 

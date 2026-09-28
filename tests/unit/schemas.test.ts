@@ -24,46 +24,11 @@ describe("shared zod config", () => {
 });
 
 describe("Bookmark", () => {
-  it("accepts a valid record", () => {
+  it("accepts valid bookmarks with defaults and explicit health", () => {
     expect(Bookmark.safeParse(validBookmark).success).toBe(true);
-  });
-
-  it.each(["not a url", "example.com/path", "", "https://"])(
-    "rejects invalid url %j",
-    (url) => {
-      expect(Bookmark.safeParse({ ...validBookmark, url }).success).toBe(false);
-    },
-  );
-
-  it.each([["empty", ""], ["over 500 chars", "x".repeat(501)]])(
-    "rejects title that is %s",
-    (_label, title) => {
-      expect(
-        Bookmark.safeParse({ ...validBookmark, title }).success,
-      ).toBe(false);
-    },
-  );
-
-  it.each([["one char", "x"], ["500 chars", "x".repeat(500)]])(
-    "accepts title that is %s",
-    (_label, title) => {
-      expect(Bookmark.safeParse({ ...validBookmark, title }).success).toBe(
-        true,
-      );
-    },
-  );
-
-  it("defaults health to { status: \"unknown\" }", () => {
-    expect(Bookmark.parse(validBookmark).health).toEqual({
-      status: "unknown",
-    });
-  });
-
-  it("defaults tags to []", () => {
+    expect(Bookmark.parse(validBookmark).health).toEqual({ status: "unknown" });
     expect(Bookmark.parse(validBookmark).tags).toEqual([]);
-  });
 
-  it("keeps an explicit health record", () => {
     const parsed = Bookmark.parse({
       ...validBookmark,
       health: { status: "dead", httpCode: 404 },
@@ -71,37 +36,36 @@ describe("Bookmark", () => {
     expect(parsed.health).toEqual({ status: "dead", httpCode: 404 });
   });
 
-  it.each([
-    ["unknown category", { category: "not-a-category" }],
-    ["wrong schemaVersion", { schemaVersion: 2 }],
-    ["notes over 10k", { notes: "n".repeat(10_001) }],
-    ["non-ISO createdAt", { createdAt: "last Tuesday" }],
-    ["invalid health.finalUrl", {
-      health: { status: "redirect", finalUrl: "not a url" },
-    }],
-  ])("rejects %s", (_label, patch) => {
-    expect(
-      Bookmark.safeParse({ ...validBookmark, ...patch }).success,
-    ).toBe(false);
+  it("validates title bounds and URL formatting", () => {
+    for (const url of ["not a url", "example.com/path", "", "https://"]) {
+      expect(Bookmark.safeParse({ ...validBookmark, url }).success).toBe(false);
+    }
+    expect(Bookmark.safeParse({ ...validBookmark, title: "" }).success).toBe(false);
+    expect(Bookmark.safeParse({ ...validBookmark, title: "x".repeat(501) }).success).toBe(false);
+    expect(Bookmark.safeParse({ ...validBookmark, title: "x" }).success).toBe(true);
+    expect(Bookmark.safeParse({ ...validBookmark, title: "x".repeat(500) }).success).toBe(true);
+  });
+
+  it("rejects invalid patches", () => {
+    const patches = [
+      { category: "not-a-category" },
+      { schemaVersion: 2 },
+      { notes: "n".repeat(10_001) },
+      { createdAt: "last Tuesday" },
+      { health: { status: "redirect", finalUrl: "not a url" } },
+    ];
+    for (const patch of patches) {
+      expect(Bookmark.safeParse({ ...validBookmark, ...patch }).success).toBe(false);
+    }
   });
 });
 
 describe("Tag", () => {
-  it("accepts a valid tag", () => {
+  it("accepts a valid tag and enforces name and description bounds", () => {
     expect(Tag.safeParse(validTag).success).toBe(true);
-  });
-
-  it.each([["empty", ""], ["over 64 chars", "n".repeat(65)]])(
-    "rejects name that is %s",
-    (_label, name) => {
-      expect(Tag.safeParse({ ...validTag, name }).success).toBe(false);
-    },
-  );
-
-  it("rejects a description over 300 chars", () => {
-    expect(
-      Tag.safeParse({ ...validTag, description: "d".repeat(301) }).success,
-    ).toBe(false);
+    expect(Tag.safeParse({ ...validTag, name: "" }).success).toBe(false);
+    expect(Tag.safeParse({ ...validTag, name: "n".repeat(65) }).success).toBe(false);
+    expect(Tag.safeParse({ ...validTag, description: "d".repeat(301) }).success).toBe(false);
   });
 });
 
@@ -116,166 +80,95 @@ describe("Decision", () => {
     ["create_folder", { path: ["Reading", "2026"], description: "d" }],
   ];
 
-  it.each(kindPayloads)(
-    "accepts kind %s with its matching payload",
-    (kind, payload) => {
+  it("accepts matching kind payloads and rejects missing or mismatched payloads", () => {
+    for (const [kind, payload] of kindPayloads) {
       expect(
         Decision.safeParse({ ...decisionBase, kind, ...payload }).success,
       ).toBe(true);
-    },
-  );
-
-  it.each(kindPayloads)(
-    "rejects kind %s when its payload is missing",
-    (kind) => {
-      expect(Decision.safeParse({ ...decisionBase, kind }).success).toBe(
-        false,
-      );
-    },
-  );
-
-  it("rejects kind \"move\" when the record carries another kind's payload", () => {
-    expect(Decision.safeParse({ ...validDecision, kind: "move" }).success).toBe(
-      false,
-    );
+      expect(Decision.safeParse({ ...decisionBase, kind }).success).toBe(false);
+    }
+    expect(Decision.safeParse({ ...validDecision, kind: "move" }).success).toBe(false);
   });
 
-  it.each([-0.01, 1.01, 2])("rejects confidence %s", (confidence) => {
-    expect(
-      Decision.safeParse({ ...validDecision, confidence }).success,
-    ).toBe(false);
-  });
+  it("validates confidence bounds and general decision fields", () => {
+    for (const confidence of [-0.01, 1.01, 2]) {
+      expect(Decision.safeParse({ ...validDecision, confidence }).success).toBe(false);
+    }
+    for (const confidence of [0, 1]) {
+      expect(Decision.safeParse({ ...validDecision, confidence }).success).toBe(true);
+    }
 
-  it.each([0, 1])("accepts boundary confidence %s", (confidence) => {
-    expect(
-      Decision.safeParse({ ...validDecision, confidence }).success,
-    ).toBe(true);
-  });
-
-  it.each([
-    ["non-uuid id", { id: "not-a-uuid" }],
-    ["unknown status", { status: "maybe" }],
-    ["empty bookmarkIds", { bookmarkIds: [] }],
-    ["unknown engine", { source: { ...decisionBase.source, engine: "bot" } }],
-  ])("rejects %s", (_label, patch) => {
-    expect(
-      Decision.safeParse({ ...validDecision, ...patch }).success,
-    ).toBe(false);
+    const patches = [
+      { id: "not-a-uuid" },
+      { status: "maybe" },
+      { bookmarkIds: [] },
+      { source: { ...decisionBase.source, engine: "bot" } },
+    ];
+    for (const patch of patches) {
+      expect(Decision.safeParse({ ...validDecision, ...patch }).success).toBe(false);
+    }
   });
 });
 
 describe("ProviderSettings", () => {
-  it("accepts a valid record", () => {
-    expect(ProviderSettings.safeParse(validProviderSettings).success).toBe(
-      true,
-    );
+  it("accepts valid records and supported models per preset", () => {
+    expect(ProviderSettings.safeParse(validProviderSettings).success).toBe(true);
+
+    for (const model of PRESET_MODELS.typesafe) {
+      expect(
+        ProviderSettings.safeParse({ ...validProviderSettings, preset: "typesafe", model }).success,
+      ).toBe(true);
+    }
+    for (const model of PRESET_MODELS.openrouter) {
+      expect(
+        ProviderSettings.safeParse({ ...validProviderSettings, preset: "openrouter", model }).success,
+      ).toBe(true);
+    }
   });
 
-  it.each([...PRESET_MODELS.typesafe])(
-    "accepts typesafe model %s",
-    (model) => {
-      expect(
-        ProviderSettings.safeParse({
-          ...validProviderSettings,
-          preset: "typesafe",
-          model,
-        }).success,
-      ).toBe(true);
-    },
-  );
+  it("rejects cross-preset exclusive models and invalid presets", () => {
+    const openrouterOnly = PRESET_MODELS.openrouter.filter(
+      (m) => !(PRESET_MODELS.typesafe as readonly string[]).includes(m),
+    );
+    const typesafeOnly = PRESET_MODELS.typesafe.filter(
+      (m) => !(PRESET_MODELS.openrouter as readonly string[]).includes(m),
+    );
 
-  it.each([...PRESET_MODELS.openrouter])(
-    "accepts openrouter model %s",
-    (model) => {
+    for (const model of openrouterOnly) {
       expect(
-        ProviderSettings.safeParse({
-          ...validProviderSettings,
-          preset: "openrouter",
-          model,
-        }).success,
-      ).toBe(true);
-    },
-  );
-
-  // jev-latest is allowed on both presets; only preset-exclusive models are
-  // used for the cross-preset rejection cases.
-  const openrouterOnly = PRESET_MODELS.openrouter.filter(
-    (model) => !(PRESET_MODELS.typesafe as readonly string[]).includes(model),
-  );
-  const typesafeOnly = PRESET_MODELS.typesafe.filter(
-    (model) => !(PRESET_MODELS.openrouter as readonly string[]).includes(model),
-  );
-
-  it.each(openrouterOnly)(
-    "rejects openrouter-only model %s on the typesafe preset",
-    (model) => {
-      expect(
-        ProviderSettings.safeParse({
-          ...validProviderSettings,
-          preset: "typesafe",
-          model,
-        }).success,
+        ProviderSettings.safeParse({ ...validProviderSettings, preset: "typesafe", model }).success,
       ).toBe(false);
-    },
-  );
-
-  it.each(typesafeOnly)(
-    "rejects typesafe-only model %s on the openrouter preset",
-    (model) => {
+    }
+    for (const model of typesafeOnly) {
       expect(
-        ProviderSettings.safeParse({
-          ...validProviderSettings,
-          preset: "openrouter",
-          model,
-        }).success,
+        ProviderSettings.safeParse({ ...validProviderSettings, preset: "openrouter", model }).success,
       ).toBe(false);
-    },
-  );
+    }
 
-  it.each([
-    ["unknown preset", { preset: "custom", model: "jev-latest" }],
-    ["empty keySuffix", { keySuffix: "" }],
-  ])("rejects %s", (_label, patch) => {
     expect(
-      ProviderSettings.safeParse({ ...validProviderSettings, ...patch })
-        .success,
+      ProviderSettings.safeParse({ ...validProviderSettings, preset: "custom", model: "jev-latest" }).success,
+    ).toBe(false);
+    expect(
+      ProviderSettings.safeParse({ ...validProviderSettings, keySuffix: "" }).success,
     ).toBe(false);
   });
 });
 
 describe("ConsentRecord", () => {
-  it("accepts a valid jev_test consent", () => {
+  it("accepts valid records and enforces scope bounds", () => {
     expect(ConsentRecord.safeParse(validConsent).success).toBe(true);
-  });
-
-  it("is scoped to the jev_test and jev_decisions scopes only", () => {
     expect(CONSENT_SCOPE).toBe("jev_test");
     expect(
-      ConsentRecord.safeParse({
-        ...validConsent,
-        scope: "bookmark_analysis",
-      }).success,
+      ConsentRecord.safeParse({ ...validConsent, scope: "bookmark_analysis" }).success,
     ).toBe(false);
   });
 
-  it.each([
-    ["http origin", "http://api.typesafe.ai"],
-    ["trailing slash", "https://api.typesafe.ai/"],
-    ["origin with path", "https://api.typesafe.ai/v1"],
-    ["non-url", "api.typesafe.ai"],
-  ])("rejects origin %s", (_label, origin) => {
-    expect(
-      ConsentRecord.safeParse({ ...validConsent, origin }).success,
-    ).toBe(false);
-  });
-
-  it.each([
-    ["zero version", { consentVersion: 0 }],
-    ["fractional version", { consentVersion: 1.5 }],
-    ["non-ISO acceptedAt", { acceptedAt: "2026-09-25" }],
-  ])("rejects %s", (_label, patch) => {
-    expect(
-      ConsentRecord.safeParse({ ...validConsent, ...patch }).success,
-    ).toBe(false);
+  it("validates origin formats and record fields", () => {
+    for (const origin of ["http://api.typesafe.ai", "https://api.typesafe.ai/", "https://api.typesafe.ai/v1", "api.typesafe.ai"]) {
+      expect(ConsentRecord.safeParse({ ...validConsent, origin }).success).toBe(false);
+    }
+    for (const patch of [{ consentVersion: 0 }, { consentVersion: 1.5 }, { acceptedAt: "2026-09-25" }]) {
+      expect(ConsentRecord.safeParse({ ...validConsent, ...patch }).success).toBe(false);
+    }
   });
 });

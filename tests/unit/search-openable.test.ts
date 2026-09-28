@@ -9,93 +9,63 @@ import { isOpenableUrl } from "../../src/search/openable";
  * degrades to a typed `api` failure at the tabs boundary.
  */
 
-describe("isOpenableUrl blocked schemes", () => {
-  it.each([
-    "javascript:alert(1)",
-    "javascript:",
-    "data:text/html;base64,PGI+aGk8L2I+",
-    "data:image/png;base64,iVBORw0KGgo=",
-  ])("rejects %s", (url) => {
-    expect(isOpenableUrl(url)).toBe(false);
-  });
-
-  it.each([
-    "JAVASCRIPT:alert(1)",
-    "JaVaScRiPt:alert(document.cookie)",
-    "DATA:text/plain,hi",
-    "Data:text/html,<h1>x</h1>",
-  ])("rejects the mixed-case scheme %s", (url) => {
-    expect(isOpenableUrl(url)).toBe(false);
-  });
-
-  it.each([
-    "  javascript:alert(1)",
-    "\tjavascript:alert(1)",
-    "\njavascript:alert(1)",
-    "  DATA:text/plain,hi  ",
-    "\u00a0javascript:alert(1)", // leading NBSP — inert input, blocked anyway
-  ])("rejects the whitespace-padded scheme %s", (url) => {
-    expect(isOpenableUrl(url)).toBe(false);
-  });
-
-  it.each([
-    "java\tscript:alert(1)",
-    "java\nscript:alert(1)",
-    "java\r\nscript:alert(1)",
-    "javascript\t:alert(1)",
-  ])(
-    "rejects %s — ASCII tab/newline are removed by URL parsing, so they are removed here too",
-    (url) => {
+describe("isOpenableUrl", () => {
+  it("rejects blocked schemes across casing, whitespace, and internal delimiters", () => {
+    const blocked = [
+      "javascript:alert(1)",
+      "javascript:",
+      "data:text/html;base64,PGI+aGk8L2I+",
+      "data:image/png;base64,iVBORw0KGgo=",
+      "JAVASCRIPT:alert(1)",
+      "JaVaScRiPt:alert(document.cookie)",
+      "DATA:text/plain,hi",
+      "Data:text/html,<h1>x</h1>",
+      "  javascript:alert(1)",
+      "\tjavascript:alert(1)",
+      "\njavascript:alert(1)",
+      "  DATA:text/plain,hi  ",
+      "\u00a0javascript:alert(1)",
+      "java\tscript:alert(1)",
+      "java\nscript:alert(1)",
+      "java\r\nscript:alert(1)",
+      "javascript\t:alert(1)",
+    ];
+    for (const url of blocked) {
       expect(isOpenableUrl(url)).toBe(false);
-    },
-  );
-});
-
-describe("isOpenableUrl blank input", () => {
-  it.each(["", "   ", "\t\n"])(
-    "rejects %j — there is nothing to navigate to",
-    (url) => {
-      expect(isOpenableUrl(url)).toBe(false);
-    },
-  );
-});
-
-describe("isOpenableUrl openable input", () => {
-  it.each([
-    "https://example.com/",
-    "http://example.com/path?q=1#f",
-    "chrome-extension://abcdefgh/options.html",
-    "chrome://extensions",
-    "about:blank",
-    "file:///home/user/doc.html",
-    "ftp://ftp.example.com/file",
-    "mailto:user@example.com",
-    "tel:+15551234567",
-    "view-source:https://example.com/",
-  ])("accepts %s", (url) => {
-    expect(isOpenableUrl(url)).toBe(true);
+    }
   });
 
-  it.each([
-    "/relative/path",
-    "page.html",
-    "?query=1",
-    "#fragment",
-  ])(
-    "accepts schemeless %s — the tabs API resolves it against the extension origin",
-    (url) => {
+  it("rejects blank or whitespace-only inputs", () => {
+    for (const url of ["", "   ", "\t\n"]) {
+      expect(isOpenableUrl(url)).toBe(false);
+    }
+  });
+
+  it("accepts valid schemes, relative URLs, and near-miss strings", () => {
+    const openable = [
+      "https://example.com/",
+      "http://example.com/path?q=1#f",
+      "chrome-extension://abcdefgh/options.html",
+      "chrome://extensions",
+      "about:blank",
+      "file:///home/user/doc.html",
+      "ftp://ftp.example.com/file",
+      "mailto:user@example.com",
+      "tel:+15551234567",
+      "view-source:https://example.com/",
+      "/relative/path",
+      "page.html",
+      "?query=1",
+      "#fragment",
+      "javascriptx:alert(1)",
+      "xjavascript:alert(1)",
+      "datax:text/plain,hi",
+      "java script:alert(1)",
+      "javascript :alert(1)",
+      "https://example.com/javascript:foo",
+    ];
+    for (const url of openable) {
       expect(isOpenableUrl(url)).toBe(true);
-    },
-  );
-
-  it.each([
-    "javascriptx:alert(1)", // a different scheme entirely
-    "xjavascript:alert(1)", // the scheme is xjavascript, not javascript
-    "datax:text/plain,hi",
-    "java script:alert(1)", // space inside: not a valid scheme to a browser
-    "javascript :alert(1)", // space before colon: not a valid scheme either
-    "https://example.com/javascript:foo", // colon later — scheme is https
-  ])("accepts near-miss %s", (url) => {
-    expect(isOpenableUrl(url)).toBe(true);
+    }
   });
 });

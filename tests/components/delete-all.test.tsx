@@ -89,8 +89,10 @@ beforeEach(async () => {
     permissions: { contains: containsSpy, remove: removeSpy },
     bookmarks,
   });
-  await db.delete();
-  await db.open();
+  if (!db.isOpen()) {
+    await db.open();
+  }
+  await Promise.all(db.tables.map((table) => table.clear()));
 });
 
 afterAll(() => {

@@ -40,60 +40,58 @@ const validState = {
 };
 
 describe("CleanedUrl", () => {
-  it.each([
-    "https://example.com",
-    "https://example.com/",
-    "https://example.com/a/b",
-    "https://example.com:8443/p",
-    "https://xn--bcher-kva.de/seite",
-    "http://[2001:db8::1]:8080/p",
-    "https://example.com/@user",
-    "https://example.com/a%3Fb",
-    "HTTPS://EXAMPLE.COM/Path",
-    "file:///etc/passwd",
-    "ftp://files.example.com/pub",
-  ])("accepts already-clean %j", (url) => {
-    expect(CleanedUrl.safeParse(url).success).toBe(true);
+  it("accepts valid clean URLs", () => {
+    const cleanUrls = [
+      "https://example.com",
+      "https://example.com/",
+      "https://example.com/a/b",
+      "https://example.com:8443/p",
+      "https://xn--bcher-kva.de/seite",
+      "http://[2001:db8::1]:8080/p",
+      "https://example.com/@user",
+      "https://example.com/a%3Fb",
+      "HTTPS://EXAMPLE.COM/Path",
+      "file:///etc/passwd",
+      "ftp://files.example.com/pub",
+    ];
+    for (const url of cleanUrls) {
+      expect(CleanedUrl.safeParse(url).success).toBe(true);
+    }
   });
 
-  it.each([
-    ["query string", "https://example.com/p?a=1&b=2"],
-    ["empty-value query", "https://example.com/p?q="],
-    ["bare query marker", "https://example.com/p?"],
-    ["fragment", "https://example.com/p#section"],
-    ["bare fragment marker", "https://example.com/p#"],
-    ["query and fragment markers", "https://example.com/?#f"],
-    ["user and password", "https://user:pass@example.com/p"],
-    ["user only", "https://user@example.com/p"],
-    ["credentials in a non-http scheme", "ftp://u:p@files.example.com/"],
-    ["relative URL", "example.com/path"],
-    ["plain host", "example.com"],
-    ["non-URL text", "not a url"],
-    ["empty string", ""],
-    ["query on a non-hierarchical scheme", "data:text/plain,x?y=1"],
-    ["literal tab (parser silently strips it)", "https://exa\tmple.com/"],
-    ["literal newline", "https://example.com/\n"],
-    ["literal carriage return", "https://example.com/\r"],
-    ["literal space in the path", "https://example.com/a b"],
-    ["literal NUL", "https://example.com/\u0000"],
-    ["literal DEL", "https://example.com/\u007f"],
-  ])("rejects %s %j", (_label, url) => {
-    expect(CleanedUrl.safeParse(url).success).toBe(false);
+  it("rejects unclean, credentials, or malformed URLs", () => {
+    const dirtyUrls = [
+      "https://example.com/p?a=1&b=2",
+      "https://example.com/p?q=",
+      "https://example.com/p?",
+      "https://example.com/p#section",
+      "https://example.com/p#",
+      "https://example.com/?#f",
+      "https://user:pass@example.com/p",
+      "https://user@example.com/p",
+      "ftp://u:p@files.example.com/",
+      "example.com/path",
+      "example.com",
+      "not a url",
+      "",
+      "data:text/plain,x?y=1",
+      "https://exa\tmple.com/",
+      "https://example.com/\n",
+      "https://example.com/\r",
+      "https://example.com/a b",
+      "https://example.com/\u0000",
+      "https://example.com/\u007f",
+    ];
+    for (const url of dirtyUrls) {
+      expect(CleanedUrl.safeParse(url).success).toBe(false);
+    }
   });
 });
 
 describe("SentBookmark", () => {
-  it("accepts a valid bookmark", () => {
+  it("accepts valid bookmarks, empty titles, and IPv6 domains", () => {
     expect(SentBookmark.safeParse(validBookmark).success).toBe(true);
-  });
-
-  it("accepts an empty title (Chrome permits untitled bookmarks)", () => {
-    expect(
-      SentBookmark.safeParse({ ...validBookmark, title: "" }).success,
-    ).toBe(true);
-  });
-
-  it("accepts an IPv6 domain matching the bracketed hostname", () => {
+    expect(SentBookmark.safeParse({ ...validBookmark, title: "" }).success).toBe(true);
     expect(
       SentBookmark.safeParse({
         title: "v6",
@@ -103,23 +101,10 @@ describe("SentBookmark", () => {
     ).toBe(true);
   });
 
-  it("rejects a domain that does not equal the url hostname", () => {
-    expect(
-      SentBookmark.safeParse({ ...validBookmark, domain: "evil.com" }).success,
-    ).toBe(false);
-    expect(
-      SentBookmark.safeParse({ ...validBookmark, domain: "sub.tokio.rs" })
-        .success,
-    ).toBe(false);
-  });
-
-  it("rejects an empty domain", () => {
-    expect(
-      SentBookmark.safeParse({ ...validBookmark, domain: "" }).success,
-    ).toBe(false);
-  });
-
-  it("rejects a dirty url even when domain is consistent", () => {
+  it("rejects mismatched domains, dirty URLs, and stray keys", () => {
+    expect(SentBookmark.safeParse({ ...validBookmark, domain: "evil.com" }).success).toBe(false);
+    expect(SentBookmark.safeParse({ ...validBookmark, domain: "sub.tokio.rs" }).success).toBe(false);
+    expect(SentBookmark.safeParse({ ...validBookmark, domain: "" }).success).toBe(false);
     expect(
       SentBookmark.safeParse({
         title: "x",
@@ -127,62 +112,29 @@ describe("SentBookmark", () => {
         domain: "tokio.rs",
       }).success,
     ).toBe(false);
-  });
 
-  it.each(["notes", "id", "extra"])("rejects a stray %j key", (key) => {
-    expect(
-      SentBookmark.safeParse({ ...validBookmark, [key]: "x" }).success,
-    ).toBe(false);
+    for (const key of ["notes", "id", "extra"]) {
+      expect(SentBookmark.safeParse({ ...validBookmark, [key]: "x" }).success).toBe(false);
+    }
   });
 });
 
 describe("DecisionState", () => {
-  it("accepts a fully-populated state", () => {
+  it("accepts valid, minimal, query-only, and root-level states", () => {
     expect(DecisionState.safeParse(validState).success).toBe(true);
+    expect(DecisionState.safeParse({ bookmark: validBookmark }).success).toBe(true);
+    expect(DecisionState.safeParse({ query: "rust async" }).success).toBe(true);
+    expect(DecisionState.safeParse({ bookmark: validBookmark, folderPath: [] }).success).toBe(true);
   });
 
-  it("accepts a minimal bookmark-only state", () => {
-    expect(
-      DecisionState.safeParse({ bookmark: validBookmark }).success,
-    ).toBe(true);
-  });
-
-  it("accepts a query-only state (Ask rerank carries candidates per question)", () => {
-    expect(DecisionState.safeParse({ query: "rust async" }).success).toBe(
-      true,
-    );
-  });
-
-  it("accepts an empty folderPath (a root-level bookmark)", () => {
-    expect(
-      DecisionState.safeParse({ bookmark: validBookmark, folderPath: [] })
-        .success,
-    ).toBe(true);
-  });
-
-  it("rejects a completely empty state", () => {
+  it("rejects empty states and states with unknown keys or notes", () => {
     expect(DecisionState.safeParse({}).success).toBe(false);
-    // An undefined-valued key serializes to nothing — still empty.
-    expect(
-      DecisionState.safeParse({ bookmark: undefined }).success,
-    ).toBe(false);
-  });
+    expect(DecisionState.safeParse({ bookmark: undefined }).success).toBe(false);
 
-  it.each([
-    "notes",
-    "page",
-    "pageText",
-    "excerpt",
-    "bookmarkId",
-    "history",
-    "extra",
-  ])("rejects a state carrying unknown key %j", (key) => {
-    expect(
-      DecisionState.safeParse({ ...validState, [key]: "x" }).success,
-    ).toBe(false);
-  });
+    for (const key of ["notes", "page", "pageText", "excerpt", "bookmarkId", "history", "extra"]) {
+      expect(DecisionState.safeParse({ ...validState, [key]: "x" }).success).toBe(false);
+    }
 
-  it("rejects notes at every level", () => {
     expect(
       DecisionState.safeParse({
         bookmark: { ...validBookmark, notes: "private note" },
@@ -194,119 +146,53 @@ describe("DecisionState", () => {
         pairPartner: { ...validPartner, notes: "private note" },
       }).success,
     ).toBe(false);
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        notes: "private note",
-      }).success,
-    ).toBe(false);
   });
 
-  it.each([
-    ["bookmark.url query", { bookmark: { ...validBookmark, url: "https://tokio.rs/p?x=1" } }],
-    ["bookmark.url fragment", { bookmark: { ...validBookmark, url: "https://tokio.rs/p#f" } }],
-    ["bookmark.url userinfo", { bookmark: { ...validBookmark, url: "https://u:p@tokio.rs/p" } }],
-    ["pairPartner.url query", { bookmark: validBookmark, pairPartner: { ...validPartner, url: "https://blog.example.com/a?x=1" } }],
-    [
-      "candidateBookmarks[].url query",
+  it("rejects dirty URLs at every position", () => {
+    const dirtyCases = [
+      { bookmark: { ...validBookmark, url: "https://tokio.rs/p?x=1" } },
+      { bookmark: { ...validBookmark, url: "https://tokio.rs/p#f" } },
+      { bookmark: { ...validBookmark, url: "https://u:p@tokio.rs/p" } },
+      { bookmark: validBookmark, pairPartner: { ...validPartner, url: "https://blog.example.com/a?x=1" } },
       {
         bookmark: validBookmark,
-        candidateBookmarks: [
-          { ...validPartner, url: "https://blog.example.com/a#f" },
-        ],
+        candidateBookmarks: [{ ...validPartner, url: "https://blog.example.com/a#f" }],
       },
-    ],
-  ])("rejects a dirty url in %s", (_label, state) => {
-    expect(DecisionState.safeParse(state).success).toBe(false);
+    ];
+    for (const state of dirtyCases) {
+      expect(DecisionState.safeParse(state).success).toBe(false);
+    }
   });
 
-  it("rejects candidateTags over the 30-candidate cap", () => {
-    const tags = Array.from({ length: 31 }, (_v, i) => ({ name: `t${i}` }));
-    expect(
-      DecisionState.safeParse({ bookmark: validBookmark, candidateTags: tags })
-        .success,
-    ).toBe(false);
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        candidateTags: tags.slice(0, 30),
-      }).success,
-    ).toBe(true);
+  it("enforces candidate list bounds and rejects empty queries", () => {
+    const tags31 = Array.from({ length: 31 }, (_v, i) => ({ name: `t${i}` }));
+    expect(DecisionState.safeParse({ bookmark: validBookmark, candidateTags: tags31 }).success).toBe(false);
+    expect(DecisionState.safeParse({ bookmark: validBookmark, candidateTags: tags31.slice(0, 30) }).success).toBe(true);
+
+    const folders52 = Array.from({ length: 52 }, (_v, i) => ({ id: `f_${i}`, path: ["a"] }));
+    expect(DecisionState.safeParse({ bookmark: validBookmark, candidateFolders: folders52.slice(0, 51) }).success).toBe(true);
+    expect(DecisionState.safeParse({ bookmark: validBookmark, candidateFolders: folders52 }).success).toBe(false);
+
+    expect(DecisionState.safeParse({ bookmark: validBookmark, query: "" }).success).toBe(false);
   });
 
-  it("accepts 51 folder candidates and rejects 52 (50 ranked + guaranteed current)", () => {
-    // FR3's misfiled scan sends the top 50 folders plus the bookmark's
-    // current folder when that falls outside the top 50, so the bound is 51
-    // — not the 50 of the ranked shortlist alone.
-    const folders = Array.from({ length: 52 }, (_v, i) => ({
-      id: `f_${i}`,
-      path: ["a"],
-    }));
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        candidateFolders: folders.slice(0, 51),
-      }).success,
-    ).toBe(true);
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        candidateFolders: folders,
-      }).success,
-    ).toBe(false);
-  });
+  it("validates CandidateTag and CandidateFolder constraints", () => {
+    expect(CandidateTag.safeParse({ name: "", description: "x" }).success).toBe(false);
+    expect(CandidateTag.safeParse({ name: "t", nameKey: "t" }).success).toBe(false);
+    expect(CandidateFolder.safeParse({ id: "", path: ["a"] }).success).toBe(false);
+    expect(CandidateFolder.safeParse({ id: "f", path: [] }).success).toBe(false);
+    expect(CandidateFolder.safeParse({ id: "f", path: ["a"], notes: "x" }).success).toBe(false);
 
-  it("rejects an empty query", () => {
-    expect(
-      DecisionState.safeParse({ bookmark: validBookmark, query: "" }).success,
-    ).toBe(false);
-  });
+    expect(CandidateFolder.safeParse({ id: "f".repeat(64), path: ["a"] }).success).toBe(true);
+    expect(CandidateFolder.safeParse({ id: "f".repeat(65), path: ["a"] }).success).toBe(false);
+    expect(CandidateFolder.safeParse({ id: "f", path: ["a".repeat(255)] }).success).toBe(true);
+    expect(CandidateFolder.safeParse({ id: "f", path: ["a".repeat(256)] }).success).toBe(false);
 
-  it("rejects malformed candidates", () => {
     expect(
-      CandidateTag.safeParse({ name: "", description: "x" }).success,
-    ).toBe(false);
-    expect(CandidateTag.safeParse({ name: "t", nameKey: "t" }).success).toBe(
-      false,
-    );
-    expect(
-      CandidateFolder.safeParse({ id: "", path: ["a"] }).success,
-    ).toBe(false);
-    expect(CandidateFolder.safeParse({ id: "f", path: [] }).success).toBe(
-      false,
-    );
-    expect(
-      CandidateFolder.safeParse({ id: "f", path: ["a"], notes: "x" }).success,
-    ).toBe(false);
-  });
-
-  it("bounds candidate folder ids and path segments", () => {
-    expect(
-      CandidateFolder.safeParse({ id: "f".repeat(64), path: ["a"] }).success,
+      DecisionState.safeParse({ bookmark: validBookmark, folderPath: ["a".repeat(255)] }).success,
     ).toBe(true);
     expect(
-      CandidateFolder.safeParse({ id: "f".repeat(65), path: ["a"] }).success,
-    ).toBe(false);
-    expect(
-      CandidateFolder.safeParse({ id: "f", path: ["a".repeat(255)] }).success,
-    ).toBe(true);
-    expect(
-      CandidateFolder.safeParse({ id: "f", path: ["a".repeat(256)] }).success,
-    ).toBe(false);
-  });
-
-  it("bounds folderPath segments", () => {
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        folderPath: ["a".repeat(255)],
-      }).success,
-    ).toBe(true);
-    expect(
-      DecisionState.safeParse({
-        bookmark: validBookmark,
-        folderPath: ["a".repeat(256)],
-      }).success,
+      DecisionState.safeParse({ bookmark: validBookmark, folderPath: ["a".repeat(256)] }).success,
     ).toBe(false);
   });
 

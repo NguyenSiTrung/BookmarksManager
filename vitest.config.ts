@@ -4,7 +4,21 @@ import { WxtVitest } from "wxt/testing/vitest-plugin";
 export default defineConfig({
   plugins: [WxtVitest()],
   test: {
-    environment: "jsdom",
-    include: ["tests/unit/**/*.test.{ts,tsx}", "tests/components/**/*.test.{ts,tsx}"],
+    projects: [
+      {
+        test: {
+          name: "unit",
+          environment: "node",
+          include: ["tests/unit/**/*.test.{ts,tsx}"],
+        },
+      },
+      {
+        test: {
+          name: "components",
+          environment: "jsdom",
+          include: ["tests/components/**/*.test.{ts,tsx}"],
+        },
+      },
+    ],
   },
 });

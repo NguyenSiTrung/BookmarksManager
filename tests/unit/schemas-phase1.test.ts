@@ -28,98 +28,61 @@ import {
 } from "../fixtures/export";
 
 describe("BookmarkMeta", () => {
-  it("accepts a fully-populated metadata row", () => {
+  it("accepts a fully-populated metadata row and minimal rows", () => {
     expect(BookmarkMeta.safeParse(validBookmarkMeta).success).toBe(true);
-  });
-
-  it("accepts a minimal row and defaults tags to []", () => {
     const parsed = BookmarkMeta.safeParse(minimalBookmarkMeta);
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.tags).toEqual([]);
+    expect(
+      BookmarkMeta.safeParse({ ...validBookmarkMeta, notes: "n".repeat(10_000) }).success,
+    ).toBe(true);
   });
 
-  it.each([["boundary 10,000 chars", "n".repeat(10_000)]])(
-    "accepts notes of %s",
-    (_label, notes) => {
-      expect(
-        BookmarkMeta.safeParse({ ...validBookmarkMeta, notes }).success,
-      ).toBe(true);
-    },
-  );
-
-  it.each(Object.entries(invalidBookmarkMetas))(
-    "rejects invalid fixture %s",
-    (_label, fixture) => {
+  it("rejects invalid and malformed fixtures", () => {
+    for (const fixture of Object.values(invalidBookmarkMetas)) {
       expect(BookmarkMeta.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedBookmarkMetas))(
-    "rejects malformed fixture %s",
-    (_label, fixture) => {
+    }
+    for (const fixture of Object.values(malformedBookmarkMetas)) {
       expect(BookmarkMeta.safeParse(fixture).success).toBe(false);
-    },
-  );
+    }
+  });
 });
 
 describe("TagDef", () => {
-  it("accepts a fully-populated tag definition", () => {
+  it("accepts valid and minimal tag definitions with bounds", () => {
     expect(TagDef.safeParse(validTagDef).success).toBe(true);
-  });
-
-  it("accepts a minimal tag definition", () => {
     expect(TagDef.safeParse(minimalTagDef).success).toBe(true);
+    for (const name of ["x", "n".repeat(64)]) {
+      expect(
+        TagDef.safeParse({ ...validTagDef, name, nameKey: tagNameKey(name) }).success,
+      ).toBe(true);
+    }
+    expect(
+      TagDef.safeParse({ ...validTagDef, description: "d".repeat(300) }).success,
+    ).toBe(true);
   });
 
-  it.each([["1 char", "x"], ["64 chars", "n".repeat(64)]])(
-    "accepts name that is %s",
-    (_label, name) => {
-      expect(
-        TagDef.safeParse({ ...validTagDef, name, nameKey: tagNameKey(name) })
-          .success,
-      ).toBe(true);
-    },
-  );
-
-  it.each([["300 chars", "d".repeat(300)]])(
-    "accepts description of %s",
-    (_label, description) => {
-      expect(
-        TagDef.safeParse({ ...validTagDef, description }).success,
-      ).toBe(true);
-    },
-  );
-
-  it.each(Object.entries(invalidTagDefs))(
-    "rejects invalid fixture %s",
-    (_label, fixture) => {
+  it("rejects invalid and malformed tag fixtures", () => {
+    for (const fixture of Object.values(invalidTagDefs)) {
       expect(TagDef.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedTagDefs))(
-    "rejects malformed fixture %s",
-    (_label, fixture) => {
+    }
+    for (const fixture of Object.values(malformedTagDefs)) {
       expect(TagDef.safeParse(fixture).success).toBe(false);
-    },
-  );
+    }
+  });
 
-  it("derives the same nameKey for names that differ only by case and surrounding whitespace", () => {
+  it("derives and compares nameKey accurately", () => {
     expect(tagNameKey("Reading List")).toBe("reading list");
     expect(tagNameKey("READING LIST")).toBe("reading list");
     expect(tagNameKey("  reading list  ")).toBe("reading list");
-  });
-
-  it("accepts a tag whose name differs from nameKey only by case", () => {
     expect(
-      TagDef.safeParse({ ...validTagDef, name: "TYPESCRIPT", nameKey: "typescript" })
-        .success,
+      TagDef.safeParse({ ...validTagDef, name: "TYPESCRIPT", nameKey: "typescript" }).success,
     ).toBe(true);
   });
 });
 
 describe("UndoNode", () => {
-  it("accepts a leaf bookmark node", () => {
+  it("accepts a leaf bookmark node and nested folder children recursively", () => {
     expect(
       UndoNode.safeParse({
         id: "bm-100",
@@ -129,9 +92,7 @@ describe("UndoNode", () => {
         url: "https://example.com/",
       }).success,
     ).toBe(true);
-  });
 
-  it("accepts nested folder children recursively", () => {
     expect(
       UndoNode.safeParse({
         id: "f-9",
@@ -153,7 +114,7 @@ describe("UndoNode", () => {
     ).toBe(true);
   });
 
-  it("rejects an extra key inside a nested child (strict at every level)", () => {
+  it("rejects an extra key inside a nested child", () => {
     expect(
       UndoNode.safeParse({
         id: "f-9",
@@ -169,34 +130,21 @@ describe("UndoNode", () => {
 });
 
 describe("UndoSnapshot", () => {
-  it.each([
-    ["delete", validUndoSnapshot],
-    ["bulk_move", undoBulkMoveSnapshot],
-    ["merge", undoMergeSnapshot],
-    ["tag_delete", undoTagDeleteSnapshot],
-  ])("accepts a %s snapshot", (_kind, fixture) => {
-    expect(UndoSnapshot.safeParse(fixture).success).toBe(true);
+  it("accepts valid snapshots across kinds and auto-assigned ids", () => {
+    for (const fixture of [validUndoSnapshot, undoBulkMoveSnapshot, undoMergeSnapshot, undoTagDeleteSnapshot]) {
+      expect(UndoSnapshot.safeParse(fixture).success).toBe(true);
+    }
+    expect(UndoSnapshot.safeParse({ ...validUndoSnapshot, id: 7 }).success).toBe(true);
   });
 
-  it("accepts a row with an auto-increment id already assigned", () => {
-    expect(
-      UndoSnapshot.safeParse({ ...validUndoSnapshot, id: 7 }).success,
-    ).toBe(true);
+  it("rejects invalid and malformed undo snapshots", () => {
+    for (const fixture of Object.values(invalidUndoSnapshots)) {
+      expect(UndoSnapshot.safeParse(fixture).success).toBe(false);
+    }
+    for (const fixture of Object.values(malformedUndoSnapshots)) {
+      expect(UndoSnapshot.safeParse(fixture).success).toBe(false);
+    }
   });
-
-  it.each(Object.entries(invalidUndoSnapshots))(
-    "rejects invalid fixture %s",
-    (_label, fixture) => {
-      expect(UndoSnapshot.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedUndoSnapshots))(
-    "rejects malformed fixture %s",
-    (_label, fixture) => {
-      expect(UndoSnapshot.safeParse(fixture).success).toBe(false);
-    },
-  );
 });
 
 describe("ExportTreeNode", () => {
@@ -215,44 +163,25 @@ describe("ExportTreeNode", () => {
 });
 
 describe("ExportEnvelope", () => {
-  it("accepts a fully-populated envelope", () => {
+  it("accepts fully-populated and minimal empty-library envelopes", () => {
     expect(ExportEnvelope.safeParse(validExportEnvelope).success).toBe(true);
-  });
-
-  it("accepts an empty-library envelope", () => {
     expect(ExportEnvelope.safeParse(minimalExportEnvelope).success).toBe(true);
   });
 
-  it.each(Object.entries(invalidExportEnvelopes))(
-    "rejects invalid fixture %s",
-    (_label, fixture) => {
+  it("rejects invalid and malformed export envelope fixtures", () => {
+    for (const fixture of Object.values(invalidExportEnvelopes)) {
       expect(ExportEnvelope.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedExportEnvelopes))(
-    "rejects malformed fixture %s",
-    (_label, fixture) => {
+    }
+    for (const fixture of Object.values(malformedExportEnvelopes)) {
       expect(ExportEnvelope.safeParse(fixture).success).toBe(false);
-    },
-  );
+    }
+  });
 
-  // The envelope is the JSON file users can share; every object level is
-  // strict so secret-bearing fields fail validation instead of being carried
-  // or silently stripped (spec: "exports never include API keys, key material,
-  // consent records, provider settings, the sent log, or decisions").
-  it.each([
-    "keys",
-    "apiKey",
-    "providerSettings",
-    "consents",
-    "sentLog",
-    "keyMaterials",
-    "decisions",
-  ])("rejects an envelope smuggling %j", (field) => {
-    expect(
-      ExportEnvelope.safeParse({ ...validExportEnvelope, [field]: [] })
-        .success,
-    ).toBe(false);
+  it("rejects an envelope smuggling disallowed or sensitive fields", () => {
+    for (const field of ["keys", "apiKey", "providerSettings", "consents", "sentLog", "keyMaterials", "decisions"]) {
+      expect(
+        ExportEnvelope.safeParse({ ...validExportEnvelope, [field]: [] }).success,
+      ).toBe(false);
+    }
   });
 });
