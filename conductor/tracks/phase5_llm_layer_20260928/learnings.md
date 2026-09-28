@@ -205,3 +205,33 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     itself. `check-manifest.mjs` diffs `store/permissions.md` rows against
     the built manifest — doc rows and `wxt.config.ts` must change together.
 ---
+## Phase 2 Task 3 — LLM egress gate, client, scripted server (2026-09-28)
+
+- **Intent:** `sendLlmConsented` (src/net/llm-send.ts) enforces gate order
+  (registered scope → provider → destination → closed request → consent →
+  exact permission → credential → budget reservation → fetch);
+  `createLlmClient` (src/llm/client.ts) wire-parses responses, settles
+  usage on every path, maps capability failures; scripted in-memory
+  OpenAI server for tests.
+- **Files changed:** `src/net/llm-send.ts` (new), `src/llm/client.ts` (new),
+  `src/schemas/llm.ts` (`monthlyBudgetUsd` on LlmProviderRecord),
+  `src/net/send.ts` (registry `satisfies` narrowed to Jev scopes —
+  widening `ConsentScope` made full-union exhaustiveness fail),
+  `tests/mock-servers/openai.ts`, `tests/unit/llm-gate.test.ts`,
+  `tests/unit/llm-client.test.ts` (new).
+- **Learnings:**
+  - Gotchas: widening a `satisfies Record<UnionType, …>` key set turns the
+    check exhaustive — the Jev SCOPES registry needed its key type pinned
+    to the two Jev scopes; `unknownCostConfirmed` is a `LlmSendOptions`
+    field, not input — a stray input key is silently ignored (strict
+    object would reject; interfaces don't); `await p.catch(f) as T` on
+    `Promise<unknown>` still yields `unknown` — wrap the whole await in
+    parens before casting; Dexie's "Target cannot be null or undefined"
+    assertion was a test-helper bug (`fetch.requests` on the bare fetch
+    fn instead of the server object), not a schema problem.
+  - Patterns: `settleLlmUsage` runs inside `db.transaction('rw', …)` so
+    reservation settle + llmUsage row are atomic; idempotent via
+    `status !== "active"` early-return; the sent-log row is appended only
+    after fetch resolves so blocked requests never log.
+---
+

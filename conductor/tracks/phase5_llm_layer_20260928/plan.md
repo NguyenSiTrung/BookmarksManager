@@ -146,7 +146,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/consent.test.ts tests/unit/consent-snapshot.test.ts tests/unit/manifest.test.ts && npm run check:manifest`.
 
-- [ ] Task 3: LLM egress gate, client, and scripted server
+- [x] Task 3: LLM egress gate, client, and scripted server
   - Files: `src/net/llm-send.ts`, `src/llm/client.ts`,
     `tests/mock-servers/openai.ts`, `tests/unit/llm-gate.test.ts`,
     `tests/unit/llm-client.test.ts`.
