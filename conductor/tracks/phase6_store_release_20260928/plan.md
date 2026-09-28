@@ -111,7 +111,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `npx vitest list --config vitest.eval.config.ts --filesOnly` and
     `npm run test:eval` without keys; both providers skip cleanly.
 
-- [x] Task 4: Pin release models and evidence-backed confidence policy
+- [x] Task 4: Pin release models and evidence-backed confidence policy (851af50)
   - Files: create `src/decisions/release-policy.ts`; modify
     `src/decisions/policy.ts`, `src/schemas/provider.ts`,
     `src/net/provider-info.ts`,
