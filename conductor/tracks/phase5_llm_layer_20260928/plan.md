@@ -219,7 +219,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/llm-explain.test.ts tests/unit/decisions-store.test.ts`.
 
-- [ ] Task 2: Escalation router
+- [x] Task 2: Escalation router
   <!-- files: src/llm/escalate.ts, src/schemas/decision.ts, src/decisions/pipeline.ts, tests/unit/llm-escalate.test.ts, tests/unit/decisions-pipeline.test.ts -->
   - Interfaces: `maybeEscalateDecision(decision, context)`,
     `LlmEscalation` with verdict, optional constrained alternative, rationale,

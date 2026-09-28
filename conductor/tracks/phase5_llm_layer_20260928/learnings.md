@@ -307,3 +307,14 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   - `LlmCapabilityError`/`TokenUsage` live in `structured.ts`/`wire.ts`,
     not `client.ts`/`schemas/llm.ts`.
 ---
+### Phase 3 Task 2 — Escalation router
+  - Custom provider ids derive from the FULL baseUrl (`custom:<baseUrl>`,
+    path included — `custom:https://llm.example.com/v1`); the gate rejects a
+    record whose providerId doesn't match its resolved destination.
+  - `RequestKind` is `"manual" | "automatic"` — not `"auto"`.
+  - `maybeEscalateDecision` swallows every failure into `null` (ordinary
+    review fallback) — keep the try/catch total, and keep `escalation`/`rationale`
+    writes advisory: status stays whatever the policy decided.
+  - `AnalyzeBookmarkResult` is a discriminated union on `sent` — tests need a
+    `if (!result.sent) throw` narrowing guard before touching `.decisions`.
+---
