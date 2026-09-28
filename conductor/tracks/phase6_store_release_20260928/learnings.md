@@ -61,3 +61,6 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 - **Keep HTML-only checks behind `.endsWith(".html")`** — required non-HTML files (styles.css) otherwise get landmark/meta violations.
 - **Playwright screenshots regenerate every asset deterministically** — `page.setContent` with the SVG inlined at the target viewport produces 16/32/48/128 icons; `page.goto(file://...)` at 440×280 produces the promo tile. No image libs needed.
 - **Manifest icons in WXT are `icon/NN.png` paths under `public/`** — they land at the built root, so the manifest key is `icon/16.png` not `public/icon/16.png`.
+- **Store screenshots are deterministic e2e captures, not manual shots.** `UPDATE_STORE_ASSETS=1` gates `tests/e2e/store-assets.spec.ts` — a synthetic `*.example` tree seeded through `chrome.bookmarks` renders the real production side panel at 1280×800; the spec is a no-op in the default suite.
+- **`__dirname` is unavailable in the e2e ESM loader** — derive paths from `fileURLToPath(import.meta.url)` like `helpers/extension.ts` does.
+- **Declare-or-helper for `chrome.*` in page.evaluate** — seed.ts carries a narrow `declare const chrome`; new specs should reuse `createBookmark`/`createFolder` rather than re-declaring the namespace inline.

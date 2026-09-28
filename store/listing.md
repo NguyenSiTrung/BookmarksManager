@@ -121,7 +121,7 @@ Version 1.0 — first public release.
 
 ## Category
 
-Productivity _(suggested — confirm against current dashboard categories)_
+Productivity
 
 ## Language
 
@@ -139,7 +139,10 @@ English
 
 - Icon: `store/assets/icon-128.png` at 128×128 px (the package embeds 16,
   32, and 48 px variants)
-- Screenshots of the real UI at 1280×800 in `store/assets/` (`screenshot-*.png`)
+- Screenshot of the real manager UI at 1280×800:
+  `store/assets/screenshot-manager-1280x800.png` (synthetic demo library —
+  regenerate with
+  `UPDATE_STORE_ASSETS=1 xvfb-run -a npx playwright test tests/e2e/store-assets.spec.ts`)
 - Small promo tile: `store/assets/promo-440x280.png` at 440×280 px
 
 ## Content notes for reviewers of this copy
