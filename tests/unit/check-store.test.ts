@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   checkStore,
@@ -26,6 +26,20 @@ import {
 
 const REPO = resolve(__dirname, "..", "..");
 const RELEASE = "1.0.0";
+
+/**
+ * The good fixture copies the BUILT manifest, so a clean checkout needs one
+ * build first — `npm run build` is cheap (~1 s) and runs only when
+ * `.output/chrome-mv3/manifest.json` is absent.
+ */
+beforeAll(() => {
+  if (!existsSync(join(REPO, ".output", "chrome-mv3", "manifest.json"))) {
+    execFileSync("npm", ["run", "build", "--silent"], {
+      cwd: REPO,
+      stdio: "inherit",
+    });
+  }
+});
 
 /** A PNG whose IHDR reports w×h — enough for the checker's dimension read. */
 function pngWithSize(w: number, h: number): Buffer {
