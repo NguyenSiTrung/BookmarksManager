@@ -42,6 +42,7 @@ import {
   type DecisionsHandlers,
   type SettingsSnapshot,
 } from "../messages/decisions";
+import { handleLlmProviderMessage } from "../messages/llm-provider";
 import { handleProviderMessage } from "../messages/provider";
 import { PRESETS } from "../net/presets";
 import {
@@ -537,7 +538,13 @@ export default defineBackground(() => {
           sendResponse(response);
           return;
         }
-        void handleProviderMessage(message, sender).then(sendResponse);
+        void handleLlmProviderMessage(message, sender).then((llmResponse) => {
+          if (llmResponse !== undefined) {
+            sendResponse(llmResponse);
+            return;
+          }
+          void handleProviderMessage(message, sender).then(sendResponse);
+        });
       },
     );
     return true;
