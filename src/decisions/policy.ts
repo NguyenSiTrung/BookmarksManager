@@ -1,5 +1,6 @@
 import { z } from "../schemas/z";
 import type { Decision } from "../schemas/decision";
+import { RELEASE_THRESHOLDS } from "./release-policy";
 
 /**
  * Confidence policy — PROJECT_PLAN.md §10.2 / spec FR5. Given a decision
@@ -24,16 +25,18 @@ export type PolicyOccasion = "on_save" | "misfiled_scan";
  * escalation hook runs. */
 export type PolicyOutcome = "auto_apply" | "preselect" | "review" | "unsure";
 
-/** Below this confidence every kind except `create_folder` is `unsure`. */
-export const REVIEW_FLOOR = 0.5;
+/** Below this confidence every kind except `create_folder` is `unsure`.
+ * The value lives in {@link RELEASE_THRESHOLDS} — the release track owns
+ * the bar; this name keeps the §10.2 vocabulary for existing call sites. */
+export const REVIEW_FLOOR = RELEASE_THRESHOLDS.reviewFloor;
 /** `move` on save pre-selects the folder at or above this confidence. */
-export const MOVE_PRESELECT_THRESHOLD = 0.7;
+export const MOVE_PRESELECT_THRESHOLD = RELEASE_THRESHOLDS.movePreselect;
 /** `add_tags`/`set_category` auto-apply at or above this confidence, but
  * only while that kind's toggle is on. */
-export const AUTO_APPLY_THRESHOLD = 0.85;
+export const AUTO_APPLY_THRESHOLD = RELEASE_THRESHOLDS.autoApply;
 /** When every rerank candidate probability falls below this bar the UI
  * reports "no match" instead of listing weak results. */
-export const RERANK_NO_MATCH_BAR = 0.5;
+export const RERANK_NO_MATCH_BAR = RELEASE_THRESHOLDS.rerankNoMatchBar;
 
 /**
  * Per-kind auto-apply toggles. Only `add_tags` and `set_category` can ever
@@ -134,7 +137,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyOutcome {
  */
 export function isNoMatch(
   candidateProbabilities: readonly number[],
-  bar = RERANK_NO_MATCH_BAR,
+  bar: number = RERANK_NO_MATCH_BAR,
 ): boolean {
   return candidateProbabilities.every((p) => p < bar);
 }

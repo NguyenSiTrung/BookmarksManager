@@ -9,6 +9,18 @@ import {
   RERANK_NO_MATCH_BAR,
   REVIEW_FLOOR,
 } from "../../src/decisions/policy";
+import {
+  RELEASE_JEV_MODELS,
+  RELEASE_THRESHOLDS,
+} from "../../src/decisions/release-policy";
+import {
+  DEFAULT_PROVIDER_MODEL,
+  PRESET_MODELS,
+} from "../../src/schemas/provider";
+import {
+  isMovingAlias,
+  MOVING_MODEL_ALIASES,
+} from "../../src/net/provider-info";
 
 /**
  * These tests pin PROJECT_PLAN.md §10.2 / spec FR5: confidence bands are
@@ -231,5 +243,73 @@ describe("DecisionSettings schema", () => {
     { autoApply: { add_tags: "yes" } },
   ])("rejects unknown kinds and keys: %j", (bad) => {
     expect(DecisionSettings.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("release policy pins (Phase 6 Task 4)", () => {
+  it("RELEASE_JEV_MODELS owns a fixed request id and response ids per preset", () => {
+    expect(RELEASE_JEV_MODELS.typesafe.request).toBe("jev-1.13.0");
+    expect(RELEASE_JEV_MODELS.openrouter.request).toBe("typesafe/jev-1.13");
+    for (const preset of ["typesafe", "openrouter"] as const) {
+      const { request, responseIds } = RELEASE_JEV_MODELS[preset];
+      // The request id is selectable — it must be on the preset's allowlist.
+      expect(PRESET_MODELS[preset]).toContain(request);
+      expect(responseIds).toContain(request);
+      for (const id of responseIds) {
+        // Every accepted response id is allowlisted and pinned — a moving
+        // alias can never satisfy a release-model check.
+        expect(PRESET_MODELS[preset]).toContain(id);
+        expect(MOVING_MODEL_ALIASES[preset]).not.toContain(id);
+      }
+    }
+  });
+
+  it("RELEASE_THRESHOLDS owns every confidence bar the policy uses", () => {
+    expect(RELEASE_THRESHOLDS.reviewFloor).toBe(REVIEW_FLOOR);
+    expect(RELEASE_THRESHOLDS.movePreselect).toBe(MOVE_PRESELECT_THRESHOLD);
+    expect(RELEASE_THRESHOLDS.autoApply).toBe(AUTO_APPLY_THRESHOLD);
+    expect(RELEASE_THRESHOLDS.rerankNoMatchBar).toBe(RERANK_NO_MATCH_BAR);
+    expect(RELEASE_THRESHOLDS.tagSelect).toBe(0.5);
+  });
+
+  it("defaults each preset's model to the pinned release id, not an alias", () => {
+    for (const preset of ["typesafe", "openrouter"] as const) {
+      expect(DEFAULT_PROVIDER_MODEL[preset]).toBe(
+        RELEASE_JEV_MODELS[preset].request,
+      );
+      expect(isMovingAlias(preset, DEFAULT_PROVIDER_MODEL[preset])).toBe(
+        false,
+      );
+    }
+  });
+
+  it("never auto-applies move, merge, or housekeeping kinds even at 1.0", () => {
+    const on = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+    const band = RELEASE_THRESHOLDS.autoApply;
+    expect(band).toBeGreaterThan(0);
+    for (const kind of [
+      "mark_dead",
+      "merge_duplicates",
+      "rename",
+      "create_folder",
+    ] as const) {
+      for (const confidence of [band, 1]) {
+        expect(
+          evaluatePolicy({ kind, confidence, settings: on }),
+        ).not.toBe("auto_apply");
+      }
+    }
+    for (const occasion of ["on_save", "misfiled_scan"] as const) {
+      expect(
+        evaluatePolicy({
+          kind: "move",
+          occasion,
+          confidence: 1,
+          settings: on,
+        }),
+      ).not.toBe("auto_apply");
+    }
   });
 });

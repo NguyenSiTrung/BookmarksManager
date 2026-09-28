@@ -1,4 +1,5 @@
 import type { PresetId } from "../schemas/provider";
+import { RELEASE_JEV_MODELS } from "../decisions/release-policy";
 
 /**
  * Provider/model metadata for the Options UI (PROJECT_PLAN.md §8.5 step 6,
@@ -39,3 +40,22 @@ export const MOVING_ALIAS_WARNING =
 export function isMovingAlias(preset: PresetId, model: string): boolean {
   return MOVING_MODEL_ALIASES[preset].some((alias) => alias === model);
 }
+
+/**
+ * Whether `model` is the pinned release id under `preset` — the exact
+ * `RELEASE_JEV_MODELS[preset].request` the eval baseline and decision
+ * thresholds were tuned against. Strict equality, not `responseIds`
+ * membership: the picker sends the request id.
+ */
+export function isPinnedReleaseModel(preset: PresetId, model: string): boolean {
+  return RELEASE_JEV_MODELS[preset].request === model;
+}
+
+/**
+ * Note shown under the Options model picker while the pinned release model
+ * is selected. Rendered immediately after the pinned `<code>{model}</code>`
+ * id, mirroring {@link MOVING_ALIAS_WARNING}, so it reads "<model> is the
+ * pinned release model …".
+ */
+export const PINNED_RELEASE_NOTE =
+  "is the pinned release model — the decision thresholds were tuned and validated against this version.";

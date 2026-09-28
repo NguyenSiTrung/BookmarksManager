@@ -1,5 +1,6 @@
 import { LOOPBACK_HOSTS } from "./llm";
 import { z } from "./z";
+import { RELEASE_JEV_MODELS } from "../decisions/release-policy";
 
 /** Jev provider presets — the only destinations this extension may reach
  * (PROJECT_PLAN.md §8.1). */
@@ -11,6 +12,19 @@ export const PRESET_MODELS = {
   typesafe: ["jev-latest", "jev-preview", "jev-1.13.0"],
   openrouter: ["jev-latest", "jev-1.13", "typesafe/jev-1.13"],
 } as const satisfies Record<PresetId, readonly string[]>;
+
+/**
+ * The model each preset's picker starts on — the pinned release id from
+ * `RELEASE_JEV_MODELS`, never a moving alias. The release baselines (eval
+ * harness + thresholds) are tuned against these ids, so defaulting to an
+ * alias would put fresh installs on an unpinned model the thresholds were
+ * not validated for. Stored settings still validate against
+ * `PRESET_MODELS`; this constant only governs the default.
+ */
+export const DEFAULT_PROVIDER_MODEL = {
+  typesafe: RELEASE_JEV_MODELS.typesafe.request,
+  openrouter: RELEASE_JEV_MODELS.openrouter.request,
+} as const satisfies Record<PresetId, string>;
 
 /**
  * Persisted provider configuration, stored in the Dexie `metadata` table

@@ -8,6 +8,7 @@ import { placement } from "../../src/jev/tasks/placement";
 import { rerank } from "../../src/jev/tasks/rerank";
 import { tags } from "../../src/jev/tasks/tags";
 import { PRESETS } from "../../src/net/presets";
+import { RELEASE_JEV_MODELS } from "../../src/decisions/release-policy";
 import type { PresetId } from "../../src/schemas/provider";
 import type { SentBookmark } from "../../src/schemas/decision-state";
 import type { EvalAnswer, EvalObservation } from "../../src/eval/metrics";
@@ -40,14 +41,14 @@ export interface EvalProviderSpec {
 export const EVAL_PROVIDERS: readonly EvalProviderSpec[] = [
   {
     preset: "typesafe",
-    requestModel: "jev-1.13.0",
-    acceptedModelIds: ["jev-1.13.0"],
+    requestModel: RELEASE_JEV_MODELS.typesafe.request,
+    acceptedModelIds: RELEASE_JEV_MODELS.typesafe.responseIds,
     envKey: "TYPESAFE_API_KEY",
   },
   {
     preset: "openrouter",
-    requestModel: "typesafe/jev-1.13",
-    acceptedModelIds: ["typesafe/jev-1.13"],
+    requestModel: RELEASE_JEV_MODELS.openrouter.request,
+    acceptedModelIds: RELEASE_JEV_MODELS.openrouter.responseIds,
     envKey: "OPENROUTER_API_KEY",
   },
 ];

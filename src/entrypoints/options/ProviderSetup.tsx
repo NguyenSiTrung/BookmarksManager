@@ -14,10 +14,16 @@ import {
 } from "../../messages/provider";
 import { PRESETS } from "../../net/presets";
 import {
-  MOVING_ALIAS_WARNING,
   isMovingAlias,
+  isPinnedReleaseModel,
+  MOVING_ALIAS_WARNING,
+  PINNED_RELEASE_NOTE,
 } from "../../net/provider-info";
-import { PRESET_MODELS, PresetId } from "../../schemas/provider";
+import {
+  DEFAULT_PROVIDER_MODEL,
+  PRESET_MODELS,
+  PresetId,
+} from "../../schemas/provider";
 import { PrivacyDraft } from "./PrivacyDraft";
 
 /**
@@ -58,7 +64,7 @@ type TestOutcome =
 
 export function ProviderSetup() {
   const [presetId, setPresetId] = useState<PresetId>("typesafe");
-  const [model, setModel] = useState<string>(PRESET_MODELS.typesafe[0]);
+  const [model, setModel] = useState<string>(DEFAULT_PROVIDER_MODEL.typesafe);
   const [apiKey, setApiKey] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
@@ -117,7 +123,7 @@ export function ProviderSetup() {
     currentPreset.current = next;
     setPresetId(next);
     setStatus(null);
-    setModel(PRESET_MODELS[next][0]);
+    setModel(DEFAULT_PROVIDER_MODEL[next]);
     setApiKey("");
     setAgreed(false);
     setError(null);
@@ -487,7 +493,9 @@ export function ProviderSetup() {
                 aria-describedby={
                   isMovingAlias(presetId, model)
                     ? "provider-model-alias-warning"
-                    : undefined
+                    : isPinnedReleaseModel(presetId, model)
+                      ? "provider-model-pinned-note"
+                      : undefined
                 }
                 className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
               >
@@ -505,6 +513,16 @@ export function ProviderSetup() {
                 >
                   <code className="rounded bg-gray-100 px-1">{model}</code>{" "}
                   {MOVING_ALIAS_WARNING}
+                </p>
+              )}
+              {isPinnedReleaseModel(presetId, model) && (
+                <p
+                  role="status"
+                  id="provider-model-pinned-note"
+                  className="mt-1 text-xs text-gray-500"
+                >
+                  <code className="rounded bg-gray-100 px-1">{model}</code>{" "}
+                  {PINNED_RELEASE_NOTE}
                 </p>
               )}
             </div>

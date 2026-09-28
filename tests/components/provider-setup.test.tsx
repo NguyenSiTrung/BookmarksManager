@@ -23,7 +23,11 @@ import type {
   ProviderMessageResult,
   ProviderStatus,
 } from "../../src/messages/provider";
-import { PRESET_MODELS, type PresetId } from "../../src/schemas/provider";
+import {
+  DEFAULT_PROVIDER_MODEL,
+  PRESET_MODELS,
+  type PresetId,
+} from "../../src/schemas/provider";
 
 /**
  * jsdom + RTL under Vitest globals-off: the act environment flag and manual
@@ -198,6 +202,22 @@ describe("disclosure", () => {
       Array.from(modelSelect().options).map((option) => option.value),
     ).toEqual([...PRESET_MODELS.typesafe]);
   });
+
+  it("defaults the model picker to the pinned release model, not an alias", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.typesafe);
+    expect(screen.queryByText(/moving alias/i)).toBeNull();
+  });
+
+  it("defaults to the pinned release model after switching providers", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    // findBy keeps the async status refresh inside act.
+    await screen.findByRole("region", { name: /data disclosure/i });
+    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.openrouter);
+  });
 });
 
 describe("enable flow", () => {
@@ -229,7 +249,7 @@ describe("enable flow", () => {
       {
         type: "ENABLE_PROVIDER",
         preset: "typesafe",
-        model: "jev-latest",
+        model: "jev-1.13.0",
         key: "sk-live-abcdef",
       },
     ]);
@@ -441,8 +461,10 @@ describe("persisted state and revocation", () => {
 describe("model alias warning", () => {
   it("warns under the picker while a moving alias is selected", async () => {
     render(<ProviderSetup />);
-    // TypeSafe defaults to jev-latest — a moving alias — so the warning is
-    // up as soon as the form renders.
+    await screen.findByRole("button", { name: /enable/i });
+    // The picker defaults to the pinned release id — the warning appears
+    // once a moving alias is selected.
+    fireEvent.change(modelSelect(), { target: { value: "jev-latest" } });
     const warning = await screen.findByText(/moving alias/i);
     expect(warning.getAttribute("role")).toBe("status");
     // The warning names the selected model and is programmatically
@@ -456,7 +478,7 @@ describe("model alias warning", () => {
 
   it("shows the warning for the jev-preview alias too", async () => {
     render(<ProviderSetup />);
-    await screen.findByText(/moving alias/i);
+    await screen.findByRole("button", { name: /enable/i });
     fireEvent.change(modelSelect(), { target: { value: "jev-preview" } });
     const warning = await screen.findByText(/moving alias/i);
     expect(warning.textContent).toContain("jev-preview");
@@ -468,21 +490,29 @@ describe("model alias warning", () => {
     await screen.findByRole("button", { name: /enable/i });
     fireEvent.change(modelSelect(), { target: { value: "jev-1.13.0" } });
     expect(screen.queryByText(/moving alias/i)).toBeNull();
-    expect(modelSelect().getAttribute("aria-describedby")).toBeNull();
+    // The pinned release model shows the pinned note instead.
+    expect(modelSelect().getAttribute("aria-describedby")).toBe(
+      "provider-model-pinned-note",
+    );
   });
 
   it("warns for OpenRouter's moving alias but not its pinned ids", async () => {
     render(<ProviderSetup />);
     await screen.findByRole("button", { name: /enable/i });
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    // OpenRouter defaults to jev-latest — the warning follows the preset's
-    // own alias list.
+    await screen.findByRole("region", { name: /data disclosure/i });
+    fireEvent.change(modelSelect(), { target: { value: "jev-latest" } });
     const warning = await screen.findByText(/moving alias/i);
     expect(warning.textContent).toContain("jev-latest");
     for (const pinned of ["jev-1.13", "typesafe/jev-1.13"]) {
       fireEvent.change(modelSelect(), { target: { value: pinned } });
       expect(screen.queryByText(/moving alias/i)).toBeNull();
-      expect(modelSelect().getAttribute("aria-describedby")).toBeNull();
+      // Pinned release ids show the pinned note; other pinned ids none.
+      const expected =
+        pinned === "typesafe/jev-1.13"
+          ? "provider-model-pinned-note"
+          : null;
+      expect(modelSelect().getAttribute("aria-describedby")).toBe(expected);
     }
     // Read-only interaction — still no TEST_PROVIDER traffic.
     expect(nonStatusCalls()).toEqual([]);

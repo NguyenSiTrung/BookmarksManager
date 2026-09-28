@@ -94,7 +94,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
   - Verify:
     `npx vitest run tests/unit/eval-metrics.test.ts tests/unit/eval-report.test.ts`.
 
-- [x] Task 3: Add the key-gated TypeSafe/OpenRouter evaluation runner
+- [x] Task 3: Add the key-gated TypeSafe/OpenRouter evaluation runner (23be89c)
   - Files: create `vitest.eval.config.ts`,
     `tests/eval/jev-eval.live.test.ts`, and `tests/eval/provider.ts`;
     modify `package.json`, `package-lock.json`, and `.gitignore`.
@@ -111,7 +111,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `npx vitest list --config vitest.eval.config.ts --filesOnly` and
     `npm run test:eval` without keys; both providers skip cleanly.
 
-- [ ] Task 4: Pin release models and evidence-backed confidence policy
+- [x] Task 4: Pin release models and evidence-backed confidence policy
   - Files: create `src/decisions/release-policy.ts`; modify
     `src/decisions/policy.ts`, `src/schemas/provider.ts`,
     `src/net/provider-info.ts`,
