@@ -24,5 +24,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Phase 5 — Optional OpenAI-Compatible LLM Layer
+## [~] Track: Phase 5 — Optional OpenAI-Compatible LLM Layer
 *Link: [./conductor/tracks/phase5_llm_layer_20260928/](./conductor/tracks/phase5_llm_layer_20260928/)*

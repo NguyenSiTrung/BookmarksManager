@@ -267,3 +267,21 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     the tier enum.
 ---
 
+### Phase 2 Task 5 — Options provider/budget UI + CostConfirmationDialog
+  - Enable click calls `chrome.permissions.request` synchronously BEFORE any
+    await — the user-gesture token dies across microtask boundaries, so the
+    first permission request must be the literal first statement after
+    validation that does not await (URL validation errors return early
+    without touching permissions).
+  - `noUncheckedIndexedAccess` turns index reads into `T | undefined` even
+    right after an assignment — capture the value in a const; in tests the
+    worker double must return the same object shape the real protocol
+    produces or the parsed-union check fails typecheck.
+  - `no-case-declarations` lint fires on bare `const` inside `case` — wrap
+    the case body in `{}`.
+  - Button-name regexes must be anchored: `/send|confirm/i` also matches
+    "Don't send"; use `/^send anyway$/i`.
+  - Disclosure wants concrete credential transport naming — the verbatim
+    `credentialUse` string plus an explicit bullet naming the
+    `Authorization`/`api-key` header keeps the copy honest per auth mode.
+---

@@ -178,7 +178,7 @@ reservations protect every egress path.
     enable, consent-first revoke, and total handlers.
   - Verify: `npx vitest run tests/unit/llm-provider-messages.test.ts`.
 
-- [ ] Task 5: Options provider and budget UI
+- [x] Task 5: Options provider and budget UI
   - Files: `src/entrypoints/options/LlmProviderSetup.tsx`,
     `src/entrypoints/options/LlmBudget.tsx`,
     `src/entrypoints/options/main.tsx`,
