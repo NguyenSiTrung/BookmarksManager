@@ -19,11 +19,14 @@ describe("extension scaffold", () => {
     // `activeTab` joined in Phase 5 Task 1 (the quick-save popup reads the
     // active tab's title/URL on the user's action); `contextMenus` joined in
     // Phase 5 Task 3 (the right-click "Save page"/"Save link" items).
+    // `scripting` joined in the Phase 5 LLM track (opt-in page extraction
+    // injects `extract.js` into the active tab, on explicit action only).
     expect(manifest?.permissions).toEqual([
       "activeTab",
       "bookmarks",
       "contextMenus",
       "favicon",
+      "scripting",
       "storage",
       "sidePanel",
     ]);

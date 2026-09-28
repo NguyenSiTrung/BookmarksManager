@@ -34,6 +34,7 @@ describe("manifest host permissions", () => {
       "bookmarks",
       "contextMenus",
       "favicon",
+      "scripting",
       "storage",
       "sidePanel",
     ]);
