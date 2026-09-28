@@ -199,7 +199,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/components/options-llm-provider.test.tsx tests/components/cost-confirmation-dialog.test.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'LLM provider setup and security boundary' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'LLM provider setup and security boundary' (Protocol in workflow.md)
   - Run lint, typecheck, Phase 2 tests, build, manifest and bundle checks; manually
     exercise exact-origin and loopback permission prompts before approval.
 

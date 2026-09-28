@@ -285,3 +285,10 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     `credentialUse` string plus an explicit bullet naming the
     `Authorization`/`api-key` header keeps the copy honest per auth mode.
 ---
+### Phase 2 gate — stale pins
+  - Schema bumps and optional_host_permissions changes invalidate older
+    migration/scaffold assertions: full-suite gate caught database.test,
+    database-v2/v3 and scaffold still pinning v3/11-tables/two patterns.
+    When the spec widens a contract, update every pin in the same commit
+    wave — do not leave half the suite asserting the old world.
+---
