@@ -1,11 +1,12 @@
 import Dexie, { type Table } from "dexie";
+import type { BudgetReservation } from "../llm/budget";
 import type { AuditEvent } from "../schemas/audit";
 import type { Decision } from "../schemas/decision";
 import type { Job } from "../schemas/job";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
 import type { UndoSnapshot } from "../schemas/undo";
-import type { UsageRecord } from "../schemas/usage";
+import type { LlmUsageRecord, UsageRecord } from "../schemas/usage";
 
 /**
  * Settings row. `key` is a stable lookup string — ProviderSettings rows use
@@ -53,6 +54,8 @@ export class BookmarksManagerDB extends Dexie {
   declare jobs: Table<Job, string>;
   declare audit: Table<AuditEvent, number>;
   declare usage: Table<UsageRecord, number>;
+  declare llmUsage: Table<LlmUsageRecord, number>;
+  declare llmReservations: Table<BudgetReservation, string>;
 
   constructor() {
     super("BookmarksManager");
@@ -89,6 +92,16 @@ export class BookmarksManagerDB extends Dexie {
       // Per-request usage rows (FR8): ++id is append order, jobId rolls up
       // per job, recordedAt is chronological.
       usage: "++id,jobId,recordedAt",
+    });
+    this.version(4).stores({
+      // Per-request usage rows for the dynamic LLM layer (LLM spec FR7):
+      // ++id is append order, providerId scopes monthly roll-ups,
+      // recordedAt is chronological.
+      llmUsage: "++id,providerId,recordedAt",
+      // Active/settled/released budget reservations (LLM spec FR7.5-7);
+      // caller-generated ids, providerId + status indexed so a provider can
+      // sweep its pending reservations on revoke.
+      llmReservations: "id,providerId,status",
     });
   }
 }

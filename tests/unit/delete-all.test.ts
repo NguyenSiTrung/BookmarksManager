@@ -35,6 +35,7 @@ interface ChromeStub {
   session: AreaStub;
   contains: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
+  getAll?: ReturnType<typeof vi.fn>;
 }
 
 /** Recorder for the `chrome.runtime` slice the release protocol uses. */
@@ -70,6 +71,7 @@ function installChromeStub(options: {
   local?: AreaStub;
   session?: AreaStub;
   granted?: string[];
+  getAllOrigins?: string[];
   removeResult?: (origin: string) => boolean;
   bookmarks?: FakeBookmarksApi;
   runtime?: RuntimeStub;
@@ -86,12 +88,23 @@ function installChromeStub(options: {
     if (result) granted.delete(origin);
     return result;
   });
+  const getAll =
+    options.getAllOrigins === undefined
+      ? undefined
+      : vi.fn(async () => ({
+          permissions: [] as string[],
+          origins: [...(options.getAllOrigins ?? [])],
+        }));
   vi.stubGlobal("chrome", {
     storage: {
       local: { clear: local.clear },
       session: { clear: session.clear },
     },
-    permissions: { contains, remove },
+    permissions: {
+      contains,
+      remove,
+      ...(getAll === undefined ? {} : { getAll }),
+    },
     ...(options.runtime === undefined
       ? {}
       : {
@@ -114,7 +127,7 @@ function installChromeStub(options: {
       ? {}
       : { bookmarks: options.bookmarks }),
   });
-  return { local, session, contains, remove };
+  return { local, session, contains, remove, ...(getAll === undefined ? {} : { getAll }) };
 }
 
 beforeEach(async () => {
@@ -413,6 +426,105 @@ describe("registerDbReleaseListener", () => {
     expect(() => registerDbReleaseListener()()).not.toThrow();
     vi.stubGlobal("chrome", { storage: {}, permissions: {} });
     expect(() => registerDbReleaseListener()()).not.toThrow();
+  });
+});
+
+describe("LLM layer cleanup (Phase 5)", () => {
+  it("clears credential envelopes for LLM providers from chrome.storage.local", async () => {
+    const local = areaStub({
+      "providerKey:typesafe": { v: 1, iv: "a", ct: "b" },
+      "credential:preset:openai": { v: 1, iv: "c", ct: "d" },
+      "credential:custom:https://api.example.com/v1": { v: 1, iv: "e", ct: "f" },
+      "llmProvider:preset:openai": { provider: { kind: "preset" } },
+    });
+    installChromeStub({ local });
+
+    await deleteAllExtensionData();
+
+    expect(local.clear).toHaveBeenCalledTimes(1);
+    expect(local.store).toEqual({});
+  });
+
+  it("drops llmUsage, llmReservations, and llm settings rows with the database", async () => {
+    installChromeStub({});
+    await db.metadata.put({
+      key: "llmProvider:preset:openai",
+      value: {
+        providerId: "preset:openai",
+        provider: { kind: "preset", preset: "openai" },
+        configuredAt: "2026-09-28T00:00:00Z",
+      },
+    });
+    await db.metadata.put({ key: "llmActiveProvider", value: "preset:openai" });
+    await db.llmUsage.add({
+      providerId: "preset:openai",
+      feature: "llm_explain",
+      model: "m",
+      configuredModel: "m",
+      inputTokens: 10,
+      outputTokens: 5,
+      recordedAt: "2026-09-28T00:00:00Z",
+    });
+    await db.llmReservations.put({
+      id: "res-1",
+      providerId: "preset:openai",
+      model: "m",
+      month: "2026-09",
+      reservedUsd: 0.5,
+      maxInputTokens: 1,
+      maxOutputTokens: 1,
+      kind: "manual",
+      status: "active",
+      createdAt: "2026-09-28T00:00:00Z",
+    });
+
+    await deleteAllExtensionData();
+
+    expect(await Dexie.exists("BookmarksManager")).toBe(false);
+    await db.open();
+    expect(await db.metadata.count()).toBe(0);
+    expect(await db.llmUsage.count()).toBe(0);
+    expect(await db.llmReservations.count()).toBe(0);
+  });
+
+  it("releases dynamically granted custom-provider origins via getAll", async () => {
+    const chrome = installChromeStub({
+      granted: [
+        PRESETS.typesafe.permissionPattern,
+        "https://api.example.com/*",
+        "http://localhost/*",
+      ],
+      getAllOrigins: [
+        PRESETS.typesafe.permissionPattern,
+        "https://api.example.com/*",
+        "http://localhost/*",
+      ],
+    });
+
+    const result = await deleteAllExtensionData();
+
+    expect(result.permissionsFailed).toEqual([]);
+    expect(result.permissionsRemoved).toEqual(
+      expect.arrayContaining([
+        PRESETS.typesafe.permissionPattern,
+        "https://api.example.com/*",
+        "http://localhost/*",
+      ]),
+    );
+    // The dynamic origins are removed even though OPTIONAL_HOST_ORIGINS
+    // only lists the Jev presets.
+    expect(OPTIONAL_HOST_ORIGINS).not.toContain("https://api.example.com/*");
+    expect(chrome.remove).toHaveBeenCalledWith({
+      origins: ["https://api.example.com/*"],
+    });
+  });
+
+  it("falls back to the preset registry when getAll is unavailable", async () => {
+    installChromeStub({ granted: [PRESETS.typesafe.permissionPattern] });
+    const result = await deleteAllExtensionData();
+    expect(result.permissionsRemoved).toEqual([
+      PRESETS.typesafe.permissionPattern,
+    ]);
   });
 });
 

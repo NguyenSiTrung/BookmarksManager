@@ -116,3 +116,19 @@ export const LlmProviderSettings = z.discriminatedUnion("kind", [
   }),
 ]);
 export type LlmProviderSettings = z.infer<typeof LlmProviderSettings>;
+
+/**
+ * A configured LLM provider as persisted in the Dexie `metadata` table under
+ * `llmProvider:<providerId>`. `keySuffix` is a short masked display hint
+ * (e.g. `…wxyz`) and must never hold a raw credential; `tier` is the
+ * structured-output capability discovered by Test Connection. Strict — a
+ * stored row carrying extra fields (e.g. a raw key) fails closed.
+ */
+export const LlmProviderRecord = z.strictObject({
+  providerId: z.string().min(1).max(300),
+  provider: LlmProviderSettings,
+  keySuffix: z.string().min(1).max(8).optional(),
+  tier: StructuredOutputTier.optional(),
+  configuredAt: z.iso.datetime(),
+});
+export type LlmProviderRecord = z.infer<typeof LlmProviderRecord>;

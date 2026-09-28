@@ -28,3 +28,27 @@ export const UsageRecord = z.strictObject({
   recordedAt: z.iso.datetime(),
 });
 export type UsageRecord = z.infer<typeof UsageRecord>;
+
+/**
+ * One `llmUsage` row — per-request accounting for the dynamic LLM layer
+ * (spec FR7.1). `providerId` scopes spend per provider; `feature` is the
+ * consent scope that authorized the request (e.g. `llm_explain`). Both the
+ * configured and returned model ids are recorded (spec FR4.6).
+ *
+ * Cost provenance is derivable, never stored: `costUsd` present →
+ * provider-reported; `estimatedCostUsd` present → locally estimated from
+ * configured rates; neither → unknown (never rendered as $0.00).
+ */
+export const LlmUsageRecord = z.strictObject({
+  id: z.number().int().positive().optional(), // assigned by IndexedDB
+  providerId: z.string().min(1),
+  feature: z.string().min(1),
+  model: z.string().min(1),
+  configuredModel: z.string().min(1),
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  costUsd: z.number().min(0).optional(),
+  estimatedCostUsd: z.number().min(0).optional(),
+  recordedAt: z.iso.datetime(),
+});
+export type LlmUsageRecord = z.infer<typeof LlmUsageRecord>;

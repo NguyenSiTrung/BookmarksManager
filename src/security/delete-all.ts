@@ -190,6 +190,9 @@ declare const chrome: {
   permissions: {
     contains(permissions: { origins?: string[] }): Promise<boolean>;
     remove(permissions: { origins?: string[] }): Promise<boolean>;
+    /** Optional — when present it enumerates every granted origin, including
+     * dynamic custom-provider origins outside `OPTIONAL_HOST_ORIGINS`. */
+    getAll?(): Promise<{ permissions?: string[]; origins?: string[] }>;
   };
 };
 
@@ -311,6 +314,28 @@ async function isOriginGranted(origin: string): Promise<boolean> {
 }
 
 /**
+ * Origins to try releasing: the preset registry plus every origin
+ * `permissions.getAll()` reports as granted — the LLM layer grants
+ * user-configured dynamic origins that no static list can name. A missing or
+ * failing `getAll` degrades to the registry alone (the original behavior).
+ */
+async function removableOriginCandidates(): Promise<string[]> {
+  const candidates = new Set<string>(OPTIONAL_HOST_ORIGINS);
+  const getAll = chrome.permissions.getAll;
+  if (getAll !== undefined) {
+    try {
+      const granted = await getAll.call(chrome.permissions);
+      for (const origin of granted.origins ?? []) {
+        candidates.add(origin);
+      }
+    } catch {
+      // Fall back to the static registry only.
+    }
+  }
+  return [...candidates];
+}
+
+/**
  * Delete every piece of extension-owned data and return the extension to a
  * first-run state. Native Chrome bookmarks are never touched.
  *
@@ -345,11 +370,13 @@ export async function deleteAllExtensionData(
   await clearSessionArea(chrome.storage.session);
 
   // 3. Release granted optional host permissions, one origin at a time.
+  //    Candidates are the preset registry plus every granted origin
+  //    `permissions.getAll` reports (dynamic custom LLM origins included).
   //    Origins that were never granted are skipped — there is nothing to
   //    remove and their absence is not a failure.
   const permissionsRemoved: string[] = [];
   const permissionsFailed: string[] = [];
-  for (const origin of OPTIONAL_HOST_ORIGINS) {
+  for (const origin of await removableOriginCandidates()) {
     if (!(await isOriginGranted(origin))) continue;
     try {
       const removed = await chrome.permissions.remove({ origins: [origin] });
