@@ -25,13 +25,21 @@ import type { MockJevServer } from "../mock-servers/jev";
  * Analyze-on-save performance gate (spec §15 NFR, PROJECT_PLAN.md:927 — "Jev
  * analyze on save takes under 1.5 s end to end"): one full SAVE_SUGGEST round
  * trip — message layer → production handlers → minimize + candidates → ONE
- * request through the consented client → answer cross-check → policy → three
- * persisted `decisions` rows plus `usage`/`sentLog` — must complete in under
+ * request through a consented client → answer cross-check → policy → three
+ * persisted `decisions` rows plus one `usage` row — must complete in under
  * 1.5 s against a localhost mock answering instantly. The mock's default
  * replies are schema-valid and pass the pipeline's answer cross-check, so no
  * scripting is needed and the measurement covers the device-side path: the
  * budget is the regression tripwire for N+1 Dexie reads, per-question
- * fetches, or exponential candidate math, not network latency.
+ * fetches, or library-size-scaling candidate math, not network latency. To
+ * that end the seeded corpus matches the 10k scale of the search gate
+ * (tests/unit/search-perf.test.ts), so a candidate selector gone quadratic
+ * in corpus size trips here, not only on a user's real library.
+ *
+ * Bypass disclosure: redirecting the client's transport means `sendConsented`
+ * — the egress gate AND the only sentLog writer — never runs here (pinned
+ * below with a zero-row assertion). The gate + audit-log path is owned by
+ * the `src/net/send` tests; this file measures everything around it.
  *
  * The other two §15 gates hold in their own files and stay green in the same
  * `vitest run`: popup-open < 150 ms (tests/components/popup-save.test.tsx
@@ -40,10 +48,10 @@ import type { MockJevServer } from "../mock-servers/jev";
  * < 50 ms). They are referenced here, not duplicated.
  *
  * The seeded library is deterministic — fixed ids, titles, URLs, folders —
- * so every run computes the same candidate shortlists: 250 bookmarks across
- * 5 domains in 10 folders, 20 tag definitions, and meta rows on every 5th
- * bookmark (so the tag selector has a real same-domain signal for the
- * subject's host). Only `sendConsented` is redirected to the mock server
+ * so every run computes the same candidate shortlists: 10k bookmarks across
+ * 5 domains in 6 seeded folders, 20 tag definitions, and meta rows on every
+ * 5th bookmark (all on the subject's domain — the tag selector's real
+ * same-domain signal). Only `sendConsented` is redirected to the mock server
  * (the decisions-save-suggest.test.ts pattern); everything else is the real
  * production path. Each iteration analyzes a synthetic `popup:` id, so runs
  * never collide in the store.
@@ -86,7 +94,7 @@ const WORDS = [
   "parser", "storage", "offline", "sync",
 ] as const;
 
-const LIBRARY_SIZE = 250;
+const LIBRARY_SIZE = 10_000;
 const WARMUP_RUNS = 3;
 const MEASURED_RUNS = 10;
 const BUDGET_MS = 1_500;
@@ -248,11 +256,12 @@ async function saveSuggestOnce(index: number): Promise<number> {
   const elapsed = performance.now() - start;
 
   // A fast FAILURE must not pass the gate: every round trip really asked one
-  // question set, got a valid answer, and persisted its proposal rows.
+  // question set, got a valid answer, and persisted its three proposal rows
+  // (set_category + add_tags + move for this seed).
   expect(result).toMatchObject({
     ok: true,
     code: "analyze_ok",
-    result: { sent: true },
+    result: { sent: true, decisionCount: 3 },
   });
   return elapsed;
 }
@@ -284,5 +293,10 @@ describe("analyze-on-save performance", () => {
         `${tagDefs.length} tags)`,
     );
     expect(max).toBeLessThan(BUDGET_MS);
+
+    // Pin the disclosed bypass: the mocked transport means `sendConsented`
+    // (the egress gate and the only sentLog writer) never ran — zero rows,
+    // by design. That path is owned by the `src/net/send` tests.
+    expect(await db.sentLog.count()).toBe(0);
   });
 });

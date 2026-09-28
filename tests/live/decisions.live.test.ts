@@ -26,7 +26,12 @@ import { PRESETS } from "../../src/net/presets";
 
 const TYPESAFE_API_KEY = process.env.TYPESAFE_API_KEY;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const REQUEST_TIMEOUT_MS = 15_000;
+// Three fixtures run serially inside one it(), so the per-request abort must
+// leave room under the 30 s testTimeout (vitest.live.config.ts) for all
+// three: 3 × 8 s = 24 s worst case, and a hung endpoint surfaces as this
+// abort (or its `expected 2xx` assertion), never as a mid-fixture vitest
+// timeout.
+const REQUEST_TIMEOUT_MS = 8_000;
 const MODEL = "jev-latest";
 
 /** Fixture bookmark metadata; `expect` pins the category when unambiguous. */
@@ -96,6 +101,9 @@ async function liveCategorize(
     `choice ${JSON.stringify(answer.choice)} must be a sent Category option`,
   ).toContain(answer.choice);
   const probability = answer.probabilities[answer.choice];
+  // A distribution that omits its own chosen key is a wire-contract bug —
+  // name it directly instead of failing the [0, 1] bounds on undefined.
+  expect(probability).toBeDefined();
   expect(probability).toBeGreaterThanOrEqual(0);
   expect(probability).toBeLessThanOrEqual(1);
   expect(answer.confidence).toBeGreaterThanOrEqual(0);
