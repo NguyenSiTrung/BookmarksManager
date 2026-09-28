@@ -351,7 +351,7 @@ reservations protect every egress path.
     idempotent undo, and never applying before explicit confirmation.
   - Verify: `npx vitest run tests/unit/restructure-apply.test.ts`.
 
-- [ ] Task 4: Restructure protocol and UI
+- [x] Task 4: Restructure protocol and UI
   - Files: `src/messages/restructure.ts`, `src/entrypoints/background.ts`,
     `src/entrypoints/sidepanel/RestructureView.tsx`,
     `src/entrypoints/sidepanel/App.tsx`,

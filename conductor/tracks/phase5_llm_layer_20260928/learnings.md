@@ -445,3 +445,19 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   removes each created folder iff still a folder and empty.
 - `Array.isArray` does NOT narrow a `ReadonlyMap | readonly T[]` union in the
   false branch — use `"get" in metas` (in-narrowing) instead.
+
+## Phase 5 Task 4 — protocol + view
+
+- `handleRestructureMessage(message, sender, deps)` owns RESTARTURE_*
+  types (START/STATUS/PAUSE/RESUME/CANCEL/CONFIRM/UNDO); injected
+  `deps.runJob` = `runPersistedJob` (which now dispatches
+  `createRestructureAssigner` for `kind === "restructure"`).
+- START replies `confirmation_required` + `destinationOrigin` so the view
+  resends once with `unknownCostConfirmed: true` via CostConfirmationDialog.
+- Job table has no `kind` index — latest-restructure lookup is a filtered
+  `toArray()` scan sorted by `createdAt`.
+- Side-panel chrome stub must late-bind `sendMessage` (`(m) => sendMessage(m)`)
+  or per-test mock swaps silently keep the beforeEach instance.
+- The shell toast's Undo calls `undoLatest` — `undoable: true` alone wires
+  restructure undo; no custom callback needed.
+- Job status is spelled `canceled` (single l).
