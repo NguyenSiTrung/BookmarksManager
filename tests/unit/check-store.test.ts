@@ -310,11 +310,10 @@ describe("the real repo on the current tree", () => {
     }
     const v = violationsAt(REPO);
     const c = checks(v);
-    // 1.0.0 not yet cut: version bump + assets + release record land in
-    // Phase 3/4. Everything else must already be clean.
-    expect(c).toContain("version");
-    expect(c).toContain("assets");
-    expect(c).toContain("release-record");
+    // The version is bumped and assets exist; until the release record lands
+    // the only remaining violation may be "release-record" (empty once the
+    // record is written — everything else must already be clean).
+    expect(c.every((x) => x === "release-record")).toBe(true);
     expect(c).not.toContain("unfinished-marker");
     expect(c).not.toContain("publisher-contact");
     expect(c).not.toContain("public-urls");
@@ -324,5 +323,7 @@ describe("the real repo on the current tree", () => {
     expect(c).not.toContain("reviewer-notes");
     expect(c).not.toContain("release-models");
     expect(c).not.toContain("eval-evidence");
+    expect(c).not.toContain("version");
+    expect(c).not.toContain("assets");
   });
 });
