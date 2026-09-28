@@ -44,6 +44,7 @@ import {
 } from "../messages/decisions";
 import { handleLlmProviderMessage } from "../messages/llm-provider";
 import { handleLlmFeatureMessage } from "../messages/llm-features";
+import { handleSummarizeMessage } from "../messages/summaries";
 import { handleProviderMessage } from "../messages/provider";
 import { PRESETS } from "../net/presets";
 import {
@@ -550,7 +551,17 @@ export default defineBackground(() => {
                 sendResponse(featureResponse);
                 return;
               }
-              void handleProviderMessage(message, sender).then(sendResponse);
+              void handleSummarizeMessage(message, sender).then(
+                (summaryResponse) => {
+                  if (summaryResponse !== undefined) {
+                    sendResponse(summaryResponse);
+                    return;
+                  }
+                  void handleProviderMessage(message, sender).then(
+                    sendResponse,
+                  );
+                },
+              );
             },
           );
         });

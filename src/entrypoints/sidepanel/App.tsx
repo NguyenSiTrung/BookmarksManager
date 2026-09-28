@@ -24,6 +24,7 @@ import {
 import { BulkBar, deleteNodesWithUndo, deleteResultMessage } from "./BulkBar";
 import { DndProvider } from "./dnd";
 import { EditDialog } from "./EditDialog";
+import { SummaryDialog } from "./SummaryDialog";
 import {
   FolderActionDialog,
   FolderActions,
@@ -70,8 +71,14 @@ import type { ToastApi, ToastState } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
 
-/** Lazy slice: `chrome.runtime.openOptionsPage`, absent in tests/popup. */
+/** Lazy slice: `chrome.runtime.openOptionsPage` + `tabs.query` (absent in tests/popup). */
 declare const chrome: {
+  tabs?: {
+    query?(queryInfo: {
+      active?: boolean;
+      currentWindow?: boolean;
+    }): Promise<{ id?: number }[]>;
+  };
   runtime?: { openOptionsPage?: () => Promise<void> | void } | null;
 };
 
@@ -373,6 +380,10 @@ export function App() {
     [reportToast],
   );
   const [editTarget, setEditTarget] = useState<TreeEntry | null>(null);
+  const [summarizeTarget, setSummarizeTarget] = useState<{
+    tabId: number;
+    item: BookmarkItem;
+  } | null>(null);
   const [moveIds, setMoveIds] = useState<readonly string[] | null>(null);
   const [folderRequest, setFolderRequest] = useState<FolderActionRequest | null>(
     null,
@@ -531,6 +542,39 @@ export function App() {
   };
 
   /**
+   * Summarize (spec FR10): resolves the active tab inside this click handler
+   * (the `activeTab` grant), then opens `SummaryDialog` which sends the
+   * explicit LLM_SUMMARIZE intent. A missing/inactive tab is a toast; the
+   * dialog itself reports gate/verify outcomes.
+   */
+  const handleSummarizeItem = async (item: BookmarkItem): Promise<void> => {
+    try {
+      const query = chrome.tabs?.query;
+      const tabs =
+        query === undefined
+          ? []
+          : await query.call(chrome.tabs, {
+              active: true,
+              currentWindow: true,
+            });
+      const tabId = tabs[0]?.id;
+      if (tabId === undefined) {
+        reportToast({
+          message: "No active tab to summarize — open the page first.",
+          error: true,
+        });
+        return;
+      }
+      setSummarizeTarget({ tabId, item });
+    } catch {
+      reportToast({
+        message: "Could not reach the active tab — nothing was sent.",
+        error: true,
+      });
+    }
+  };
+
+  /**
    * P4.T3 row action: one ANALYZE_BOOKMARK intent for this bookmark — the
    * worker runs the decision pipeline and persists any suggestions; the
    * reply (suggestion count, a quiet blocklist skip, or the redacted
@@ -578,6 +622,12 @@ export function App() {
       label: "Analyze",
       disabled: false,
       onSelect: () => void handleAnalyzeItem(item),
+    },
+    {
+      key: "summarize",
+      label: "Summarize…",
+      disabled: item.isManaged,
+      onSelect: () => void handleSummarizeItem(item),
     },
     {
       key: "delete",
@@ -884,6 +934,17 @@ export function App() {
           tree={tree}
           meta={editTarget === null ? undefined : metaById.get(editTarget.id)}
           tagNameByKey={tagNameByKey}
+        />
+        <SummaryDialog
+          open={summarizeTarget !== null}
+          tabId={summarizeTarget?.tabId ?? 0}
+          bookmarkId={summarizeTarget?.item.id ?? ""}
+          bookmarkTitle={
+            summarizeTarget === null
+              ? ""
+              : itemLabel(summarizeTarget.item)
+          }
+          onClose={() => setSummarizeTarget(null)}
         />
         <MoveToDialog
           open={moveIds !== null}
