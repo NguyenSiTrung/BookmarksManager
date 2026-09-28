@@ -29,10 +29,17 @@ describe("extension scaffold", () => {
     ]);
   });
 
-  it("declares only the initial host patterns", () => {
+  it("declares only capability-level optional host patterns", () => {
+    // The broad https/loopback patterns are only a *capability*: the user
+    // grants the exact configured origin at runtime, and the egress gate
+    // re-checks origin + consent before any request (spec FR2.1).
     expect(manifest?.optional_host_permissions).toEqual([
       "https://api.typesafe.ai/*",
       "https://openrouter.ai/*",
+      "https://*/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*",
+      "http://[::1]/*",
     ]);
   });
 
