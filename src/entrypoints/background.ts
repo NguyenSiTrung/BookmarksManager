@@ -45,6 +45,8 @@ import {
 import { handleLlmProviderMessage } from "../messages/llm-provider";
 import { handleLlmFeatureMessage } from "../messages/llm-features";
 import { handleSummarizeMessage } from "../messages/summaries";
+import { handleRestructureMessage } from "../messages/restructure";
+import { createRestructureAssigner } from "../restructure/assign";
 import { handleProviderMessage } from "../messages/provider";
 import { PRESETS } from "../net/presets";
 import {
@@ -252,11 +254,25 @@ async function resolveWorkSet(
  * mandatory: a `library_scan` fails closed without it, so leaving it out
  * would silently skip the FR7 pair phase.
  */
-async function buildRunner(provider: ActiveProvider): Promise<JobRunner> {
+async function buildRunner(
+  provider: ActiveProvider,
+  kind: Job["kind"],
+): Promise<JobRunner> {
   const [context, userBlocklist] = await Promise.all([
     loadAnalysisContext(),
     readBlocklist(),
   ]);
+  // Restructure jobs assign proposed folders via Jev (FR8); everything else
+  // keeps the analyze/scan pipeline.
+  if (kind === "restructure") {
+    return new JobRunner({
+      analyze: createRestructureAssigner({
+        preset: provider.preset,
+        model: provider.model,
+        userBlocklist,
+      }),
+    });
+  }
   return new JobRunner({
     analyze: createPipelineAnalyzer({
       context,
@@ -294,7 +310,7 @@ export async function runPersistedJob(jobId: string): Promise<void> {
   const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
   if (bookmarks.length === 0) return;
   try {
-    const runner = await buildRunner(provider);
+    const runner = await buildRunner(provider, job.kind);
     await runner.run(jobId, { bookmarks });
   } catch (error) {
     if (!(error instanceof JobRunnerError)) throw error;
@@ -557,9 +573,17 @@ export default defineBackground(() => {
                     sendResponse(summaryResponse);
                     return;
                   }
-                  void handleProviderMessage(message, sender).then(
-                    sendResponse,
-                  );
+                  void handleRestructureMessage(message, sender, {
+                    runJob: runPersistedJob,
+                  }).then((restructureResponse) => {
+                    if (restructureResponse !== undefined) {
+                      sendResponse(restructureResponse);
+                      return;
+                    }
+                    void handleProviderMessage(message, sender).then(
+                      sendResponse,
+                    );
+                  });
                 },
               );
             },

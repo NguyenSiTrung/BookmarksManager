@@ -32,6 +32,11 @@ import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
  *                   an empty bookmark list; the shell renders `ReviewView`
  *                   in place of `BookmarkList`, the same swap `duplicates`
  *                   makes.
+ *  - `restructure` — the LLM restructure workflow (P5): propose → assign
+ *                   → preview → apply. Its rows are the job's diff, not
+ *                   bookmarks, so it resolves to an empty bookmark list and
+ *                   the shell renders `RestructureView` in place of
+ *                   `BookmarkList` — the same swap `review` makes.
  *  - `recent`     — all bookmarks sorted by `dateAdded` descending, capped
  *                   at {@link RECENT_VIEW_LIMIT}.
  *  - `search`     — results of `runQuery` over the whole library for the
@@ -50,6 +55,7 @@ export type SidePanelView =
   | { kind: "untagged" }
   | { kind: "duplicates" }
   | { kind: "review" }
+  | { kind: "restructure" }
   | { kind: "recent" }
   | { kind: "search"; query: string };
 
@@ -188,6 +194,11 @@ export function resolveView(
       // resolve. Empty also means the shared selection empties, which keeps
       // the bookmark bulk bar out of the review pane.
       return [];
+    case "restructure":
+      // The restructure pane renders `RestructureView` — its rows are the
+      // job's diff, not bookmarks — so there is no bookmark list to
+      // resolve. Empty also keeps the bookmark bulk bar out of the pane.
+      return [];
     case "recent": {
       return [...tree.bookmarks.values()]
         .sort(
@@ -242,6 +253,8 @@ export function viewTitle(
       return "Duplicates";
     case "review":
       return "Review suggestions";
+    case "restructure":
+      return "Restructure library";
     case "recent":
       return "Recently saved";
     case "search": {

@@ -1,0 +1,445 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
+import { RestructureMessageResult } from "../../messages/restructure";
+import type { Job } from "../../schemas/job";
+import type { RestructureDiff, DiffRow } from "../../restructure/diff";
+import { cn } from "../../ui/lib/cn";
+import { useToast } from "./UndoToast";
+
+/**
+ * The restructure workflow pane (spec FR8): propose → assign → preview →
+ * confirm → apply → undo. Every intent is a `RESTRUCTURE_*` message to the
+ * worker; replies are validated by `RestructureMessageResult.safeParse`.
+ *
+ * Design rules:
+ *
+ * - **Messages out, polling in.** The view holds no Dexie handles — it asks
+ *   `RESTRUCTURE_STATUS` for the latest restructure job on mount and again
+ *   every second while a job is `pending`/`running` (the worker may die
+ *   mid-run; polling also covers the resume path). A terminal job stops the
+ *   poll.
+ * - **Confidence is never color-only.** Each diff row carries a text chip
+ *   (`High`/`Low`/`Unresolved`) in addition to shading, so the confidence
+ *   signal survives monochrome and screen readers.
+ * - **Apply needs two clicks.** `RESTRUCTURE_CONFIRM` fires only after an
+ *   explicit destructive confirmation — the first click arms, the second
+ *   confirms. A plan NEVER applies on proposal or on job completion alone
+ *   (spec: "plans never auto-apply").
+ * - **Unresolved stays visible.** Rows Jev left unresolved (low confidence
+ *   or "keep") render in their own section and are excluded from the apply —
+ *   the user can leave them in place or re-run later.
+ * - **Worker restart is a state, not an error.** A `running` job whose poll
+ *   stops changing is still shown as running; `resumeJobs` picks it up on
+ *   the next worker start and the next poll reflects the catch-up.
+ */
+
+declare const chrome: {
+  runtime?: {
+    getURL?(path: string): string;
+    sendMessage?(message: unknown): Promise<unknown>;
+  };
+};
+
+async function send(message: unknown): Promise<RestructureMessageResult> {
+  const runtime = chrome.runtime;
+  if (runtime?.sendMessage === undefined) {
+    return { ok: false, code: "internal_error", message: "Messaging unavailable." };
+  }
+  const raw = await runtime.sendMessage(message);
+  const parsed = RestructureMessageResult.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: "internal_error",
+      message: "The worker returned an unreadable reply.",
+    };
+  }
+  return parsed.data;
+}
+
+type Phase =
+  | { kind: "idle" }
+  | { kind: "starting" }
+  | { kind: "confirm_cost"; providerId: string; destinationOrigin: string }
+  | { kind: "active"; job: Job; diff?: RestructureDiff }
+  | { kind: "arm_apply"; job: Job; diff: RestructureDiff }
+  | { kind: "applied"; moved: number }
+  | { kind: "error"; message: string };
+
+const POLL_MS = 1_000;
+
+function confidenceLabel(row: DiffRow): string {
+  if (row.status === "unresolved") return "Unresolved";
+  if (row.status === "stale") return "Stale";
+  const c = row.confidence;
+  return c !== null && c >= 0.75 ? "High" : "Low";
+}
+
+function DiffList(props: { diff: RestructureDiff }) {
+  const resolved = props.diff.rows.filter((r) => r.status === "resolved");
+  const unresolved = props.diff.rows.filter((r) => r.status !== "resolved");
+  return (
+    <div className="space-y-3">
+      <section aria-label="Proposed moves">
+        <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+          Moves ({resolved.length})
+        </h3>
+        {resolved.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No moves proposed.</p>
+        ) : (
+          <ul className="space-y-1">
+            {resolved.map((row) => (
+              <li
+                key={row.bookmarkId}
+                tabIndex={0}
+                className={cn(
+                  "rounded-sm border border-border px-2 py-1 text-xs",
+                  "outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                <span className="block truncate font-medium">{row.title}</span>
+                <span className="block text-muted-foreground">
+                  {row.fromPath} → {row.toPath}
+                </span>
+                <span
+                  aria-label={`Confidence: ${confidenceLabel(row)}`}
+                  className={cn(
+                    "mt-0.5 inline-block rounded-sm px-1 py-0.5 text-[10px]",
+                    confidenceLabel(row) === "High"
+                      ? "bg-primary/15 text-primary"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {confidenceLabel(row)} confidence
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {unresolved.length > 0 && (
+        <section aria-label="Unresolved and stale">
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">
+            Left in place ({unresolved.length})
+          </h3>
+          <ul className="space-y-1">
+            {unresolved.map((row) => (
+              <li
+                key={row.bookmarkId}
+                tabIndex={0}
+                className={cn(
+                  "rounded-sm border border-dashed border-border px-2 py-1",
+                  "text-xs outline-hidden focus-visible:ring-2",
+                  "focus-visible:ring-ring",
+                )}
+              >
+                <span className="block truncate">{row.title}</span>
+                <span className="text-muted-foreground">
+                  {row.status === "stale"
+                    ? `Stale — ${row.fromPath}`
+                    : `${row.fromPath} (kept)`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+export function RestructureView(props: { className?: string }) {
+  const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [error, setError] = useState<string | null>(null);
+  const { showToast } = useToast();
+  const mounted = useRef(true);
+
+  const refresh = useCallback(async () => {
+    const reply = await send({ type: "RESTRUCTURE_STATUS" });
+    if (!mounted.current) return;
+    if (!reply.ok) {
+      if (reply.code === "not_found") setPhase({ kind: "idle" });
+      return; // transient read failures just retry on the next poll
+    }
+    if (reply.code === "job_state") {
+      const { job, diff } = reply.result;
+      setPhase((current) =>
+        // Don't tear down the destructive-confirm arm on a background poll.
+        current.kind === "arm_apply"
+          ? current
+          : { kind: "active", job, ...(diff !== undefined ? { diff } : {}) },
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    // Deferred out of the effect body — the rule forbids a synchronous
+    // setState chain; the microtask keeps mount-order identical.
+    queueMicrotask(() => void refresh());
+    const timer = setInterval(() => {
+      setPhase((current) => {
+        if (current.kind === "active") {
+          const status = current.job.status;
+          if (status === "pending" || status === "running") {
+            void refresh();
+          }
+        }
+        return current;
+      });
+    }, POLL_MS);
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+    };
+  }, [refresh]);
+
+  const start = async (unknownCostConfirmed?: boolean) => {
+    setError(null);
+    setPhase({ kind: "starting" });
+    const reply = await send({
+      type: "RESTRUCTURE_START",
+      providerId: "active",
+      ...(unknownCostConfirmed === true ? { unknownCostConfirmed } : {}),
+    });
+    if (!reply.ok) {
+      if (reply.code === "confirmation_required" && reply.destinationOrigin !== undefined) {
+        setPhase({
+          kind: "confirm_cost",
+          providerId: "active",
+          destinationOrigin: reply.destinationOrigin,
+        });
+        return;
+      }
+      setPhase({ kind: "error", message: reply.message });
+      return;
+    }
+    await refresh();
+  };
+
+  const intent = async (
+    message: { type: string; jobId?: string },
+    onError: (m: string) => void = setError,
+  ) => {
+    setError(null);
+    const reply = await send(message);
+    if (!reply.ok) {
+      onError(reply.message);
+      return;
+    }
+    await refresh();
+  };
+
+  const confirmApply = async (job: Job, diff: RestructureDiff) => {
+    const reply = await send({ type: "RESTRUCTURE_CONFIRM", jobId: job.id });
+    if (!reply.ok) {
+      setPhase({ kind: "active", job, diff });
+      setError(reply.message);
+      return;
+    }
+    if (reply.code === "applied") {
+      setPhase({ kind: "applied", moved: reply.moved });
+      // `undoable` arms the shell toast's Undo — it calls `undoLatest`,
+      // which dispatches to the restructure restore (moves back + created
+      // empty folders removed). No custom callback needed.
+      showToast({
+        message: `Restructure applied — ${reply.moved} bookmark${reply.moved === 1 ? "" : "s"} moved.`,
+        undoable: true,
+      });
+      return;
+    }
+    await refresh();
+  };
+
+  const job = phase.kind === "active" || phase.kind === "arm_apply" ? phase.job : null;
+  const running = job !== null && (job.status === "pending" || job.status === "running");
+  const progress = job?.progress;
+  const pct =
+    progress !== undefined && progress.totalBatches > 0
+      ? Math.round((progress.committedBatches / progress.totalBatches) * 100)
+      : 0;
+
+  return (
+    <div
+      className={cn("flex flex-col gap-3 overflow-y-auto p-3", props.className)}
+      aria-label="Restructure library"
+      // Focus lands here when the pane opens; Escape returns to idle only
+      // when nothing destructive is armed.
+      onKeyDown={(event: ReactKeyboardEvent) => {
+        if (event.key === "Escape" && phase.kind === "arm_apply") {
+          setPhase({ kind: "active", job: phase.job, diff: phase.diff });
+        }
+      }}
+    >
+      <p className="text-xs text-muted-foreground">
+        Propose a new folder layout with the configured LLM provider. Every
+        bookmark is assigned by Jev; nothing moves until you confirm.
+      </p>
+      {error !== null && (
+        <p role="alert" className="rounded-sm border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive-foreground">
+          {error}
+        </p>
+      )}
+
+      {phase.kind === "idle" && (
+        <button
+          type="button"
+          onClick={() => void start()}
+          className="w-fit rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Propose a layout…
+        </button>
+      )}
+      {phase.kind === "starting" && (
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          Asking the provider for a layout…
+        </p>
+      )}
+      {phase.kind === "error" && (
+        <div className="space-y-2">
+          <p className="text-xs text-destructive-foreground">{phase.message}</p>
+          <button
+            type="button"
+            onClick={() => void start()}
+            className="rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {job !== null && (
+        <section aria-label="Assignment progress" className="space-y-2">
+          <div
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Assignment progress"
+            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          >
+            <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
+          </div>
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            {job.status === "completed"
+              ? "Assignments ready — review the proposed moves."
+              : job.status === "paused"
+                ? "Paused."
+                : job.status === "failed"
+                  ? "The job failed."
+                  : `Assigning… ${progress?.committedBatches ?? 0}/${progress?.totalBatches ?? "?"} batches`}
+          </p>
+          {running && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  void intent({ type: "RESTRUCTURE_PAUSE", jobId: job.id })
+                }
+                className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Pause
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void intent({ type: "RESTRUCTURE_CANCEL", jobId: job.id })
+                }
+                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {job.status === "paused" && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  void intent({ type: "RESTRUCTURE_RESUME", jobId: job.id })
+                }
+                className="rounded-sm bg-primary px-2 py-1 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Resume
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void intent({ type: "RESTRUCTURE_CANCEL", jobId: job.id })
+                }
+                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {phase.kind === "active" && phase.diff !== undefined && (
+        <>
+          <DiffList diff={phase.diff} />
+          <button
+            type="button"
+            onClick={() =>
+              setPhase({ kind: "arm_apply", job: phase.job, diff: phase.diff! })
+            }
+            className="w-fit rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Apply this layout…
+          </button>
+        </>
+      )}
+      {phase.kind === "arm_apply" && (
+        <section
+          aria-label="Confirm apply"
+          className="space-y-2 rounded-sm border border-destructive/50 p-2"
+        >
+          <p className="text-xs">
+            Apply moves{" "}
+            {phase.diff.rows.filter((r) => r.status === "resolved").length}{" "}
+            bookmarks into the proposed folders? This creates new folders in
+            your library.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              // Autofocus keeps keyboard flow: confirm lands on focus.
+              autoFocus
+              onClick={() => void confirmApply(phase.job, phase.diff)}
+              className="rounded-sm bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Yes, apply
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                setPhase({ kind: "active", job: phase.job, diff: phase.diff })
+              }
+              className="rounded-sm border border-border px-3 py-1.5 text-xs outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Keep looking
+            </button>
+          </div>
+        </section>
+      )}
+      {phase.kind === "applied" && (
+        <p className="text-xs" aria-live="polite">
+          Applied — {phase.moved} bookmark{phase.moved === 1 ? "" : "s"} moved.
+          Use Undo to roll it back.
+        </p>
+      )}
+
+      <CostConfirmationDialog
+        open={phase.kind === "confirm_cost"}
+        featureLabel="restructure proposal"
+        destinationOrigin={
+          phase.kind === "confirm_cost" ? phase.destinationOrigin : ""
+        }
+        onCancel={() => setPhase({ kind: "idle" })}
+        onConfirm={() => void start(true)}
+      />
+    </div>
+  );
+}

@@ -24,6 +24,7 @@ import {
 import { BulkBar, deleteNodesWithUndo, deleteResultMessage } from "./BulkBar";
 import { DndProvider } from "./dnd";
 import { EditDialog } from "./EditDialog";
+import { RestructureView } from "./RestructureView";
 import { SummaryDialog } from "./SummaryDialog";
 import {
   FolderActionDialog,
@@ -127,6 +128,7 @@ const FIXED_VIEWS: { kind: SidePanelView["kind"]; label: string }[] = [
   { kind: "untagged", label: "Untagged" },
   { kind: "duplicates", label: "Duplicates" },
   { kind: "review", label: "Review" },
+  { kind: "restructure", label: "Restructure" },
 ];
 
 const navButtonClass =
@@ -165,6 +167,8 @@ function makeView(kind: SidePanelView["kind"]): SidePanelView {
       return { kind: "duplicates" };
     case "review":
       return { kind: "review" };
+    case "restructure":
+      return { kind: "restructure" };
     default:
       return { kind: "all" };
   }
@@ -902,6 +906,10 @@ export function App() {
                     onApplied={armDecisionRevert}
                     className="flex-1"
                   />
+                ) : activeView.kind === "restructure" ? (
+                  // The restructure workflow replaces BookmarkList the same
+                  // way ReviewView does — its rows are the job's diff.
+                  <RestructureView className="flex-1" />
                 ) : (
                   <BookmarkList
                     items={items}
