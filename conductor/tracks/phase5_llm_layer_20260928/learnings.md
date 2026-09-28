@@ -413,3 +413,20 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
 - `@testing-library/user-event` is NOT installed — use `fireEvent`.
 - No jest-dom matchers — assert `el.textContent`/`.toContain`, not
   toHaveTextContent/toBeInTheDocument.
+- `Job.restructure` (v4 job schema, optional): `{proposal, assignments[]}` —
+  the vetted proposal travels on the row so a resume never re-egresses the
+  LLM call; `mergeRestructureAssignments` merges by bookmarkId (last wins).
+  `jobChecks("restructure")` → `[]`; the runner drives an injected
+  JobAnalyzeFn — `createRestructureAssigner` adapts `assignProposedFolder`.
+- Provider records' `providerId` MUST equal `resolveLlmDestination`'s id:
+  `preset:<preset>` or `custom:<baseUrl>` — an arbitrary id fails the gate's
+  `invalid_provider` destination check.
+- `makeOpenAiServer({completion})` takes a `(body) => completion` callback,
+  not a payload; `requests[].body` is already parsed JSON.
+- `.example` is an intranet TLD → `isSensitiveUrl` blocks it in tests; use
+  real-looking domains (a-site.io). `accounts.mybank.com` is NOT builtin —
+  `chase.com` is.
+- Credential tests need a `chrome.storage.local` shim (get/set/remove over a
+  Map) AND `permissions.contains` — both stubbed via `vi.stubGlobal`.
+- `ASSIGNMENT_CONFIDENCE_THRESHOLD = 0.5`: below it (or `none`/unknown key)
+  → `{proposedPath: null, confidence: null}` = unresolved.

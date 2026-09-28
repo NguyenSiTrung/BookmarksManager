@@ -326,7 +326,7 @@ reservations protect every egress path.
     empty libraries, and sensitive-site exclusion.
   - Verify: `npx vitest run tests/unit/restructure-synopsis.test.ts`.
 
-- [ ] Task 2: LLM proposal and resumable Jev assignment
+- [x] Task 2: LLM proposal and resumable Jev assignment
   - Files: `src/restructure/propose.ts`, `src/restructure/assign.ts`,
     `src/jev/tasks/restructure.ts`, `src/schemas/job.ts`,
     `src/jobs/queue.ts`, `src/jobs/runner.ts`,
