@@ -54,14 +54,8 @@ export function buildLibrarySynopsis(
   const domainsCap = limits.domains ?? RESTRUCTURE_LIMITS.domains;
   const titleCap = limits.titleLength ?? RESTRUCTURE_LIMITS.titleLength;
 
-  let metaById: ReadonlyMap<string, BookmarkMeta>;
-  if (metas instanceof Map) {
-    metaById = metas;
-  } else if (Array.isArray(metas)) {
-    metaById = new Map(metas.map((m: BookmarkMeta) => [m.id, m]));
-  } else {
-    metaById = metas;
-  }
+  const metaById: ReadonlyMap<string, BookmarkMeta> =
+    "get" in metas ? metas : new Map(metas.map((m) => [m.id, m]));
 
   const folderPaths: string[] = [];
   const titlesByFolder = new Map<string, MutableBucket>();

@@ -17,6 +17,7 @@ import {
   createBookmark,
   createFolder,
   moveNode,
+  removeTree as removeTreeForRestore,
   MutationError,
 } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
@@ -342,6 +343,42 @@ async function restoreMoves(
 }
 
 /**
+ * `restructure`: replay the recorded moves back to their original parents —
+ * identical to `bulk_move` — then remove each folder the apply created iff
+ * it still exists, is a folder, and is empty (a folder the user has since
+ * filed into is kept). Removed-first ordering is bottom-up so a parent is
+ * only removed after its created children.
+ */
+async function restoreRestructure(
+  snapshot: UndoSnapshot,
+  ctx: RestoreContext,
+): Promise<void> {
+  await restoreMoves(snapshot, ctx);
+  for (const id of [...(snapshot.createdFolderIds ?? [])].reverse()) {
+    const current = await get(id)
+      .then((found) => found[0])
+      .catch(() => undefined);
+    if (current === undefined) {
+      ctx.restoredIds.push(id); // already gone — nothing to remove
+      continue;
+    }
+    const children = await getChildren(id).catch(() => []);
+    if (children.length > 0) continue; // user filed into it since — keep
+    await apiRemoveOrSkip(id);
+    ctx.restoredIds.push(id);
+  }
+}
+
+async function apiRemoveOrSkip(id: string): Promise<void> {
+  try {
+    await removeTreeForRestore(id);
+  } catch {
+    // Folder already gone or managed — the tree is closer to the
+    // pre-apply state either way; skipping preserves idempotency.
+  }
+}
+
+/**
  * `tag_delete`: restore the definition verbatim — original `createdAt`
  * included — unless an identical-keyed tag was recreated since (the live
  * def wins, no collision). Then re-add ONLY the deleted nameKey to each
@@ -438,6 +475,9 @@ async function runUndoLatest(): Promise<UndoResult> {
         break;
       case "bulk_move":
         await restoreMoves(snapshot, ctx);
+        break;
+      case "restructure":
+        await restoreRestructure(snapshot, ctx);
         break;
       case "tag_delete":
         await restoreTagDelete(snapshot, ctx);

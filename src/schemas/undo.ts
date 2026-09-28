@@ -2,7 +2,13 @@ import { z } from "./z";
 import { BookmarkMeta, TagDef } from "./meta";
 
 /** Operations that write an undo snapshot before mutating the tree/tags. */
-export const UndoKind = z.enum(["delete", "bulk_move", "merge", "tag_delete"]);
+export const UndoKind = z.enum([
+  "delete",
+  "bulk_move",
+  "merge",
+  "tag_delete",
+  "restructure",
+]);
 export type UndoKind = z.infer<typeof UndoKind>;
 
 /**
@@ -51,6 +57,13 @@ export const UndoSnapshot = z
     meta: z.array(UndoMeta),
     tagDef: TagDef.optional(),
     idMap: z.record(z.string(), z.string()).optional(),
+    /**
+     * `restructure` snapshots only: Chrome ids of the folders the apply
+     * created (parents-first order). On undo each is removed iff it is
+     * still a folder and empty — a folder the user has since filed into is
+     * kept.
+     */
+    createdFolderIds: z.array(z.string().min(1)).optional(),
   })
   .superRefine((snapshot, ctx) => {
     if (snapshot.kind === "tag_delete" && snapshot.tagDef === undefined) {

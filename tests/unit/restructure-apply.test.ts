@@ -1,0 +1,225 @@
+import "fake-indexeddb/auto";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "../../src/db/database";
+import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
+import {
+  enqueueJob,
+  mergeRestructureAssignments,
+  setJobStatus,
+} from "../../src/jobs/queue";
+import {
+  applyRestructurePlan,
+  undoRestructurePlan,
+} from "../../src/restructure/apply";
+import { buildRestructureDiff } from "../../src/restructure/diff";
+import type { RestructureProposal } from "../../src/schemas/restructure";
+import { listSnapshots } from "../../src/undo/snapshot";
+
+/**
+ * `buildRestructureDiff` + `applyRestructurePlan` + `undoRestructurePlan`
+ * (spec FR8.6–8.9): the diff marks resolved/unresolved/stale rows in stable
+ * bookmarkId order; the apply revalidates the live tree, creates folders
+ * parents-first (reusing existing same-path folders), moves resolved rows
+ * only, writes one `restructure` undo snapshot, and rolls back on failure.
+ * Undo replays moves and removes now-empty created folders.
+ */
+
+const NOW = "2026-09-28T00:00:00.000Z";
+const now = () => NOW;
+
+let api: FakeBookmarksApi;
+
+const PROPOSAL: RestructureProposal = {
+  folders: [
+    { path: "dev/tools", description: "Developer utilities." },
+    { path: "dev", description: "" },
+    { path: "news", description: "Press." },
+  ],
+};
+
+async function completedJob(
+  bookmarkIds: string[],
+  assignments: Array<{ bookmarkId: string; proposedPath: string | null; confidence: number | null }>,
+) {
+  const job = await enqueueJob({
+    kind: "restructure",
+    bookmarkIds,
+    restructureProposal: PROPOSAL,
+    batchSize: 10,
+    now,
+  });
+  await setJobStatus(job.id, "running", {}, now);
+  await mergeRestructureAssignments(job.id, assignments);
+  return setJobStatus(job.id, "completed", {}, now);
+}
+
+beforeEach(async () => {
+  api = installBookmarksFake({
+    bookmarksBar: [
+      {
+        id: "10",
+        title: "Old",
+        children: [
+          { id: "11", title: "Article A", url: "https://a.io/x" },
+          { id: "12", title: "Article B", url: "https://b.io/y" },
+        ],
+      },
+      { id: "20", title: "News", children: [
+        { id: "21", title: "Daily", url: "https://news.io/" },
+      ]},
+      { id: "30", title: "Loose", url: "https://loose.io/" },
+    ],
+  });
+  await db.delete();
+  await db.open();
+});
+
+afterAll(() => {
+  db.close();
+  vi.unstubAllGlobals();
+});
+
+describe("buildRestructureDiff", () => {
+  it("marks resolved/unresolved/stale rows in stable order", async () => {
+    const job = await completedJob(
+      ["11", "12", "21", "gone"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "12", proposedPath: null, confidence: null },
+        { bookmarkId: "gone", proposedPath: "news", confidence: 0.8 },
+        { bookmarkId: "21", proposedPath: "news", confidence: 0.95 },
+      ],
+    );
+    const tree = await api.getSubTree("1");
+    const diff = buildRestructureDiff(tree, job.restructure!);
+    expect(diff.rows.map((r) => r.bookmarkId)).toEqual([
+      "11",
+      "12",
+      "21",
+      "gone",
+    ]);
+    expect(diff.resolved).toBe(2);
+    expect(diff.unresolved).toBe(1);
+    expect(diff.stale).toBe(1);
+    const byId = Object.fromEntries(diff.rows.map((r) => [r.bookmarkId, r]));
+    expect(byId["11"]).toMatchObject({
+      fromPath: "Bookmarks bar/Old",
+      toPath: "dev/tools",
+      status: "resolved",
+    });
+    expect(byId["21"]).toMatchObject({
+      fromPath: "Bookmarks bar/News",
+      toPath: "news",
+      status: "resolved",
+    });
+  });
+});
+
+describe("applyRestructurePlan", () => {
+  it("creates folders parents-first, reuses existing ones, moves resolved only", async () => {
+    const job = await completedJob(
+      ["11", "12", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "12", proposedPath: null, confidence: null },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.8 },
+      ],
+    );
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(2);
+
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    const tools = dev.children!.find((c) => c.title === "tools")!;
+    // `dev` was created under the bar; `tools` under `dev`; `news` reused the
+    // pre-existing "News" folder? No — case-sensitive path match, so a NEW
+    // lowercase "news" is created.
+    expect(tools.children!.map((c) => c.id)).toEqual(["11"]);
+    expect(dev.children!.map((c) => c.id)).toEqual(["21", tools.id].sort());
+    // Unresolved row untouched — still under "Old".
+    const old = bar[0]!.children!.find((c) => c.title === "Old")!;
+    expect(old.children!.map((c) => c.id)).toEqual(["12"]);
+    // One undo snapshot with the captured pre-move positions + created ids.
+    const snapshots = await listSnapshots();
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]!.kind).toBe("restructure");
+    expect(snapshots[0]!.createdFolderIds).toContain(tools.id);
+  });
+
+  it("rejects a job that is not completed", async () => {
+    const job = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: ["11"],
+      restructureProposal: PROPOSAL,
+      now,
+    });
+    await expect(applyRestructurePlan(job.id)).rejects.toMatchObject({
+      code: "not_ready",
+    });
+  });
+
+  it("rejects a non-restructure job", async () => {
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["11"],
+      now,
+    });
+    await expect(applyRestructurePlan(job.id)).rejects.toMatchObject({
+      code: "invalid_job",
+    });
+  });
+
+  it("rolls back created folders when a move fails", async () => {
+    const job = await completedJob(
+      ["11", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    // Force the second move to fail — the first move + folder creates must
+    // be compensated. Other calls (including the compensating replays) pass
+    // through to the real fake.
+    const originalMove = api.move.bind(api);
+    let calls = 0;
+    const spy = vi.spyOn(api, "move").mockImplementation(async (id, dest) => {
+      calls += 1;
+      if (calls === 2) throw new Error("forced move failure");
+      return originalMove(id, dest);
+    });
+    await expect(applyRestructurePlan(job.id)).rejects.toMatchObject({
+      code: "mutation_failed",
+    });
+    spy.mockRestore();
+    const bar = await api.getSubTree("1");
+    // "dev" (and its children) was rolled back — no leftover created folder.
+    expect(bar[0]!.children!.some((c) => c.title === "dev")).toBe(false);
+    // The first moved bookmark was moved back under "Old".
+    const old = bar[0]!.children!.find((c) => c.title === "Old")!;
+    expect(old.children!.map((c) => c.id)).toContain("11");
+  });
+});
+
+describe("undoRestructurePlan", () => {
+  it("replays moves and removes empty created folders", async () => {
+    const job = await completedJob(
+      ["11", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.8 },
+      ],
+    );
+    await applyRestructurePlan(job.id);
+    const undone = await undoRestructurePlan();
+    expect(undone.ok).toBe(true);
+    const bar = await api.getSubTree("1");
+    // Bookmarks back under "Old" / "News".
+    const old = bar[0]!.children!.find((c) => c.title === "Old")!;
+    const news = bar[0]!.children!.find((c) => c.title === "News")!;
+    expect(old.children!.map((c) => c.id)).toContain("11");
+    expect(news.children!.map((c) => c.id)).toContain("21");
+    // Created folders removed.
+    expect(bar[0]!.children!.some((c) => c.title === "dev")).toBe(false);
+  });
+});

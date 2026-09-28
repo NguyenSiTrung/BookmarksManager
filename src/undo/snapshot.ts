@@ -71,6 +71,8 @@ export interface UndoSnapshotInput {
   meta: readonly UndoMeta[];
   /** Required for `tag_delete` snapshots; absent otherwise. */
   tagDef?: TagDef;
+  /** `restructure` snapshots: folders the apply created, parents-first. */
+  createdFolderIds?: readonly string[];
   createdAt?: string;
 }
 

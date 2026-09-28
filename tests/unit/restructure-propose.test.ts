@@ -121,10 +121,15 @@ describe("proposeLayout", () => {
     ]);
     expect(result.model).toBe("gpt-4o-mini-2024-07-18");
 
-    const [request] = server.requests;
+    const request = server.requests[0];
+    expect(request).toBeDefined();
+    if (request === undefined) throw new Error("no request");
     expect(request.url).toBe(`${LLM_ORIGIN}/v1/chat/completions`);
-    const body = request.body;
-    const user = body.messages.find((m: { role: string }) => m.role === "user");
+    const body = request.body as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const user = body.messages.find((m) => m.role === "user");
+    if (user === undefined) throw new Error("no user message");
     const sentSynopsis = JSON.parse(user.content);
     expect(sentSynopsis).toEqual(SYNOPSIS);
     // No URL, notes, or bookmark id may reach the provider.
