@@ -87,6 +87,11 @@ export interface MetaPatch {
   tags?: readonly string[];
   category?: Category | null;
   notes?: string | null;
+  /**
+   * A Jev-verified page summary (spec FR10). `null` clears; absent leaves
+   * unchanged on merge paths. Written only by the verified summarize flow.
+   */
+  summary?: string | null;
 }
 
 export interface TagCreateOptions {
@@ -111,7 +116,10 @@ export interface RenameTagResult {
   bookmarkCount: number;
 }
 
-type MetaFields = Pick<BookmarkMeta, "tags" | "category" | "notes">;
+type MetaFields = Pick<
+  BookmarkMeta,
+  "tags" | "category" | "notes" | "summary"
+>;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -139,12 +147,13 @@ function normalizeTagKeys(tags: readonly string[]): TagNameKey[] {
   return keys;
 }
 
-/** The lazy-row rule: a row with no tags/category/notes must not exist. */
+/** The lazy-row rule: a row with no tags/category/notes/summary must not exist. */
 function isEmptyMeta(fields: MetaFields): boolean {
   return (
     fields.tags.length === 0 &&
     fields.category === undefined &&
-    (fields.notes === undefined || fields.notes === "")
+    (fields.notes === undefined || fields.notes === "") &&
+    (fields.summary === undefined || fields.summary === "")
   );
 }
 
@@ -170,11 +179,13 @@ async function commitMeta(
 ): Promise<BookmarkMeta | undefined> {
   // An emptied textarea is "no notes", not a one-character-shy payload.
   const notes = fields.notes === "" ? undefined : fields.notes;
+  const summary = fields.summary === "" ? undefined : fields.summary;
   const parsed = BookmarkMeta.safeParse({
     id,
     tags: fields.tags,
     ...(fields.category === undefined ? {} : { category: fields.category }),
     ...(notes === undefined ? {} : { notes }),
+    ...(summary === undefined ? {} : { summary }),
     updatedAt: nowIso(),
   });
   if (!parsed.success) {
@@ -222,7 +233,14 @@ async function rewriteTagRows(
   const updatedAt = nowIso();
   for (const meta of metas) {
     const tags = rewrite(meta.tags);
-    if (isEmptyMeta({ tags, category: meta.category, notes: meta.notes })) {
+    if (
+      isEmptyMeta({
+        tags,
+        category: meta.category,
+        notes: meta.notes,
+        summary: meta.summary,
+      })
+    ) {
       deletes.push(meta.id);
     } else {
       puts.push({ ...meta, tags, updatedAt });
@@ -314,6 +332,7 @@ export async function putMeta(
     tags: normalizeTagKeys(fields.tags ?? []),
     category: fields.category ?? undefined,
     notes: fields.notes ?? undefined,
+    summary: fields.summary ?? undefined,
   });
 }
 
@@ -344,8 +363,27 @@ export async function patchMeta(
         patch.notes === undefined
           ? existing?.notes
           : (patch.notes ?? undefined),
+      summary:
+        patch.summary === undefined
+          ? existing?.summary
+          : (patch.summary ?? undefined),
     });
   });
+}
+
+/**
+ * Persist a Jev-verified page summary for a bookmark (spec FR10.6). The
+ * summary is the ONLY field this writes — callers reach it from the
+ * verified summarize path, never as free text (Jev must answer
+ * "supported" first). `patchMeta` merge keeps the row's other fields;
+ * passing `null` clears. Returns the stored meta, or `undefined` when
+ * clearing emptied the row (lazy-row rule).
+ */
+export async function setBookmarkSummary(
+  id: string,
+  summary: string | null,
+): Promise<BookmarkMeta | undefined> {
+  return patchMeta(id, { summary });
 }
 
 /**

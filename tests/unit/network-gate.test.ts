@@ -812,3 +812,117 @@ async function sendWithTamperedPreset(
     vi.doUnmock("../../src/net/presets");
   }
 }
+
+describe("jev_summary_verify gate", () => {
+  const validState = {
+    bookmark: {
+      title: "T",
+      url: "https://blog.a-site.com/x",
+      domain: "blog.a-site.com",
+    },
+    excerpt: "Page text under verification.",
+    headings: ["H"],
+    summary: "A page summary.",
+  };
+
+  function verifyRequest(state: unknown, model = "jev-latest"): unknown {
+    return {
+      model,
+      state,
+      questions: {
+        verdict: { type: "choice", instructions: "q", criteria: { a: "a", b: "b" } },
+      },
+    };
+  }
+
+  it("is a registered scope — requires consent like any other", async () => {
+    const error = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest(validState),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(NetworkGateError);
+    expect((error as NetworkGateError).code).toBe("no_consent");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown state field (notes) before consent/permission/key reads", async () => {
+    const error = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest({ ...validState, notes: "private" }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a blocklisted bookmark URL even with consent granted", async () => {
+    await grantConsent("jev_summary_verify", "typesafe");
+    const error = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest({
+        ...validState,
+        bookmark: {
+          title: "Mail",
+          url: "https://mail.google.com/",
+          domain: "mail.google.com",
+        },
+      }),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("pins the request model to the allowlisted model argument", async () => {
+    await grantConsent("jev_summary_verify", "typesafe");
+    const error = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest(validState, "other-model"),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("request_not_allowed");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("sends the admitted request and resolves with the raw Response", async () => {
+    await grantConsent("jev_summary_verify", "typesafe");
+    fetchSpy.mockResolvedValue(okResponse());
+    const response = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest(validState),
+    );
+    expect(response.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(
+      (fetchSpy.mock.calls[0]?.[1] as { body: string }).body,
+    );
+    expect(body.state).toEqual(validState);
+    // The sent-log row records the scope as its feature — page-text sends
+    // are auditable separately from jev_decisions.
+    const logs = await db.sentLog.toArray();
+    expect(logs.some((row) => row.feature === "jev_summary_verify")).toBe(
+      true,
+    );
+  });
+
+  it("a jev_decisions grant does NOT cover jev_summary_verify", async () => {
+    await grantConsent("jev_decisions", "typesafe");
+    const error = await sendConsented(
+      "jev_summary_verify",
+      "typesafe",
+      "jev-latest",
+      verifyRequest(validState),
+    ).catch((caught: unknown) => caught);
+    expect((error as NetworkGateError).code).toBe("no_consent");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

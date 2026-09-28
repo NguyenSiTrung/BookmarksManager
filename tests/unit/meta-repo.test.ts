@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../src/db/database";
 import {
   createTag,
+  setBookmarkSummary,
   deleteMetaByIds,
   deleteTag,
   getMeta,
@@ -558,5 +559,65 @@ describe("deleteTag", () => {
     await createTag("Empty");
     expect(await deleteTag("empty")).toBe(0);
     expect(await getTag("empty")).toBeUndefined();
+  });
+});
+
+describe("setBookmarkSummary", () => {
+  it("stores a verified summary on an existing row without touching other fields", async () => {
+    await putMeta("bm-1", { tags: ["Docs"], category: "docs", notes: "kept" });
+    const meta = await setBookmarkSummary("bm-1", "A verified summary.");
+    expect(meta).toMatchObject({
+      id: "bm-1",
+      tags: ["docs"],
+      category: "docs",
+      notes: "kept",
+      summary: "A verified summary.",
+    });
+    expect((await getMeta("bm-1"))?.summary).toBe("A verified summary.");
+  });
+
+  it("lazily creates a row when the bookmark has no other metadata", async () => {
+    const meta = await setBookmarkSummary("bm-new", "Verified.");
+    expect(meta?.summary).toBe("Verified.");
+    expect((await getMeta("bm-new"))?.summary).toBe("Verified.");
+  });
+
+  it("rejects a summary over 2,000 chars and a non-string", async () => {
+    await putMeta("bm-1", { tags: ["x"] });
+    await expect(
+      setBookmarkSummary("bm-1", "s".repeat(2001)),
+    ).rejects.toBeInstanceOf(MetaRepoError);
+    await expect(
+      setBookmarkSummary("bm-1", 42 as unknown as string),
+    ).rejects.toBeInstanceOf(MetaRepoError);
+  });
+
+  it("null clears the summary without deleting a row that still has data", async () => {
+    await putMeta("bm-1", { tags: ["x"] });
+    await setBookmarkSummary("bm-1", "Verified.");
+    const meta = await setBookmarkSummary("bm-1", null);
+    expect(meta?.summary).toBeUndefined();
+    expect(meta?.tags).toEqual(["x"]);
+  });
+
+  it("keeps the row when a stored summary survives a tag rewrite", async () => {
+    await putMeta("bm-1", { summary: "kept" });
+    await expect(getMeta("bm-1")).resolves.toMatchObject({
+      summary: "kept",
+    });
+    // A summary-only row is data — the lazy-row rule must not delete it.
+    await deleteMetaByIds(["other"]);
+    expect((await getMeta("bm-1"))?.summary).toBe("kept");
+  });
+
+  it("parses pre-Phase-4 rows that have no summary field", async () => {
+    // Stored before `summary` existed — strict-parse must still accept.
+    await putMeta("bm-1", { tags: ["x"] });
+    const raw = await db.bookmarkMeta.get("bm-1");
+    expect(raw).toBeDefined();
+    expect("summary" in (raw as object)).toBe(false);
+    const meta = await getMeta("bm-1");
+    expect(meta).toBeDefined();
+    expect(meta?.summary).toBeUndefined();
   });
 });

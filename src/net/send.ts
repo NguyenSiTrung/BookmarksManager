@@ -3,6 +3,7 @@ import { readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
 import { DecisionState } from "../schemas/decision-state";
+import { SummaryVerificationState } from "../schemas/summary-verification";
 import type { PresetId } from "../schemas/provider";
 import { readProviderKey } from "../security/keys";
 import { resolvePreset, type PresetDestination } from "./presets";
@@ -166,12 +167,41 @@ function admitsDecisionState(
 }
 
 /**
+ * The `jev_summary_verify` request guard (spec FR10): strict-parse the
+ * request's `state` against the closed `SummaryVerificationState` schema —
+ * the only state shape page text may travel in — refusing unknown fields
+ * (notes can never arrive here) and any uncleaned or blocklisted
+ * `bookmark.url`. Model pin identical to `jev_decisions`. Fails closed,
+ * before consent/permission/key reads.
+ */
+function admitsSummaryVerifyState(
+  request: unknown,
+  model: string,
+  userBlocklist: readonly string[],
+): boolean {
+  if (typeof request !== "object" || request === null) {
+    return false;
+  }
+  const candidate = request as { model?: unknown; state?: unknown };
+  if (candidate.model !== model) {
+    return false;
+  }
+  const parsed = SummaryVerificationState.safeParse(candidate.state);
+  if (!parsed.success) {
+    return false;
+  }
+  return !isSensitiveUrl(parsed.data.bookmark.url, userBlocklist);
+}
+
+/**
  * The frozen scope registry. `jev_test` admits exactly one payload: a
  * request deep-equal to `makeSyntheticRequest(model)`, so no caller-supplied
  * state, questions, or headers can leave under test consent. `jev_decisions`
  * admits only a request whose `model` equals the allowlist-checked `model`
  * argument and whose `state` strict-parses as a `DecisionState` with every
  * URL already cleaned and off the sensitive-site blocklist.
+ * `jev_summary_verify` admits the same envelope whose state strict-parses
+ * as a `SummaryVerificationState` (spec FR10's page-text-carrying request).
  */
 const SCOPES = Object.freeze({
   jev_test: Object.freeze({
@@ -184,7 +214,14 @@ const SCOPES = Object.freeze({
     scope: "jev_decisions" as ConsentScope,
     admits: admitsDecisionState,
   } satisfies ScopeRegistration),
-} satisfies Record<"jev_test" | "jev_decisions", ScopeRegistration>);
+  jev_summary_verify: Object.freeze({
+    scope: "jev_summary_verify" as ConsentScope,
+    admits: admitsSummaryVerifyState,
+  } satisfies ScopeRegistration),
+} satisfies Record<
+  "jev_test" | "jev_decisions" | "jev_summary_verify",
+  ScopeRegistration
+>);
 
 function resolveScope(scope: string): ScopeRegistration {
   const entry = (SCOPES as Record<string, ScopeRegistration | undefined>)[

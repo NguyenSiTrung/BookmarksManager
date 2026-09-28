@@ -64,6 +64,12 @@ export const BookmarkMeta = z.strictObject({
   tags: z.array(TagNameKey).default([]),
   category: Category.optional(),
   notes: z.string().max(10_000).optional(),
+  /**
+   * A Jev-verified page summary (spec FR10.8). Optional and absent on
+   * pre-Phase-4 rows — backward compatible. Written only by the verified
+   * summarize path; ≤2,000 chars matching `SUMMARY_VERIFY_LIMITS.summary`.
+   */
+  summary: z.string().min(1).max(2_000).optional(),
   updatedAt: z.iso.datetime(),
 });
 export type BookmarkMeta = z.infer<typeof BookmarkMeta>;
