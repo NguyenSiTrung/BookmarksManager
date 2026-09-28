@@ -76,8 +76,9 @@ yet installed are marked **[planned]**.
   `src/ui/components/query-input.tsx` combobox, `src/sync/tabs.ts`
   (`openBookmarkUrl` typed open slice), and `registerOmnibox()` in
   `src/entrypoints/background.ts`.
-- **[planned]** `@mozilla/readability` (opt-in page excerpt) — not yet
-  installed.
+- `@mozilla/readability` 0.6 — opt-in page excerpt extraction, used by
+  `src/extract/readability.ts` under the click-triggered
+  `entrypoints/extract.ts` content script (Phase 5).
 
 ## AI and Networking
 

@@ -1,37 +1,10 @@
 {
-  "last_refresh": "2026-09-27",
-  "previous_marker": "2026-09-26",
+  "lastRefresh": "2026-09-28T09:55:00Z",
   "scope": "all",
-  "files_updated": [
-    "patterns.md",
-    "refresh_state.json"
-  ],
-  "drift_resolved": {
-    "product.md": "no drift — Phase 3 delivery entry already written at archive (2026-09-27)",
-    "tech-stack.md": "no drift — all dependency versions verified against node_modules; src/jev (8 files) and src/net (3 files) module maps match; [planned] items still absent",
-    "workflow.md": "no drift — gate sequence still matches package.json scripts and .github/workflows/ci.yml",
-    "tracks.md": "no drift — all 4 tracks archived, none active",
-    "patterns.md": "phase3 learnings consolidated — 10 entries elevated (2 cross-track merges + 8 new); the phase3 'Elevated' section already carried 10 bullets from archive time"
-  },
-  "beads": {
-    "enabled": true,
-    "open_issues": 10,
-    "drift": "none — no active tracks; 10 open issues are P2/P3 backlog follow-ups, incl. BookmarksManager-4fb (chrome.permissions.request e2e gap) filed at phase3 close",
-    "note": "bd warns 'beads.role not configured (GH#2950)' — cosmetic, not blocking"
-  },
-  "learnings_consolidation": {
-    "tracks_scanned": [
-      "phase0_foundation_20260925",
-      "phase1_core_manager_20260926",
-      "phase2_search_20260926",
-      "phase3_jev_client_20260927"
-    ],
-    "new_patterns_elevated": 10,
-    "note": "phase3 was the only unconsolidated track; recurring 'pure domain layer' (search+jev) and 'non-creating IndexedDB opens' (phase1+phase3) patterns merged cross-track"
-  },
-  "untracked_files": [
-    ".beads/issues.jsonl",
-    "conductor/*.md.bak"
-  ],
-  "active_tracks": []
+  "changes": [
+    "tech-stack.md: @mozilla/readability [planned] -> installed (0.6; src/extract/readability.ts, Phase 5)",
+    "PROJECT_PLAN.md §6.3: removed @mozilla/readability from not-installed list",
+    "tracks.md: phase5_llm_layer_20260928 archived (done at archive step)",
+    "Beads drift: none — open issues are filed follow-ups only"
+  ]
 }
