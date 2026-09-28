@@ -6,10 +6,12 @@ import {
   CONSENT_VERSION,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
+import type { BudgetReservation } from "../../src/llm/budget";
 import {
   LlmGateError,
   sendLlmConsented,
   settleLlmUsage,
+  STALE_RESERVATION_TTL_MS,
 } from "../../src/net/llm-send";
 import { makeOpenAiServer } from "../mock-servers/openai";
 import { saveLlmProvider } from "../../src/llm/settings";
@@ -473,5 +475,131 @@ describe("sendLlmConsented happy path", () => {
     expect(req.url).toBe("http://localhost:11434/chat/completions");
     expect(req.headers.Authorization).toBeUndefined();
     expect(req.headers["api-key"]).toBeUndefined();
+  });
+
+  it("releases a stale active reservation inside the reservation transaction", async () => {
+    // An `active` row older than the TTL can only be orphaned by a request
+    // killed mid-flight — the next send releases it instead of letting it
+    // charge the cap forever.
+    const stale: BudgetReservation = {
+      id: "stale-1",
+      providerId: PROVIDER_ID,
+      model: MODEL,
+      month: "2026-09",
+      reservedUsd: 0.5,
+      maxInputTokens: 1,
+      maxOutputTokens: 1,
+      kind: "manual",
+      status: "active",
+      createdAt: new Date(
+        NOW.getTime() - STALE_RESERVATION_TTL_MS - 1,
+      ).toISOString(),
+    };
+    await db.llmReservations.put(stale);
+
+    const { reservation } = await send().result;
+    expect(reservation.status).toBe("active");
+    expect((await db.llmReservations.get("stale-1"))?.status).toBe(
+      "released",
+    );
+  });
+
+  it("does NOT release a fresh active reservation — it still charges the cap", async () => {
+    // A priced provider so the new request's own reservation carries a
+    // committed amount against the cap.
+    const custom = customProviderRecord({ monthlyBudgetUsd: 5 });
+    await saveLlmProvider(custom);
+    await grantConsentAtOrigin("llm_explain", "https://llm.example.com");
+    await saveCredential(custom.providerId, "k");
+    const fresh: BudgetReservation = {
+      id: "fresh-1",
+      providerId: custom.providerId,
+      model: "llama-3",
+      month: "2026-09",
+      reservedUsd: 999,
+      maxInputTokens: 1,
+      maxOutputTokens: 1,
+      kind: "manual",
+      status: "active",
+      createdAt: NOW.toISOString(),
+    };
+    await db.llmReservations.put(fresh);
+
+    const server = makeOpenAiServer();
+    const result = sendLlmConsented(
+      {
+        providerId: custom.providerId,
+        scope: "llm_explain",
+        request: {
+          model: "llama-3",
+          messages: [{ role: "user", content: "x" }],
+        },
+        maxInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: "manual",
+      },
+      { now: () => NOW, fetchImpl: server.fetch },
+    );
+    await expectGateBlock(result, "budget_exceeded");
+    expect(server.requests).toHaveLength(0);
+    // The fresh reservation stays active — only stale ones are swept.
+    expect((await db.llmReservations.get("fresh-1"))?.status).toBe(
+      "active",
+    );
+  });
+
+  it("serializes concurrent sends: the second sees the first's reservation", async () => {
+    // The cap admits one request at these bounds but not two — under a
+    // non-transactional reserve both could pass the check against each
+    // other's pre-reservation state (TOCTOU). With the whole reserve inside
+    // one rw transaction, IndexedDB serializes them and exactly one wins.
+    const custom = customProviderRecord({
+      monthlyBudgetUsd: 0.4,
+      provider: {
+        kind: "custom",
+        baseUrl: "https://llm.example.com/v1",
+        model: "llama-3",
+        auth: "api-key",
+        pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      },
+    });
+    await saveLlmProvider(custom);
+    await grantConsentAtOrigin("llm_explain", "https://llm.example.com");
+    await saveCredential(custom.providerId, "k");
+    const server = makeOpenAiServer();
+
+    const sendOne = () =>
+      sendLlmConsented(
+        {
+          providerId: custom.providerId,
+          scope: "llm_explain",
+          request: {
+            model: "llama-3",
+            messages: [{ role: "user", content: "x" }],
+          },
+          // 100k × $1/M + 100k × $2/M = $0.30 reserved per request.
+          maxInputTokens: 100_000,
+          maxOutputTokens: 100_000,
+          kind: "manual",
+        },
+        {
+          now: () => NOW,
+          fetchImpl: server.fetch,
+        },
+      );
+    const [first, second] = await Promise.allSettled([sendOne(), sendOne()]);
+
+    const outcomes = [first, second].map((s) => s.status);
+    expect(outcomes.sort()).toEqual(["fulfilled", "rejected"]);
+    const refused = [first, second].find((s) => s.status === "rejected");
+    expect((refused as PromiseRejectedResult).reason).toMatchObject({
+      code: "budget_exceeded",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(
+      (await db.llmReservations.toArray()).filter(
+        (r) => r.status === "active",
+      ),
+    ).toHaveLength(1);
   });
 });

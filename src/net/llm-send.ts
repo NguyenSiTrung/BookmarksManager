@@ -104,6 +104,18 @@ const DEFAULT_RETRIES = 1;
 /** Retry-After is honored but bounded — a hostile header cannot stall the gate. */
 const MAX_RETRY_AFTER_MS = 5_000;
 
+/**
+ * How long an `active` reservation may live before the next request's
+ * transaction reaps it as stale. A reservation's legitimate lifetime is one
+ * request: `timeoutMs × (retries + 1)` plus bounded Retry-After waits, then
+ * settle-or-release — under the defaults ≈65s; callers may raise the
+ * timeout, so the TTL sits far above the default lifecycle (15 minutes).
+ * A row older than that can only be orphaned by a request killed mid-flight
+ * (MV3 worker eviction) — it never reaches settle/release, and leaving it
+ * `active` would silently charge the month's cap forever.
+ */
+export const STALE_RESERVATION_TTL_MS = 15 * 60_000;
+
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 function isRegisteredScope(scope: string): scope is ConsentScope {
@@ -186,7 +198,8 @@ export async function settleLlmUsage(
  * provider record → destination re-resolved and canonical → closed wire
  * schema + configured-model pin → current versioned consent at the exact
  * origin → Chrome host permission → stored credential (when auth requires
- * one) → budget reservation persisted as `active`. Only then does `fetch`
+ * one) → stale-reservation sweep + budget reservation persisted as
+ * `active`, all inside one `rw` transaction. Only then does `fetch`
  * run — `credentials: "omit"`, `redirect: "error"`, per-attempt timeout, and
  * at most `retries` extra attempts on transport failures and 408/429/5xx
  * (honoring a bounded Retry-After). A `sentLog` metadata row — timestamp,
@@ -274,33 +287,71 @@ export async function sendLlmConsented(
   // Budget: the reservation is persisted BEFORE any network activity so a
   // crash mid-request cannot spend unrecorded. Manual requests may carry the
   // user's unknown-cost confirmation; automatic ones cannot.
+  //
+  // The whole read → sweep → check → write runs inside ONE Dexie `rw`
+  // transaction — IndexedDB serializes `rw` transactions on these stores,
+  // so two parallel sends (a `library_scan` batch fanning out) can never
+  // each pass the cap check against the other's pre-reservation state and
+  // overshoot the monthly cap together (TOCTOU). The sweep runs inside the
+  // same transaction: `active` rows older than `STALE_RESERVATION_TTL_MS`
+  // are released before the cap math, so a reservation orphaned by worker
+  // eviction stops charging the cap at the next request instead of never.
   const unknownCostConfirmed =
     input.kind === "manual" && options?.unknownCostConfirmed === true;
   const reservationId = crypto.randomUUID();
-  const [usageRows, reservationRows] = await Promise.all([
-    db.llmUsage.where("providerId").equals(record.providerId).toArray(),
-    db.llmReservations.where("providerId").equals(record.providerId).toArray(),
-  ]);
-  const reservationResult = reserveBudget({
-    reservationId,
-    providerId: record.providerId,
-    model: destination.model,
-    maxInputTokens: input.maxInputTokens,
-    maxOutputTokens: input.maxOutputTokens,
-    ...(record.provider.kind === "custom" &&
-    record.provider.pricing !== undefined
-      ? { pricing: record.provider.pricing }
-      : {}),
-    kind: input.kind,
-    ...(record.monthlyBudgetUsd !== undefined
-      ? { monthlyBudgetUsd: record.monthlyBudgetUsd }
-      : {}),
-    usage: usageRows,
-    reservations: reservationRows,
-    now: now(),
-    unknownCostConfirmed,
-  });
+  const reservationResult = await db.transaction(
+    "rw",
+    db.llmUsage,
+    db.llmReservations,
+    async () => {
+      const [usageRows, reservationRows] = await Promise.all([
+        db.llmUsage.where("providerId").equals(record.providerId).toArray(),
+        db.llmReservations
+          .where("providerId")
+          .equals(record.providerId)
+          .toArray(),
+      ]);
+      const nowDate = now();
+      const staleBefore = nowDate.getTime() - STALE_RESERVATION_TTL_MS;
+      const liveReservations: BudgetReservation[] = [];
+      for (const row of reservationRows) {
+        if (
+          row.status === "active" &&
+          Date.parse(row.createdAt) < staleBefore
+        ) {
+          await db.llmReservations.put(releaseBudget(row, nowDate));
+        } else {
+          liveReservations.push(row);
+        }
+      }
+      const result = reserveBudget({
+        reservationId,
+        providerId: record.providerId,
+        model: destination.model,
+        maxInputTokens: input.maxInputTokens,
+        maxOutputTokens: input.maxOutputTokens,
+        ...(record.provider.kind === "custom" &&
+        record.provider.pricing !== undefined
+          ? { pricing: record.provider.pricing }
+          : {}),
+        kind: input.kind,
+        ...(record.monthlyBudgetUsd !== undefined
+          ? { monthlyBudgetUsd: record.monthlyBudgetUsd }
+          : {}),
+        usage: usageRows,
+        reservations: liveReservations,
+        now: nowDate,
+        unknownCostConfirmed,
+      });
+      if (result.status === "reserved") {
+        await db.llmReservations.put(result.reservation);
+      }
+      return result;
+    },
+  );
 
+  // Refusals throw AFTER the transaction so the stale-reservation sweep
+  // still commits — refused requests must not strand the cleanup.
   if (reservationResult.status === "refused") {
     throw new LlmGateError(
       reservationResult.reason,
@@ -314,7 +365,6 @@ export async function sendLlmConsented(
     );
   }
   const reservation = reservationResult.reservation;
-  await db.llmReservations.put(reservation);
 
   const fetchImpl = options?.fetchImpl ?? fetch;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
