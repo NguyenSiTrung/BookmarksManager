@@ -550,3 +550,27 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   the `[planned]` LLM line with the shipped layer; `conductor/patterns.md`
   gained two patterns: grant-at-click feature consent, and the
   parked-request valve for deterministic pause/resume e2e.
+
+## Phase 6 Task 4 — Full release gate
+
+Final counts on `main` (not pushed): lint 0 errors / 1 pre-existing TanStack
+`incompatible-library` warning · typecheck clean · **2865/2865** unit +
+component tests in 123 files · build **1.36 MB** · `check:manifest` +
+`check:bundle` OK · **28/28** Playwright e2e (~40 s) · `npm run test:live`
+green with 6 key-gated smokes skipped (no provider keys on this machine).
+
+Regressions the release gate caught and fixed, all e2e-selector fallout
+from the LLM provider section sharing Options with the Jev section:
+- `provider.spec.ts` pinned `consentVersion: 2` — the LLM scopes bumped the
+  consent schema to 3; updated to 3.
+- `getByLabel("API key")` and `getByLabel(/agree to enable/)` each resolved
+  to BOTH provider sections under strict mode — scoped to the
+  `region "AI provider connection"` landmark.
+- `decisions.spec.ts`'s disclosure-checkbox assertion matched the LLM
+  provider's identical phrasing — narrowed the accessible-name regex to
+  `/agree to send bookmark metadata to/`.
+
+Known limitation (documented, unchanged): `chrome.permissions.request`
+cannot resolve under Playwright, so the host-grant prompt itself is
+verified manually; e2e pre-grants exact origins via install-time host
+patterns.

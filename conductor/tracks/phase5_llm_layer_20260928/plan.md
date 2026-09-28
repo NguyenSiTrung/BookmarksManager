@@ -405,7 +405,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/compliance-scripts.test.ts tests/unit/consent-snapshot.test.ts && npm run check:manifest && npm run check:bundle`.
 
-- [ ] Task 4: Full release gate
+- [x] Task 4: Full release gate
   <!-- depends: task1, task2, task3 -->
   - Run:
     `npm run lint && npm run typecheck && npm test -- --run && npm run build && npm run check:manifest && npm run check:bundle && xvfb-run -a npm run test:e2e`.

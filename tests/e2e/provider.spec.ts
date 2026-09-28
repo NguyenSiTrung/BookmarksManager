@@ -77,7 +77,7 @@ test("Options consent flow enables TypeSafe and Test connection sends exactly on
       expect.objectContaining({
         scope: "jev_test",
         origin: PRESETS.typesafe.origin,
-        consentVersion: 2,
+        consentVersion: 3,
       }),
     ]);
 
@@ -150,10 +150,11 @@ test("without consent the Test connection path sends zero requests", async () =>
 
     // UI gate: Enable stays disabled until the affirmative-consent box is
     // checked, and no Test button exists while the provider is off.
-    await options.getByLabel("API key").fill(E2E_API_KEY);
-    const enable = options.getByRole("button", { name: "Enable TypeSafe" });
+    const jev = options.getByRole("region", { name: "AI provider connection" });
+    await jev.getByLabel("API key").fill(E2E_API_KEY);
+    const enable = jev.getByRole("button", { name: "Enable TypeSafe" });
     await expect(enable).toBeDisabled();
-    await options.getByLabel(/agree to enable/).check();
+    await jev.getByLabel(/agree to enable/).check();
     await expect(enable).toBeEnabled();
     await expect(
       options.getByRole("button", { name: "Test connection" }),

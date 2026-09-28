@@ -114,7 +114,7 @@ test("zero egress until the jev_decisions grant exists", async () => {
 
   // The consent UI itself starts unchecked with Allow disabled.
   await expect(
-    options.getByLabel(/I have read the disclosure above and agree/),
+    options.getByLabel(/agree to send bookmark metadata to/),
   ).not.toBeChecked();
   await expect(
     options.getByRole("button", {
