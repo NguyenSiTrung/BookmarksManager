@@ -210,7 +210,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 
 ## Phase 4: Release Candidate and Trusted-Test Release
 
-- [ ] Task 1: Set version 1.0.0 and add release packaging/audit
+- [x] Task 1: Set version 1.0.0 and add release packaging/audit (cbd8cdf)
   - Files: modify `package.json`, `package-lock.json`, and `wxt.config.ts`;
     create `scripts/audit-release.mjs`,
     `tests/unit/audit-release.test.ts`, and
