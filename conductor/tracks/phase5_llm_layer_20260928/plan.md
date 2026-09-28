@@ -82,7 +82,7 @@ reservations protect every egress path.
     and redacted errors.
   - Verify: `npx vitest run tests/unit/credentials.test.ts tests/unit/keys.test.ts`.
 
-- [~] Task 3: OpenAI-compatible wire schemas and structured-output engine
+- [x] Task 3: OpenAI-compatible wire schemas and structured-output engine
   <!-- files: src/llm/wire.ts, src/llm/structured.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
   - Interfaces: `ChatCompletionRequest`, `ChatCompletionResponse`,
     `runStructured({ tier, schema, messages, send })`,

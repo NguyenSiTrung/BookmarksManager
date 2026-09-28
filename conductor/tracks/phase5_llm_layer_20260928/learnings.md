@@ -91,3 +91,32 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   - Context: credential ids are validated (1–300 chars, no blank/whitespace)
     but NOT secrets — they embed the provider locator, never the token.
 ---
+
+## [2026-09-28 03:38] - Phase 1 Task 3: OpenAI-compatible wire schemas and structured-output engine
+- **Implemented:** `src/llm/wire.ts` — strict `ChatCompletionRequest`/
+  `ChatMessage`/`ResponseFormat` (json_schema+json_object), loose
+  `ChatCompletionResponse` (provider responses are untrusted: validate only
+  consumed fields), `firstText`, `parseUsage` (OpenRouter `cost` →
+  `reportedCostUsd`, null = unknown never 0). `src/llm/structured.ts` —
+  `runStructured({tier, model, schema, schemaName, messages, send})`,
+  `LlmCapabilityError` (tier-fallback signal), `StructuredOutputError`
+  (redacted, reason-tagged), `extractBoundedJson` (64KB cap + whole-body-or-
+  single-fence-only), ≤2 repairs per tier, fallback only on explicit
+  capability rejection.
+- **Files changed:** `src/llm/wire.ts`, `src/llm/structured.ts`,
+  `tests/unit/llm-wire.test.ts`, `tests/unit/llm-structured.test.ts`
+- **Commit:** (see below)
+- **Learnings:**
+  - Patterns: repair = append assistant echo (truncated to 4KB) + generic
+    user instruction carrying the failure reason, staying on the same tier;
+    a tier's failure NEVER descends — only `LlmCapabilityError` descends.
+    Tier system-prompt merges into an existing leading system message rather
+    than stacking a second one (some providers accept only one).
+  - Gotchas: `import { T, type U }` mixing — a schema used as `.parse()` must
+    be a value import even when the neighboring name is type-only
+    (verbatimModuleSyntax). `exactOptionalPropertyTypes` forces conditional
+    spreads when mapping optional provider fields (`usage.cost` etc.).
+  - Context: `z.toJSONSchema(schema, {target: "draft-7"})` emits the subset
+    OpenAI documents for `response_format: json_schema`; Zod's jitless config
+    does not affect it.
+---
