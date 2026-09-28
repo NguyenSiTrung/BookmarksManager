@@ -21,3 +21,8 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-28 — Phase 4 Jev decisions completed: metadata-only decisions pipeline (title/cleaned-URL/domain minimization with blocklist; notes never sent), six question sets, §10.2 confidence policy with auto-apply off by default (never for move/merge), review queue with audit+undo, resumable job queue incl. near-duplicate pair scans, popup save suggestions, Ask re-rank, usage/cost tracking, "Data sent" log (cap 500), decisions consent v2, Dexie v3 — full gate green (2467 unit/component, 19 e2e) and user-accepted manual verification (see conductor/archive/phase4_jev_decisions_20260927/) -->
+
+---
+
+## [ ] Track: Phase 5 — Optional OpenAI-Compatible LLM Layer
+*Link: [./conductor/tracks/phase5_llm_layer_20260928/](./conductor/tracks/phase5_llm_layer_20260928/)*
