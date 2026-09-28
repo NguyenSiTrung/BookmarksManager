@@ -151,7 +151,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `npx vitest run tests/unit/consent-snapshot.test.ts tests/unit/manifest.test.ts`
     and `npm run check:manifest`.
 
-- [ ] Task 2: Add the strict store-readiness checker
+- [x] Task 2: Add the strict store-readiness checker
   - Files: create `scripts/check-store.mjs` and
     `tests/unit/check-store.test.ts`; modify `package.json`,
     `package-lock.json`, and `.github/workflows/ci.yml`.

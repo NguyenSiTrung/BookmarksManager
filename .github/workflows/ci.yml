@@ -40,6 +40,11 @@ jobs:
       - name: Check bundle for eval / remote scripts
         run: npm run check:bundle
 
+      # Release-strict store gate (Phase 6): runs keyless against local files
+      # and fails until the version bump, assets, and release record land.
+      - name: Store-readiness gate
+        run: npm run check:store
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
