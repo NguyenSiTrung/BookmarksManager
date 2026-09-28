@@ -67,3 +67,6 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 - **`unzip -Z1` + `unzip -p` are the dependency-free zip inspector** — no adm-zip needed; `execFileSync` with a 64MB buffer covers the extension archive, and a null return doubles as "not a zip".
 - **The audit forbids by entry-name class, not content** — `*.map`, `.env*`, `*.pem/key/p12/pfx`, sqlite/db/ldb/log, `test-results/`, `tests?/eval/` dirs, `conductor|store|docs|.beads|.agents|.github/`, `src/*.ts`, and project configs — because the zip's only job is shipping the runtime.
 - **`npm version 1.0.0 --no-git-tag-version` bumps package.json + lockfile atomically** — wxt.config.ts still needs the manual edit; keep both pinned (check:store cross-checks them).
+- **The release record is a gate artifact, not a post-it.** `store/releases/<v>.json` carries commit/bytes/sha256 generated from the clean-worktree build — check:store then validates version/commit/sha256 shape, so the record can't be stale-in-name-only.
+- **A gate worktree must run `npm ci` before tests** — `npm run test -- --run` precedes `npm run build` in the sequence, so fixtures that read `.output` need a self-healing `beforeAll` build (committed a403526).
+- **Zip determinism**: `wxt zip` reproduced byte-identical 412,893-byte archives across worktrees at the same commit — sha256 is a meaningful release identity.

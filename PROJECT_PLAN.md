@@ -758,6 +758,8 @@ Sources: [Program Policies](https://developer.chrome.com/docs/webstore/program-p
 - **1.0** ships the core plus the TypeSafe and OpenRouter presets, the LLM presets, and custom base URLs via `https://*/*`.
 - **1.1** adds the opt-in link checker, together with `http://*/*`.
 
+**1.0.0 candidate (recorded 2026-09-28):** `bookmarks-manager-1.0.0-chrome.zip`, 412,893 bytes, sha256 `b86638775429f435dd6f991bb87b5246ab0153a576fccb2ad6344f2e047e3e1a`, built from a clean worktree at commit `52a15bb` — full gate and audit evidence in `store/releases/1.0.0.json` and `store/releases/1.0.0-checklist.md`. Trusted-tester channel only; public submission is out of scope.
+
 Adding optional permissions in an update does not disable the extension for existing users. Only new *required* permissions trigger Chrome's re-approval prompt.
 
 ### 13.4 Data inventory
