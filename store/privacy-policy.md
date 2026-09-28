@@ -1,23 +1,24 @@
 # Privacy Policy — Bookmarks Manager
 
-> **Draft — release prerequisite.** This text is kept in the repo so the
-> shipped policy stays in sync with the code. Before publication it must be
-> hosted at a public URL (for example GitHub Pages, one click from the project
-> homepage) and that URL must be entered in the Chrome Web Store dashboard.
-> The publisher name, contact email, hosted URL, and effective date below are
-> placeholders to fill in at release time — do not publish with placeholders.
+> This text is kept in the repo so the shipped policy stays in sync with the
+> code. It is hosted at <https://nguyensitrung.github.io/BookmarksManager/privacy/>
+> (the `site/` GitHub Pages source) and that URL is entered in the Chrome Web
+> Store dashboard. Update this file, `site/privacy/index.html`, the in-product
+> consent screens, and the dashboard entry in the same change whenever data
+> handling changes.
 
-**Version:** 0.3 draft
-**Effective date:** _release prerequisite — set at publication_
-**Hosted URL:** _release prerequisite — not yet published_
+**Version:** 1.0
+**Effective date:** 2026-09-28
+**Hosted URL:** <https://nguyensitrung.github.io/BookmarksManager/privacy/>
 
 ## Who publishes this extension
 
-Bookmarks Manager is published by: _release prerequisite — publisher identity
-to be confirmed on the Chrome Web Store developer account._
+Bookmarks Manager is published by: **NguyenSiTrung**
+(<https://github.com/NguyenSiTrung>).
 
-Contact: _release prerequisite — monitored contact email to be verified in the
-developer account dashboard._
+Contact: **trungnsai95@gmail.com** — monitored; privacy questions and deletion
+requests are answered there. Issues may also be filed at
+<https://github.com/NguyenSiTrung/BookmarksManager/issues>.
 
 ## Summary
 
@@ -136,13 +137,17 @@ until you enable it.
   Analyze, starting a library scan, or running an Ask search — and only when
   you start them — never on install, on a timer, or in the background.
 - **Links:** the provider's privacy policy above and this extension's privacy
-  policy (the bundled local draft until a public URL exists).
+  policy (https://nguyensitrung.github.io/BookmarksManager/privacy/).
 
 ### Optional LLM provider features (`llm_test`, `llm_explain`, `llm_escalate`, `llm_restructure`, `llm_summary`, `jev_summary_verify`)
 
 You may optionally configure one OpenAI-compatible LLM provider — an OpenAI
 or OpenRouter preset, or a custom HTTPS endpoint (HTTP only for a loopback
-service such as `http://localhost:11434`). Each feature below is a separate
+service such as `http://localhost:11434`). A custom HTTPS origin is granted
+through the manifest's `https://*/*` optional host pattern: the broad
+optional host pattern is capability only — it grants the exact configured
+origin at runtime from your direct Enable click, never default access, and
+it can be revoked like any other host grant. Each feature below is a separate
 consent scope, granted per provider origin, and every request is re-checked
 against the exact configured origin, the saved consent, the host permission,
 and the closed request schema before it can leave the device. Your stored

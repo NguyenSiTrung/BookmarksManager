@@ -1,6 +1,6 @@
 # Reviewer notes — draft
 
-> **Draft — release prerequisite.** Paste the relevant parts into the
+> **Draft.** Paste the relevant parts into the
 > dashboard's test-instructions field at submission time. Keep it truthful to
 > the shipped build.
 
@@ -54,8 +54,11 @@ key. Suggested walkthrough:
    (The `bm` omnibox path is unit-tested: the browser's address bar cannot be
    driven by automation.)
 2. Permissions at install are the required set only — `activeTab`,
-   `bookmarks`, `contextMenus`, `favicon`, `storage`, `sidePanel`. There is no
-   host access and no page-content access at install.
+   `bookmarks`, `contextMenus`, `favicon`, `scripting`, `storage`,
+   `sidePanel`. There is no host access and no page-content access at
+   install. (`scripting` backs the on-demand Readability extractor — injected
+   only after an explicit Summarize click; there are no static content
+   scripts.)
 3. **Quick save from the popup:** click the toolbar action. The form is
    prefilled with the active tab's title and URL; add tags, a category, notes,
    and pick a folder, then Save. Re-opening the popup defaults to the folder
@@ -147,13 +150,22 @@ needs a real provider key:
   the stored key) and stops all further requests. Revoking deletes every
   consent scope the provider holds — the synthetic `jev_test` grant and the
   bookmark-data `jev_decisions` grant.
-- _A temporary low-credit test key can be supplied at submission time and
-  revoked after review — decide at release._
+- A temporary low-credit test key may be supplied in the dashboard's test
+  instructions at submission time and revoked after review.
 
 ## Testing the optional LLM provider
 
 The LLM provider flow is consent-gated per feature scope and is exercisable
-without a paid account by pointing a custom provider at a local model server:
+without a paid account by pointing a custom provider at a local model server.
+
+**About the broad `https://*/*` optional pattern in the manifest:** it is a
+capability pattern, not default access — the extension requests no host
+access at install time, and the pattern exists so Chrome can grant the
+*exact* custom origin the user configures, at runtime, from a direct Enable
+click. The single egress gate then re-checks the exact origin (scheme, host,
+and port — loopback ports included), the per-scope consent record, and the
+closed request schema before any request can leave; revoking removes the
+grant, the permission, and the key.
 
 - Open the options page → "LLM provider". Choose a preset (OpenAI or
   OpenRouter) or a custom base URL. Custom remote endpoints must be HTTPS;

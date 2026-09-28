@@ -45,11 +45,13 @@ settings or from the provider's Revoke action in Options.
 _The first two patterns back the shipped, consent-gated Jev provider flow — the
 synthetic Test connection and the bookmark-data `jev_decisions` flow. The
 remaining four back the optional LLM provider: `https://*/*` is a
-capability pattern so a user can grant a custom HTTPS origin at runtime, and
-the loopback patterns cover local model servers — every grant is scoped to
-the exact configured origin, requires its own consent record, and fires only
-on an explicit user action. Any change here must update the manifest in the
-same change._
+capability pattern, not default access — it grants the exact configured
+origin at runtime from a direct click, and the loopback patterns cover local
+model servers. Every grant is scoped to the exact configured origin
+(scheme + host + port), requires its own consent record, keeps credentials
+in the authentication header only, refuses redirects and URL credentials,
+and revokes cleanly with the provider. Any change here must update the
+manifest in the same change._
 
 ## Declared but empty
 
@@ -57,12 +59,13 @@ same change._
   time.
 - `optional_permissions`: none.
 
-## Not requested in this slice
+## Not requested in this release
 
 `alarms`,
 `history`, `tabs`, `cookies`, `webRequest`, `offscreen`, `unlimitedStorage`,
 `<all_urls>`, and the broad `http://*/*` wildcard. None of them ship in this
-release. Each future permission must be added only
+release — the opt-in link checker that would need the `http://*/*` pattern
+stays out of 1.0. Each future permission must be added only
 together with the feature that uses it, in the same change that updates this
 table, and with a justification — the Chrome Web Store's minimum-permission
 rule applies to optional permissions too.

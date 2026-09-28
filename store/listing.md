@@ -1,10 +1,9 @@
 # Store listing — draft
 
-> **Draft — release prerequisite.** Copy for the Chrome Web Store listing.
-> Fields marked _release prerequisite_ must be filled with real values before
-> submission; none are invented here. Store rules followed: no "Chrome"/
-> "Google" endorsement implications, no third-party logos, no keyword lists,
-> no unverifiable claims.
+> **Draft.** Copy for the Chrome Web Store listing, pasted into the dashboard
+> at submission time. Store rules followed: no "Chrome"/"Google" endorsement
+> implications, no third-party logos, no keyword lists, no unverifiable
+> claims.
 
 ## Name
 
@@ -79,7 +78,12 @@ works without a key.
 
 Optionally, you can also configure one OpenAI-compatible LLM provider — a
 preset (OpenAI, OpenRouter) or a custom HTTPS endpoint, with HTTP allowed
-only for a loopback service — for features the local model cannot do:
+only for a loopback service — for features the local model cannot do. A
+custom endpoint is granted through the broad `https://*/*` optional host
+pattern, which is capability only: the browser grants the exact origin you
+configure, at runtime, from your own click — never default access — and the
+extension re-checks that exact origin, its consent record, and the request
+schema before any request can leave the device:
 plain-language explanations of review decisions, budget-capped second
 opinions on low-confidence calls, folder-restructure proposals for your
 review (never applied automatically), and opt-in page summaries verified by
@@ -94,7 +98,7 @@ requests no access to your browsing history or page content.
 
 ## What's new
 
-Version 0.1 — first release.
+Version 1.0 — first public release.
 
 - Offline core manager: side panel with folder tree, virtualized list/grid,
   and views for all, recently saved, untagged, duplicates, tags, and
@@ -123,18 +127,20 @@ Productivity _(suggested — confirm against current dashboard categories)_
 
 English
 
-## URLs — all release prerequisites
+## URLs
 
-- Homepage: _release prerequisite_
-- Support (email or issue tracker): _release prerequisite_
-- Privacy policy: _release prerequisite — must be the hosted URL of
-  `store/privacy-policy.md`_
+- Homepage: <https://nguyensitrung.github.io/BookmarksManager/>
+- Support (issue tracker):
+  <https://github.com/NguyenSiTrung/BookmarksManager/issues>
+- Privacy policy: <https://nguyensitrung.github.io/BookmarksManager/privacy/>
+  — the hosted copy of `store/privacy-policy.md`
 
-## Assets — all release prerequisites
+## Assets
 
-- Icon: 128×128 px (plus 16, 32, and 48 px inside the package)
-- At least one screenshot of the real UI at 1280×800 or 640×400
-- Small promo tile: 440×280 px
+- Icon: `store/assets/icon-128.png` at 128×128 px (the package embeds 16,
+  32, and 48 px variants)
+- Screenshots of the real UI at 1280×800 in `store/assets/` (`screenshot-*.png`)
+- Small promo tile: `store/assets/promo-440x280.png` at 440×280 px
 
 ## Content notes for reviewers of this copy
 

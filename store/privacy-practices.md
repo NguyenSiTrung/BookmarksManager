@@ -1,6 +1,6 @@
 # Chrome Web Store "Privacy practices" — draft answers
 
-> **Draft — release prerequisite.** These are the answers to give in the
+> **Draft.** These are the answers to give in the
 > Chrome Web Store developer dashboard's privacy tab at submission time.
 > Google sets the checkbox labels and they can change: map this inventory to
 > the current labels then. Keep this file in the same change as any code that
@@ -49,6 +49,10 @@ Use the justification column of `store/permissions.md` verbatim; CI
 - `favicon` — Serve cached page favicons via Chrome's built-in
   `chrome-extension://<id>/_favicon/?pageUrl=...&size=...` renderer so the
   manager UI can show site icons without host access or any network request.
+- `scripting` — Inject the bundled Readability extractor into the active tab
+  only after an explicit Summarize action, so page text can be summarized
+  with consent; there are no static content scripts and no extraction on
+  navigation, install, timers, or scans.
 - `sidePanel` — Show the Bookmarks Manager UI in Chrome's side panel.
 - `storage` — Store encrypted provider API-key envelopes in
   chrome.storage.local; plaintext keys are never persisted.
@@ -67,12 +71,14 @@ Use the justification column of `store/permissions.md` verbatim; CI
 - `http://127.0.0.1/*` (optional) — same, via the IPv4 loopback literal.
 - `http://[::1]/*` (optional) — same, via the IPv6 loopback literal.
 
-(The two optional patterns back the shipped, consent-gated Jev provider flow —
-the synthetic Test connection and the bookmark-data `jev_decisions` flow — the
-only features that produce network traffic, and only on an explicit Test
-connection click or a user-started save, Analyze, library scan, or Ask search.
-The extension requests no host access at install time and reads no page content
-on any site.)
+(The first two optional patterns back the consent-gated Jev provider flow —
+the synthetic Test connection and the bookmark-data `jev_decisions` flow.
+`https://*/*` is capability only, not default access: it grants the exact
+custom origin at runtime from a direct click, and the egress gate re-checks
+the exact origin, its consent scope, and the request schema before any send.
+The three loopback literals cover local LLM servers — Chrome patterns cannot
+express ports, so the gate enforces the port itself. The extension requests
+no host access at install time and reads no page content on any site.)
 
 ## Remote code
 
@@ -116,7 +122,8 @@ Conservative declaration — under-declaring is the risky direction:
   in the background. To whom: exactly one provider origin you chose —
   `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
   Links: the provider's privacy policy (`https://typesafe.ai/legal/privacy-policy`
-  or `https://openrouter.ai/privacy`) and this extension's privacy policy. The
+  or `https://openrouter.ai/privacy`) and this extension's privacy policy
+  (https://nguyensitrung.github.io/BookmarksManager/privacy/). The
   consent is versioned (`consentVersion`, currently 3); revoking a provider
   deletes every consent grant for its origin — `jev_test`, `jev_decisions`,
   and every `llm_*` scope — removes its host permission, and offers to delete
@@ -182,5 +189,5 @@ Tick all three:
 
 ## Privacy policy URL
 
-_release prerequisite — the hosted URL from `store/privacy-policy.md` once
-the policy is published._
+<https://nguyensitrung.github.io/BookmarksManager/privacy/> — the hosted copy
+of `store/privacy-policy.md`.

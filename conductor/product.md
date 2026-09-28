@@ -22,8 +22,8 @@ Jev proposes classifications, tags, and folder placement with confidence scores.
 
 ## Release Scope
 
-- **1.0:** Complete offline core and optional AI through narrow-permission provider presets, with Chrome Web Store disclosures and review readiness.
-- **1.1:** Custom provider base URLs and the opt-in link checker, with their additional permissions and disclosures.
+- **1.0:** Complete offline core and optional AI — the Jev presets plus custom OpenAI-compatible provider base URLs behind the broad `https://*/*` optional capability and loopback host patterns — with Chrome Web Store disclosures and review readiness.
+- **1.1:** The opt-in link checker, with its additional permissions and disclosures.
 - **v2:** Scheduled maintenance, smart collections, threshold tuning, and other advanced workflows.
 
 ## Boundaries

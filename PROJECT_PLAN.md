@@ -394,7 +394,7 @@ export const Decision = z.discriminatedUnion("kind", [
 | **TypeSafe** | `https://api.typesafe.ai` | `POST /v1/systemone` | TypeSafe key from [console.typesafe.ai/keys](https://console.typesafe.ai/keys) | `jev-latest`, `jev-preview`, or `jev-1.13.0` | `GET /v1/models` lists available aliases |
 | **OpenRouter** | `https://openrouter.ai/api` | `POST /v1/systemone` | OpenRouter key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) | `jev-latest` (maps to `~typesafe/jev-latest`), `jev-1.13`, or `typesafe/jev-1.13` | Response adds `id`, `provider`, and `usage.cost` (USD). OpenRouter's `/v1/models` uses a different format, so the model list is built in (the TypeSafe list call is not reused). Billed to the OpenRouter account; no TypeSafe account needed |
 | **OpenRouter Decisions (alpha)** | `https://openrouter.ai/api/alpha` | `POST /decisions` | OpenRouter key | `typesafe/jev-1.13` | Same body and answers. Alpha API: one user reported about 15% read timeouts. Offered as an advanced option only |
-| **Custom** (release 1.1) | user-provided, HTTPS only | path configurable, default `/v1/systemone` | user-provided | user-provided | For self-hosted proxies or gateways that implement the TypeSafe spec |
+| **Custom** | user-provided, HTTPS only | path configurable, default `/v1/systemone` | user-provided | user-provided | For self-hosted proxies or gateways that implement the TypeSafe spec |
 
 All presets use `Authorization: Bearer <key>` and `Content-Type: application/json`.
 
@@ -734,7 +734,7 @@ Sources: [Program Policies](https://developer.chrome.com/docs/webstore/program-p
 - `history`, `tabs`, `cookies`, `webRequest`, `offscreen`, `unlimitedStorage`.
 - Any required host permission.
 
-**Manifest (release 1.1; release 1.0 omits the last two patterns, `https://*/*` and `http://*/*`):**
+**Manifest (release 1.0 omits only `http://*/*` — the link checker would need it in a later release):**
 
 ```json
 {
@@ -754,9 +754,9 @@ Sources: [Program Policies](https://developer.chrome.com/docs/webstore/program-p
 
 **Implemented today (2026-09-28):** the generated manifest declares `activeTab`, `bookmarks`, `contextMenus`, `favicon`, `scripting`, `storage`, and `sidePanel`, plus the `omnibox.keyword` `bm` (which needs no permission) and the `_execute_action` quick-save command. `scripting` backs the on-demand Readability extractor (`src/entrypoints/extract.ts`, shipped with the Phase 5 summaries): the script is injected only after an explicit user action on the active tab — there are no static content scripts and no extraction on navigation, install, timers, or scans. The optional origins today are `https://api.typesafe.ai/*`, `https://openrouter.ai/*`, `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*`, and `http://[::1]/*`: the first two back the Jev presets, and the rest are capabilities for the optional LLM layer, whose egress gate grants and re-checks the exact configured origin (scheme, host, and port) per scope before any request can fire. The broad `https://*/*` pattern is therefore already in the shipped manifest, so the staged-release split recommended below no longer describes it. The Phase 4 decisions layer added **no** new permissions — it sends bookmark metadata only to the origins the user already granted for the provider, and `npm run check:manifest` keeps the manifest in sync with `store/permissions.md`. Each remaining permission above is added with the feature that needs it, so no "future-proofing" appears in a shipped manifest (section 1.1, `store/permissions.md`).
 
-**Staged release (recommended).** Broad patterns such as `https://*/*` make reviews take longer. Also, the minimum-permission policy applies to optional permissions as well:
-- **1.0** ships the core plus the TypeSafe, OpenRouter, and LLM presets, with narrow host patterns only.
-- **1.1** adds custom base URLs and the link checker, together with `https://*/*` and `http://*/*`.
+**Approved release scope (Phase 6).** The earlier staged-release recommendation — custom base URLs deferred to 1.1 — was superseded: version 1.0 ships custom OpenAI-compatible providers, so the broad `https://*/*` optional capability and the loopback patterns are intentional release behavior. `https://*/*` is a capability pattern, not default access: it grants only the exact configured origin at runtime, behind exact-origin consent, the permission prompt, refused redirects/credentials, and clean revocation. The minimum-permission policy still applies to optional permissions.
+- **1.0** ships the core plus the TypeSafe and OpenRouter presets, the LLM presets, and custom base URLs via `https://*/*`.
+- **1.1** adds the opt-in link checker, together with `http://*/*`.
 
 Adding optional permissions in an update does not disable the extension for existing users. Only new *required* permissions trigger Chrome's re-approval prompt.
 

@@ -136,9 +136,24 @@ export const DECISIONS_TRIGGER_NOTE =
 export const DECISIONS_DESCRIPTION =
   "bookmark metadata only — no notes and no page text, which are never sent under any scope";
 
-/** How the extension's own privacy policy is referenced before a public URL exists. */
-export const EXTENSION_PRIVACY_POLICY_REFERENCE =
-  "this extension's privacy policy";
+/** The public URL where the extension's privacy policy is hosted. */
+export const PRIVACY_POLICY_URL =
+  "https://nguyensitrung.github.io/BookmarksManager/privacy/";
+
+/** How the extension's own privacy policy is referenced in disclosures. */
+export const EXTENSION_PRIVACY_POLICY_REFERENCE = `this extension's privacy policy (${PRIVACY_POLICY_URL})`;
+
+/**
+ * The broad any-HTTPS-host optional pattern in the manifest, explained for
+ * disclosures and store text: it is a capability pattern only — Chrome
+ * grants the exact configured origin at runtime from a direct click, never
+ * default access, and the egress gate re-checks the exact origin
+ * (scheme + host + port), the per-scope consent record, and the closed
+ * request schema before any request can leave the device. (The literal
+ * pattern is kept out of comments — `*\/` would terminate them.)
+ */
+export const BROAD_HOST_CAPABILITY_NOTE =
+  "the broad optional host pattern is capability only — it grants the exact configured origin at runtime, never default access";
 
 // --- Phase 5: dynamic LLM provider disclosures ---------------------------
 // One typed disclosure per LLM consent scope (spec §3, FR2.8). The recipient
