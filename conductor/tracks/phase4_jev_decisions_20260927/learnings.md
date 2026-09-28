@@ -621,3 +621,36 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
     github repo → repo); contract-only for debatable ones (Tokio tutorial: article vs docs) — a live model
     regression on canonical pages SHOULD fail, wording ambiguity SHOULD NOT.
 ---
+## [2026-09-28] - Phase 5 Task 3: Docs sync and follow-ups
+- **Implemented:** all standing docs synced to the delivered Phase 4/5 state. `PROJECT_PLAN.md` §1.1
+  (header date, Delivered paragraph now covering Phases 0–4 with the track active for its closing
+  tasks, gate paragraph re-verified at `cacd084`: 93 files/2467 tests, e2e 19 in 5 spec files,
+  build 1.20 MB, +perf/live gates; 11 plan-area table rows; open-beads paragraph recounted to 18),
+  §13.3 (no new permissions from the decisions layer, `check:manifest` guard, `scripting` deferred
+  with 4hw.6), §15 (Phase 4 → Done, status note, remaining-to-1.0 ≈ 3 weeks), §17 Q1/Q2 resolved,
+  §18 item 6 Done + date header. `conductor/tech-stack.md` (Phase 4 stage header, Dexie v3 tables,
+  decisions-layer module map, testing bullet), `conductor/product.md` (Phase 4 + track-hardening
+  delivery entries, trimmed "Not yet built"), `conductor/patterns.md` (new track elevation section:
+  wire-level fakes/valve, browser-restart emulation, popup prefill ordering, perf-gate honesty,
+  sequential runner contracts, INTRANET_SUFFIXES/strict-AND).
+- **Files changed:** docs only — PROJECT_PLAN.md, conductor/{tech-stack,product,patterns}.md. No
+  production or test code, so no gate re-run; the authoritative gate evidence is the `cacd084` note.
+- **Commits:** `b98c897` (docs sync) + `a3cfd6a` (review fixes). The user's pending PROJECT_PLAN.md
+  edits were committed first, untouched, as `1f6b21e` per their ask_user_choice instruction.
+- **Review:** read-only subagent, APPROVED_WITH_FIXES; both findings fixed in `a3cfd6a`:
+  1. Important — product.md's "**Phase 5 hardening delivered**" bullet label collided with plan
+     Phase 5 (the LLM layer, Not started); relabeled "**Phase 4 track hardening delivered**
+     (Phase 5 of track …)".
+  2. Minor — §1.1's open-beads itemization summed to 17 of 18 (the `4hw` epic unitemized); now
+     "Five belong to the active Phase 4 track — the phase epic itself, …".
+- **Learnings:**
+  - Phase numbering is three-layered (plan §15 phases, track phases, release phases) — any doc that
+    says "Phase N" outside PROJECT_PLAN §15 must name which numbering it means. The reviewer caught
+    exactly this collision; the fix is the track-scoped label pattern
+    "(Phase 5 of track `phase4_jev_decisions_20260927`)".
+  - When recounting open issues in a doc, derive the total from `bd list --status open` AND make the
+    itemization sum to it — epics count as issues and are easy to drop.
+  - Follow-ups filed: `BookmarksManager-4hw.6` (opt-in page-text extraction: content script,
+    `scripting` permission, Readability, page-text consent — full scope sketch in the bead) and
+    `BookmarksManager-4hw.7` (title-quality check before analyze/save-suggest), both P3.
+---

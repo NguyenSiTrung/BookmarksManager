@@ -338,11 +338,21 @@ all behind a new per-provider bookmark-data consent.
         (`popup-save.test.tsx` < 150 ms) and 10k search gate (`search-perf.test.ts`) green in the same run;
         `npm run test:live` keyless → 4 skipped
 
-- [ ] Task 3: Docs sync and follow-ups
-  - [ ] Update PROJECT_PLAN.md §1.1 / §13.3 / §15 (after asking about the pending user edits),
+- [x] Task 3: Docs sync and follow-ups
+  - [x] Update PROJECT_PLAN.md §1.1 / §13.3 / §15 (after asking about the pending user edits),
         `conductor/product.md`, and `conductor/tech-stack.md`; elevate patterns to `conductor/patterns.md`
-  - [ ] File Beads follow-ups: opt-in page-text extraction (content script, `scripting`, Readability,
+  - [x] File Beads follow-ups: opt-in page-text extraction (content script, `scripting`, Readability,
         page-text consent) and the title-quality check
+  <!-- User's pending PROJECT_PLAN.md edits committed first as their own commit 1f6b21e (authorized via
+       ask_user_choice; option 1: commit as-is, then layer Phase 4/5 updates on top). Docs landed b98c897
+       + review fixes a3cfd6a: §1.1 header/Delivered/gate (93 files, 2467 tests, e2e 19 in 5 spec files,
+       build 1.20 MB, perf/live gates) + 11 table rows + 18-open-beads paragraph; §13.3 no-new-permissions
+       note; §15 Phase 4 → Done (track active for closing tasks), status note, ~3 weeks to 1.0; §17 Q1/Q2
+       resolved; §18 item 6 Done. Reviewer (read-only): APPROVED_WITH_FIXES — product.md "Phase 5 hardening"
+       label relabeled to track scope; the 4hw epic added to the beads itemization. Follow-ups filed:
+       BookmarksManager-4hw.6 (page-text, P3), BookmarksManager-4hw.7 (title-quality, P3). Docs-only task:
+       no gate re-run (authoritative gate evidence remains cacd084; next change to the tree is Task 4's
+       checkpoint). -->
 
 - [ ] Task 4: Final automated checkpoint — full gate green, evidence in `learnings.md`
 
