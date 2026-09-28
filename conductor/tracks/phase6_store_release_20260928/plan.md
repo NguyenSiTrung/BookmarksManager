@@ -226,7 +226,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `node scripts/audit-release.mjs .output/*-1.0.0-chrome.zip`, and
     `npx vitest run tests/unit/audit-release.test.ts`.
 
-- [ ] Task 2: Run the final automated gate and record the candidate
+- [x] Task 2: Run the final automated gate and record the candidate (7f534f6)
   - Files: create `store/releases/1.0.0.json`; update
     `store/releases/1.0.0-checklist.md` and `PROJECT_PLAN.md` only with
     verified evidence.
