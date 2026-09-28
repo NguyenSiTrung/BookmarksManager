@@ -15,6 +15,7 @@ export default defineConfig({
       "bookmarks",
       "contextMenus",
       "favicon",
+      "scripting",
       "storage",
       "sidePanel",
     ],
