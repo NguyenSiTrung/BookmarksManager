@@ -195,7 +195,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `npx vitest run tests/unit/manifest.test.ts`, and
     `npm run check:manifest`.
 
-- [ ] Task 3: Capture real UI screenshots and finalize listing materials
+- [x] Task 3: Capture real UI screenshots and finalize listing materials (d51484c)
   <!-- files: tests/e2e/store-assets.spec.ts, store/assets/screenshot-manager-1280x800.png, store/listing.md, store/privacy-practices.md, store/reviewer-notes.md, scripts/check-store.mjs, tests/unit/check-store.test.ts -->
   <!-- depends: task1, task2 -->
   - Seed deterministic synthetic bookmarks and capture the real production
