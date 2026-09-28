@@ -1,3 +1,4 @@
+import { z } from "../schemas/z";
 import { db } from "../db/database";
 import { AuditEvent } from "../schemas/audit";
 import type { AuditActor, DecisionStatus } from "../schemas/audit";
@@ -151,6 +152,47 @@ export async function persistDecision(
     );
   }
   return row;
+}
+
+// ---------------------------------------------------------------------------
+// Rationale persistence (spec FR5.4)
+// ---------------------------------------------------------------------------
+
+const Rationale = z.string().min(1).max(1_000);
+
+/**
+ * Set the §7 `rationale` field on an existing decision — the one field a row
+ * may gain after persistence. Updates ONLY `rationale`: the status, every
+ * `kind` payload field, and both sidecars (`guard`, `undoSnapshotId`) are
+ * preserved verbatim, and NO audit row is appended (an explanation is not a
+ * status transition). Rejects `invalid` for an empty/over-1,000-char
+ * rationale and `not_found` for an unknown id; nothing is written in either
+ * case.
+ */
+export async function persistDecisionRationale(
+  id: string,
+  rationale: string,
+): Promise<DecisionRow> {
+  const parsed = Rationale.safeParse(rationale);
+  if (!parsed.success) {
+    throw new DecisionStoreError(
+      "invalid",
+      "rationale must be 1–1,000 characters",
+    );
+  }
+  return db.transaction("rw", db.decisions, async () => {
+    const raw = await db.decisions.get(id);
+    if (raw === undefined) {
+      throw new DecisionStoreError(
+        "not_found",
+        `No decision exists for id "${id}".`,
+      );
+    }
+    const row = raw as DecisionRow;
+    const updated: DecisionRow = { ...row, rationale: parsed.data };
+    await db.decisions.put(updated);
+    return updated;
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import {
   listDecisions,
   listPending,
   persistDecision,
+  persistDecisionRationale,
   transitionStatus,
 } from "../../src/decisions/store";
 import type { DecisionRow, DecisionStoreErrorCode } from "../../src/decisions/store";
@@ -320,5 +321,79 @@ describe("DecisionRow", () => {
     // The persisted core re-validates against the §7 schema.
     expect(Decision.safeParse({ ...row, guard: undefined }).success).toBe(true);
     expect(row.guard?.placements).toBeTypeOf("object");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistDecisionRationale (spec FR5.4 — the §7 `rationale` field is the one
+// field a decision may gain after persistence, and only through this write)
+// ---------------------------------------------------------------------------
+
+describe("persistDecisionRationale", () => {
+  async function expectRationaleError(
+    fn: () => Promise<unknown>,
+    code: DecisionStoreErrorCode,
+  ) {
+    try {
+      await fn();
+    } catch (caught) {
+      expect(caught).toBeInstanceOf(DecisionStoreError);
+      expect((caught as DecisionStoreError).code).toBe(code);
+      return;
+    }
+    throw new Error(`expected a DecisionStoreError ${code}`);
+  }
+
+  it("writes only the rationale — status, payload, and sidecars untouched", async () => {
+    await persistDecision(
+      decision({ status: "pending", probabilities: { article: 0.9 } }),
+    );
+    const before = (await getDecision(UUID)) as DecisionRow;
+    const row = await persistDecisionRationale(UUID, "Jev picked 'article'.");
+    expect(row.rationale).toBe("Jev picked 'article'.");
+    expect(row.status).toBe("pending");
+    expect(row.probabilities).toEqual({ article: 0.9 });
+    expect(row.guard).toEqual(before.guard);
+    const after = (await getDecision(UUID)) as DecisionRow;
+    expect(after.rationale).toBe("Jev picked 'article'.");
+    expect(after.status).toBe("pending");
+  });
+
+  it("writes no audit row and touches no undo/apply bookkeeping", async () => {
+    await persistDecision(decision());
+    await persistDecisionRationale(UUID, "A concise rationale.");
+    expect(await db.audit.toArray()).toEqual([]);
+    expect(await db.undo.toArray()).toEqual([]);
+    expect((await getDecision(UUID))?.undoSnapshotId).toBeUndefined();
+  });
+
+  it("overwrites an existing rationale", async () => {
+    await persistDecision(decision({ rationale: "old" }));
+    await persistDecisionRationale(UUID, "new");
+    expect((await getDecision(UUID))?.rationale).toBe("new");
+  });
+
+  it("rejects a rationale over the 1,000-character §7 bound", async () => {
+    await persistDecision(decision());
+    await expectRationaleError(
+      () => persistDecisionRationale(UUID, "x".repeat(1_001)),
+      "invalid",
+    );
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
+
+  it("rejects an empty rationale", async () => {
+    await persistDecision(decision());
+    await expectRationaleError(
+      () => persistDecisionRationale(UUID, ""),
+      "invalid",
+    );
+  });
+
+  it("rejects an unknown decision id", async () => {
+    await expectRationaleError(
+      () => persistDecisionRationale(UUID2, "no row"),
+      "not_found",
+    );
   });
 });
