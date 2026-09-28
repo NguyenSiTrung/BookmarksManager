@@ -65,6 +65,12 @@ export interface EvalObservation {
   readonly status: EvalObservationStatus;
   /** The provider's actual response model id, when it answered. */
   readonly modelId?: string;
+  /**
+   * A short machine-readable failure code (`JevClientError.code` or
+   * `unexpected_model`) — never a message, so no body or key material can
+   * leak into report artifacts.
+   */
+  readonly errorCode?: string;
   readonly answer?: EvalAnswer;
 }
 

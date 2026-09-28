@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:e2e": "playwright test",
     "test:live": "vitest run --config vitest.live.config.ts",
+    "test:eval": "vitest run --config vitest.eval.config.ts",
     "check:manifest": "node scripts/check-manifest.mjs",
     "check:bundle": "node scripts/check-bundle.mjs"
   },

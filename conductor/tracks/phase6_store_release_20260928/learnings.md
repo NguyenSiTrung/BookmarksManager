@@ -39,3 +39,8 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 - **Misfiled correctness has three-way semantics.** Predicting the current folder or "none" both mean "no move" in production — correct only for correctly-filed cases. Track `flaggedMisfiled` separately for detection precision/recall.
 - **Reproduce production's add_tags confidence verbatim** (min noulMargin over selected tags at t=0.5) — import `noulMargin` rather than reimplementing.
 - **Zod-inferred output types make defaults required in test fixtures** — `excluded: false` must be explicit in `satisfies EvalCorpus` literals; `noUncheckedIndexedAccess` means `cases[i]` needs `as EvalCase`.
+- **The eval runner reuses the hardened client, not a parallel fetch.** `makeEvalClient` wraps `createJevClient` with a bare-fetch `JevTransport` (no consent gate — none exists under vitest) at `maxConcurrency: 1`; the client's own timeout/retry/cross-check machinery supplies bounded aborts, missing-answer detection, and invented-candidate rejection for free.
+- **Record error codes, never messages.** Observations store `errorCode` only — `JevClientError` messages are designed-redacted but codes are structurally guaranteed to carry no body/key material.
+- **Excluded corpus fixtures produce `skipped` observations, not errors** — the excluded sensitive/malformed bookmarks exercise the same never-send path as production, keeping coverage honest (report separates coverage from accuracy).
+- **`.gitignore` already covers `test-results/`** — the eval artifacts need no new ignore entry; noted here since the plan listed the file.
+- **The client does not pin response-model equality** — it only checks batch consistency; the eval must enforce `acceptedModelIds` itself (`unexpected_model` error).

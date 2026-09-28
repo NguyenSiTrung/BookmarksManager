@@ -76,7 +76,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
   - Verify:
     `npx vitest run tests/unit/eval-schema.test.ts && npm run typecheck`.
 
-- [x] Task 2: Implement deterministic evaluation metrics and reports
+- [x] Task 2: Implement deterministic evaluation metrics and reports (dae4a35)
   - Files: create `src/eval/metrics.ts`, `src/eval/report.ts`,
     `tests/unit/eval-metrics.test.ts`, and
     `tests/unit/eval-report.test.ts`.
@@ -94,7 +94,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
   - Verify:
     `npx vitest run tests/unit/eval-metrics.test.ts tests/unit/eval-report.test.ts`.
 
-- [ ] Task 3: Add the key-gated TypeSafe/OpenRouter evaluation runner
+- [x] Task 3: Add the key-gated TypeSafe/OpenRouter evaluation runner
   - Files: create `vitest.eval.config.ts`,
     `tests/eval/jev-eval.live.test.ts`, and `tests/eval/provider.ts`;
     modify `package.json`, `package-lock.json`, and `.gitignore`.
