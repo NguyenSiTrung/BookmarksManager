@@ -173,3 +173,35 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     (local estimate) XOR neither (unknown) — provenance is derivable, so
     it's deliberately NOT a stored column.
 ---
+### Phase 2 Task 2 — LLM consent scopes, permissions, disclosures
+- **Outcome:** Success — 6 new scopes (`llm_test`, `llm_explain`,
+  `llm_escalate`, `llm_restructure`, `llm_summary`, `jev_summary_verify`),
+  `CONSENT_VERSION` 2→3 (all earlier grants re-disclosed), consent API
+  generalized to origin-based (`*AtOrigin`) with preset wrappers delegating,
+  `ConsentRecord.origin` widened to canonical https OR canonical loopback
+  http (port included in origin), `wxt.config.ts` optional hosts now
+  presets + `https://*/*` capability + 3 loopback patterns, all five store
+  docs updated, consent snapshot extended to v3 + LLM disclosure/store-doc
+  assertions, new `manifest.test.ts` pins the host list.
+- **Files changed:** `src/schemas/provider.ts`, `src/consent/records.ts`,
+  `src/consent/disclosure.ts`, `src/schemas/llm.ts` (export LOOPBACK_HOSTS),
+  `wxt.config.ts`, `store/permissions.md`, `store/privacy-policy.md`,
+  `store/privacy-practices.md`, `store/listing.md`, `store/reviewer-notes.md`,
+  `tests/unit/consent.test.ts`, `tests/unit/consent-snapshot.test.ts`,
+  `tests/unit/manifest.test.ts` (new)
+- **Learnings:**
+  - Patterns: `ConsentScope` enum derives from `CONSENT_SCOPES` tuple —
+    appending six scopes automatically widened every consumer;
+    `LLM_SCOPE_DISCLOSURES` is `satisfies Record<LlmConsentScope, …>` so a
+    missing scope fails to compile; the §13.12 snapshot now unions all
+    per-scope `fields` (deduped — labels repeat across scopes).
+  - Gotchas: `grantConsent` must stay `async` — `resolvePreset` throws
+    synchronously, and a non-async delegating wrapper turns a rejection into
+    a sync throw (broke "rejects unknown preset" tests); `export { X }` +
+    `import { X }` both needed when re-exporting AND consuming the same
+    binding.
+  - Context: Chrome host patterns can't express ports — loopback grants are
+    host-scoped; the Phase-3 gate enforces the full origin (host+port)
+    itself. `check-manifest.mjs` diffs `store/permissions.md` rows against
+    the built manifest — doc rows and `wxt.config.ts` must change together.
+---

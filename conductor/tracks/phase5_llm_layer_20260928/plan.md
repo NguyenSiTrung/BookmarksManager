@@ -131,7 +131,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/database-v4.test.ts tests/unit/llm-settings.test.ts tests/unit/delete-all.test.ts`.
 
-- [ ] Task 2: LLM consent scopes, permissions, and disclosures
+- [x] Task 2: LLM consent scopes, permissions, and disclosures
   - Files: `src/schemas/provider.ts`, `src/consent/records.ts`,
     `src/consent/disclosure.ts`, `wxt.config.ts`, `store/permissions.md`,
     `store/privacy-policy.md`, `store/privacy-practices.md`,
