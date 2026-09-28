@@ -225,6 +225,21 @@ export async function listPending(): Promise<DecisionRow[]> {
   return listByStatus("pending");
 }
 
+/**
+ * The full review surface: `pending` rows plus `unsure` ones — unsure rows
+ * carry the LLM second-opinion verdicts and remain user-reviewable (they
+ * can still reach `applied`/`rejected`). Oldest-first by `createdAt`.
+ */
+export async function listReviewable(): Promise<DecisionRow[]> {
+  const [pending, unsure] = await Promise.all([
+    listByStatus("pending"),
+    listByStatus("unsure"),
+  ]);
+  return [...pending, ...unsure].sort((a, b) =>
+    a.createdAt.localeCompare(b.createdAt),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Status transitions + audit
 // ---------------------------------------------------------------------------

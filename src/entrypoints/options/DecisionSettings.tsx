@@ -20,7 +20,11 @@ import {
   grantConsent,
   hasConsent,
   revokeConsent,
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+  revokeConsentAtOrigin,
 } from "../../consent/records";
+import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
 import {
   addBlocklistEntry,
   BUILTIN_SENSITIVE_SITES,
@@ -36,8 +40,17 @@ import {
 } from "../../messages/decisions";
 import {
   DECISIONS_CONSENT_SCOPE,
+  LLM_ESCALATE_SCOPE,
   PresetId,
 } from "../../schemas/provider";
+import {
+  LlmFeatureMessage,
+  LlmFeatureMessageResult,
+} from "../../messages/llm-features";
+import {
+  LlmProviderMessage,
+  LlmProviderMessageResult,
+} from "../../messages/llm-provider";
 
 /**
  * Options-page surface for the Phase 4 Jev decisions protocol (spec FR10):
@@ -143,6 +156,20 @@ export function DecisionSettings() {
   // Synchronous reentrancy guard — `busy` state lags a fast double click.
   const inFlight = useRef(false);
 
+  // --- Automatic second opinions (escalation, spec FR6) --------------------
+  // The worker owns the `llmEscalation` metadata row and the budget reads;
+  // the page writes consent directly (Dexie is shared) after showing the
+  // scope's disclosure verbatim — the same split as `jev_decisions` above.
+  const [llmOrigin, setLlmOrigin] = useState<string | null>(null);
+  const [escalation, setEscalation] = useState<{
+    enabled: boolean;
+    providerConfigured: boolean;
+    monthlyBudgetUsd: number | null;
+  } | null>(null);
+  const [escalationAgreed, setEscalationAgreed] = useState(false);
+  const [escalationBusy, setEscalationBusy] = useState(false);
+  const escalationDisclosure = LLM_SCOPE_DISCLOSURES[LLM_ESCALATE_SCOPE];
+
   const disclosure = PROVIDER_DISCLOSURES[presetId];
 
   /**
@@ -215,6 +242,127 @@ export function DecisionSettings() {
   /** Re-run the settings read after a failure — the Retry button's action. */
   const onRetryLoad = () => {
     void loadSettings();
+  };
+
+  /**
+   * Read the escalation state: the provider status supplies the egress
+   * origin (needed for the `llm_escalate` consent read below) and the
+   * configured cap; the feature reply carries the enabled flag. Both are
+   * worker answers — the page renders exactly what the gate would see.
+   */
+  const loadEscalation = useCallback(async () => {
+    try {
+      const [providerRaw, statusRaw] = await Promise.all([
+        chrome.runtime.sendMessage(
+          LlmProviderMessage.parse({ type: "LLM_PROVIDER_STATUS" }),
+        ),
+        chrome.runtime.sendMessage(
+          LlmFeatureMessage.parse({ type: "LLM_ESCALATION_STATUS" }),
+        ),
+      ]);
+      const provider = LlmProviderMessageResult.safeParse(providerRaw);
+      const status = LlmFeatureMessageResult.safeParse(statusRaw);
+      if (
+        provider.success &&
+        provider.data.ok &&
+        "status" in provider.data
+      ) {
+        setLlmOrigin(provider.data.status.origin ?? null);
+      }
+      if (
+        status.success &&
+        status.data.ok &&
+        "escalation" in status.data
+      ) {
+        setEscalation(status.data.escalation);
+      }
+    } catch {
+      // A missing worker surface leaves the section in its loading state.
+    }
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void loadEscalation();
+    });
+  }, [loadEscalation]);
+
+  /**
+   * The `llm_escalate` grant at the provider's egress origin — same
+   * pinned-version read as the Jev consent above, keyed on the origin the
+   * worker reported. `undefined` (pending) renders a checking state rather
+   * than a stale grant.
+   */
+  const escalationConsentRead = useLiveQuery(
+    (): Promise<boolean | null> =>
+      llmOrigin === null
+        ? Promise.resolve(null)
+        : hasConsentAtOrigin(LLM_ESCALATE_SCOPE, llmOrigin).catch(() => null),
+    [llmOrigin],
+  );
+
+  /** Grant or revoke `llm_escalate` at the provider's exact origin. */
+  const onEscalationConsent = (grant: boolean) => {
+    if (llmOrigin === null || inFlight.current || escalationBusy) return;
+    if (grant && !escalationAgreed) return;
+    setEscalationBusy(true);
+    setError(null);
+    setNotice(null);
+    const write = grant
+      ? grantConsentAtOrigin(LLM_ESCALATE_SCOPE, llmOrigin)
+      : revokeConsentAtOrigin(LLM_ESCALATE_SCOPE, llmOrigin);
+    void write
+      .then(() => {
+        setEscalationAgreed(false);
+        setNotice(
+          grant
+            ? "Second-opinion consent recorded. Escalation still needs the toggle below and a monthly cap on the provider."
+            : "Second-opinion consent revoked — escalation can no longer send.",
+        );
+      })
+      .catch(() => {
+        setError(
+          grant
+            ? "Something went wrong while recording consent."
+            : "Something went wrong while revoking consent.",
+        );
+      })
+      .finally(() => setEscalationBusy(false));
+  };
+
+  /** Flip the escalation flag through the worker; the reply is re-rendered. */
+  const onEscalationToggle = (enabled: boolean) => {
+    if (inFlight.current || escalationBusy) return;
+    setEscalationBusy(true);
+    setError(null);
+    setNotice(null);
+    void chrome.runtime
+      .sendMessage(
+        LlmFeatureMessage.parse({ type: "LLM_ESCALATION_SET", enabled }),
+      )
+      .then((raw) => {
+        const result = LlmFeatureMessageResult.safeParse(raw);
+        if (
+          result.success &&
+          result.data.ok &&
+          "escalation" in result.data
+        ) {
+          setEscalation(result.data.escalation);
+          setNotice(
+            enabled
+              ? "Automatic second opinions are on for low-confidence suggestions."
+              : "Automatic second opinions are off.",
+          );
+        } else if (result.success && !result.data.ok) {
+          setError(`${result.data.code}: ${result.data.message}`);
+        } else {
+          setError("The extension worker returned an unexpected response.");
+        }
+      })
+      .catch(() => {
+        setError("The extension worker did not answer the escalation write.");
+      })
+      .finally(() => setEscalationBusy(false));
   };
 
   const onPresetChange = (next: PresetId) => {
@@ -561,6 +709,101 @@ export function DecisionSettings() {
                 {label}
               </label>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="escalation-heading" className="mt-6">
+        <h3 id="escalation-heading" className="font-medium">
+          Automatic second opinions
+        </h3>
+        <p className="mt-1 text-sm text-gray-700">
+          When enabled, a suggestion whose confidence falls below the review
+          floor may get a second opinion from the LLM provider configured
+          above — inside a Save, Analyze, or library scan you started, and
+          only while the monthly cap allows it. The verdict is advisory: the
+          suggestion still waits for your review.
+        </p>
+        {llmOrigin === null ? (
+          <p className="mt-2 text-sm text-gray-600">
+            Configure and enable an LLM provider above to use second
+            opinions.
+          </p>
+        ) : (
+          <div className="mt-2 space-y-3">
+            <div>
+              <p className="text-sm font-medium text-gray-800">
+                {escalationDisclosure.title}
+              </p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-gray-700">
+                <li>Purpose: {escalationDisclosure.purpose}.</li>
+                <li>
+                  Sends: {escalationDisclosure.fields.join(", ")} — never page
+                  content or full URLs.
+                </li>
+                <li>When: {escalationDisclosure.trigger}.</li>
+                <li>{escalationDisclosure.credentialUse}</li>
+              </ul>
+              {escalationConsentRead === null ? null : !escalationConsentRead ? (
+                <div className="mt-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={escalationAgreed}
+                      disabled={escalationBusy}
+                      onChange={(event) =>
+                        setEscalationAgreed(event.target.checked)
+                      }
+                    />
+                    I allow second opinions to be sent to {llmOrigin}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => onEscalationConsent(true)}
+                    disabled={!escalationAgreed || escalationBusy}
+                    className="mt-2 rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+                  >
+                    Allow second opinions
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onEscalationConsent(false)}
+                  disabled={escalationBusy}
+                  className="mt-2 rounded border border-gray-300 px-2 py-0.5 text-xs disabled:opacity-50"
+                >
+                  Revoke second-opinion consent
+                </button>
+              )}
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={escalation?.enabled ?? false}
+                disabled={
+                  escalationBusy ||
+                  escalation === null ||
+                  !escalation.providerConfigured ||
+                  escalationConsentRead !== true ||
+                  escalation.monthlyBudgetUsd === null
+                }
+                onChange={(event) =>
+                  onEscalationToggle(event.target.checked)
+                }
+              />
+              Ask the provider for a second opinion on unsure suggestions
+            </label>
+            {escalation !== null && (
+              <p className="text-sm text-gray-600">
+                {escalation.monthlyBudgetUsd === null
+                  ? "No monthly cap is set — escalation cannot run. Set one in the LLM provider section above."
+                  : `Monthly cap: $${escalation.monthlyBudgetUsd.toFixed(2)}.`}
+                {escalation.providerConfigured
+                  ? ""
+                  : " The stored provider is gone — configure it again above."}
+              </p>
+            )}
           </div>
         )}
       </section>

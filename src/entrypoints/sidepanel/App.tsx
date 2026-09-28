@@ -55,7 +55,7 @@ import {
   readPendingEditId,
 } from "../popup/chrome";
 import { registerDbReleaseListener } from "../../security/delete-all";
-import { listPending } from "../../decisions/store";
+import { listReviewable } from "../../decisions/store";
 import type { DecisionRow } from "../../decisions/store";
 import { DecisionMessage } from "../../messages/decisions";
 import { TagManager } from "./TagManager";
@@ -201,11 +201,12 @@ export function App() {
   const tagDefs =
     useLiveQuery(() => listTags().catch((): TagDef[] => []), []) ??
     EMPTY_TAG_DEFS;
-  // The review queue: pending `Decision` rows stream straight from Dexie
-  // (same degrade-to-[] rule as metas/tagDefs) — the header badge and the
-  // ReviewView pane both read this.
+  // The review queue: pending + unsure `Decision` rows stream straight
+  // from Dexie (same degrade-to-[] rule as metas/tagDefs) — the header
+  // badge and the ReviewView pane both read this. `unsure` rows carry the
+  // LLM second opinion and stay user-reviewable (spec FR6.9).
   const pendingDecisions =
-    useLiveQuery(() => listPending().catch((): DecisionRow[] => []), []) ??
+    useLiveQuery(() => listReviewable().catch((): DecisionRow[] => []), []) ??
     EMPTY_DECISIONS;
   // The badge mirrors ReviewView's ACTIONABLE queue — save-suggest
   // placeholder (`popup:`) decisions are withheld there, so counting them

@@ -7,6 +7,7 @@ import {
   writeLlmEscalationSettings,
 } from "../llm/escalate";
 import { LlmHttpError } from "../llm/client";
+import { resolveLlmDestination } from "../llm/providers";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import type { TokenUsage } from "../llm/wire";
@@ -161,6 +162,12 @@ export const LlmFeatureMessageResult = z.union([
     ok: z.literal(false),
     code: LlmFeatureErrorCode,
     message: z.string(),
+    /**
+     * On `confirmation_required`: the exact egress origin the resend would
+     * hit, so the CostConfirmationDialog can name it. A target, never
+     * content.
+     */
+    destinationOrigin: z.string().optional(),
   }),
 ]);
 export type LlmFeatureMessageResult = z.infer<typeof LlmFeatureMessageResult>;
@@ -177,6 +184,15 @@ function failure(
   return { ok: false, code, message };
 }
 
+/** Carries a ready-made reply through the dispatcher's catch — never rewrapped. */
+class ReplyError extends Error {
+  readonly reply: LlmFeatureMessageResult;
+  constructor(reply: LlmFeatureMessageResult) {
+    super("reply");
+    this.reply = reply;
+  }
+}
+
 function isTrustedExtensionSender(sender: LlmFeatureMessageSender): boolean {
   try {
     const base = chrome.runtime.getURL("");
@@ -188,6 +204,9 @@ function isTrustedExtensionSender(sender: LlmFeatureMessageSender): boolean {
 
 /** Map a thrown error to a stable code without leaking its content. */
 function mapError(cause: unknown): LlmFeatureMessageResult {
+  if (cause instanceof ReplyError) {
+    return cause.reply;
+  }
   if (cause instanceof ExplainError) {
     return failure(cause.code, cause.message);
   }
@@ -310,10 +329,29 @@ async function explain(message: {
   if (active === null) {
     return failure("no_provider", "No LLM provider is configured.");
   }
-  const result = await explainDecision(message.decisionId, active.providerId, {
-    ...(message.unknownCostConfirmed !== undefined
-      ? { unknownCostConfirmed: message.unknownCostConfirmed }
-      : {}),
+  const result = await explainDecision(
+    message.decisionId,
+    active.providerId,
+    {
+      ...(message.unknownCostConfirmed !== undefined
+        ? { unknownCostConfirmed: message.unknownCostConfirmed }
+        : {}),
+    },
+  ).catch((cause: unknown) => {
+    // Attach the destination origin to a confirmation refusal so the page
+    // can name it in the dialog — a target, never content.
+    if (
+      cause instanceof LlmGateError &&
+      cause.code === "confirmation_required"
+    ) {
+      throw new ReplyError({
+        ok: false,
+        code: cause.code,
+        message: cause.message,
+        destinationOrigin: resolveLlmDestination(active.provider).origin,
+      });
+    }
+    throw cause;
   });
   const usage: TokenUsage | undefined = result.usage;
   return {

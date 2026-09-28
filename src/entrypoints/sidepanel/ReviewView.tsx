@@ -13,6 +13,11 @@ import {
   DecisionMessage,
   DecisionMessageResult,
 } from "../../messages/decisions";
+import {
+  LlmFeatureMessage,
+  LlmFeatureMessageResult,
+} from "../../messages/llm-features";
+import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
 import type { Decision } from "../../schemas/decision";
 import type { DecisionStatus } from "../../schemas/audit";
 import type { FlattenedTree } from "../../sync/tree";
@@ -121,6 +126,44 @@ export async function sendDecisionMessage(
     };
   }
   const parsed = DecisionMessageResult.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: "internal_error",
+      message: UNEXPECTED_REPLY_MESSAGE,
+    };
+  }
+  return parsed.data;
+}
+
+/**
+ * Send one LLM-feature intent and validate the reply — the same
+ * never-throw/never-fabricate rules as {@link sendDecisionMessage}, against
+ * the feature protocol's result union.
+ */
+export async function sendLlmFeatureMessage(
+  message: LlmFeatureMessage,
+): Promise<LlmFeatureMessageResult> {
+  let raw: unknown;
+  try {
+    const runtime = chrome.runtime;
+    const send = runtime?.sendMessage;
+    if (send === undefined) {
+      return {
+        ok: false,
+        code: "internal_error",
+        message: NO_WORKER_MESSAGE,
+      };
+    }
+    raw = await send.call(runtime, message);
+  } catch {
+    return {
+      ok: false,
+      code: "internal_error",
+      message: NO_WORKER_MESSAGE,
+    };
+  }
+  const parsed = LlmFeatureMessageResult.safeParse(raw);
   if (!parsed.success) {
     return {
       ok: false,
@@ -434,6 +477,17 @@ export function ReviewView({
     () => new Set<string>(),
   );
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Rationales this session's Explain calls returned — rendered at once so
+  // the answer is visible even before the Dexie live-query refresh lands.
+  const [explanations, setExplanations] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  // A `confirmation_required` refusal parks the resend here until the user
+  // confirms or cancels the one-shot unknown-cost dialog (spec FR7.8).
+  const [confirming, setConfirming] = useState<{
+    decisionId: string;
+    origin: string;
+  } | null>(null);
   /** Row id → the redacted failure message it last reported. */
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
@@ -549,6 +603,53 @@ export function ReviewView({
     );
     if (!result.ok || result.code !== "decision_ok") return;
     toast.showToast({ message: "Reverted the suggestion." });
+  };
+
+  /**
+   * Explain one pending row. `confirmed` is the resend flag after the
+   * cost dialog — it is the only path allowed to set `unknownCostConfirmed`.
+   */
+  const explain = async (
+    decisionId: string,
+    confirmed: boolean,
+  ): Promise<void> => {
+    setBusy(decisionId, true);
+    const result = await sendLlmFeatureMessage(
+      LlmFeatureMessage.parse({
+        type: "LLM_EXPLAIN",
+        decisionId,
+        ...(confirmed ? { unknownCostConfirmed: true } : {}),
+      }),
+    );
+    setBusy(decisionId, false);
+    if (!result.ok) {
+      if (result.code === "confirmation_required") {
+        setConfirming({
+          decisionId,
+          origin: result.destinationOrigin ?? "the configured provider",
+        });
+        return;
+      }
+      setFailure(decisionId, result.message);
+      toast.showToast({ message: result.message, error: true });
+      return;
+    }
+    if (result.code !== "explain_ok") {
+      setFailure(decisionId, UNEXPECTED_REPLY_MESSAGE);
+      toast.showToast({ message: UNEXPECTED_REPLY_MESSAGE, error: true });
+      return;
+    }
+    setFailure(decisionId, null);
+    setExplanations((prev) => {
+      const next = new Map(prev);
+      next.set(decisionId, result.result.rationale);
+      return next;
+    });
+    toast.showToast({ message: "Added an explanation." });
+  };
+
+  const handleExplain = (row: DecisionRow): void => {
+    void explain(row.id, false);
   };
 
   const handleBulkApprove = async (): Promise<void> => {
@@ -680,6 +781,7 @@ export function ReviewView({
               selected={selectedIds.has(row.id)}
               busy={busyIds.has(row.id) || bulkBusy}
               failure={failures.get(row.id)}
+              explanation={explanations.get(row.id) ?? row.rationale}
               onRegister={registerOption}
               onSelect={(i) => {
                 setActiveIndex(i);
@@ -689,10 +791,22 @@ export function ReviewView({
               onApprove={handleApprove}
               onReject={handleReject}
               onRevert={handleRevert}
+              onExplain={handleExplain}
             />
           ))
         )}
       </div>
+      <CostConfirmationDialog
+        open={confirming !== null}
+        featureLabel="Explain this suggestion"
+        destinationOrigin={confirming?.origin ?? ""}
+        onConfirm={() => {
+          const pending = confirming;
+          setConfirming(null);
+          if (pending !== null) void explain(pending.decisionId, true);
+        }}
+        onCancel={() => setConfirming(null)}
+      />
     </div>
   );
 }
@@ -711,12 +825,31 @@ interface ReviewRowProps {
   selected: boolean;
   busy: boolean;
   failure?: string;
+  /** Persisted rationale or one this session's Explain just returned. */
+  explanation?: string;
   onRegister: (id: string, el: HTMLElement | null) => void;
   onSelect: (index: number) => void;
   onToggle: (id: string) => void;
   onApprove: (row: DecisionRow) => void;
   onReject: (row: DecisionRow) => void;
   onRevert: (row: DecisionRow) => void;
+  onExplain: (row: DecisionRow) => void;
+}
+
+/** The escalation verdict as words — never color-only. */
+function verdictText(row: DecisionRow): string | null {
+  const escalation = row.escalation;
+  if (escalation === undefined) return null;
+  switch (escalation.llmVerdict) {
+    case "agree":
+      return "agrees with the suggestion";
+    case "unsure":
+      return "is unsure";
+    case "disagree":
+      return escalation.llmAlternative !== undefined
+        ? `disagrees — suggests “${escalation.llmAlternative}”`
+        : "disagrees";
+  }
 }
 
 function ReviewRow({
@@ -728,12 +861,14 @@ function ReviewRow({
   selected,
   busy,
   failure,
+  explanation,
   onRegister,
   onSelect,
   onToggle,
   onApprove,
   onReject,
   onRevert,
+  onExplain,
 }: ReviewRowProps) {
   const band = confidenceBand(row.confidence);
   const percent = Math.round(row.confidence * 100);
@@ -748,6 +883,9 @@ function ReviewRow({
   const canApprove = statusAllows(row, "applied");
   const canReject = statusAllows(row, "rejected");
   const canRevert = statusAllows(row, "reverted");
+  // Explain is a pending-queue action (the worker refuses anything else).
+  const canExplain = row.status === "pending";
+  const verdict = verdictText(row);
 
   const stopEvent = (event: ReactMouseEvent<HTMLElement>): void => {
     event.stopPropagation();
@@ -799,6 +937,21 @@ function ReviewRow({
         <div className="truncate text-xs text-muted-foreground">
           {payloadSummary(row, tree)}
         </div>
+        {row.status === "unsure" && (
+          <div className="mt-0.5 text-xs italic text-muted-foreground">
+            Unsure — low confidence; needs a decision.
+          </div>
+        )}
+        {verdict !== null && (
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            Second opinion ({row.escalation?.llmModel}): {verdict}.
+          </div>
+        )}
+        {explanation !== undefined && (
+          <p className="mt-0.5 text-xs italic text-muted-foreground">
+            “{explanation}”
+          </p>
+        )}
         {stale && (
           <div className="mt-0.5 text-xs italic text-muted-foreground">
             Stale — a referenced bookmark is gone; applying may be refused.
@@ -822,6 +975,17 @@ function ReviewRow({
           onClick={stopEvent}
           onKeyDown={(event) => event.stopPropagation()}
         >
+          {canExplain && (
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={`Explain the suggestion for ${primaryLabel}`}
+              onClick={() => onExplain(row)}
+              className={secondaryButtonClass}
+            >
+              Explain
+            </button>
+          )}
           {canApprove && (
             <button
               type="button"

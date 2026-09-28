@@ -826,3 +826,253 @@ describe("Analyze actions", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Explain + second opinions (spec FR5/FR6)
+// ---------------------------------------------------------------------------
+
+const D_UNSURE = "e5f6a7b8-c9d0-4e1f-a2b3-4c5d6e7f8a9b";
+
+/** The stub worker's reply type — LLM replies sit outside that union, so
+ * feature-protocol replies are cast through it at the mock boundary. */
+const asWorkerReply = (v: unknown): ReturnType<typeof defaultWorker> =>
+  Promise.resolve(v) as ReturnType<typeof defaultWorker>;
+
+describe("Explain and second opinions", () => {
+  /** Seed an unsure row carrying a second-opinion verdict. */
+  function unsureRow(over: Partial<DecisionDocument> = {}) {
+    return decision({
+      id: D_UNSURE,
+      kind: "set_category",
+      category: "docs",
+      bookmarkIds: ["b1"],
+      confidence: 0.3,
+      status: "unsure",
+      escalation: {
+        llmVerdict: "disagree",
+        llmModel: "gpt-4o-mini",
+        llmAlternative: "article",
+      },
+      rationale: "The article body reads as a tutorial.",
+      createdAt: "2026-09-27T09:04:00.000Z",
+      ...over,
+    });
+  }
+
+  it("an unsure row renders the verdict + constrained alternative in words", async () => {
+    render(
+      <ReviewView tree={await liveTree()} decisions={[unsureRow()]} />,
+    );
+    const row = option(/Alpha/);
+    expect(row.textContent).toMatch(/unsure/i);
+    // Non-color-only: the verdict and the alternative id are written out.
+    expect(row.textContent).toContain("disagrees");
+    expect(row.textContent).toContain("article");
+    expect(row.textContent).toContain("gpt-4o-mini");
+    expect(row.textContent).toContain("The article body reads as a tutorial.");
+    // Explain is a pending-queue action — an unsure row has no button.
+    expect(
+      within(row).queryByRole("button", { name: /^Explain/ }),
+    ).toBeNull();
+  });
+
+  it("renders an agree verdict", async () => {
+    render(
+      <ReviewView
+        tree={await liveTree()}
+        decisions={[
+          unsureRow({
+            escalation: { llmVerdict: "agree", llmModel: "m" },
+            rationale: undefined,
+          } as Partial<DecisionDocument>),
+        ]}
+      />,
+    );
+    expect(option(/Alpha/).textContent).toContain("agrees with the suggestion");
+  });
+
+  it("Explain sends LLM_EXPLAIN and renders the returned rationale", async () => {
+    await seedDecisions();
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as Intent & { unknownCostConfirmed?: boolean };
+      if (msg.type === "LLM_EXPLAIN") {
+        await db.decisions.update(msg.decisionId as string, {
+          rationale: "Looks like a reference page.",
+        });
+        return asWorkerReply({
+          ok: true,
+          code: "explain_ok",
+          result: {
+            decisionId: msg.decisionId,
+            rationale: "Looks like a reference page.",
+            model: "gpt-4o-mini",
+          },
+        });
+      }
+      return defaultWorker(raw);
+    });
+    render(<ReviewView tree={await liveTree()} decisions={seedRows()} />);
+
+    const row = option(/Alpha/);
+    fireEvent.click(
+      within(row).getByRole("button", { name: /^Explain/ }),
+    );
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "LLM_EXPLAIN",
+        decisionId: D_TAGS,
+      }),
+    );
+    await waitFor(() =>
+      expect(row.textContent).toContain("Looks like a reference page."),
+    );
+    // The rationale is on the persisted row too (worker wrote it).
+    expect((await db.decisions.get(D_TAGS))?.rationale).toBe(
+      "Looks like a reference page.",
+    );
+  });
+
+  it("a double click sends exactly one request", async () => {
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as Intent;
+      if (msg.type === "LLM_EXPLAIN") {
+        return asWorkerReply({
+          ok: true,
+          code: "explain_ok",
+          result: { decisionId: msg.decisionId, rationale: "R.", model: "m" },
+        });
+      }
+      return defaultWorker(raw);
+    });
+    render(<ReviewView tree={await liveTree()} decisions={seedRows()} />);
+    const button = within(option(/Alpha/)).getByRole("button", {
+      name: /^Explain/,
+    });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "LLM_EXPLAIN",
+        decisionId: D_TAGS,
+      }),
+    );
+    expect(
+      sendMessage.mock.calls.filter(
+        ([m]) => (m as Intent).type === "LLM_EXPLAIN",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("confirmation_required opens the cost dialog and resends with the flag", async () => {
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as Intent & { unknownCostConfirmed?: boolean };
+      if (msg.type === "LLM_EXPLAIN" && msg.unknownCostConfirmed !== true) {
+        return asWorkerReply({
+          ok: false,
+          code: "confirmation_required",
+          message: "Cost cannot be estimated — confirm to send.",
+          destinationOrigin: "https://api.openai.com",
+        });
+      }
+      if (msg.type === "LLM_EXPLAIN") {
+        return asWorkerReply({
+          ok: true,
+          code: "explain_ok",
+          result: {
+            decisionId: msg.decisionId,
+            rationale: "Confirmed.",
+            model: "gpt-4o-mini",
+          },
+        });
+      }
+      return defaultWorker(raw);
+    });
+    render(<ReviewView tree={await liveTree()} decisions={seedRows()} />);
+
+    fireEvent.click(
+      within(option(/Alpha/)).getByRole("button", { name: /^Explain/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("https://api.openai.com");
+
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /send anyway/i }),
+    );
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "LLM_EXPLAIN",
+        decisionId: D_TAGS,
+        unknownCostConfirmed: true,
+      }),
+    );
+    await waitFor(() =>
+      expect(option(/Alpha/).textContent).toContain("Confirmed."),
+    );
+    // The dialog is gone after the resend.
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("cancel dismisses the dialog without resending", async () => {
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as Intent & { unknownCostConfirmed?: boolean };
+      if (msg.type === "LLM_EXPLAIN") {
+        return asWorkerReply({
+          ok: false,
+          code: "confirmation_required",
+          message: "Cost cannot be estimated — confirm to send.",
+          destinationOrigin: "https://api.openai.com",
+        });
+      }
+      return defaultWorker(raw);
+    });
+    render(<ReviewView tree={await liveTree()} decisions={seedRows()} />);
+
+    fireEvent.click(
+      within(option(/Alpha/)).getByRole("button", { name: /^Explain/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: /cancel|don.t send/i }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(
+      sendMessage.mock.calls.filter(
+        ([m]) => (m as Intent).type === "LLM_EXPLAIN",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("an {ok:false} reply lands on the row and in the toast, focus retained", async () => {
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as Intent;
+      if (msg.type === "LLM_EXPLAIN") {
+        return {
+          ok: false,
+          code: "no_provider",
+          message: "No LLM provider is configured.",
+        };
+      }
+      return defaultWorker(raw);
+    });
+    await seedDecisions();
+    await renderApp();
+    await openReviewView();
+
+    const row = option(/Alpha/);
+    const explainButton = within(row).getByRole("button", {
+      name: /^Explain/,
+    });
+    explainButton.focus();
+    fireEvent.click(explainButton);
+    await waitFor(() =>
+      expect(within(row).getByRole("alert").textContent).toBe(
+        "No LLM provider is configured.",
+      ),
+    );
+    await waitFor(() =>
+      expect(toast().textContent).toContain("No LLM provider is configured."),
+    );
+    // Focus stays on the row's control surface.
+    expect(document.activeElement).toBe(explainButton);
+  });
+});
