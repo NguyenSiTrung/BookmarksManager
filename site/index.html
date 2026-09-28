@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Bookmarks Manager — a local-first Chrome extension that organizes your bookmarks, with an optional AI provider you control.">
+  <title>Bookmarks Manager — local-first bookmark organization for Chrome</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <nav class="site" aria-label="Site">
+        <a class="brand" href="./">Bookmarks Manager</a>
+        <span class="spacer"></span>
+        <a href="privacy/">Privacy</a>
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager">Source</a>
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">Support</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <h1>Your bookmarks, organized — on your device.</h1>
+      <p class="lede">
+        Bookmarks Manager is a Chrome extension that replaces the built-in
+        bookmark manager with fast search, tags, categories, notes, undo, and
+        import/export. Everything runs locally. An optional AI provider
+        connection — off by default — can help organize on your request.
+      </p>
+      <p>
+        <a class="button" href="https://github.com/NguyenSiTrung/BookmarksManager">View on GitHub</a>
+      </p>
+
+      <div class="cards">
+        <section class="card">
+          <h3>Local-first</h3>
+          <p>
+            No accounts, no sign-in, no telemetry, no developer servers. Your
+            bookmark metadata lives in your browser's IndexedDB and never
+            leaves the device unless you start a provider feature yourself.
+          </p>
+        </section>
+        <section class="card">
+          <h3>Fast search everywhere</h3>
+          <p>
+            A side panel, command palette, popup, and <code>bm</code> omnibox
+            keyword all query an in-memory index — search produces zero
+            network requests.
+          </p>
+        </section>
+        <section class="card">
+          <h3>Optional AI, your rules</h3>
+          <p>
+            Pin a Jev 1.13 model or configure one OpenAI-compatible endpoint.
+            Consent is per-scope and versioned, keys are AES-GCM encrypted at
+            rest, and revoking deletes every grant.
+          </p>
+        </section>
+        <section class="card">
+          <h3>Safe by design</h3>
+          <p>
+            Move, merge, and restructure operations are never auto-applied.
+            Destructive changes take undo snapshots. No data is sold, shared
+            for advertising, or read by humans.
+          </p>
+        </section>
+      </div>
+
+      <h2>Links</h2>
+      <ul>
+        <li><a href="privacy/">Privacy policy</a> — what the extension stores and the only flows that can send data.</li>
+        <li><a href="https://github.com/NguyenSiTrung/BookmarksManager">Source code</a> — the full extension, evals, and store materials.</li>
+        <li><a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">Support</a> — file a bug or ask a question.</li>
+      </ul>
+    </div>
+  </main>
+
+  <footer class="site">
+    <div class="wrap">
+      <p>
+        Published by NguyenSiTrung ·
+        <a href="privacy/">Privacy policy</a> ·
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">Support</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

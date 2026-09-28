@@ -56,3 +56,6 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 - **PNG size reads straight from IHDR** — bytes 16–24 BE after the 8-byte signature + "IHDR" tag; no image lib needed for a 33-byte synthetic fixture.
 - **Version assets land late by design.** On the pre-Phase-3 tree, `check:store` correctly reports only `version`/`assets`/`release-record` violations — a release-strict gate is expected to fail until release artifacts exist.
 - **TS needs a `.d.mts` beside imported `.mjs` scripts** for `typecheck` (TS7016); type the violations array so test assertions stay checked.
+- **check-site treats the static site as fully self-contained.** Any `<script>` tag, `<form>`, `document.cookie`, tracker string, or external non-anchor asset (`link/img/iframe` href→http) is a violation — anchors to github.com are fine.
+- **Policy equivalence is a field floor, not a diff.** check-site asserts every required string (publisher, contact, `consentVersion`, `jev_*`/`llm_*` scopes, Limited Use, capability-only note, version, effective date) in privacy-policy.md also appears in privacy/index.html — wording can differ, fields cannot.
+- **Keep HTML-only checks behind `.endsWith(".html")`** — required non-HTML files (styles.css) otherwise get landmark/meta violations.

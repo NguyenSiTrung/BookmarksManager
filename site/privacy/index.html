@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Privacy policy for the Bookmarks Manager Chrome extension — local-first, no data collection, optional provider connection you control.">
+  <title>Privacy Policy — Bookmarks Manager</title>
+  <link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="wrap">
+      <nav class="site" aria-label="Site">
+        <a class="brand" href="../">Bookmarks Manager</a>
+        <span class="spacer"></span>
+        <a href="../privacy/" aria-current="page">Privacy</a>
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager">Source</a>
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">Support</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <h1>Privacy Policy — Bookmarks Manager</h1>
+
+      <p class="meta">
+        <strong>Version:</strong> 1.0 ·
+        <strong>Effective date:</strong> 2026-09-28 ·
+        <strong>Hosted URL:</strong>
+        <a href="https://nguyensitrung.github.io/BookmarksManager/privacy/">https://nguyensitrung.github.io/BookmarksManager/privacy/</a>
+      </p>
+
+      <h2>Who publishes this extension</h2>
+      <p>
+        Bookmarks Manager is published by
+        <strong><a href="https://github.com/NguyenSiTrung">NguyenSiTrung</a></strong>.
+      </p>
+      <p>
+        Contact: <strong>trungnsai95@gmail.com</strong> — monitored; privacy
+        questions and deletion requests are answered there. Issues may also be
+        filed at
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">github.com/NguyenSiTrung/BookmarksManager/issues</a>.
+      </p>
+
+      <h2>Summary</h2>
+      <p>
+        The developer does not collect, receive, or store any of your data.
+        There are no accounts, no analytics, no telemetry, no crash reporting,
+        no remote code, and no developer-operated servers.
+      </p>
+      <p>
+        Bookmark management works fully offline: there is no account, no
+        sign-in, and no API key required. Everything stays in your browser
+        unless you explicitly start a feature that sends data to a provider
+        you chose. The optional AI provider flow — disclosure, consent, host
+        permission, encrypted key storage, revocation, the Test connection,
+        and the bookmark decisions flow — is off by default and is the only
+        code path that can ever make a network request. At a fresh install the
+        extension sends zero requests.
+      </p>
+
+      <h2>How the extension handles your bookmarks</h2>
+      <ul>
+        <li>Your native Chrome bookmarks remain the source of truth. The
+          extension reads them through the <code>bookmarks</code> permission
+          and writes only the changes you make (create, edit, move, delete,
+          quick save, import).</li>
+        <li>The extension stores only its <strong>own</strong> extra
+          information — tags, category, and notes — in its local IndexedDB
+          database, keyed by the Chrome bookmark id it belongs to. It never
+          copies your bookmark tree to a server, and it never uploads a
+          bookmark.</li>
+        <li><strong>Undo snapshots</strong> (for a delete, a bulk move, a
+          duplicate merge, or a tag delete) are kept in the same local
+          IndexedDB database, newest-first and capped at the 20 most recent,
+          so the last operation can be reversed.</li>
+        <li><strong>Site icons</strong> are served by Chrome's own built-in
+          <code>_favicon</code> renderer using the <code>favicon</code>
+          permission. The extension requests no host access for icons and
+          makes no request to any icon service.</li>
+        <li><strong>Search</strong> runs entirely on your device. The
+          side-panel bar, the command palette (Ctrl+K / Command+K), the popup
+          search box, and the <code>bm</code> address-bar keyword all query a
+          local index built in memory from your bookmarks and their tags,
+          notes, and categories. Search queries are never stored, logged, or
+          sent anywhere — typing into any search surface produces no network
+          request of any kind. The index itself is held in memory only: it is
+          rebuilt when a surface opens (the omnibox builds a fresh one per
+          session and discards it when you leave) and is never written to
+          disk.</li>
+        <li><strong>Import and export</strong> are local file operations: you
+          pick a file on your own device (JSON, Netscape HTML, or CSV) or
+          download one. The file is read and written entirely in the browser —
+          nothing is uploaded, and no server is involved.</li>
+      </ul>
+
+      <h2>Data stored locally (never sent to the developer)</h2>
+      <ul>
+        <li>Bookmark metadata — tags, category, and notes — in IndexedDB, one
+          row per Chrome bookmark id, and tag definitions (name, color,
+          description).</li>
+        <li>Undo snapshots for reversible operations, in IndexedDB.</li>
+        <li>Extension settings and preferences (for example the last folder a
+          quick save used), in IndexedDB.</li>
+        <li>The search index exists only in memory — it is not persisted, and
+          search queries are never written to any storage surface.</li>
+        <li>Provider records, written only if you set up the optional AI
+          feature; they stay on the device:
+          <ul>
+            <li>Consent records: a versioned grant per provider origin and
+              per scope — the synthetic <code>jev_test</code> scope and the
+              bookmark-data <code>jev_decisions</code> scope — each recording
+              the scope, the origin, the <code>consentVersion</code> you
+              accepted, and when.</li>
+            <li>Provider settings: the provider preset, chosen model name,
+              and a masked display hint — the last four characters of your
+              API key (a fixed <code>****</code> placeholder for keys too
+              short to mask safely), never the full key.</li>
+            <li>API key ciphertext: an AES-GCM encrypted envelope in
+              <code>chrome.storage.local</code>; the encryption key is a
+              non-extractable CryptoKey held in IndexedDB. Plaintext keys are
+              never written anywhere.</li>
+            <li>A local "data sent" log holding metadata only — the time, the
+              destination origin, the feature (the consent scope,
+              <code>jev_test</code> or <code>jev_decisions</code>), and the
+              top-level field names sent. It never stores request contents,
+              headers, keys, or bookmark data.</li>
+          </ul>
+        </li>
+      </ul>
+
+      <h2>Data sent to third parties — only at your direction</h2>
+      <p>
+        The only features that can send data are the optional
+        <strong>Test connection</strong> and the optional
+        <strong>bookmark decisions</strong> flow for the Jev AI providers.
+        Both are off until you turn them on, and neither sends anything unless
+        you start it.
+      </p>
+
+      <h3>The synthetic Test connection (<code>jev_test</code>)</h3>
+      <ul>
+        <li><strong>What is sent:</strong> a fixed, synthetic test payload
+          generated by the extension with exactly the top-level fields
+          <code>model</code>, <code>state</code>, and <code>questions</code> —
+          sample text, not your data — plus your API key in the
+          <code>Authorization: Bearer</code> header. No bookmark titles, URLs,
+          notes, tags, categories, page content, or browsing history are ever
+          sent.</li>
+        <li><strong>To whom:</strong> exactly one provider origin that you
+          picked — <code>https://api.typesafe.ai</code> (TypeSafe) or
+          <code>https://openrouter.ai</code> (OpenRouter). The corresponding
+          optional host permission is requested only from a direct click on
+          the provider's Enable button in Options, and is revocable at any
+          time.</li>
+        <li><strong>When:</strong> only on an explicit Test connection click,
+          after the in-product disclosure screen and an affirmative,
+          unchecked consent checkbox — never on install, on page load, in the
+          background, or when enabling a provider. Enabling only stores
+          consent, the saved settings, and the encrypted key locally; nothing
+          leaves the device until you click Test connection.</li>
+      </ul>
+
+      <h3>Bookmark decisions (<code>jev_decisions</code>)</h3>
+      <p>
+        Beyond the synthetic test, an optional <strong>bookmark-data</strong>
+        flow can send bookmark metadata to the same provider for AI decisions
+        (categorize, tag, folder pre-select, near-duplicates, misfiled scan,
+        and search re-rank). It is a separate consent scope,
+        <code>jev_decisions</code>, granted per provider, and it is off until
+        you enable it.
+      </p>
+      <ul>
+        <li><strong>What is sent:</strong> bookmark metadata only — the
+          bookmark title, cleaned URL, domain, and folder path; tag names and
+          descriptions; candidate folder paths; candidate bookmarks; the
+          near-duplicate partner; and the Ask search query. Your notes are
+          <strong>never</strong> sent under any scope. Page text is sent only
+          under the <code>llm_summary</code> and
+          <code>jev_summary_verify</code> scopes — a bounded excerpt — and
+          only after you click Summarize on a saved page.</li>
+        <li><strong>To whom:</strong> exactly one provider origin you chose —
+          <code>https://api.typesafe.ai</code> (TypeSafe) or
+          <code>https://openrouter.ai</code> (OpenRouter) — whose own privacy
+          policy governs what it receives
+          (<a href="https://typesafe.ai/legal/privacy-policy">typesafe.ai/legal/privacy-policy</a>
+          and <a href="https://openrouter.ai/privacy">openrouter.ai/privacy</a>).</li>
+        <li><strong>Why:</strong> to categorize, tag, folder pre-select, run a
+          near-duplicate check, run a misfiled scan, and search re-rank.</li>
+        <li><strong>When:</strong> only on a user-started action — saving a
+          bookmark, clicking Analyze, starting a library scan, or running an
+          Ask search — and only when you start them — never on install, on a
+          timer, or in the background.</li>
+        <li><strong>Links:</strong> the provider's privacy policy above and
+          this extension's privacy policy
+          (<a href="https://nguyensitrung.github.io/BookmarksManager/privacy/">nguyensitrung.github.io/BookmarksManager/privacy/</a>).</li>
+      </ul>
+
+      <h3>Optional LLM provider features (<code>llm_test</code>, <code>llm_explain</code>, <code>llm_escalate</code>, <code>llm_restructure</code>, <code>llm_summary</code>, <code>jev_summary_verify</code>)</h3>
+      <p>
+        You may optionally configure one OpenAI-compatible LLM provider — an
+        OpenAI or OpenRouter preset, or a custom HTTPS endpoint (HTTP only for
+        a loopback service such as <code>http://localhost:11434</code>). A
+        custom HTTPS origin is granted through the manifest's
+        <code>https://*/*</code> optional host pattern: the broad optional
+        host pattern is capability only — it grants the exact configured
+        origin at runtime from your direct Enable click, never default
+        access, and it can be revoked like any other host grant. Each feature
+        below is a separate consent scope, granted per provider origin, and
+        every request is re-checked against the exact configured origin, the
+        saved consent, the host permission, and the closed request schema
+        before it can leave the device. Your stored provider credential goes
+        in the request's authentication header only — never inside the
+        message body. Notes, the full page DOM, and credentials in the
+        message body are never sent under any scope.
+      </p>
+      <ul>
+        <li><strong>LLM test connection</strong> (<code>llm_test</code>) —
+          sends <code>model</code>, <code>messages</code>, and
+          <code>response_format</code> as a fixed synthetic request to check
+          that your credentials and endpoint respond. Triggered only when you
+          click "Test connection".</li>
+        <li><strong>Decision explanations</strong> (<code>llm_explain</code>)
+          — sends the decision state, the question, the candidate labels, the
+          Jev probabilities, and the selected answer to explain a
+          review-queue decision in plain language. Triggered only when you
+          click "Explain" on a pending decision.</li>
+        <li><strong>Automatic second opinions</strong>
+          (<code>llm_escalate</code>) — sends the decision state, the
+          question, the allowed options, the Jev probabilities, and the Jev
+          answer for a second opinion on a low-confidence decision. Runs only
+          inside a Save, Analyze, or library scan you started, within the
+          monthly budget you set; it never applies changes by itself.</li>
+        <li><strong>Restructure proposals</strong>
+          (<code>llm_restructure</code>) — sends folder paths, category
+          counts, tag counts, domains, and representative titles (capped) to
+          propose a folder structure. Proposals are plans for your review —
+          nothing is applied automatically. Triggered only when you start
+          "Restructure".</li>
+        <li><strong>Page summaries</strong> (<code>llm_summary</code>) —
+          sends the page title, site name, headings, and a bounded page
+          excerpt to summarize the current page. The page is extracted only
+          after you click "Summarize" — never in the background and never in
+          incognito.</li>
+        <li><strong>Jev summary verification</strong>
+          (<code>jev_summary_verify</code>) — sends the page title, the
+          bounded page excerpt, and the LLM-generated summary to your Jev
+          provider to verify the summary is supported by the page. This is
+          the only LLM feature that sends data to Jev, and only as part of a
+          Summarize action you started.</li>
+      </ul>
+      <p>
+        Each grant is tied to the exact configured origin (including the port
+        for a loopback endpoint). Revoking the provider deletes every consent
+        scope at its origin, removes the host permission, and deletes the
+        stored credential. LLM spending is metered: when reliable per-token
+        pricing is configured, each request first reserves an estimated cost;
+        when it is not, requests run only inside the unknown-cost mode you
+        chose. Nothing is sent on install, on a timer, or in the background.
+      </p>
+      <p>
+        The consent is versioned — <code>consentVersion</code>, currently 3 —
+        so a change to the sent fields or recipients re-shows the disclosure
+        before the next request. Revoking a provider deletes
+        <strong>every</strong> consent grant for its origin —
+        <code>jev_test</code>, <code>jev_decisions</code>, and every
+        <code>llm_*</code> scope — removes its host permission, and offers to
+        delete its key.
+      </p>
+      <p>
+        Requests to a provider are governed by that provider's own privacy
+        policy and retention terms. The in-product disclosure links to
+        <a href="https://typesafe.ai/legal/privacy-policy">typesafe.ai/legal/privacy-policy</a>
+        (TypeSafe) and
+        <a href="https://openrouter.ai/privacy">openrouter.ai/privacy</a>
+        (OpenRouter); both must be verified against the providers' real
+        policies before submission.
+      </p>
+
+      <h2>API keys</h2>
+      <p>
+        Your API key is yours. It is transmitted only to the provider that
+        issued it, inside the <code>Authorization: Bearer</code> header, over
+        HTTPS, with cookies and credentials omitted and redirects refused. It
+        is encrypted at rest on your device (AES-GCM via WebCrypto; the
+        encryption key is stored non-extractably in IndexedDB) and is never
+        logged, exported, or shown in full — only a masked last-four hint (or
+        the <code>****</code> placeholder for short keys) appears in Options
+        as a reminder.
+      </p>
+
+      <h2>Your choices and deletion</h2>
+      <ul>
+        <li>You can revoke a provider's consent and host permission at any
+          time from Options, and choose whether the stored key is deleted
+          too. Revoking removes every consent scope for that provider — both
+          the synthetic <code>jev_test</code> grant and the bookmark-data
+          <code>jev_decisions</code> grant — and the consent gate refuses
+          contact with that provider afterwards.</li>
+        <li><strong>Delete all extension data</strong> in Options removes
+          everything the extension stored for itself: its IndexedDB database
+          (tags, categories, notes, undo snapshots, imported-file metadata,
+          consent records, the sent log, and the provider key material),
+          <code>chrome.storage.local</code> and
+          <code>chrome.storage.session</code>, and it releases any granted
+          optional host permissions. It <strong>never</strong> touches your
+          native Chrome bookmarks — those are byte-identical before and
+          after.</li>
+        <li>Uninstalling the extension removes all locally stored data.</li>
+        <li>There are no accounts and nothing to delete on the developer's
+          side — the developer holds no data.</li>
+      </ul>
+
+      <h2>Security</h2>
+      <p>
+        All remote requests must use HTTPS, pass through a single audited
+        network module, require a matching stored consent record at the
+        current consent version and a live Chrome host permission, and stay
+        limited to the provider origins listed above. The consent gate,
+        encrypted key storage, the synthetic Test connection, and the
+        bookmark-data decision flow are all in place — the build makes no
+        remote requests except the synthetic test request on an explicit Test
+        connection click and a <code>jev_decisions</code> request on a
+        user-started save, Analyze, library scan, or Ask search, and none at
+        all until you enable a provider and start one of those actions.
+      </p>
+
+      <h2>Limited Use statement</h2>
+      <p>
+        The use of information received from Google APIs will adhere to the
+        Chrome Web Store User Data Policy, including the Limited Use
+        requirements.
+      </p>
+      <p>
+        In plain terms: this extension uses any data it handles only to
+        provide its single user-facing purpose (managing your bookmarks, with
+        an optional provider connection you control). It does not sell your
+        data, does not use it for advertising, does not use it to determine
+        creditworthiness, and does not let humans read it. No Google API data
+        leaves the device.
+      </p>
+
+      <h2>Children</h2>
+      <p>This extension is not directed at children under 13.</p>
+
+      <h2>Changes to this policy</h2>
+      <p>
+        Data-handling changes will be disclosed in the extension and will
+        require renewed consent before the changed feature can send data. The
+        policy version and effective date above are updated with each
+        release.
+      </p>
+    </div>
+  </main>
+
+  <footer class="site">
+    <div class="wrap">
+      <p>
+        Published by NguyenSiTrung ·
+        <a href="https://github.com/NguyenSiTrung/BookmarksManager/issues">Support</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
