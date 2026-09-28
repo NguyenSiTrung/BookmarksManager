@@ -302,7 +302,7 @@ describe("LLM_CONFIGURE", () => {
     expect(await readCredential(providerId)).toBeNull();
     // The record itself reflects the new auth mode (keySuffix is dropped).
     const record = await readLlmProvider(providerId);
-    expect(record?.provider.auth).toBe("none");
+    expect(record?.provider).toMatchObject({ kind: "custom", auth: "none" });
     expect(record?.keySuffix).toBeUndefined();
   });
 });
