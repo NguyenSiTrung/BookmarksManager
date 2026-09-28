@@ -285,7 +285,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/summary-verification.test.ts tests/unit/meta.test.ts tests/unit/network-gate.test.ts`.
 
-- [ ] Task 3: Summary orchestration
+- [x] Task 3: Summary orchestration
   <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, tests/unit/llm-summarize.test.ts -->
   <!-- depends: task1, task2 -->
   - Interface: `summarizeActiveBookmark(input)` performs extract → LLM summarize

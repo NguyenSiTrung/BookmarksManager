@@ -374,3 +374,20 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     `rewriteTagRows` emptiness check — the optional field compiles silently
     without it.
 ---
+- `summarizeActiveBookmark(input)` is total: extract → bookmark URL match
+  (`cleanUrl` both sides) → separate `llm_summary` + `jev_summary_verify`
+  consent checks (`hasConsentAtOrigin`, origins resolved from the provider
+  record / typesafe preset) → `summarizePage` → `verifySummaryRun` →
+  `setBookmarkSummary` ONLY on `supported`. Every failure is a typed
+  `SummarizeOutcome` (extract|match|consent|summarize|verify|persist).
+- `ScriptResult` has NO `url` field (strict object) — the extract URL is the
+  tab's own `tab.url`; test script results must not include `url`.
+- `llmUsage` rows carry `feature` (the consent scope), not `scope`.
+- `hasConsent(scope, preset)` takes a PresetId — use `hasConsentAtOrigin`
+  for resolved-origin checks.
+- `createJevClient` defaults `transport = sendConsented`; tests inject a
+  `jevTransport` seam on `SummarizeInput` rather than stubbing the preset URL.
+- Unpriced preset providers gate with `confirmation_required` unless
+  `unknownCostConfirmed: true` — same as Explain.
+- Stale manifest pins: adding `scripting` to wxt.config permissions needs the
+  same constant added in scaffold.test.ts + manifest.test.ts.
