@@ -16,8 +16,7 @@ cd "$repo_root"
 # starts without one and every bd command fails with "no beads database found".
 # `bd bootstrap` clones it from the Dolt remote configured in .beads/config.yaml:
 # a read-only clone that never pushes, so it does not "automatically sync it to
-# the remote" in the sense conductor/patterns.md warns about. A normal wake finds
-# the database already present and skips all of that.
+# the remote" in the sense conductor/patterns.md warns about.
 #
 # A failure is reported but not fatal: the repository is fully usable without the
 # issue tracker, and a wake should not fail because a remote is unreachable.
@@ -26,7 +25,16 @@ if command -v bd >/dev/null 2>&1; then
   # with "no beads database found" and never creates one), so a normal wake
   # costs a tenth of a second.
   if bd ready >/dev/null 2>&1; then
-    printf 'beads: issue database ready\n'
+    # The project pulls the issue database before each session, so do it on every
+    # wake. A freshly bootstrapped clone is already current as of the clone, which
+    # is why the branch below skips the pull. Dolt never prompts for credentials,
+    # so an unreachable remote fails in well under a second instead of hanging.
+    if pull_output="$(bd dolt pull --quiet --no-color 2>&1)"; then
+      printf 'beads: issue database up to date\n'
+    else
+      printf '%s\n' "$pull_output" >&2
+      printf 'warning: bd dolt pull failed - the issue database may be behind the remote.\n' >&2
+    fi
   else
     # Without a reachable Dolt remote, `bd bootstrap` silently falls back to
     # importing the tracked .beads/issues.jsonl export (or creating an empty

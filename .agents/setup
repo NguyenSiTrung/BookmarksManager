@@ -124,8 +124,10 @@ if ! grep -Fqx "$guidance_marker" "$guidance" 2>/dev/null; then
   `bd` (beads) and `firecrawl` CLIs. `npm ci` has already run and `.wxt/` types
   are generated.
 - The beads issue database is machine-local: `.agents/resume` clones it on the
-  first wake. If `bd` reports "no beads database found", run `bd bootstrap --yes`
-  — do not run `bd init`, which would reinitialize the workspace.
+  first wake and runs `bd dolt pull` on every wake, so `bd ready` is current when
+  the session starts. If `bd` reports "no beads database found", run
+  `bd bootstrap --yes` — do not run `bd init`, which would reinitialize the
+  workspace.
 - The e2e suite loads a built extension, so run `npm run build` before
   `xvfb-run -a npm run test:e2e` (`E2E_HEADLESS=1` opts into headless). No build
   is baked into the snapshot, so a stale `.output/` cannot hide your changes.
