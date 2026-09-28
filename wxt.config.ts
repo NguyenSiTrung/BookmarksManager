@@ -51,5 +51,13 @@ export default defineConfig({
         description: "Save the current page to Bookmarks Manager",
       },
     },
+    // Regenerate with `node scripts/generate-store-assets.mjs` — sources live
+    // in store/assets/source/.
+    icons: {
+      16: "icon/16.png",
+      32: "icon/32.png",
+      48: "icon/48.png",
+      128: "icon/128.png",
+    },
   },
 });

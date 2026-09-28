@@ -59,3 +59,5 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 - **check-site treats the static site as fully self-contained.** Any `<script>` tag, `<form>`, `document.cookie`, tracker string, or external non-anchor asset (`link/img/iframe` href→http) is a violation — anchors to github.com are fine.
 - **Policy equivalence is a field floor, not a diff.** check-site asserts every required string (publisher, contact, `consentVersion`, `jev_*`/`llm_*` scopes, Limited Use, capability-only note, version, effective date) in privacy-policy.md also appears in privacy/index.html — wording can differ, fields cannot.
 - **Keep HTML-only checks behind `.endsWith(".html")`** — required non-HTML files (styles.css) otherwise get landmark/meta violations.
+- **Playwright screenshots regenerate every asset deterministically** — `page.setContent` with the SVG inlined at the target viewport produces 16/32/48/128 icons; `page.goto(file://...)` at 440×280 produces the promo tile. No image libs needed.
+- **Manifest icons in WXT are `icon/NN.png` paths under `public/`** — they land at the built root, so the manifest key is `icon/16.png` not `public/icon/16.png`.

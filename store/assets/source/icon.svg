@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Bookmarks Manager mark: a bookmark ribbon on a navy rounded square.
+       Bold single glyph stays legible at 16px. Reproducible source for
+       public/icon/*.png and store/assets/icon-128.png. -->
+  <rect width="128" height="128" rx="26" fill="#16305e"/>
+  <rect x="6" y="6" width="116" height="116" rx="22" fill="none" stroke="#2d4d8f" stroke-width="3"/>
+  <path d="M44 30
+           h40
+           a6 6 0 0 1 6 6
+           v66
+           l-26-19
+           l-26 19
+           v-66
+           a6 6 0 0 1 6-6
+           z"
+        fill="#f6c344"/>
+  <circle cx="64" cy="52" r="9" fill="#16305e"/>
+</svg>
