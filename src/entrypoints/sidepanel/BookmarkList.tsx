@@ -475,6 +475,7 @@ export function BookmarkList({
     return map;
   }, [items]);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual's documented API returns non-memoizable functions by design; upstream caveat, not a bug.
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
