@@ -162,6 +162,22 @@ _Last refreshed: 2026-09-27_
 ### E2E: wire-level fakes and restarts
 
 - **Fake the provider at the wire, not the client.** A Playwright `context.route` that parses each request's `questions` record and answers every key by type (choices confined to the sent option keys, echoed model, schema-valid usage) passes the real client's cross-check — so the real pipeline, gate, and persistence run end to end; only the endpoint is fake. A route is also a **request valve**: fulfill the first N and hold the rest until `release()` — with a strictly sequential runner this freezes the worker mid-batch deterministically (exactly ONE held request), which is how to test pause/restart/resume without timers. (from: phase4_jev_decisions_20260927)
+- **Feature consent is granted at the affirmative click.** Each `llm_*` /
+  `jev_summary_verify` scope's origin-scoped consent record is written by the
+  click that triggers the feature (Explain button, Summarize action,
+  Restructure start, escalation toggle) — the click IS the consent trigger,
+  mirroring `llm_test` at provider Enable. The egress gate then re-checks the
+  grant on every request, so revoking the provider (or testing a fresh
+  profile) fails closed with `no_consent`/`no_permission`. (from:
+  phase5_llm_layer_20260928)
+- **Parked-request valve for e2e pause/resume:** a `context.route` handler
+  that fulfills the first N requests and holds the rest lets a strictly
+  sequential job runner freeze mid-batch deterministically; assert the
+  committed-batch count, then `release()` before `context.close()` (a parked
+  routed fetch aborts on close and can race `paused`→`failed`).
+  `chrome.permissions.request` never resolves under Playwright — grant
+  install-time host patterns via `launchPersistentContext` args instead.
+  (from: phase5_llm_layer_20260928)
 - **Emulating a browser restart under Playwright:** persistent profile dir + a copy-once extension root (manifest check before re-copy) gives the SAME derived extension id across `launchPersistentContext` calls, so IndexedDB state (consents, jobs) survives; add `--host-resolver-rules="MAP <provider-origins> 127.0.0.1"` so a resume attempt that races route registration can never become real egress. A browser restart subsumes the MV3 worker restart no API can trigger on demand. The temp dirs need an explicit `dispose()` — the launcher's own cleanup deliberately skips caller-owned roots. (from: phase4_jev_decisions_20260927)
 - **Popup prefill under Playwright needs `tabs` injected and `bringToFront` ordering:** production prefills via `activeTab`, which Playwright cannot grant — patch the copied manifest to add `tabs` and use `chrome.tabs.query`. Create the HTTPS page, then `context.newPage()` STEALS the active-tab slot: `bringToFront()` the HTTPS page AFTER creating the popup page but BEFORE `popup.goto(chrome-extension://…)` or the prefill reads the wrong tab. (from: phase4_jev_decisions_20260927)
 

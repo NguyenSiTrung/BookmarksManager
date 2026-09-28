@@ -395,7 +395,7 @@ reservations protect every egress path.
   - Verify:
     `npm run test:live && npx vitest run tests/unit/llm-performance.test.ts tests/components/llm-accessibility.test.tsx`.
 
-- [ ] Task 3: Compliance and project-context synchronization
+- [x] Task 3: Compliance and project-context synchronization
   <!-- files: scripts/check-manifest.mjs, scripts/check-bundle.mjs, tests/unit/compliance-scripts.test.ts, tests/unit/consent-snapshot.test.ts, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, store/permissions.md, PROJECT_PLAN.md, conductor/product.md, conductor/tech-stack.md, conductor/patterns.md -->
   <!-- depends: task1, task2 -->
   - Pin broad declared HTTPS capability to exact-origin runtime requests in

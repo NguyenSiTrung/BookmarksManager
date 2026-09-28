@@ -122,7 +122,9 @@ until you enable it.
 - **What is sent:** bookmark metadata only — the bookmark title, cleaned URL,
   domain, and folder path; tag names and descriptions; candidate folder
   paths; candidate bookmarks; the near-duplicate partner; and the Ask search
-  query. Your notes and page text are **never** sent under any scope.
+  query. Your notes are **never** sent under any scope. Page text is sent
+  only under the `llm_summary` and `jev_summary_verify` scopes — a bounded
+  excerpt — and only after you click Summarize on a saved page.
 - **To whom:** exactly one provider origin you chose —
   `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter)
   — whose own privacy policy governs what it receives

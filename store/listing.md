@@ -72,9 +72,10 @@ metadata only — title, cleaned URL, domain, folder path, tag names and
 descriptions, candidate folder paths, candidate bookmarks, the near-duplicate
 partner, and the Ask query — and only on a user-started action (saving a
 bookmark, clicking Analyze, starting a library scan, or running an Ask
-search); never on install, on a timer, or in the background. Your notes and
-page text are never sent. AI features are entirely optional; every feature
-above works without a key.
+search); never on install, on a timer, or in the background. Your notes are
+never sent; a bounded page excerpt leaves the device only under the opt-in
+Summarize scopes. AI features are entirely optional; every feature above
+works without a key.
 
 Optionally, you can also configure one OpenAI-compatible LLM provider — a
 preset (OpenAI, OpenRouter) or a custom HTTPS endpoint, with HTTP allowed
@@ -112,7 +113,7 @@ Version 0.1 — first release.
 - Optional, consent-gated Jev provider flow: a synthetic Test connection, and
   a separate bookmark-data consent for categorize, tag, folder pre-select,
   near-duplicate, misfiled-scan, and Ask search decisions (metadata only —
-  never notes or page text).
+  never notes; page text only under the separate opt-in Summarize scopes).
 
 ## Category
 

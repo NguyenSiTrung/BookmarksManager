@@ -107,8 +107,10 @@ Conservative declaration — under-declaring is the risky direction:
   misfiled scan, and search re-rank. What is sent is metadata only — the
   bookmark title, cleaned URL, domain, and folder path; tag names and
   descriptions; candidate folder paths; candidate bookmarks; the
-  near-duplicate partner; and the Ask search query. Your notes and page text
-  are **never** sent under any scope. It runs only on a user-started action —
+  near-duplicate partner; and the Ask search query. Your notes are **never**
+  sent under any scope; page text leaves the device only under the
+  `llm_summary` / `jev_summary_verify` scopes (a bounded excerpt, after an
+  explicit Summarize click) described below. It runs only on a user-started action —
   saving a bookmark, clicking Analyze, starting a library scan, or running an
   Ask search — and only when you start them — never on install, on a timer, or
   in the background. To whom: exactly one provider origin you chose —
@@ -158,9 +160,11 @@ Conservative declaration — under-declaring is the risky direction:
   search.
 - Not collected: personally identifiable information, health information,
   financial and payment information, personal communications, location, user
-  activity, website content. (No click or keystroke monitoring; no page text
-  leaves the device, and no bookmark, tag, or note leaves it outside the
-  `jev_decisions` flow above.)
+  activity. (No click or keystroke monitoring. Website content — a bounded
+  page excerpt — leaves the device only under the optional `llm_summary` /
+  `jev_summary_verify` scopes after an explicit Summarize click; no
+  bookmark, tag, or note leaves it outside the `jev_decisions` and `llm_*`
+  flows above.)
 
 Before any future feature sends bookmark, page, or activity data, update this
 declaration, `store/privacy-policy.md`, and the in-product consent screen in

@@ -525,3 +525,28 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   `getAttribute`/`querySelector`, not `toHaveAttribute`. `RestructureView`'s
   root is a `div` with `aria-label` (not a landmark); query it by attribute
   selector rather than `findByRole("region")`.
+
+## Phase 6 Task 3 — Compliance and project-context synchronization
+
+- The compliance machinery needed no changes — `check-manifest` /
+  `check-bundle` and their unit tests already cover the shipped
+  `https://*/*` capability pattern plus the loopback patterns, and the
+  permissions inventory already documents the capability-to-exact-origin
+  pin. The real sync surface was prose: `store/privacy-policy.md`,
+  `store/privacy-practices.md`, and `store/listing.md` still claimed "page
+  text is never sent under any scope", which `llm_summary` /
+  `jev_summary_verify` now falsify — each claim was narrowed to "notes
+  never sent; page text only under the Summarize scopes after an explicit
+  click", and the "not collected: website content" line now names the
+  bounded-excerpt exception.
+- `PROJECT_PLAN.md` status rows moved with the evidence: §5.3 → Done, §6.1
+  shipped-list gained the LLM layer, §6.4 gained `src/{llm,extract,
+  restructure}`, §9–11 gained the §11 description, §14 gained the LLM e2e
+  suite + live smokes (2865 unit/component, 28 e2e in 6 files), §15's
+  status note records Phase 5 delivered and gate-green.
+- `conductor/product.md` gained the Phase 5 delivered bullet (analyze-input
+  page extraction remains filed as follow-up — the summarize feature's
+  extraction is summary-scoped only); `conductor/tech-stack.md` replaced
+  the `[planned]` LLM line with the shipped layer; `conductor/patterns.md`
+  gained two patterns: grant-at-click feature consent, and the
+  parked-request valve for deterministic pause/resume e2e.

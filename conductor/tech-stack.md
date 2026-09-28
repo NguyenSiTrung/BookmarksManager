@@ -119,8 +119,16 @@ yet installed are marked **[planned]**.
   approve/reject, scan lifecycle). UI: Options consent + auto-apply +
   blocklist + "Data sent" log; sidepanel review queue, scan dialog, and Ask
   toggle; popup suggestion chips.
-- **[planned]** Optional OpenAI-compatible LLM client for generation and
-  second opinions.
+- **LLM provider layer** (`src/llm/`, added Phase 5): OpenAI-compatible
+  presets (OpenAI, OpenRouter) and custom HTTPS/loopback endpoints with a
+  canonical base-URL policy; `client.ts` wraps the wire schemas in the
+  egress gate; `structured.ts` runs the three-tier output cascade
+  (json_schema → json_object → prompt_only) with capability-only fallback
+  on 400/404/422 responses; `budget.ts` meters spending with reservations
+  and an unpriced manual-confirmation escape; `escalate.ts` routes unsure
+  decisions for a second opinion without applying anything. `src/extract/`
+  holds the click-triggered Readability page extraction; `src/restructure/`
+  the bounded synopsis, proposal, Jev assignment, diff, and guarded apply.
 
 ## Quality and Delivery
 
