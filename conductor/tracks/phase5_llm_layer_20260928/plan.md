@@ -206,7 +206,7 @@ reservations protect every egress path.
 ## Phase 3: Explanations and automatic second opinions
 <!-- execution: parallel -->
 
-- [ ] Task 1: Explanation service
+- [x] Task 1: Explanation service
   <!-- files: src/llm/explain.ts, src/decisions/store.ts, tests/unit/llm-explain.test.ts, tests/unit/decisions-store.test.ts -->
   - Interfaces: `explainDecision(decisionId, providerId)`,
     `persistDecisionRationale(decisionId, rationale)`.

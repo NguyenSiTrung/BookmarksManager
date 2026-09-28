@@ -292,3 +292,18 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     When the spec widens a contract, update every pin in the same commit
     wave — do not leave half the suite asserting the old world.
 ---
+### Phase 3 Task 1 — Explanation service
+  - `installBookmarksFake` stubs the WHOLE `chrome` global (`{bookmarks:
+    fake}`) — compose it: install the fake first, then re-stub chrome with
+    `{bookmarks: fake, storage, permissions}`; ordering matters.
+  - Blocklist includes the private-use TLD `example` — fixture URLs like
+    `https://a.example/` are silently unsendable; use public-looking hosts
+    (`a-site.com`) in tests that exercise the egress path.
+  - Gate codes are `no_consent`/`no_permission`/`no_key` — not
+    `consent_required`; `confirmation_required` applies only to
+    `kind:"manual"` requests without `unknownCostConfirmed:true`.
+  - `record.provider.model` is optional for presets — always resolve the
+    effective model via `resolveLlmDestination(provider).model`.
+  - `LlmCapabilityError`/`TokenUsage` live in `structured.ts`/`wire.ts`,
+    not `client.ts`/`schemas/llm.ts`.
+---
