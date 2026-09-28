@@ -270,6 +270,41 @@ describe("LLM_CONFIGURE", () => {
       await hasConsentAtOrigin("llm_test", "http://localhost:11434"),
     ).toBe(true);
   });
+
+  it("drops the stored credential when reconfigured to auth:none", async () => {
+    // Same baseUrl ⇒ same providerId; flipping auth api-key → none must not
+    // leave the key stored-but-unreachable behind the new record.
+    const baseUrl = "http://localhost:11434/v1";
+    const providerId = `custom:${baseUrl}`;
+    const first = await call({
+      type: "LLM_CONFIGURE",
+      settings: {
+        kind: "custom",
+        baseUrl,
+        model: "llama3",
+        auth: "api-key",
+      },
+      key: "sk-once-secret",
+    });
+    expect(first).toMatchObject({ ok: true });
+    expect(await readCredential(providerId)).not.toBeNull();
+
+    const second = await call({
+      type: "LLM_CONFIGURE",
+      settings: {
+        kind: "custom",
+        baseUrl,
+        model: "llama3",
+        auth: "none",
+      },
+    });
+    expect(second).toMatchObject({ ok: true });
+    expect(await readCredential(providerId)).toBeNull();
+    // The record itself reflects the new auth mode (keySuffix is dropped).
+    const record = await readLlmProvider(providerId);
+    expect(record?.provider.auth).toBe("none");
+    expect(record?.keySuffix).toBeUndefined();
+  });
 });
 
 describe("LLM_PROVIDER_STATUS", () => {

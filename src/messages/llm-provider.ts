@@ -375,6 +375,12 @@ async function configureProvider(message: {
     await saveLlmProvider(record);
     if (message.key !== undefined && destination.auth !== "none") {
       await saveCredential(record.providerId, message.key);
+    } else if (destination.auth === "none") {
+      // A credential stored by an earlier keyed configuration of this same
+      // providerId would sit orphaned once the record flips to `auth:
+      // "none"` — the gate skips credential reads for keyless providers, so
+      // nothing would ever delete it. Drop it (a no-op when none exists).
+      await deleteCredential(record.providerId);
     }
     // The consent row is written last so nothing is "enabled" until every
     // piece landed.
