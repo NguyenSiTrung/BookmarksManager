@@ -239,7 +239,7 @@ reservations protect every egress path.
     unavailable paths return stable codes.
   - Verify: `npx vitest run tests/unit/llm-feature-messages.test.ts`.
 
-- [ ] Task 4: Review and escalation settings UI
+- [x] Task 4: Review and escalation settings UI
   <!-- files: src/entrypoints/sidepanel/ReviewView.tsx, src/entrypoints/options/DecisionSettings.tsx, tests/components/review-view.test.tsx, tests/components/options-llm-settings.test.tsx -->
   <!-- depends: task3 -->
   - Render Explain, rationale, verdict, constrained alternative, unavailable and

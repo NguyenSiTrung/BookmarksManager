@@ -328,3 +328,19 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   - Disabling escalation must keep the stored providerId (re-enable is one
     click); write `{enabled:false}` only when none was ever stored.
 ---
+### Phase 3 Task 4 — Review + escalation settings UI
+  - Unsure/escalated rows were invisible — `listPending()` returns status
+    "pending" only. `listReviewable()` (pending + unsure, createdAt order)
+    backs App/badge/ReviewView; the popup still uses `listPending`.
+  - Sidepanel can't read provider status (options-trusted protocol) — the
+    `confirmation_required` reply carries `destinationOrigin` so
+    CostConfirmationDialog names the egress origin without a second round
+    trip. Other failure replies omit it (exactOptionalPropertyTypes).
+  - Escalation settings split reads: `LLM_PROVIDER_STATUS` supplies the
+    egress origin (consent lookup key) + cap; `LLM_ESCALATION_STATUS` the
+    enabled flag. Consent is a direct Dexie `grantConsentAtOrigin` at the
+    origin — re-read live via `useLiveQuery` keyed on llmOrigin.
+  - Component tests: `findByRole` (not `getByRole`) for anything behind the
+    async provider-status load; mock LLM replies need casting through the
+    stub worker's reply union (`asWorkerReply`).
+---
