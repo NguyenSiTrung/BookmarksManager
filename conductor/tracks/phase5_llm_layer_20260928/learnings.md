@@ -120,3 +120,56 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     OpenAI documents for `response_format: json_schema`; Zod's jitless config
     does not affect it.
 ---
+
+## [2026-09-28 03:42] - Phase 1 Task 4: Pure budget and usage accounting
+- **Implemented:** `src/llm/budget.ts` — `reserveBudget` (conservative
+  max-cost reservation from token bounds × rates; refuses `budget_exceeded`
+  past the cap, `pricing_required` for automatic w/o rates,
+  `confirmation_required` for manual w/o rates; `unknownCostConfirmed` is a
+  manual-only override and is ignored for automatic), `reconcileBudget`
+  (reported > estimated > unknown provenance; settles reservation, emits the
+  usage row to persist), `releaseBudget`, `monthlyBudgetSnapshot` (UTC-month
+  filtering, active reservations only, `unknownCostRequests` surfaced).
+- **Files changed:** `src/llm/budget.ts`, `tests/unit/llm-budget.test.ts`
+- **Commit:** (see below)
+- **Learnings:**
+  - Patterns: reservations snapshot their pricing so reconcile needs only
+    the reservation + actual usage; callers persist rows, functions stay
+    pure (even `now` is a parameter — no hidden `new Date()`).
+  - Gotchas: UTC month membership must be derived from the parsed Date
+    (`getUTCFullYear/Month`), not string slicing — ISO timestamps with
+    offsets (`+02:00`) can straddle boundaries. "Reliable pricing" resolves
+    to numeric rates (configured or provider-fetched e.g. OpenRouter
+    `/models`); post-hoc reported cost alone cannot bound a reservation.
+  - Context: unknown-cost reservations have `reservedUsd: null` and never
+    count toward the cap — they exist only via the manual override.
+---
+
+## [2026-09-28 03:52] - Phase 2 Task 1: Dexie and LLM configuration persistence
+- **Implemented:** Dexie v4 (`llmUsage` ++id,providerId,recordedAt +
+  `llmReservations` id,providerId,status); `LlmUsageRecord` schema
+  (providerId/feature/configuredModel/model/tokens/costUsd?/estimatedCostUsd?/
+  recordedAt — provenance derivable, never stored); `LlmProviderRecord` schema
+  (strict — extra fields like a raw key fail closed); `src/llm/settings.ts`
+  read/save/delete/active-pointer on metadata rows (`llmProvider:<id>`,
+  `llmActiveProvider`); delete-all now also releases dynamically granted
+  origins via `permissions.getAll` (registry fallback when absent).
+- **Files changed:** `src/db/database.ts`, `src/schemas/usage.ts`,
+  `src/schemas/llm.ts`, `src/llm/settings.ts`, `src/security/delete-all.ts`,
+  `tests/unit/database-v4.test.ts`, `tests/unit/llm-settings.test.ts`,
+  `tests/unit/delete-all.test.ts`
+- **Commit:** (see below)
+- **Learnings:**
+  - Patterns: LLM settings live in the shared `metadata` table under
+    namespaced keys (`llmProvider:<providerId>`, `llmActiveProvider`) — no
+    dedicated table needed; readers validate rows through
+    `LlmProviderRecord.safeParse` so hostile/malformed rows fail to null.
+    `deleteLlmProvider` sweeps the provider's reservation rows in one tx,
+    then deletes its `credential:<providerId>` envelope via credentials.ts.
+  - Gotchas: static `OPTIONAL_HOST_ORIGINS` can't name dynamic custom origins
+    — `permissions.getAll().origins` enumerates every granted host
+    permission; union it with the registry, keep `contains` before `remove`.
+  - Context: usage rows carry `costUsd` (reported) XOR `estimatedCostUsd`
+    (local estimate) XOR neither (unknown) — provenance is derivable, so
+    it's deliberately NOT a stored column.
+---

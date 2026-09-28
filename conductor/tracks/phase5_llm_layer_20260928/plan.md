@@ -94,7 +94,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/llm-wire.test.ts tests/unit/llm-structured.test.ts`.
 
-- [ ] Task 4: Pure budget and usage accounting
+- [x] Task 4: Pure budget and usage accounting
   <!-- files: src/llm/budget.ts, tests/unit/llm-budget.test.ts -->
   <!-- depends: task1 -->
   - Interfaces: `reserveBudget(input)`, `reconcileBudget(reservation, usage)`,
@@ -110,7 +110,7 @@ reservations protect every egress path.
     tokens/requests; automatic escalation can never set that override.
   - Verify: `npx vitest run tests/unit/llm-budget.test.ts`.
 
-- [ ] Task: Conductor - User Manual Verification 'Pure LLM foundations' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Pure LLM foundations' (Protocol in workflow.md)
   <!-- depends: task1, task2, task3, task4 -->
   - Run lint, typecheck, Phase 1 unit tests, and build; summarize evidence and
     request user approval before Phase 2.
@@ -118,7 +118,7 @@ reservations protect every egress path.
 ## Phase 2: Persistence, consent, egress, and provider setup
 <!-- execution: sequential -->
 
-- [ ] Task 1: Dexie and LLM configuration persistence
+- [x] Task 1: Dexie and LLM configuration persistence
   - Files: `src/db/database.ts`, `src/llm/settings.ts`,
     `src/schemas/usage.ts`, `src/security/delete-all.ts`,
     `tests/unit/database-v4.test.ts`,
