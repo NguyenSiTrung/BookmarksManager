@@ -253,7 +253,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/components/review-view.test.tsx tests/components/options-llm-settings.test.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Explanations and automatic escalation' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Explanations and automatic escalation' (Protocol in workflow.md)
   <!-- depends: task4 -->
   - Run applicable gate and manually verify Explain plus one budget-capped
     low-confidence escalation before approval.
