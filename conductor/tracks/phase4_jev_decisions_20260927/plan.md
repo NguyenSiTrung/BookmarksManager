@@ -354,6 +354,10 @@ all behind a new per-provider bookmark-data consent.
        no gate re-run (authoritative gate evidence remains cacd084; next change to the tree is Task 4's
        checkpoint). -->
 
-- [ ] Task 4: Final automated checkpoint — full gate green, evidence in `learnings.md`
+- [x] Task 4: Final automated checkpoint — full gate green, evidence in `learnings.md`
+  <!-- Gate at fa021d0 (2026-09-28): lint 0 errors (1 pre-existing TanStack warning) · typecheck
+       clean · vitest 93 files / 2467 tests · build 1.20 MB · check:manifest OK · check:bundle OK ·
+       xvfb-run -a e2e 19/19. Docs-only delta over cacd084 (identical numbers) — re-validates that
+       the docs tasks did not disturb the build or tests. Evidence in learnings.md. -->
 
 - [ ] Task 5: Conductor - User Manual Verification 'Phase 4 Jev decisions' (Protocol in workflow.md)

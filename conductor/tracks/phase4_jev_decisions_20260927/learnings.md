@@ -654,3 +654,18 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
     `scripting` permission, Readability, page-text consent — full scope sketch in the bead) and
     `BookmarksManager-4hw.7` (title-quality check before analyze/save-suggest), both P3.
 ---
+## [2026-09-28] - Phase 5 Task 4: Final automated checkpoint
+- **Gate (main @ `fa021d0`, run 2026-09-28 00:41–00:45 UTC):** all green.
+  - `npm run lint`: 0 errors, 1 warning (pre-existing `react-hooks/incompatible-library` on the
+    virtualizer call)
+  - `npm run typecheck`: clean
+  - `npx vitest run`: **93 files / 2467 tests passed** (73.8 s)
+  - `npm run build`: 1.20 MB
+  - `npm run check:manifest`: OK (matches `store/permissions.md`)
+  - `npm run check:bundle`: OK (no eval / new Function / remote script src)
+  - `xvfb-run -a npm run test:e2e`: **19/19 passed** (57.6 s; 5 spec files)
+- **Files changed:** track docs only (this evidence entry, plan.md Task 4 marker,
+  implement_state current_task_index 3→4).
+- **Note:** gate ran on the docs-only delta over `cacd084` (whose note carries the identical
+  numbers), so this checkpoint re-validates that the docs tasks did not disturb the build or tests.
+---
