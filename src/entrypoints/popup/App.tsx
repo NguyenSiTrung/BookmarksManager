@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hasConsent } from "../../consent/records";
-import { listMeta, listTags, patchMeta } from "../../db/meta";
+import {
+  createTag,
+  getTag,
+  listMeta,
+  listTags,
+  MetaRepoError,
+  patchMeta,
+} from "../../db/meta";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { normalizeUrl } from "../../duplicates/normalize";
+import { isBlockedScheme } from "../../io/netscape";
 import {
   DecisionMessage,
   DecisionMessageResult,
@@ -21,8 +29,7 @@ import {
   resolveSaveFolder,
   setLastFolderId,
 } from "../../sync/last-folder";
-import { createBookmark } from "../../sync/mutations";
-import { bulkAddTag } from "../../sync/tag-ops";
+import { createBookmark, removeTree } from "../../sync/mutations";
 import { flattenTree } from "../../sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
 import { registerDbReleaseListener } from "../../security/delete-all";
@@ -46,10 +53,13 @@ import type { SuggestionStatus } from "./Suggestions";
  * root "0" and is preselected to the last-used folder (Other bookmarks when
  * there is none, or when the stored folder no longer exists).
  *
- * Save writes through the guarded mutation service: `createBookmark` first
- * (Chrome yields the real id), then tag definitions are resolved-or-created
- * per staged chip through `bulkAddTag`, and one `patchMeta` commits the exact
- * tag list plus category/notes. The chosen folder is then remembered as the
+ * Save writes through the guarded mutation service. The URL is checked
+ * against the shared `isBlockedScheme` write boundary first (the same
+ * blocklist the import writer and the context menu enforce). Tag
+ * definitions resolve-or-create per staged chip BEFORE `createBookmark`
+ * runs, then one `patchMeta` commits the exact tag list plus
+ * category/notes; a failed meta write unwinds the just-created bookmark so
+ * a save is all-or-nothing. The chosen folder is then remembered as the
  * last-used default. Zero network.
  *
  * Duplicate detection is local and deterministic: when the typed URL
@@ -420,22 +430,47 @@ export function App() {
     try {
       const trimmedUrl = url.trim();
       const trimmedTitle = title.trim();
+      if (trimmedUrl === "") {
+        throw new Error("Enter a URL to save.");
+      }
+      if (isBlockedScheme(trimmedUrl)) {
+        throw new Error("This URL scheme cannot be saved as a bookmark.");
+      }
+      // Resolve-or-create every staged chip's def BEFORE the bookmark
+      // exists: defs are the only step that can fail without the tree, so
+      // ordering them first keeps the save atomic. A tag_exists race just
+      // means the def is already stored.
+      for (const chip of chips) {
+        if ((await getTag(chip.key)) !== undefined) continue;
+        try {
+          await createTag(chip.label);
+        } catch (cause) {
+          if (
+            !(cause instanceof MetaRepoError && cause.code === "tag_exists")
+          ) {
+            throw cause;
+          }
+        }
+      }
       const created = await createBookmark({
         parentId: folderId,
         title: trimmedTitle === "" ? trimmedUrl : trimmedTitle,
         url: trimmedUrl,
       });
-      // Tag definitions resolve-or-create on demand; the final patchMeta
-      // writes the exact staged key list (removed chips are dropped).
-      for (const chip of chips) {
-        const result = await bulkAddTag([created.id], chip.label);
-        if (!result.ok) throw new Error(result.message);
+      try {
+        // The exact staged key list (removed chips are dropped) plus
+        // category/notes in one meta write.
+        await patchMeta(created.id, {
+          tags: chips.map((chip) => chip.key),
+          category: category === "" ? null : category,
+          notes: notes === "" ? null : notes,
+        });
+      } catch (metaCause) {
+        // Nothing should reference a half-saved bookmark — unwind it so the
+        // failed save leaves only the (harmless) tag defs behind.
+        await removeTree(created.id).catch(() => undefined);
+        throw metaCause;
       }
-      await patchMeta(created.id, {
-        tags: chips.map((chip) => chip.key),
-        category: category === "" ? null : category,
-        notes: notes === "" ? null : notes,
-      });
       await setLastFolderId(folderId);
       setSavedFolder(folderLabel(tree, folderId));
       await refreshTree();

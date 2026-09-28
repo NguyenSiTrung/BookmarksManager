@@ -306,6 +306,57 @@ describe("PopupApp — save", () => {
     const created = children.find((node) => node.url === ACTIVE_TAB.url);
     expect(await getMeta(created?.id ?? "")).toBeUndefined();
   });
+
+  it("refuses a blocked-scheme URL and writes nothing", async () => {
+    await renderPopup();
+    fireEvent.change(urlInput(), {
+      target: { value: "  javascript:alert(1)  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(
+      "This URL scheme cannot be saved as a bookmark.",
+    );
+    const all = await fake.getTree();
+    expect(JSON.stringify(all)).not.toContain("javascript:alert(1)");
+    expect(screen.queryByTestId("save-confirmation")).toBeNull();
+  });
+
+  it("keeps Save disabled for a blank URL", async () => {
+    await renderPopup();
+    fireEvent.change(urlInput(), { target: { value: "   " } });
+    expect(
+      (screen.getByRole("button", { name: "Save" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("unwinds the created bookmark when the meta write fails", async () => {
+    await renderPopupForFreshTab();
+    // Stage a chip so commitMeta takes the put path (non-empty row), then
+    // sabotage that write: the save must leave no half-saved bookmark.
+    fireEvent.change(screen.getByLabelText("New tag name"), {
+      target: { value: "Urgent" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    const putSpy = vi
+      .spyOn(db.bookmarkMeta, "put")
+      .mockRejectedValue(new Error("storage gone"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("storage gone");
+    const children = await fake.getChildren("2");
+    expect(
+      children.filter((node) => node.url === FRESH_TAB.url),
+    ).toHaveLength(0);
+    expect(await getMeta("1000")).toBeUndefined();
+    // The resolved tag def stays — it is not tree state and costs nothing.
+    expect(await getTag("urgent")).toBeDefined();
+    putSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
