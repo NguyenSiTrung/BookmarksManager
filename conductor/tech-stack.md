@@ -3,8 +3,8 @@
 # Technology Stack
 
 The stack below reflects the **installed dependencies in `package.json`** as of the
-Phase 4 Jev-decisions track (`phase4_jev_decisions_20260927`, in its Phase 5
-end-to-end stage), after the archived Phase 3 Jev client track
+Phase 4 Jev-decisions track (`phase4_jev_decisions_20260927`, archived
+2026-09-28), after the archived Phase 3 Jev client track
 (`phase3_jev_client_20260927`), Phase 2 search track (`phase2_search_20260926`),
 Phase 1 core manager (`phase1_core_manager_20260926`), and the Phase 0 foundation
 (`phase0_foundation_20260925`). Items still planned in `PROJECT_PLAN.md` but not

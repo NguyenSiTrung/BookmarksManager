@@ -669,3 +669,16 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
 - **Note:** gate ran on the docs-only delta over `cacd084` (whose note carries the identical
   numbers), so this checkpoint re-validates that the docs tasks did not disturb the build or tests.
 ---
+## [2026-09-28] - Phase 5 Task 5: User manual verification + track close
+- **User verification:** PASSED — all five checks accepted via dialog (option 1): Options provider +
+  decisions consent v2; popup save suggestions incl. blocklisted "not sent"; side-panel Review
+  Analyze→approve→undo; library scan pause/resume across a browser restart; Ask rerank/no-match +
+  metadata-only "Data sent" log. No feedback revisions requested.
+- **Track close:** all five phases complete; full gate green at `fa021d0` (see Task 4 entry). Track
+  archived to `conductor/archive/phase4_jev_decisions_20260927/`. Beads: `4hw.5.1`–`4hw.5.5`,
+  phase `4hw.5`, and epic `4hw` closed (epic via `--force` — bd refused the close because the
+  assignee was the stale "conductor" identity; the warning about 2 open children is expected, since
+  the P3 follow-ups `4hw.6`/`4hw.7` are backlog that outlives the track).
+- **Final state:** 15 open beads (all backlog; none block the plan's remaining scope). Plan §15
+  Phases 0–4 done; next plan milestone is Phase 5 (optional LLM layer).
+---

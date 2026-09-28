@@ -20,5 +20,4 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Phase 4 — Jev decisions (PROJECT_PLAN.md §15): metadata-only categorize, tags, folder pre-select, near-duplicates, misfiled scan, and search re-rank behind a per-provider bookmark-data consent (CONSENT_VERSION 2), with the §10.2 confidence policy, review queue, audit log, undo, resumable job queue, cost tracking, and the "Data sent" log
-*Link: [./conductor/tracks/phase4_jev_decisions_20260927/](./conductor/tracks/phase4_jev_decisions_20260927/)*
+<!-- Archived: 2026-09-28 — Phase 4 Jev decisions completed: metadata-only decisions pipeline (title/cleaned-URL/domain minimization with blocklist; notes never sent), six question sets, §10.2 confidence policy with auto-apply off by default (never for move/merge), review queue with audit+undo, resumable job queue incl. near-duplicate pair scans, popup save suggestions, Ask re-rank, usage/cost tracking, "Data sent" log (cap 500), decisions consent v2, Dexie v3 — full gate green (2467 unit/component, 19 e2e) and user-accepted manual verification (see conductor/archive/phase4_jev_decisions_20260927/) -->

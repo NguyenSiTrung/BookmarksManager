@@ -360,4 +360,10 @@ all behind a new per-provider bookmark-data consent.
        xvfb-run -a e2e 19/19. Docs-only delta over cacd084 (identical numbers) — re-validates that
        the docs tasks did not disturb the build or tests. Evidence in learnings.md. -->
 
-- [ ] Task 5: Conductor - User Manual Verification 'Phase 4 Jev decisions' (Protocol in workflow.md)
+- [x] Task 5: Conductor - User Manual Verification 'Phase 4 Jev decisions' (Protocol in workflow.md)
+  <!-- User verified all five checks via dialog (2026-09-28, option 1 "All items verified"): Options
+       provider + decisions consent v2; popup save suggestions incl. blocklisted "not sent";
+       side-panel Review Analyze→approve→undo; library scan pause/resume across a browser restart;
+       Ask rerank/no-match + metadata-only "Data sent" log. Track archived to
+       conductor/archive/phase4_jev_decisions_20260927/; epic 4hw and phase 4hw.5 closed (4hw via
+       --force: stale "conductor" assignee). Follow-ups 4hw.6/4hw.7 remain open as backlog. -->
