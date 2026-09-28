@@ -129,6 +129,9 @@ export const LlmProviderRecord = z.strictObject({
   provider: LlmProviderSettings,
   keySuffix: z.string().min(1).max(8).optional(),
   tier: StructuredOutputTier.optional(),
+  /** Monthly spend cap in USD; requests without reliable pricing refuse
+   *  unless the user explicitly confirms an unknown-cost request (FR7). */
+  monthlyBudgetUsd: z.number().nonnegative().optional(),
   configuredAt: z.iso.datetime(),
 });
 export type LlmProviderRecord = z.infer<typeof LlmProviderRecord>;

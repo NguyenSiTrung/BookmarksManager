@@ -184,7 +184,7 @@ const SCOPES = Object.freeze({
     scope: "jev_decisions" as ConsentScope,
     admits: admitsDecisionState,
   } satisfies ScopeRegistration),
-} satisfies Record<ConsentScope, ScopeRegistration>);
+} satisfies Record<"jev_test" | "jev_decisions", ScopeRegistration>);
 
 function resolveScope(scope: string): ScopeRegistration {
   const entry = (SCOPES as Record<string, ScopeRegistration | undefined>)[
