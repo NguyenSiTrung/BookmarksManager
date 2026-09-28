@@ -24,5 +24,4 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Phase 5 — Optional OpenAI-Compatible LLM Layer
-*Link: [./conductor/tracks/phase5_llm_layer_20260928/](./conductor/tracks/phase5_llm_layer_20260928/)*
+<!-- Archived: 2026-09-28 — Phase 5 LLM layer completed: optional consent-gated OpenAI-compatible provider (presets + custom HTTPS/loopback origins, generic encrypted credential store, exact-origin egress gate), three-tier structured-output cascade with capability fallback, reservation-based monthly budget, on-demand explanations, budget-capped second opinions on unsure suggestions (never auto-applied), restructure proposals with live diff + guarded apply/undo, opt-in Readability summaries persisted only on Jev verification — full gate green (2865 unit/component, 28 e2e incl. the 9-spec wire-level LLM suite, 6 key-gated live smokes) and user-accepted manual verification (see conductor/archive/phase5_llm_layer_20260928/) -->

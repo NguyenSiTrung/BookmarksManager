@@ -412,7 +412,7 @@ reservations protect every egress path.
   - Record exact counts, warnings, build size, and known limitations in
     `learnings.md`; resolve regressions before marking complete.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 5 LLM layer complete' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 5 LLM layer complete' (Protocol in workflow.md)
   <!-- depends: task4 -->
   - Present the full evidence and manual script for custom setup, Explain,
     automatic escalation, summary verification, restructure apply/undo, revoke,

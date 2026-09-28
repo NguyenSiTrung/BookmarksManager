@@ -574,3 +574,9 @@ Known limitation (documented, unchanged): `chrome.permissions.request`
 cannot resolve under Playwright, so the host-grant prompt itself is
 verified manually; e2e pre-grants exact origins via install-time host
 patterns.
+
+## Manual verification — accepted
+
+User reviewed the Phase 6 evidence (2865/2865 unit, 28/28 e2e, build
+1.36 MB, manifest+bundle checks OK) and accepted with `conductor archive`.
+Track closed 2026-09-28.
