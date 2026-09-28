@@ -184,7 +184,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
     `npx vitest run tests/unit/check-site.test.ts` and
     `node scripts/check-site.mjs`.
 
-- [ ] Task 2: Create reproducible icons and promotional assets
+- [x] Task 2: Create reproducible icons and promotional assets (2752d51)
   <!-- files: store/assets/source/icon.svg, store/assets/source/promo.html, scripts/generate-store-assets.mjs, public/icon/16.png, public/icon/32.png, public/icon/48.png, public/icon/128.png, store/assets/icon-128.png, store/assets/promo-440x280.png, wxt.config.ts, tests/unit/manifest.test.ts -->
   - Render PNGs from committed SVG/HTML through Playwright. Use no
     third-party logo and preserve 16x16 legibility.
