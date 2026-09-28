@@ -401,3 +401,15 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   — vitest has no auto-cleanup here; without it `getByRole` sees stale dialogs.
 - `chrome.tabs.query` in the click handler must be a lazy slice (`declare const
   chrome` partial) — tests stub `runtime.sendMessage` only.
+- `buildLibrarySynopsis(tree, metas, limits)`: deterministic pre-order walk,
+  sorted folder paths + count maps + top-domains + capped representative
+  titles; sensitive/blocklisted/unclean URLs skipped, URLs/notes/ids never
+  enter the synopsis. `metas` accepts Map or array.
+- `ReadonlyMap | readonly T[]` unions narrow via `instanceof Map` + explicit
+  `else` — `Array.isArray` alone doesn't split a ReadonlyMap union.
+- react-hooks/set-state-in-effect: reset dialog phase during RENDER via the
+  adjust-state-on-prop-change pattern (prevOpen state + conditional
+  setState), not inside useEffect.
+- `@testing-library/user-event` is NOT installed — use `fireEvent`.
+- No jest-dom matchers — assert `el.textContent`/`.toContain`, not
+  toHaveTextContent/toBeInTheDocument.

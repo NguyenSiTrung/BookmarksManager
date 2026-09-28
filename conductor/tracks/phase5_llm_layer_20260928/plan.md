@@ -308,7 +308,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/summary-messages.test.ts tests/components/summary-dialog.test.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Opt-in extraction and verified summaries' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Opt-in extraction and verified summaries' (Protocol in workflow.md)
   <!-- depends: task4 -->
   - Run applicable gate and manually verify the Chrome scripting prompt,
     extraction disclosure, positive verification, and refused incognito path.
@@ -316,7 +316,7 @@ reservations protect every egress path.
 ## Phase 5: Restructure proposals
 <!-- execution: sequential -->
 
-- [ ] Task 1: Bounded synopsis and proposal schemas
+- [x] Task 1: Bounded synopsis and proposal schemas
   - Files: `src/schemas/restructure.ts`, `src/restructure/synopsis.ts`,
     `tests/unit/restructure-synopsis.test.ts`.
   - Interfaces: `buildLibrarySynopsis(tree, metas, limits)`,
