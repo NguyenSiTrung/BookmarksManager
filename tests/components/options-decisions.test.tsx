@@ -127,11 +127,21 @@ afterAll(() => {
   db.close();
 });
 
+const DECISION_TYPES = ["GET_SETTINGS", "SET_SETTINGS", "SET_BLOCKLIST"];
+
 /** The `type` of every runtime.sendMessage call so far. */
 function sentTypes(): string[] {
   return sendMessageSpy.mock.calls.map(
     ([message]) => (message as { type: string }).type,
   );
+}
+
+/**
+ * Same list filtered to the decisions protocol — the page also sends the
+ * two escalation-status LLM reads on mount, which these pins ignore.
+ */
+function sentDecisionTypes(): string[] {
+  return sentTypes().filter((type) => DECISION_TYPES.includes(type));
 }
 
 function agreeBox(): HTMLInputElement {
@@ -202,7 +212,7 @@ describe("decisions consent disclosure", () => {
     // Clicking the disabled button grants nothing and sends nothing.
     fireEvent.click(allow);
     expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("switches the disclosure with the provider radio", async () => {
@@ -239,7 +249,7 @@ describe("decisions consent grant and revoke", () => {
     await screen.findByRole("button", { name: /revoke .* analysis consent/i });
     // Consent is a direct Dexie write — the only message ever sent is the
     // settings read; no consent message leaves the page.
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("shows the un-consented screen (re-disclosure) for a stale consentVersion row", async () => {
@@ -274,7 +284,7 @@ describe("decisions consent grant and revoke", () => {
     expect(await hasTestConsent("typesafe")).toBe(true);
     // The un-consented screen returns.
     await screen.findByRole("checkbox", { name: /agree/i });
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("keeps consent state per provider", async () => {
@@ -322,7 +332,7 @@ describe("auto-apply toggles", () => {
     expect(setCategory.checked).toBe(false);
     expect(screen.getByText(/0\.85/)).toBeTruthy();
     // Mount reads settings once.
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("persists a flip via SET_SETTINGS carrying the whole DecisionSettings object", async () => {
@@ -332,9 +342,11 @@ describe("auto-apply toggles", () => {
     });
     fireEvent.click(addTags);
     await waitFor(() => {
-      expect(sentTypes()).toEqual(["GET_SETTINGS", "SET_SETTINGS"]);
+      expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "SET_SETTINGS"]);
     });
-    const message = sendMessageSpy.mock.calls[1]?.[0] as {
+    const message = sendMessageSpy.mock.calls
+      .map(([m]) => m as { type: string; settings?: SettingsValue })
+      .find((m) => m.type === "SET_SETTINGS") as {
       type: string;
       settings: SettingsValue;
     };
@@ -413,7 +425,7 @@ describe("blocklist editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
     await screen.findByText(/already/i);
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("does not send for input that cannot name a host", async () => {
@@ -424,7 +436,7 @@ describe("blocklist editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
     await screen.findByRole("alert");
-    expect(sentTypes()).toEqual(["GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
   it("shows the built-in blocklist as read-only context", async () => {
@@ -546,11 +558,15 @@ describe("protocol discipline", () => {
     fireEvent.click(
       await screen.findByRole("checkbox", { name: /tag additions/i }),
     );
-    await waitFor(() => expect(sentTypes()).toContain("SET_SETTINGS"));
+    await waitFor(() =>
+      expect(sentDecisionTypes()).toContain("SET_SETTINGS"),
+    );
     for (const type of sentTypes()) {
-      expect(["GET_SETTINGS", "SET_SETTINGS", "SET_BLOCKLIST"]).toContain(
-        type,
-      );
+      expect([
+        ...DECISION_TYPES,
+        "LLM_PROVIDER_STATUS",
+        "LLM_ESCALATION_STATUS",
+      ]).toContain(type);
     }
   });
 
@@ -592,7 +608,7 @@ describe("settings load failure", () => {
     // The retry re-reads through the worker and recovers both sections.
     await screen.findByRole("checkbox", { name: /tag additions/i });
     await screen.findByLabelText(/block a host/i);
-    expect(sentTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]);
+    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /^retry$/i }),
@@ -608,7 +624,7 @@ describe("settings load failure", () => {
     // A second GET_SETTINGS goes out, fails, and the retryable failure
     // returns rather than dead-ending on "Loading…".
     await waitFor(() =>
-      expect(sentTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]),
+      expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]),
     );
     await screen.findAllByRole("button", { name: /^retry$/i });
     expect(screen.queryByText(/loading decision settings/i)).toBeNull();
