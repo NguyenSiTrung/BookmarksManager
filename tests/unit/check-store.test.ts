@@ -313,7 +313,9 @@ describe("the real repo on the current tree", () => {
     // The version is bumped and assets exist; until the release record lands
     // the only remaining violation may be "release-record" (empty once the
     // record is written — everything else must already be clean).
-    expect(c.every((x) => x === "release-record")).toBe(true);
+    expect(c.size === 0 || (c.size === 1 && c.has("release-record"))).toBe(
+      true,
+    );
     expect(c).not.toContain("unfinished-marker");
     expect(c).not.toContain("publisher-contact");
     expect(c).not.toContain("public-urls");
