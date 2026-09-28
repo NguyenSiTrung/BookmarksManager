@@ -67,3 +67,27 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     is host-only (`http://localhost/*`); the Phase-2 gate must re-check the
     exact origin (port included) per request.
 ---
+
+## [2026-09-28 03:32] - Phase 1 Task 2: Generic encrypted credential storage
+- **Implemented:** `src/security/credentials.ts` — `saveCredential`/
+  `readCredential`/`deleteCredential(id)` under a `credential:<id>` namespace
+  (both envelope key and CryptoKey row), plus exported low-level
+  `*Envelope(storageKey, materialId, …)` functions for namespaced wrappers.
+  `src/security/keys.ts` is now a thin wrapper preserving legacy
+  `provider:<preset>`/`providerKey:<preset>` ids and `ProviderKeyError`.
+- **Files changed:** `src/security/credentials.ts`, `src/security/keys.ts`,
+  `tests/unit/credentials.test.ts`, `tests/unit/keys.test.ts` (unchanged —
+  14/14 still pass, proving compat)
+- **Commit:** (see below)
+- **Learnings:**
+  - Patterns: keep legacy storage ids verbatim in wrappers — do NOT re-derive
+    them from the new namespace formula (legacy envelopes at `providerKey:*`
+    would orphan). Wrappers translate `CredentialError` → `ProviderKeyError`
+    so callers see the same error contract.
+  - Gotchas: `getOrCreateKey` had a key-generation race — concurrent saves
+    could each `put` a CryptoKey, leaving the losing envelope undecryptable.
+    Fixed with a per-materialId in-memory lock (`keyCreationLocks` map);
+    concurrent saves now share one key and last-write-wins.
+  - Context: credential ids are validated (1–300 chars, no blank/whitespace)
+    but NOT secrets — they embed the provider locator, never the token.
+---

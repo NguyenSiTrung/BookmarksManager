@@ -73,7 +73,7 @@ reservations protect every egress path.
   - Green implementation keeps URL parsing and preset resolution pure.
   - Verify: `npx vitest run tests/unit/llm-provider.test.ts`.
 
-- [~] Task 2: Generic encrypted credential storage
+- [x] Task 2: Generic encrypted credential storage
   <!-- files: src/security/credentials.ts, src/security/keys.ts, tests/unit/credentials.test.ts, tests/unit/keys.test.ts -->
   - Interfaces: `saveCredential(id, plaintext)`, `readCredential(id)`,
     `deleteCredential(id)`; existing Jev key exports remain wrappers.
