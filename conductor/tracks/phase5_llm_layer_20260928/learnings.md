@@ -235,3 +235,35 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     after fetch resolves so blocked requests never log.
 ---
 
+## Phase 2 Task 4 — Worker-owned LLM provider protocol (2026-09-28)
+
+- **Intent:** `handleLlmProviderMessage` (src/messages/llm-provider.ts) owns
+  `LLM_CONFIGURE`/`LLM_PROVIDER_STATUS`/`LLM_TEST`/`LLM_REVOKE`/
+  `LLM_BUDGET_SNAPSHOT` from the Options page only; wired into
+  `background.ts` between the decisions dispatcher and the terminal Jev
+  provider handler (returns `undefined` for foreign types).
+- **Files changed:** `src/messages/llm-provider.ts` (new),
+  `src/entrypoints/background.ts`, `tests/unit/llm-provider-messages.test.ts`
+  (new).
+- **Learnings:**
+  - Patterns: configure order is record → credential → consent (consent
+    last; unwind deletes record, credential, and the llm_test grant on any
+    partial failure); `enabled` = record + `llm_test` consent at the exact
+    origin + host permission — credential absence deliberately NOT folded
+    in so a missing key surfaces as the gate's `no_key` instead of silent
+    disable (mirrors the Jev `readStatus`); revoke is consent-first via
+    `revokeConsentsAtOrigin` (all scopes at the origin) then permission →
+    record/reservations → optional credential delete.
+  - Test seam: `LLM_TEST` discovers the structured-output tier by probing
+    json_schema → json_object → prompt_only through the real gated client —
+    `LlmCapabilityError` advances the tier probe, any other error ends it;
+    the test ping is a fixed synthetic request (max_tokens 16, temperature
+    0) under `llm_test` scope with `kind:"manual"` +
+    `unknownCostConfirmed:true` (the enable click is the confirmation).
+  - Gotchas: `vi.spyOn(chrome.storage.local, "set")` fails typecheck in
+    tests since `chrome` isn't declared there — keep a holder object whose
+    method the stub delegates to and spy on the holder;
+    `satisfies readonly StructuredOutputTier[]` pins the probe order to
+    the tier enum.
+---
+

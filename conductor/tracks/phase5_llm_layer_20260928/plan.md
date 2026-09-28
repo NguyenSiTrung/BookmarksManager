@@ -167,7 +167,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/llm-gate.test.ts tests/unit/llm-client.test.ts`.
 
-- [ ] Task 4: Worker-owned LLM provider protocol
+- [x] Task 4: Worker-owned LLM provider protocol
   - Files: `src/messages/llm-provider.ts`, `src/entrypoints/background.ts`,
     `tests/unit/llm-provider-messages.test.ts`.
   - Intents: configure, status, test, revoke, and budget snapshot; replies expose
