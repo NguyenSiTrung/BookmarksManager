@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-27 -->
+<!-- Last refreshed: 2026-09-28 -->
 
 # Codebase Patterns
 
@@ -154,3 +154,23 @@ _Last refreshed: 2026-09-25_
 - **`vi.fn` unused trailing params trip `no-unused-vars` even with a `_` prefix** — drop the param entirely rather than naming it `_options`. (from: phase3_jev_client_20260927)
 
 _Last refreshed: 2026-09-27_
+
+---
+
+## Elevated from track `phase4_jev_decisions_20260927` (2026-09-28)
+
+### E2E: wire-level fakes and restarts
+
+- **Fake the provider at the wire, not the client.** A Playwright `context.route` that parses each request's `questions` record and answers every key by type (choices confined to the sent option keys, echoed model, schema-valid usage) passes the real client's cross-check — so the real pipeline, gate, and persistence run end to end; only the endpoint is fake. A route is also a **request valve**: fulfill the first N and hold the rest until `release()` — with a strictly sequential runner this freezes the worker mid-batch deterministically (exactly ONE held request), which is how to test pause/restart/resume without timers. (from: phase4_jev_decisions_20260927)
+- **Emulating a browser restart under Playwright:** persistent profile dir + a copy-once extension root (manifest check before re-copy) gives the SAME derived extension id across `launchPersistentContext` calls, so IndexedDB state (consents, jobs) survives; add `--host-resolver-rules="MAP <provider-origins> 127.0.0.1"` so a resume attempt that races route registration can never become real egress. A browser restart subsumes the MV3 worker restart no API can trigger on demand. The temp dirs need an explicit `dispose()` — the launcher's own cleanup deliberately skips caller-owned roots. (from: phase4_jev_decisions_20260927)
+- **Popup prefill under Playwright needs `tabs` injected and `bringToFront` ordering:** production prefills via `activeTab`, which Playwright cannot grant — patch the copied manifest to add `tabs` and use `chrome.tabs.query`. Create the HTTPS page, then `context.newPage()` STEALS the active-tab slot: `bringToFront()` the HTTPS page AFTER creating the popup page but BEFORE `popup.goto(chrome-extension://…)` or the prefill reads the wrong tab. (from: phase4_jev_decisions_20260927)
+
+### Perf gates and harness honesty
+
+- **A perf gate must disclose and pin what its harness bypasses.** Mocking `sendConsented` removes the egress gate AND the only sentLog writer from the measured path — document it in the header and pin it (`expect(sentLog.count()).toBe(0)`) so the bypass is a tested fact. Gate on the WORST measured run (a slow save is a user-facing miss), warm up JIT/Dexie separately, and seed at the sibling gate's corpus scale so quadratic regressions trip. (from: phase4_jev_decisions_20260927)
+- **Assertions inside a timed run must run AFTER the clock stops** (capture `elapsed` first, then `expect`) so assertion cost never pollutes timing; and a fast FAILURE must not pass — assert `ok:true` + exact request counts + decision counts each iteration. (from: phase4_jev_decisions_20260927)
+
+### Decisions-layer contracts worth remembering
+
+- **The job runner is strictly sequential per bookmark within a batch** (`for … await`) — concurrency expectations anywhere in tests or UI must assume one in-flight analysis; batch-commit progress (`committedBatches`) is the resume boundary, and `appendSentLog` runs after `fetch` resolves, so a held or dying request writes NO row (exact sentLog counts are meaningful). (from: phase4_jev_decisions_20260927)
+- **`INTRANET_SUFFIXES` in `src/decisions/minimize.ts` blocklists `.example`/`.test`/`.local` and friends** — seed data for any decisions test must use a public-looking TLD (`.dev` works). MiniSearch query terms are strict-AND across fields: every expected hit needs every term. (from: phase4_jev_decisions_20260927)

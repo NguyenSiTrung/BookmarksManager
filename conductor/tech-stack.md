@@ -1,13 +1,14 @@
-<!-- Last refreshed: 2026-09-27 -->
+<!-- Last refreshed: 2026-09-28 -->
 
 # Technology Stack
 
 The stack below reflects the **installed dependencies in `package.json`** as of the
-Phase 3 Jev client track (`phase3_jev_client_20260927`), after the archived
-Phase 2 search track (`phase2_search_20260926`, archived 2026-09-26),
-built on the Phase 1 core manager (`phase1_core_manager_20260926`) and the
-Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
-`PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
+Phase 4 Jev-decisions track (`phase4_jev_decisions_20260927`, in its Phase 5
+end-to-end stage), after the archived Phase 3 Jev client track
+(`phase3_jev_client_20260927`), Phase 2 search track (`phase2_search_20260926`),
+Phase 1 core manager (`phase1_core_manager_20260926`), and the Phase 0 foundation
+(`phase0_foundation_20260925`). Items still planned in `PROJECT_PLAN.md` but not
+yet installed are marked **[planned]**.
 
 ## Platform
 
@@ -45,10 +46,14 @@ Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
 - **Zod 4.6.5** in jitless mode for the MV3 CSP — single configuration site
   `src/schemas/z.ts`; every schema file imports `z` from there, never from `zod`
   directly.
-- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 2**): v1 tables
+- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 3**): v1 tables
   `metadata`, `decisions`, `consents`, `sentLog`, `keyMaterials`; v2 adds
   `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), and `undo`
-  (`++id,createdAt`). The metadata/tag repository is `src/db/meta.ts`.
+  (`++id,createdAt`); v3 (Phase 4) adds the decisions-UI tables `jobs`
+  (`id,status,createdAt` — resumable batch jobs), `audit`
+  (`++id,decisionId,changedAt` — decision lifecycle history), and `usage`
+  (`++id,jobId,recordedAt` — per-request cost rows). The metadata/tag
+  repository is `src/db/meta.ts`.
 - `chrome.storage.local` holds provider-key ciphertext envelopes only
   (`src/security/keys.ts`); non-extractable AES-GCM-256 `CryptoKey` material
   persists in IndexedDB via structured clone. `chrome.storage.session` carries
@@ -97,6 +102,23 @@ Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
   `src/consent/`.
 - Message layer `src/messages/provider.ts`: total `runtime.onMessage` handlers
   returning `{ok:true,…} | {ok:false,code,message}` Zod-validated unions.
+- **Phase 4 decisions layer** (all behind the `jev_decisions` consent scope in
+  the same gate): `src/jev/tasks/` — six pure question sets
+  (`categorize`/`tags`/`placement`/`misfiled`/`near-duplicate`/`rerank`), each
+  exporting a `questionSetVersion`; `src/decisions/` — `minimize.ts`
+  (title/cleaned-URL/domain only; notes and page text never sent, intranet
+  suffixes blocklisted), `candidates.ts` (in-code shortlists for tags/folders),
+  `pipeline.ts` (`analyzeBookmark` — one request, many questions; answer-ID
+  cross-check; §10.2 policy; persist + usage), `policy.ts` (confidence bands,
+  auto-apply limited to `add_tags`/`set_category`), `apply.ts` (guarded apply
+  with compensating undo), `store.ts` (persist + lifecycle), `rerank.ts` (Ask
+  reordering with the 0.5 no-match bar), `blocklist.ts`, `duplicates.ts`;
+  `src/jobs/` — `queue.ts`/`runner.ts` (persisted, resumable, strictly
+  sequential per bookmark, batch-commit progress) + `estimate.ts`; and
+  `src/messages/decisions.ts` (total handlers: analyze, save-suggest, rerank,
+  approve/reject, scan lifecycle). UI: Options consent + auto-apply +
+  blocklist + "Data sent" log; sidepanel review queue, scan dialog, and Ask
+  toggle; popup suggestion chips.
 - **[planned]** Optional OpenAI-compatible LLM client for generation and
   second opinions.
 
@@ -106,11 +128,18 @@ Phase 0 foundation (`phase0_foundation_20260925`). Items still planned in
   fake-indexeddb 6.2.5) — `tests/unit`, `tests/components`, `tests/fixtures`,
   and `tests/fakes` (in-memory `chrome.bookmarks` fake with fixed roots).
   `tests/mock-servers/jev.ts` is a scripted HTTP fake of the System One
-  endpoint; `tests/live/` is a key-gated smoke suite run only via
+  endpoint (its default answers are schema-valid and pass the pipeline's
+  cross-check); `tests/unit/decisions-perf.test.ts` gates analyze-on-save
+  (worst-of-10 < 1.5 s at a 10k-bookmark corpus); `tests/live/` is a
+  key-gated smoke suite (synthetic probe + live categorize) run only via
   `npm run test:live` (separate `vitest.live.config.ts`, excluded from the
-  default run and CI).
+  default run and CI; every test skips when its env key is absent).
 - **Playwright 1.63** headed persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
+  `tests/e2e/helpers/decisions.ts` fakes the provider at the WIRE level (a
+  scriptable route with a request valve: first N fulfill, the rest held until
+  `release()`) and can relaunch the same extension id over a persistent
+  profile to emulate browser restarts mid-job.
 - **ESLint 9 flat config** (`eslint.config.mjs`) with typescript-eslint and
   react/react-hooks plugins; egress restriction rules ban `fetch` outside
   `src/net/**`.
