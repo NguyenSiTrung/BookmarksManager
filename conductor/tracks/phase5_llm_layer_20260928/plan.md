@@ -295,7 +295,7 @@ reservations protect every egress path.
     persistence, usage rows, and no write on any failure.
   - Verify: `npx vitest run tests/unit/llm-summarize.test.ts`.
 
-- [ ] Task 4: Summary protocol and UI
+- [x] Task 4: Summary protocol and UI
   <!-- files: src/messages/summaries.ts, src/entrypoints/background.ts, src/entrypoints/sidepanel/SummaryDialog.tsx, src/entrypoints/sidepanel/App.tsx, tests/unit/summary-messages.test.ts, tests/components/summary-dialog.test.tsx -->
   <!-- depends: task3 -->
   - Add explicit Summarize intent and progress/result states; show persisted

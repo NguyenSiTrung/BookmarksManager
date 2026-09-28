@@ -391,3 +391,13 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   `unknownCostConfirmed: true` — same as Explain.
 - Stale manifest pins: adding `scripting` to wxt.config permissions needs the
   same constant added in scaffold.test.ts + manifest.test.ts.
+- `src/messages/summaries.ts` owns `LLM_SUMMARIZE` (tabId+bookmarkId+
+  unknownCostConfirmed) and `LLM_SUMMARY_READ` — chained after
+  llm-features in background.ts. `SummarizeOutcome` maps stage→wire code;
+  `confirmation_required` reattaches `destinationOrigin` for the cost dialog.
+- The Jev verify send needs a stored `typesafe` provider key
+  (`saveProviderKey`) in tests — `sendConsented` rejects `no_key` otherwise.
+- Component tests need manual `afterEach(cleanup())` + `vi.unstubAllGlobals()`
+  — vitest has no auto-cleanup here; without it `getByRole` sees stale dialogs.
+- `chrome.tabs.query` in the click handler must be a lazy slice (`declare const
+  chrome` partial) — tests stub `runtime.sendMessage` only.
