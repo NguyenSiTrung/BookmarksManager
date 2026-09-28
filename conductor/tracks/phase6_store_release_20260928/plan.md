@@ -60,7 +60,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 
 ## Phase 1: Labeled Evaluation and Pinned Jev Policy
 
-- [x] Task 1: Define the evaluation corpus and add labeled fixtures
+- [x] Task 1: Define the evaluation corpus and add labeled fixtures (aec3d47)
   - Files: create `src/eval/schema.ts`,
     `tests/eval/fixtures/corpus.json`, and
     `tests/unit/eval-schema.test.ts`.
@@ -76,7 +76,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
   - Verify:
     `npx vitest run tests/unit/eval-schema.test.ts && npm run typecheck`.
 
-- [ ] Task 2: Implement deterministic evaluation metrics and reports
+- [x] Task 2: Implement deterministic evaluation metrics and reports
   - Files: create `src/eval/metrics.ts`, `src/eval/report.ts`,
     `tests/unit/eval-metrics.test.ts`, and
     `tests/unit/eval-report.test.ts`.
