@@ -150,6 +150,35 @@ needs a real provider key:
 - _A temporary low-credit test key can be supplied at submission time and
   revoked after review — decide at release._
 
+## Testing the optional LLM provider
+
+The LLM provider flow is consent-gated per feature scope and is exercisable
+without a paid account by pointing a custom provider at a local model server:
+
+- Open the options page → "LLM provider". Choose a preset (OpenAI or
+  OpenRouter) or a custom base URL. Custom remote endpoints must be HTTPS;
+  plain HTTP is accepted only for loopback (`http://localhost`,
+  `http://127.0.0.1`, `http://[::1]`), and redirects, URL credentials, and
+  arbitrary headers are refused.
+- Check the unchecked consent box for the feature scope and click Enable —
+  Chrome's optional host-permission prompt for the exact configured origin
+  appears from that click (e.g. `http://localhost:11434` for a local model,
+  or the preset origin). Denying it leaves the provider off.
+- **Test connection** (`llm_test`) sends a fixed synthetic chat request —
+  `model`, `messages`, `response_format` — and nothing else; the credential
+  travels in the authentication header only.
+- Feature scopes `llm_explain`, `llm_escalate`, `llm_restructure`,
+  `llm_summary`, and `jev_summary_verify` each show their own disclosure
+  naming the exact fields sent, the user action that triggers them, and the
+  credential path; a request can leave the device only while its scope's
+  grant and the exact-origin permission are both in place.
+- The monthly budget caps LLM spending; when reliable pricing is configured
+  each request reserves an estimated cost, and the second-opinion flow never
+  applies a change by itself.
+- Revoking the provider deletes every consent scope at its origin, removes
+  the host permission, and deletes the stored credential — verified by
+  `tests/unit/llm-settings.test.ts` and `tests/unit/consent.test.ts`.
+
 ## Testing bookmark decisions
 
 The bookmark-data flow is shipped behind a separate, per-provider

@@ -36,12 +36,19 @@ settings or from the provider's Revoke action in Options.
 |---|---|---|
 | `https://api.typesafe.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the TypeSafe provider, started by the user |
 | `https://openrouter.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the OpenRouter provider, started by the user |
+| `https://*/*` | optional | Capability only — lets the user grant the exact origin of a custom OpenAI-compatible LLM provider at runtime from a direct click; the egress gate re-checks the exact origin and a per-scope consent record before any request can fire |
+| `http://localhost/*` | optional | Optional LLM provider on a loopback endpoint (e.g. a local model server); Chrome patterns cannot express ports, so the gate enforces the full origin (host + port) itself |
+| `http://127.0.0.1/*` | optional | Same loopback LLM endpoint via the IPv4 literal |
+| `http://[::1]/*` | optional | Same loopback LLM endpoint via the IPv6 literal |
 
-_These two patterns back the shipped, consent-gated Jev provider flow — the
-synthetic Test connection and the bookmark-data `jev_decisions` flow — the
-only features that produce network traffic, and only on an explicit Test
-connection click or a user-started save, Analyze, library scan, or Ask search.
-Any change here must update the manifest in the same change._
+_The first two patterns back the shipped, consent-gated Jev provider flow — the
+synthetic Test connection and the bookmark-data `jev_decisions` flow. The
+remaining four back the optional LLM provider: `https://*/*` is a
+capability pattern so a user can grant a custom HTTPS origin at runtime, and
+the loopback patterns cover local model servers — every grant is scoped to
+the exact configured origin, requires its own consent record, and fires only
+on an explicit user action. Any change here must update the manifest in the
+same change._
 
 ## Declared but empty
 
@@ -53,8 +60,8 @@ Any change here must update the manifest in the same change._
 
 `scripting`, `alarms`,
 `history`, `tabs`, `cookies`, `webRequest`, `offscreen`, `unlimitedStorage`,
-`<all_urls>`, and broad wildcard patterns such as `https://*/*` or `http://*/*`.
-None of them ship in this release. Each future permission must be added only
+`<all_urls>`, and the broad `http://*/*` wildcard. None of them ship in this
+release. Each future permission must be added only
 together with the feature that uses it, in the same change that updates this
 table, and with a justification — the Chrome Web Store's minimum-permission
 rule applies to optional permissions too.

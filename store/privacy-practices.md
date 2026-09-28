@@ -27,6 +27,11 @@
 > API key: a synthetic test sends a fixed payload and never your bookmarks,
 > and the separate, off-by-default bookmark-data consent sends bookmark
 > metadata only — never notes or page text — on a user-started action.
+> A second, fully optional OpenAI-compatible LLM provider you configure
+> (preset or custom HTTPS origin, loopback HTTP allowed) can explain
+> decisions, give budget-capped second opinions, propose folder structures,
+> and summarize pages — each behind its own consent scope and an
+> explicit user action.
 
 ## Permission justifications
 
@@ -53,6 +58,14 @@ Use the justification column of `store/permissions.md` verbatim; CI
 - `https://openrouter.ai/*` (optional) — Jev provider connection (Test
   connection and bookmark decisions) to the OpenRouter provider, started by
   the user.
+- `https://*/*` (optional) — capability only: lets the user grant the exact
+  origin of a custom OpenAI-compatible LLM provider at runtime, from a
+  direct click; no request can fire without a per-scope consent record and
+  the exact-origin permission check.
+- `http://localhost/*` (optional) — optional LLM provider on a loopback
+  endpoint (e.g. a local model server), granted per exact origin.
+- `http://127.0.0.1/*` (optional) — same, via the IPv4 loopback literal.
+- `http://[::1]/*` (optional) — same, via the IPv6 loopback literal.
 
 (The two optional patterns back the shipped, consent-gated Jev provider flow —
 the synthetic Test connection and the bookmark-data `jev_decisions` flow — the
@@ -102,9 +115,36 @@ Conservative declaration — under-declaring is the risky direction:
   `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
   Links: the provider's privacy policy (`https://typesafe.ai/legal/privacy-policy`
   or `https://openrouter.ai/privacy`) and this extension's privacy policy. The
-  consent is versioned (`consentVersion`, currently 2); revoking a provider
-  deletes every `jev_decisions` grant for its origin along with its synthetic
-  `jev_test` grant, removes its host permission, and offers to delete its key.
+  consent is versioned (`consentVersion`, currently 3); revoking a provider
+  deletes every consent grant for its origin — `jev_test`, `jev_decisions`,
+  and every `llm_*` scope — removes its host permission, and offers to delete
+  its key.
+- **Optional LLM provider features, only if you configure one.** An
+  OpenAI-compatible provider you choose — preset (OpenAI or OpenRouter) or a
+  custom HTTPS origin (HTTP only for a loopback service). Each feature is a
+  separate consent scope granted per exact origin; your stored provider
+  credential goes in the request's authentication header only — never inside
+  the message body. Notes, the full page DOM, and credentials in the message
+  body are never sent under any scope:
+  - LLM test connection (`llm_test`): `model`, `messages`,
+    `response_format` — a fixed synthetic request, only when you click
+    "Test connection".
+  - Decision explanations (`llm_explain`): decision state, question,
+    candidate labels, Jev probabilities, selected answer — only when you
+    click "Explain" on a pending decision.
+  - Automatic second opinions (`llm_escalate`): decision state, question,
+    allowed options, Jev probabilities, Jev answer — only inside a Save,
+    Analyze, or library scan you started, within your monthly budget; never
+    applies changes.
+  - Restructure proposals (`llm_restructure`): folder paths, category
+    counts, tag counts, domains, representative titles (capped) — only when
+    you start "Restructure"; proposals are review-only.
+  - Page summaries (`llm_summary`): page title, site name, headings, bounded
+    page excerpt — extracted and sent only after you click "Summarize",
+    never in the background or incognito.
+  - Jev summary verification (`jev_summary_verify`): page title, bounded
+    page excerpt, LLM-generated summary — sent to your Jev provider only as
+    part of a Summarize action you started.
 - **Everything else: not collected.** The only other transmission is the test
   connection's fixed synthetic payload (`model`, `state`, `questions`), which
   contains no user data.

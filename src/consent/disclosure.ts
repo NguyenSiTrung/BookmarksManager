@@ -1,5 +1,15 @@
 import { PRESETS } from "../net/presets";
-import type { PresetId } from "../schemas/provider";
+import {
+  JEV_SUMMARY_VERIFY_SCOPE,
+  LLM_CONSENT_SCOPES,
+  LLM_ESCALATE_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
+  LLM_TEST_SCOPE,
+  type LlmConsentScope,
+  type PresetId,
+} from "../schemas/provider";
 
 /**
  * The in-product consent disclosure copy (PROJECT_PLAN.md §13.5, spec §3).
@@ -129,3 +139,112 @@ export const DECISIONS_DESCRIPTION =
 /** How the extension's own privacy policy is referenced before a public URL exists. */
 export const EXTENSION_PRIVACY_POLICY_REFERENCE =
   "this extension's privacy policy";
+
+// --- Phase 5: dynamic LLM provider disclosures ---------------------------
+// One typed disclosure per LLM consent scope (spec §3, FR2.8). The recipient
+// is the *configured* provider — not a preset — so the disclosure states
+// purpose, fields, trigger, and credential use provider-agnostically, and the
+// Options UI injects the resolved origin at render time. The snapshot test
+// pins every field label so a schema change cannot ship undisclosed.
+
+export { LLM_CONSENT_SCOPES };
+
+/** Content no LLM scope may ever send. */
+export const LLM_NEVER_SENT = [
+  "notes",
+  "the full page DOM",
+  "credentials in the message body",
+] as const;
+
+/** How the stored credential travels to the LLM provider. */
+export const LLM_CREDENTIAL_USE =
+  "your stored provider credential goes in the request's authentication header only — never inside the message body";
+
+/** How the stored Jev credential travels for the summary verification call. */
+export const JEV_CREDENTIAL_USE =
+  "your stored Jev credential goes in the request's Authorization header only — never inside the message body";
+
+/** Per-scope disclosure facts for the optional LLM provider. */
+export interface LlmScopeDisclosure {
+  /** Short feature name shown on the consent card. */
+  readonly title: string;
+  /** Why the request exists — the reason disclosed before consent. */
+  readonly purpose: string;
+  /** The exact facts the request may carry, in disclosure order. */
+  readonly fields: readonly string[];
+  /** The user action that may start this request. */
+  readonly trigger: string;
+  /** How the credential travels when the provider requires one. */
+  readonly credentialUse: string;
+}
+
+export const LLM_SCOPE_DISCLOSURES = {
+  [LLM_TEST_SCOPE]: {
+    title: "LLM test connection",
+    purpose:
+      "check that your credentials and the provider's OpenAI-compatible endpoint respond, using a fixed synthetic request containing no bookmark or page data",
+    fields: ["model", "messages", "response_format"],
+    trigger: 'only when you click "Test connection"',
+    credentialUse: LLM_CREDENTIAL_USE,
+  },
+  [LLM_EXPLAIN_SCOPE]: {
+    title: "Decision explanations",
+    purpose: "explain a review-queue decision in plain language",
+    fields: [
+      "decision state",
+      "question",
+      "candidate labels",
+      "Jev probabilities",
+      "selected answer",
+    ],
+    trigger: 'only when you click "Explain" on a pending decision',
+    credentialUse: LLM_CREDENTIAL_USE,
+  },
+  [LLM_ESCALATE_SCOPE]: {
+    title: "Automatic second opinions",
+    purpose: "give a second opinion on a low-confidence Jev decision",
+    fields: [
+      "decision state",
+      "question",
+      "allowed options",
+      "Jev probabilities",
+      "Jev answer",
+    ],
+    trigger:
+      "only inside a Save, Analyze, or library scan you started, when the Jev answer fell in the low-confidence band and your monthly budget allows it",
+    credentialUse: LLM_CREDENTIAL_USE,
+  },
+  [LLM_RESTRUCTURE_SCOPE]: {
+    title: "Restructure proposals",
+    purpose: "propose a folder structure for your library",
+    fields: [
+      "folder paths",
+      "category counts",
+      "tag counts",
+      "domains",
+      "representative titles (capped)",
+    ],
+    trigger: 'only when you start "Restructure"',
+    credentialUse: LLM_CREDENTIAL_USE,
+  },
+  [LLM_SUMMARY_SCOPE]: {
+    title: "Page summaries",
+    purpose: "summarize the current page for a saved bookmark",
+    fields: ["page title", "site name", "headings", "bounded page excerpt"],
+    trigger:
+      'only when you click "Summarize" — the page is extracted only after that click',
+    credentialUse: LLM_CREDENTIAL_USE,
+  },
+  [JEV_SUMMARY_VERIFY_SCOPE]: {
+    title: "Jev summary verification",
+    purpose:
+      "verify that an LLM summary is supported by the extracted page text",
+    fields: [
+      "page title",
+      "bounded page excerpt",
+      "LLM-generated summary",
+    ],
+    trigger: "only as part of a Summarize action you started",
+    credentialUse: JEV_CREDENTIAL_USE,
+  },
+} as const satisfies Record<LlmConsentScope, LlmScopeDisclosure>;

@@ -136,11 +136,59 @@ until you enable it.
 - **Links:** the provider's privacy policy above and this extension's privacy
   policy (the bundled local draft until a public URL exists).
 
-The consent is versioned — `consentVersion`, currently 2 — so a change to the
+### Optional LLM provider features (`llm_test`, `llm_explain`, `llm_escalate`, `llm_restructure`, `llm_summary`, `jev_summary_verify`)
+
+You may optionally configure one OpenAI-compatible LLM provider — an OpenAI
+or OpenRouter preset, or a custom HTTPS endpoint (HTTP only for a loopback
+service such as `http://localhost:11434`). Each feature below is a separate
+consent scope, granted per provider origin, and every request is re-checked
+against the exact configured origin, the saved consent, the host permission,
+and the closed request schema before it can leave the device. Your stored
+provider credential goes in the request's authentication header only — never
+inside the message body. Notes, the full page DOM, and credentials in the
+message body are never sent under any scope.
+
+- **LLM test connection** (`llm_test`) — sends `model`, `messages`, and
+  `response_format` as a fixed synthetic request to check that your
+  credentials and endpoint respond. Triggered only when you click
+  "Test connection".
+- **Decision explanations** (`llm_explain`) — sends the decision state, the
+  question, the candidate labels, the Jev probabilities, and the selected
+  answer to explain a review-queue decision in plain language. Triggered
+  only when you click "Explain" on a pending decision.
+- **Automatic second opinions** (`llm_escalate`) — sends the decision state,
+  the question, the allowed options, the Jev probabilities, and the Jev
+  answer for a second opinion on a low-confidence decision. Runs only inside
+  a Save, Analyze, or library scan you started, within the monthly budget
+  you set; it never applies changes by itself.
+- **Restructure proposals** (`llm_restructure`) — sends folder paths,
+  category counts, tag counts, domains, and representative titles (capped)
+  to propose a folder structure. Proposals are plans for your review —
+  nothing is applied automatically. Triggered only when you start
+  "Restructure".
+- **Page summaries** (`llm_summary`) — sends the page title, site name,
+  headings, and a bounded page excerpt to summarize the current page. The
+  page is extracted only after you click "Summarize" — never in the
+  background and never in incognito.
+- **Jev summary verification** (`jev_summary_verify`) — sends the page
+  title, the bounded page excerpt, and the LLM-generated summary to your
+  Jev provider to verify the summary is supported by the page. This is the
+  only LLM feature that sends data to Jev, and only as part of a Summarize
+  action you started.
+
+Each grant is tied to the exact configured origin (including the port for a
+loopback endpoint). Revoking the provider deletes every consent scope at its
+origin, removes the host permission, and deletes the stored credential.
+LLM spending is metered: when reliable per-token pricing is configured, each
+request first reserves an estimated cost; when it is not, requests run only
+inside the unknown-cost mode you chose. Nothing is sent on install, on a
+timer, or in the background.
+
+The consent is versioned — `consentVersion`, currently 3 — so a change to the
 sent fields or recipients re-shows the disclosure before the next request.
-Revoking a provider deletes **every** `jev_decisions` grant for its origin
-along with the synthetic `jev_test` grant, removes its host permission, and
-offers to delete its key.
+Revoking a provider deletes **every** consent grant for its origin —
+`jev_test`, `jev_decisions`, and every `llm_*` scope — removes its host
+permission, and offers to delete its key.
 
 Requests to a provider are governed by that provider's own privacy policy and
 retention terms. The in-product disclosure links to

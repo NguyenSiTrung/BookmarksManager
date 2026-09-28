@@ -3,7 +3,7 @@ import { resolvePreset } from "../net/presets";
 import {
   CONSENT_SCOPES,
   CONSENT_SCOPE,
-  type ConsentRecord,
+  ConsentRecord,
   type ConsentScope,
   type PresetId,
 } from "../schemas/provider";
@@ -14,52 +14,51 @@ export type { ConsentScope };
  * Version of the consent grant, shared by every scope. Bump this whenever the
  * set of sent fields or the set of recipients changes (plan §Global
  * Constraints): rows recorded under older versions then fail `hasConsent`
- * and the user must re-accept the disclosure. Version 2 introduces the
- * `jev_decisions` bookmark-metadata scope, so a stale v1 `jev_test` record
- * is re-disclosed too.
+ * and the user must re-accept the disclosure. Version 2 introduced the
+ * `jev_decisions` bookmark-metadata scope; version 3 introduces the Phase 5
+ * LLM scopes and the dynamic-origin grants behind them, so every earlier
+ * row is re-disclosed.
  */
-export const CONSENT_VERSION = 2;
+export const CONSENT_VERSION = 3;
 
 /**
- * Record the user's affirmative consent for a scope at a preset's origin.
- * Uses `put` as an upsert over the compound `[scope+origin]` key so a
+ * Record the user's affirmative consent for a scope at an origin. Uses
+ * `put` as an upsert over the compound `[scope+origin]` key so a
  * re-grant refreshes `acceptedAt` on the existing row rather than
- * duplicating it.
+ * duplicating it. The origin is validated against `ConsentRecord` —
+ * canonical HTTPS, or canonical loopback HTTP — before it is stored.
  */
-export async function grantConsent(
+export async function grantConsentAtOrigin(
   scope: ConsentScope,
-  preset: PresetId,
+  origin: string,
 ): Promise<void> {
-  const { origin } = resolvePreset(preset);
-  const record: ConsentRecord = {
+  const record: ConsentRecord = ConsentRecord.parse({
     scope,
     origin,
     consentVersion: CONSENT_VERSION,
     acceptedAt: new Date().toISOString(),
-  };
+  });
   await db.consents.put(record);
 }
 
-/** Delete the grant for a scope at a preset's origin. Safe when absent. */
-export async function revokeConsent(
+/** Delete the grant for a scope at an origin. Safe when absent. */
+export async function revokeConsentAtOrigin(
   scope: ConsentScope,
-  preset: PresetId,
+  origin: string,
 ): Promise<void> {
-  const { origin } = resolvePreset(preset);
   await db.consents.delete([scope, origin]);
 }
 
 /**
- * True only when a row exists for this preset's origin under the given
- * scope AND carries the current `consentVersion`. Scope, origin, and
- * version are compared explicitly on every call so stale-version or
- * foreign-scope rows cannot pass.
+ * True only when a row exists for this origin under the given scope AND
+ * carries the current `consentVersion`. Scope, origin, and version are
+ * compared explicitly on every call so stale-version or foreign-scope
+ * rows cannot pass.
  */
-export async function hasConsent(
+export async function hasConsentAtOrigin(
   scope: ConsentScope,
-  preset: PresetId,
+  origin: string,
 ): Promise<boolean> {
-  const { origin } = resolvePreset(preset);
   const record = await db.consents.get([scope, origin]);
   return (
     record !== undefined &&
@@ -67,6 +66,29 @@ export async function hasConsent(
     record.origin === origin &&
     record.consentVersion === CONSENT_VERSION
   );
+}
+
+/** Preset wrappers — Jev destinations resolve through the fixed registry. */
+
+export async function grantConsent(
+  scope: ConsentScope,
+  preset: PresetId,
+): Promise<void> {
+  await grantConsentAtOrigin(scope, resolvePreset(preset).origin);
+}
+
+export async function revokeConsent(
+  scope: ConsentScope,
+  preset: PresetId,
+): Promise<void> {
+  await revokeConsentAtOrigin(scope, resolvePreset(preset).origin);
+}
+
+export async function hasConsent(
+  scope: ConsentScope,
+  preset: PresetId,
+): Promise<boolean> {
+  return await hasConsentAtOrigin(scope, resolvePreset(preset).origin);
 }
 
 // --- `jev_test` convenience wrappers -------------------------------------
@@ -106,10 +128,9 @@ export class ConsentRevokeError extends Error {
  * it throws a `ConsentRevokeError` after the others have run. Safe when rows
  * are absent.
  */
-export async function revokeProviderConsents(preset: PresetId): Promise<void> {
-  const { origin } = resolvePreset(preset);
+export async function revokeConsentsAtOrigin(origin: string): Promise<void> {
   const results = await Promise.allSettled(
-    CONSENT_SCOPES.map((scope) => revokeConsent(scope, preset)),
+    CONSENT_SCOPES.map((scope) => revokeConsentAtOrigin(scope, origin)),
   );
   const rejected = results.filter(
     (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -120,4 +141,8 @@ export async function revokeProviderConsents(preset: PresetId): Promise<void> {
       { cause: rejected[0]?.reason },
     );
   }
+}
+
+export function revokeProviderConsents(preset: PresetId): Promise<void> {
+  return revokeConsentsAtOrigin(resolvePreset(preset).origin);
 }

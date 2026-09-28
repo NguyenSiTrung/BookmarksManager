@@ -4,10 +4,14 @@ import {
   CONSENT_VERSION,
   ConsentRevokeError,
   grantConsent,
+  grantConsentAtOrigin,
   grantTestConsent,
   hasConsent,
+  hasConsentAtOrigin,
   hasTestConsent,
   revokeConsent,
+  revokeConsentAtOrigin,
+  revokeConsentsAtOrigin,
   revokeProviderConsents,
   revokeTestConsent,
 } from "../../src/consent/records";
@@ -50,8 +54,8 @@ function consentRow(
 }
 
 describe("versioned consent records", () => {
-  it("pins CONSENT_VERSION to 2", () => {
-    expect(CONSENT_VERSION).toBe(2);
+  it("pins CONSENT_VERSION to 3", () => {
+    expect(CONSENT_VERSION).toBe(3);
   });
 
   it("reports no consent before any grant", async () => {
@@ -247,7 +251,43 @@ describe("jev_decisions scope", () => {
   });
 });
 
-describe("stale v1 records after the CONSENT_VERSION 2 bump", () => {
+describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
+  it.each([1, 2])("a v%i jev_test row fails hasConsent", async (version) => {
+    await db.consents.put(
+      consentRow({ scope: "jev_test", consentVersion: version }),
+    );
+    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
+    expect(await hasTestConsent("typesafe")).toBe(false);
+  });
+
+  it.each([1, 2])(
+    "a v%i jev_decisions row fails hasConsent",
+    async (version) => {
+      await db.consents.put(
+        consentRow({ scope: "jev_decisions", consentVersion: version }),
+      );
+      expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([1, 2])(
+    "a v%i llm-scope row fails hasConsentAtOrigin",
+    async (version) => {
+      await db.consents.put(
+        consentRow({
+          scope: "llm_explain",
+          origin: "https://api.example.com",
+          consentVersion: version,
+        }),
+      );
+      expect(
+        await hasConsentAtOrigin("llm_explain", "https://api.example.com"),
+      ).toBe(false);
+    },
+  );
+
   it("a v1 jev_test row fails hasConsent", async () => {
     await db.consents.put(
       consentRow({ scope: "jev_test", consentVersion: 1 }),
@@ -256,18 +296,84 @@ describe("stale v1 records after the CONSENT_VERSION 2 bump", () => {
     expect(await hasTestConsent("typesafe")).toBe(false);
   });
 
-  it("a v1 jev_decisions row fails hasConsent", async () => {
-    await db.consents.put(
-      consentRow({ scope: "jev_decisions", consentVersion: 1 }),
-    );
-    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
-  });
-
-  it("a fresh v2 grant passes for both scopes", async () => {
+  it("a fresh v3 grant passes for jev and llm scopes", async () => {
     await grantConsent("jev_test", "typesafe");
     await grantConsent("jev_decisions", "typesafe");
+    await grantConsentAtOrigin("llm_summary", "https://api.example.com");
     expect(await hasConsent("jev_test", "typesafe")).toBe(true);
     expect(await hasConsent("jev_decisions", "typesafe")).toBe(true);
+    expect(
+      await hasConsentAtOrigin("llm_summary", "https://api.example.com"),
+    ).toBe(true);
+  });
+});
+
+describe("origin-generic consent (dynamic LLM providers)", () => {
+  it("grants, checks, and revokes a scope at an arbitrary https origin", async () => {
+    await grantConsentAtOrigin("llm_explain", "https://api.example.com");
+    expect(
+      await hasConsentAtOrigin("llm_explain", "https://api.example.com"),
+    ).toBe(true);
+    // A different scope at the same origin does not pass.
+    expect(
+      await hasConsentAtOrigin("llm_summary", "https://api.example.com"),
+    ).toBe(false);
+    // The same scope at another origin does not pass.
+    expect(
+      await hasConsentAtOrigin("llm_explain", "https://other.example.com"),
+    ).toBe(false);
+    await revokeConsentAtOrigin("llm_explain", "https://api.example.com");
+    expect(
+      await hasConsentAtOrigin("llm_explain", "https://api.example.com"),
+    ).toBe(false);
+  });
+
+  it("accepts canonical loopback http origins, port included", async () => {
+    for (const origin of [
+      "http://localhost:11434",
+      "http://127.0.0.1:8080",
+      "http://[::1]:9000",
+    ]) {
+      await grantConsentAtOrigin("llm_test", origin);
+      expect(await hasConsentAtOrigin("llm_test", origin)).toBe(true);
+    }
+    // A different port is a different origin.
+    expect(
+      await hasConsentAtOrigin("llm_test", "http://localhost:9999"),
+    ).toBe(false);
+  });
+
+  it.each([
+    "http://api.example.com",
+    "https://api.example.com/path",
+    "https://api.example.com/",
+    "http://evil-localhost.com:8080",
+    "notaurl",
+    "",
+  ])("rejects the non-canonical or disallowed origin %j", async (origin) => {
+    await expect(
+      grantConsentAtOrigin("llm_test", origin),
+    ).rejects.toThrow();
+    expect(await hasConsentAtOrigin("llm_test", origin)).toBe(false);
+  });
+
+  it("revokeConsentsAtOrigin sweeps every scope at the origin only", async () => {
+    await grantConsentAtOrigin("llm_test", "https://api.example.com");
+    await grantConsentAtOrigin("llm_summary", "https://api.example.com");
+    await grantConsentAtOrigin("llm_summary", "https://other.example.com");
+
+    await revokeConsentsAtOrigin("https://api.example.com");
+
+    expect(
+      await hasConsentAtOrigin("llm_test", "https://api.example.com"),
+    ).toBe(false);
+    expect(
+      await hasConsentAtOrigin("llm_summary", "https://api.example.com"),
+    ).toBe(false);
+    expect(
+      await hasConsentAtOrigin("llm_summary", "https://other.example.com"),
+    ).toBe(true);
+    expect(await db.consents.count()).toBe(1);
   });
 });
 

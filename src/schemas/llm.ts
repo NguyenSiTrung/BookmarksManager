@@ -42,7 +42,7 @@ export const ModelPricing = z.strictObject({
 export type ModelPricing = z.infer<typeof ModelPricing>;
 
 /** Literal hosts allowed to use plain HTTP — loopback only (FR1.5). */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * A canonical provider base URL: `scheme://host[:port][/path]` — the path is

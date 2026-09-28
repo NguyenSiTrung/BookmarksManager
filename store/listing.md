@@ -76,6 +76,18 @@ search); never on install, on a timer, or in the background. Your notes and
 page text are never sent. AI features are entirely optional; every feature
 above works without a key.
 
+Optionally, you can also configure one OpenAI-compatible LLM provider — a
+preset (OpenAI, OpenRouter) or a custom HTTPS endpoint, with HTTP allowed
+only for a loopback service — for features the local model cannot do:
+plain-language explanations of review decisions, budget-capped second
+opinions on low-confidence calls, folder-restructure proposals for your
+review (never applied automatically), and opt-in page summaries verified by
+Jev. Each feature has its own consent scope tied to the exact origin you
+configured, its disclosed field list, and an explicit user action; your
+stored credential travels in the authentication header only, spending is
+metered against a monthly budget you set, and revoking the provider removes
+every grant, the host permission, and the key.
+
 Not in this release: a link checker, cloud sync, and accounts. The extension
 requests no access to your browsing history or page content.
 

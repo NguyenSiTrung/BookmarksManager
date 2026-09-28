@@ -21,6 +21,16 @@ export default defineConfig({
     optional_host_permissions: [
       "https://api.typesafe.ai/*",
       "https://openrouter.ai/*",
+      // Optional LLM providers (spec FR2.1): the broad HTTPS pattern is only
+      // a *capability* — the user grants the exact configured origin at
+      // runtime from a direct click, and the egress gate re-checks origin +
+      // per-scope consent before any request. Chrome host patterns cannot
+      // express ports, so loopback grants are host-scoped and the gate
+      // enforces the full origin (scheme + host + port) itself.
+      "https://*/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*",
+      "http://[::1]/*",
     ],
     // `bm <query>` in the address bar searches bookmarks locally (Phase 3).
     // The keyword needs no extra permission; suggestions come from a

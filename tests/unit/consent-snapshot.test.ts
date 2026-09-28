@@ -9,6 +9,10 @@ import {
   DECISIONS_TRIGGERS,
   DECISIONS_TRIGGER_NOTE,
   EXTENSION_PRIVACY_POLICY_REFERENCE,
+  LLM_CONSENT_SCOPES,
+  LLM_CREDENTIAL_USE,
+  LLM_NEVER_SENT,
+  LLM_SCOPE_DISCLOSURES,
   PROVIDER_DISCLOSURES,
   SYNTHETIC_FIELDS,
 } from "../../src/consent/disclosure";
@@ -34,17 +38,43 @@ import { DecisionState } from "../../src/schemas/decision-state";
 /** The exact sent-field set per consent version. Add a new entry whenever
  * `CONSENT_VERSION` increases. */
 const SENT_FIELD_SNAPSHOTS: Readonly<Record<number, readonly string[]>> = {
-  2: [
+  3: [
     ...SYNTHETIC_FIELDS,
     "bookmark title",
     "cleaned URL",
     "domain",
     "folder path",
+    "folder paths",
     "tag names and descriptions",
     "candidate folder paths",
     "candidate bookmarks",
     "near-duplicate partner",
     "Ask search query",
+    // llm_test — wire fields of the fixed synthetic chat request ("model"
+    // is already a synthetic field)
+    "messages",
+    "response_format",
+    // llm_explain
+    "decision state",
+    "question",
+    "candidate labels",
+    "Jev probabilities",
+    "selected answer",
+    // llm_escalate
+    "allowed options",
+    "Jev answer",
+    // llm_restructure
+    "category counts",
+    "tag counts",
+    "domains",
+    "representative titles (capped)",
+    // llm_summary
+    "page title",
+    "site name",
+    "headings",
+    "bounded page excerpt",
+    // jev_summary_verify
+    "LLM-generated summary",
   ],
 };
 
@@ -74,15 +104,41 @@ const STORE_TEXTS = [
 ] as const;
 
 describe("consent snapshot (§13.12)", () => {
-  it("pins CONSENT_VERSION to 2", () => {
-    expect(CONSENT_VERSION).toBe(2);
+  it("pins CONSENT_VERSION to 3", () => {
+    expect(CONSENT_VERSION).toBe(3);
   });
 
   it("pins the exact sent-field set for the current consent version", () => {
-    const current = [...SYNTHETIC_FIELDS, ...DECISIONS_SENT_FIELDS];
+    const llmFields = [
+      ...new Set(
+        LLM_CONSENT_SCOPES.flatMap(
+          (scope) => LLM_SCOPE_DISCLOSURES[scope].fields,
+        ),
+      ),
+    ];
+    const current = [
+      ...new Set([
+        ...SYNTHETIC_FIELDS,
+        ...DECISIONS_SENT_FIELDS,
+        ...llmFields,
+      ]),
+    ];
     const snapshot = SENT_FIELD_SNAPSHOTS[CONSENT_VERSION];
     expect(snapshot).toBeDefined();
-    expect([...current]).toEqual([...snapshot!]);
+    expect([...current].sort()).toEqual([...snapshot!].sort());
+  });
+
+  it("declares a disclosure for exactly the LLM consent scopes", () => {
+    expect(Object.keys(LLM_SCOPE_DISCLOSURES).sort()).toEqual(
+      [...LLM_CONSENT_SCOPES].sort(),
+    );
+    for (const scope of LLM_CONSENT_SCOPES) {
+      const disclosure = LLM_SCOPE_DISCLOSURES[scope];
+      expect(disclosure.fields.length).toBeGreaterThan(0);
+      expect(disclosure.purpose.length).toBeGreaterThan(0);
+      expect(disclosure.trigger.length).toBeGreaterThan(0);
+      expect(disclosure.credentialUse.length).toBeGreaterThan(0);
+    }
   });
 
   it("gives every populated DecisionState field a disclosure label", () => {
@@ -142,6 +198,32 @@ describe("store disclosures match the disclosure constants", () => {
       expect(text.toLowerCase()).toContain(
         EXTENSION_PRIVACY_POLICY_REFERENCE.toLowerCase(),
       );
+    },
+  );
+
+  it.each(STORE_TEXTS)(
+    "%s names every LLM scope with its title and sent fields",
+    (_name, text) => {
+      const lower = text.toLowerCase();
+      for (const scope of LLM_CONSENT_SCOPES) {
+        expect(text).toContain(scope);
+        const disclosure = LLM_SCOPE_DISCLOSURES[scope];
+        expect(lower).toContain(disclosure.title.toLowerCase());
+        for (const field of disclosure.fields) {
+          expect(lower).toContain(field.toLowerCase());
+        }
+      }
+    },
+  );
+
+  it.each(STORE_TEXTS)(
+    "%s names the LLM credential path and the never-sent content",
+    (_name, text) => {
+      const lower = text.toLowerCase();
+      expect(lower).toContain(LLM_CREDENTIAL_USE.toLowerCase());
+      for (const field of LLM_NEVER_SENT) {
+        expect(lower).toContain(field.toLowerCase());
+      }
     },
   );
 

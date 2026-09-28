@@ -1,3 +1,4 @@
+import { LOOPBACK_HOSTS } from "./llm";
 import { z } from "./z";
 
 /** Jev provider presets — the only destinations this extension may reach
@@ -50,6 +51,36 @@ export const CONSENT_SCOPE = "jev_test" as const;
  */
 export const DECISIONS_CONSENT_SCOPE = "jev_decisions" as const;
 
+// --- Phase 5: optional LLM provider scopes --------------------------------
+// LLM scopes are granted per *dynamic* provider origin (preset or
+// user-configured), not per Jev preset. `jev_summary_verify` is the one LLM
+// flow whose destination is a Jev provider: it re-checks consent at the Jev
+// origin under its own scope (spec FR10.5).
+
+/** Fixed synthetic test request to the configured LLM provider. */
+export const LLM_TEST_SCOPE = "llm_test" as const;
+/** Plain-language explanation of a review-queue decision (FR5). */
+export const LLM_EXPLAIN_SCOPE = "llm_explain" as const;
+/** Budget-capped second opinion on low-confidence decisions (FR6). */
+export const LLM_ESCALATE_SCOPE = "llm_escalate" as const;
+/** Folder restructure proposals (FR8). */
+export const LLM_RESTRUCTURE_SCOPE = "llm_restructure" as const;
+/** Page summaries via opt-in extraction (FR9/FR10). */
+export const LLM_SUMMARY_SCOPE = "llm_summary" as const;
+/** Jev support-verification of an LLM summary — destination is Jev (FR10.5). */
+export const JEV_SUMMARY_VERIFY_SCOPE = "jev_summary_verify" as const;
+
+/** The scopes a dynamic LLM provider can be granted, in a stable order. */
+export const LLM_CONSENT_SCOPES = [
+  LLM_TEST_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_ESCALATE_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
+] as const;
+export type LlmConsentScope = (typeof LLM_CONSENT_SCOPES)[number];
+
 /**
  * Every consent scope this extension can hold, in a stable order. Scope
  * unions are derived from this tuple so a new scope is added in exactly one
@@ -57,32 +88,43 @@ export const DECISIONS_CONSENT_SCOPE = "jev_decisions" as const;
  * registry in `src/net/send.ts`, and the `store/` disclosures) fails to
  * compile until it is handled.
  */
-export const CONSENT_SCOPES = [CONSENT_SCOPE, DECISIONS_CONSENT_SCOPE] as const;
+export const CONSENT_SCOPES = [
+  CONSENT_SCOPE,
+  DECISIONS_CONSENT_SCOPE,
+  ...LLM_CONSENT_SCOPES,
+] as const;
 
 /** The union of every registered consent scope. */
-export const ConsentScope = z.enum([CONSENT_SCOPE, DECISIONS_CONSENT_SCOPE]);
+export const ConsentScope = z.enum(CONSENT_SCOPES);
 export type ConsentScope = z.infer<typeof ConsentScope>;
 
 /**
- * A canonical HTTPS origin such as "https://api.typesafe.ai" — no path,
- * query, or trailing slash — so records compare cleanly against preset
- * registry origins.
+ * A canonical origin such as "https://api.typesafe.ai" or
+ * "http://localhost:11434" — no path, query, or trailing slash — so records
+ * compare cleanly against resolved destination origins. HTTP is accepted
+ * only for loopback hosts (localhost, 127.0.0.1, [::1]); every remote
+ * provider is HTTPS (spec FR2.3). The port is part of the origin, so two
+ * loopback services never share a grant.
  */
-const HttpsOrigin = z
+const ConsentOrigin = z
   .url()
   .refine((value) => {
     // Zod v4 still runs checks after a failed base check, so guard the parse.
     try {
       const url = new URL(value);
-      return url.protocol === "https:" && url.origin === value;
+      if (url.origin !== value) return false;
+      if (url.protocol === "https:") return true;
+      return (
+        url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)
+      );
     } catch {
       return false;
     }
-  }, "origin must be a canonical https:// origin without path, query, or trailing slash");
+  }, "origin must be a canonical https:// origin, or a canonical http:// loopback origin (localhost, 127.0.0.1, [::1]), without path, query, or trailing slash");
 
 export const ConsentRecord = z.object({
   scope: ConsentScope,
-  origin: HttpsOrigin,
+  origin: ConsentOrigin,
   consentVersion: z.number().int().positive(),
   acceptedAt: z.iso.datetime(),
 });
