@@ -318,3 +318,13 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   - `AnalyzeBookmarkResult` is a discriminated union on `sent` — tests need a
     `if (!result.sent) throw` narrowing guard before touching `.decisions`.
 ---
+### Phase 3 Task 3 — Feature messages
+  - `TokenUsage` fields are `promptTokens`/`completionTokens`/`reportedCostUsd`
+    — not input/output; map at reply boundaries to the page-facing
+    `inputTokens`/`outputTokens`/`costUsd` shape.
+  - Unpriced manual LLM calls correctly refuse with `confirmation_required`
+    FIRST — the contract is: page shows CostConfirmationDialog, resends the
+    same intent with `unknownCostConfirmed:true`. Test both legs.
+  - Disabling escalation must keep the stored providerId (re-enable is one
+    click); write `{enabled:false}` only when none was ever stored.
+---

@@ -230,7 +230,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/llm-escalate.test.ts tests/unit/decisions-pipeline.test.ts`.
 
-- [ ] Task 3: LLM feature messages and background wiring
+- [x] Task 3: LLM feature messages and background wiring
   <!-- files: src/messages/llm-features.ts, src/entrypoints/background.ts, tests/unit/llm-feature-messages.test.ts -->
   <!-- depends: task1, task2 -->
   - Add Explain, read/write escalation settings, and budget-status intents with
