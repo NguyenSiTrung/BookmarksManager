@@ -62,7 +62,7 @@ reservations protect every egress path.
 ## Phase 1: Pure LLM foundations
 <!-- execution: parallel -->
 
-- [ ] Task 1: Provider schemas and destination normalization
+- [x] Task 1: Provider schemas and destination normalization
   <!-- files: src/schemas/llm.ts, src/llm/providers.ts, tests/unit/llm-provider.test.ts -->
   - Interfaces: `LlmProviderSettings`, `LlmAuthMode`, `StructuredOutputTier`,
     `ModelPricing`, `resolveLlmDestination(settings)`.
@@ -73,7 +73,7 @@ reservations protect every egress path.
   - Green implementation keeps URL parsing and preset resolution pure.
   - Verify: `npx vitest run tests/unit/llm-provider.test.ts`.
 
-- [ ] Task 2: Generic encrypted credential storage
+- [~] Task 2: Generic encrypted credential storage
   <!-- files: src/security/credentials.ts, src/security/keys.ts, tests/unit/credentials.test.ts, tests/unit/keys.test.ts -->
   - Interfaces: `saveCredential(id, plaintext)`, `readCredential(id)`,
     `deleteCredential(id)`; existing Jev key exports remain wrappers.
@@ -82,7 +82,7 @@ reservations protect every egress path.
     and redacted errors.
   - Verify: `npx vitest run tests/unit/credentials.test.ts tests/unit/keys.test.ts`.
 
-- [ ] Task 3: OpenAI-compatible wire schemas and structured-output engine
+- [~] Task 3: OpenAI-compatible wire schemas and structured-output engine
   <!-- files: src/llm/wire.ts, src/llm/structured.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
   - Interfaces: `ChatCompletionRequest`, `ChatCompletionResponse`,
     `runStructured({ tier, schema, messages, send })`,

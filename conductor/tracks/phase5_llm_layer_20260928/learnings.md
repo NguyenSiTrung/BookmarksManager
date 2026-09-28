@@ -45,3 +45,25 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
 ---
 
 <!-- Learnings from implementation will be appended below -->
+
+## [2026-09-28 03:26] - Phase 1 Task 1: Provider schemas and destination normalization
+- **Implemented:** `LlmProviderSettings` (strict discriminated union: preset
+  openai/openrouter, custom baseUrl+model+auth+pricing), `LlmAuthMode`
+  (bearer/api-key/none), `StructuredOutputTier` (json_schema/json_object/
+  prompt_only), `ModelPricing`, `LlmBaseUrl` canonical-URL validator, and
+  `resolveLlmDestination` producing origin/baseUrl/chat+models URLs/host
+  permission pattern.
+- **Files changed:** `src/schemas/llm.ts`, `src/llm/providers.ts`,
+  `tests/unit/llm-provider.test.ts`
+- **Commit:** (see below)
+- **Learnings:**
+  - Patterns: canonical-base-URL validation = parse + scheme/userinfo/query/
+    fragment checks + `value === origin + path` equality — input must already
+    BE canonical, so `..` segments, default ports, uppercase hosts, and
+    trailing slashes are rejected without rewriting rules.
+  - Gotchas: `new URL()` does NOT collapse `//` in paths — canonical equality
+    alone accepts `https://h//v1`; check `path.includes("//")` separately.
+  - Context: Chrome match patterns can't express ports — `permissionPattern`
+    is host-only (`http://localhost/*`); the Phase-2 gate must re-check the
+    exact origin (port included) per request.
+---
