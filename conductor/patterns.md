@@ -190,3 +190,11 @@ _Last refreshed: 2026-09-27_
 
 - **The job runner is strictly sequential per bookmark within a batch** (`for … await`) — concurrency expectations anywhere in tests or UI must assume one in-flight analysis; batch-commit progress (`committedBatches`) is the resume boundary, and `appendSentLog` runs after `fetch` resolves, so a held or dying request writes NO row (exact sentLog counts are meaningful). (from: phase4_jev_decisions_20260927)
 - **`INTRANET_SUFFIXES` in `src/decisions/minimize.ts` blocklists `.example`/`.test`/`.local` and friends** — seed data for any decisions test must use a public-looking TLD (`.dev` works). MiniSearch query terms are strict-AND across fields: every expected hit needs every term. (from: phase4_jev_decisions_20260927)
+
+## Elevated from track `phase6_store_release_20260928` (2026-09-28)
+
+- **Release gates should report all violations in one run** so CI output is actionable and each check can be asserted independently.
+- **Store/site policy validation should use a required-field floor, not byte equality** — presentation may differ while release-critical disclosures remain equivalent.
+- **Generate release assets and archives deterministically from committed sources** so the recorded ZIP checksum and visual materials are reproducible.
+- **A release record must bind source commit, archive size, and SHA-256**; the record is a validation artifact, not a post-it.
+- **Key-gated live/eval suites must record exact model IDs, skipped surfaces, and pass/skip counts** rather than implying unexecuted provider coverage.
