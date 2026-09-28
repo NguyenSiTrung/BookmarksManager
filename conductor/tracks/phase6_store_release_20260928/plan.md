@@ -171,7 +171,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 ## Phase 3: Public Site, Listing, and Store Assets
 <!-- execution: parallel -->
 
-- [ ] Task 1: Build the static GitHub Pages site
+- [x] Task 1: Build the static GitHub Pages site (6e37c82)
   <!-- files: site/index.html, site/privacy/index.html, site/styles.css, site/404.html, scripts/check-site.mjs, tests/unit/check-site.test.ts, .github/workflows/pages.yml -->
   - Homepage links to privacy and support in one click. The privacy page is
     materially equivalent to `store/privacy-policy.md` and includes all
