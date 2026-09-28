@@ -60,7 +60,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 
 ## Phase 1: Labeled Evaluation and Pinned Jev Policy
 
-- [ ] Task 1: Define the evaluation corpus and add labeled fixtures
+- [x] Task 1: Define the evaluation corpus and add labeled fixtures
   - Files: create `src/eval/schema.ts`,
     `tests/eval/fixtures/corpus.json`, and
     `tests/unit/eval-schema.test.ts`.

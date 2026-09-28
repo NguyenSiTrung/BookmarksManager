@@ -414,15 +414,18 @@ function isPrivateIpv6(g: Ipv6Groups): boolean {
 }
 
 /**
- * Is this URL on the sensitive-site blocklist (never sent to Jev)? Fails
- * closed: unparseable input counts as sensitive. `userBlocklist` entries may
- * be raw user input — each is run through {@link normalizeBlocklistEntry}
- * and malformed entries are skipped.
+ * Is this URL structurally non-public — something a real saved bookmark
+ * should never be, regardless of its content? Covers `file:` URLs, hostless
+ * opaque schemes (`data:`, `mailto:`, `javascript:`, `about:`, `blob:`, …),
+ * private/loopback/reserved IP ranges (v4 and v6), dotless intranet
+ * hostnames, and private-use TLDs. Fails closed on unparseable input.
+ *
+ * Unlike {@link isSensitiveUrl} this ignores the builtin and user
+ * blocklists — a public banking or webmail domain passes. Eval fixtures use
+ * it to stay public-looking while still allowing builtin-sensitive domains
+ * for exclusion cases.
  */
-export function isSensitiveUrl(
-  raw: string,
-  userBlocklist?: readonly string[],
-): boolean {
+export function isNonPublicUrl(raw: string): boolean {
   let url: URL;
   try {
     url = new URL(raw);
@@ -432,34 +435,50 @@ export function isSensitiveUrl(
   if (url.protocol === "file:") {
     return true;
   }
-
   const host = canonicalUrlHost(url);
   if (host === "") {
-    // Hostless opaque schemes — mailto:, data:, javascript:, about:,
-    // blob:, … — carry content or local targets, never a site. (Schemes
-    // that DO carry a bare host, like chrome://extensions/, are caught by
-    // the dotless-host rule below.)
+    return true;
+  }
+  if (host.includes(":")) {
+    const groups = parseIpv6(host);
+    return groups === null || isPrivateIpv6(groups);
+  }
+  const v4 = parseIpv4(host);
+  if (v4 !== null) {
+    return isPrivateIpv4(v4);
+  }
+  return (
+    !host.includes(".") ||
+    INTRANET_SUFFIXES.some(
+      (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+    )
+  );
+}
+
+/**
+ * Is this URL on the sensitive-site blocklist (never sent to Jev)? Fails
+ * closed: unparseable input counts as sensitive. `userBlocklist` entries may
+ * be raw user input — each is run through {@link normalizeBlocklistEntry}
+ * and malformed entries are skipped.
+ */
+export function isSensitiveUrl(
+  raw: string,
+  userBlocklist?: readonly string[],
+): boolean {
+  if (isNonPublicUrl(raw)) {
     return true;
   }
 
-  let blocked: boolean;
-  if (host.includes(":")) {
-    const groups = parseIpv6(host);
-    blocked = groups === null || isPrivateIpv6(groups);
-  } else {
-    const v4 = parseIpv4(host);
-    if (v4 !== null) {
-      blocked = isPrivateIpv4(v4);
-    } else {
-      blocked =
-        !host.includes(".") || // dotless intranet host: localhost, nas, …
-        INTRANET_SUFFIXES.some(
-          (suffix) => host === suffix || host.endsWith(`.${suffix}`),
-        ) ||
-        BUILTIN_SENSITIVE_SITES.some((entry) => hostMatches(host, entry));
-    }
-  }
-  if (blocked) {
+  const url = new URL(raw); // parseable — non-public input returned above.
+  const host = canonicalUrlHost(url);
+
+  // The builtin list only applies to dotted DNS names — an IP literal that
+  // survived isNonPublicUrl is public and never matches a domain suffix.
+  if (
+    !host.includes(":") &&
+    parseIpv4(host) === null &&
+    BUILTIN_SENSITIVE_SITES.some((entry) => hostMatches(host, entry))
+  ) {
     return true;
   }
 

@@ -28,5 +28,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Phase 6 — Store readiness and 1.0 trusted-tester release
+## [~] Track: Phase 6 — Store readiness and 1.0 trusted-tester release
 *Link: [./conductor/tracks/phase6_store_release_20260928/](./conductor/tracks/phase6_store_release_20260928/)*

@@ -30,3 +30,8 @@ pattern entries from Phases 0–5. The ones most relevant to this track:
 ---
 
 <!-- Learnings from implementation will be appended below -->
+- **Sensitive-vs-private fixture tension resolves structurally, not by list.** Split `isNonPublicUrl` (structural: file:/hostless/private-IP/dotless/intranet-TLD, fail-closed) out of `isSensitiveUrl` (structural + builtin blocklist + user blocklist) in `src/decisions/minimize.ts`. Corpus fixtures may carry builtin-sensitive public domains (chase.com etc.) only when `excluded: true`; private/intranet URLs are rejected outright. The `excluded` flag on a fixture asserts the expected minimizer verdict, so the corpus cannot drift from runtime behavior.
+- **"Malformed" fixtures must be truly unparseable.** `localhost:3000`-style strings parse as valid URLs (scheme `localhost:`, empty host) and would be rejected for the wrong reason. Use strings like `ht!tp://[`, `://missing-scheme.com`, `http://` for the unparseable-excluded class.
+- **Zod 4 has no `.strict()` method — use `z.strictObject`.** Same for `discriminatedUnion` on `"kind"`. All imports go through `src/schemas/z.ts` (jitless build for MV3 CSP).
+- **Deterministic corpus generation beats hand-written fixtures.** `scripts/generate-eval-corpus.mjs` emits the ~315-bookmark/294-case corpus from typed rows; keeping the generator in-repo makes the fixture auditable and regenerable. Watch for duplicate ids when fixed candidate lists collide with per-bookmark folders — dedupe while preserving the `current: true` entry order.
+- **`npm install` state can drift on this VM.** `@mozilla/readability` was missing from node_modules though present in package.json, producing a phantom typecheck failure on clean main — run `npm install` before trusting baseline failures.
