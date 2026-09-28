@@ -89,6 +89,16 @@ export function SummaryDialog(props: SummaryDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const generation = useRef(0);
+  // Render-time reset (React's adjust-state-on-prop-change pattern): when the
+  // dialog flips closed→open the phase restarts at `running` without a
+  // setState-in-effect.
+  const [prevOpen, setPrevOpen] = useState(false);
+  if (props.open && !prevOpen) {
+    setPrevOpen(true);
+    setPhase({ kind: "running" });
+  } else if (!props.open && prevOpen) {
+    setPrevOpen(false);
+  }
 
   useEffect(() => {
     if (props.open) {
@@ -107,7 +117,6 @@ export function SummaryDialog(props: SummaryDialogProps) {
   useEffect(() => {
     if (!props.open) return;
     const gen = generation.current;
-    setPhase({ kind: "running" });
     void sendSummarizeMessage({
       type: "LLM_SUMMARIZE",
       tabId: props.tabId,

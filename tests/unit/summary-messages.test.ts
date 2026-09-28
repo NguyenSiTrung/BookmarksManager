@@ -10,7 +10,6 @@ import { saveCredential } from "../../src/security/credentials";
 import { saveProviderKey } from "../../src/security/keys";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import type { PageExtract } from "../../src/extract/page";
-import type { JevTransport } from "../../src/jev/client";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import { makeOpenAiServer } from "../mock-servers/openai";
 
@@ -98,37 +97,6 @@ function installChromeStub(bookmarks: unknown) {
       },
     },
     permissions: { contains: async () => true },
-  });
-}
-
-function jevTransportFor(answer: "supported" | "unsupported" | "uncertain") {
-  return vi.fn<JevTransport>(async (_scope, _preset, _model, request) => {
-    const answers = Object.fromEntries(
-      Object.entries(request.questions).map(([key, question]) => {
-        if (question.type !== "choice") throw new Error("expected choice");
-        const options = Object.keys(question.criteria);
-        const rest = Math.max(1, options.length - 1);
-        return [
-          key,
-          {
-            type: "choice",
-            choice: answer,
-            probabilities: Object.fromEntries(
-              options.map((k) => [k, k === answer ? 0.8 : 0.2 / rest]),
-            ),
-            confidence: 0.8,
-          },
-        ];
-      }),
-    );
-    return new Response(
-      JSON.stringify({
-        model: request.model,
-        answers,
-        usage: { input_tokens: 30, output_tokens: 4, cost: 0.0001 },
-      }),
-      { status: 200, headers: { "content-type": "application/json" } },
-    );
   });
 }
 
