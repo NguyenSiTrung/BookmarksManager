@@ -358,3 +358,19 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   - jsdom types aren't installed; unit tests use
     `document.implementation.createHTMLDocument` (vitest env is jsdom).
 ---
+### Phase 4 Task 2 — Summary persistence + Jev verification contract
+  - Task factories return `QuestionSet{questionSetVersion, decision, state}`
+    — `questionSetVersion` lives on the wrapper, not the Decision. Generic
+    field maps need `type` aliases (index signature), not `interface`.
+  - `choice(question, options)` is positional, not object-arg.
+  - `SystemOneRequest.state` is `Text` (string|record|array of json) — the
+    state object goes on the wire verbatim, so the scope guard strict-parses
+    `request.state` directly.
+  - `jev_summary_verify` rides `sendConsented` (the Jev gate), NOT
+    `sendLlmConsented`; register it in send.ts SCOPES with its own guard
+    (strict SummaryVerificationState + bookmark.url blocklist + model pin).
+  - Meta repo lazy-row rule: any new data field must join `MetaFields`,
+    `isEmptyMeta`, `commitMeta`, `putMeta`, `patchMeta` merge, and the
+    `rewriteTagRows` emptiness check — the optional field compiles silently
+    without it.
+---

@@ -273,7 +273,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/page-extraction.test.ts && npm run check:manifest`.
 
-- [ ] Task 2: Summary persistence and Jev verification contract
+- [x] Task 2: Summary persistence and Jev verification contract
   <!-- files: src/schemas/meta.ts, src/schemas/summary-verification.ts, src/jev/tasks/verify-summary.ts, src/net/send.ts, src/db/meta.ts, tests/unit/summary-verification.test.ts, tests/unit/meta.test.ts, tests/unit/network-gate.test.ts -->
   - Interfaces: `SummaryVerificationState`, `verifySummary.run(client, state)`,
     `setBookmarkSummary(id, summary)`.
