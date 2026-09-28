@@ -197,10 +197,13 @@ describe("RESTRUCTURE_CONFIRM", () => {
       deps,
     );
     expect(reply).toMatchObject({ ok: true, code: "applied", moved: 1 });
-    const bar = await chrome.bookmarks.getSubTree("1");
-    const dev = bar[0]!.children!.find((c) => c.title === "dev");
+    const { getSubTree } = await import("../../src/sync/chrome-bookmarks");
+    const bar = await getSubTree("1");
+    const dev = bar[0]!.children!.find((c: { title: string }) => c.title === "dev");
     expect(dev).toBeDefined();
-    expect(dev!.children!.map((c) => c.id)).toEqual(["11"]);
+    expect(
+      dev!.children!.map((c: { id: string }) => c.id),
+    ).toEqual(["11"]);
   });
 
   it("refuses a still-running job (never applies early)", async () => {

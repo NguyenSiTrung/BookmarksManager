@@ -95,7 +95,7 @@ function workerFor(initial: Record<string, unknown> | null) {
   });
 }
 
-let sendMessage: ReturnType<typeof vi.fn>;
+let sendMessage: ReturnType<typeof vi.fn<(m: unknown) => Promise<unknown>>>;
 
 function mount() {
   return render(
@@ -106,7 +106,7 @@ function mount() {
 }
 
 beforeEach(() => {
-  sendMessage = vi.fn(workerFor(null));
+  sendMessage = vi.fn(workerFor(null) as never);
   vi.stubGlobal("chrome", {
     runtime: {
       getURL: (p: string) => `chrome-extension://t/${p}`,
@@ -125,7 +125,7 @@ afterEach(() => {
 
 describe("RestructureView idle/start", () => {
   it("shows the idle affordance with no job, then starts on click", async () => {
-    sendMessage = vi.fn(workerFor(null));
+    sendMessage = vi.fn(workerFor(null) as never);
     mount();
     const btn = await screen.findByRole("button", {
       name: "Propose a layout…",
@@ -139,7 +139,7 @@ describe("RestructureView idle/start", () => {
   });
 
   it("resends START with unknownCostConfirmed on confirmation_required", async () => {
-    sendMessage = vi.fn(async (raw: unknown) => {
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
       const msg = raw as { type: string; unknownCostConfirmed?: boolean };
       if (msg.type === "RESTRUCTURE_STATUS") {
         return { ok: false, code: "not_found", message: "none" };
@@ -225,7 +225,7 @@ describe("RestructureView job lifecycle", () => {
 
 describe("RestructureView apply", () => {
   it("requires the destructive confirm before CONFIRM fires", async () => {
-    sendMessage = vi.fn(async (raw: unknown) => {
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
       const msg = raw as { type: string };
       if (msg.type === "RESTRUCTURE_STATUS") {
         return {
@@ -262,7 +262,7 @@ describe("RestructureView apply", () => {
   });
 
   it("surfaces a failed apply as an error, staying on the diff", async () => {
-    sendMessage = vi.fn(async (raw: unknown) => {
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
       const msg = raw as { type: string };
       if (msg.type === "RESTRUCTURE_STATUS") {
         return {
