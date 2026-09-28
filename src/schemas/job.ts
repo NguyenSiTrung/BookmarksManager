@@ -1,5 +1,6 @@
 import { z } from "./z";
 import { DEFAULT_BATCH_SIZE } from "../jobs/estimate";
+import { RestructureProposal, RestructureAssignment } from "./restructure";
 
 /**
  * A persisted, resumable batch job (spec FR7, PROJECT_PLAN.md §7). Jobs live
@@ -15,7 +16,11 @@ import { DEFAULT_BATCH_SIZE } from "../jobs/estimate";
  * The two job kinds: an ad-hoc selection analysis (categorize + tags) or a
  * whole-library scan (categorize + tags, misfiled, near-duplicate).
  */
-export const JobKind = z.enum(["analyze_selection", "library_scan"]);
+export const JobKind = z.enum([
+  "analyze_selection",
+  "library_scan",
+  "restructure",
+]);
 export type JobKind = z.infer<typeof JobKind>;
 
 /** The closed job lifecycle. */
@@ -57,6 +62,19 @@ export const JobUsage = z.strictObject({
 export type JobUsage = z.infer<typeof JobUsage>;
 
 /**
+ * The `restructure` job's carried plan (spec FR8.10): the LLM proposal that
+ * was vetted once at enqueue (never re-sent on resume) plus the per-bookmark
+ * assignments Jev has committed so far — keyed by bookmarkId, last write
+ * wins, so resuming after a mid-batch suspension can neither duplicate an
+ * assignment nor lose a committed one.
+ */
+export const RestructureJobPlan = z.strictObject({
+  proposal: RestructureProposal,
+  assignments: z.array(RestructureAssignment),
+});
+export type RestructureJobPlan = z.infer<typeof RestructureJobPlan>;
+
+/**
  * One `jobs` row. `id` is a caller-generated uuid (the job service owns it);
  * `bookmarkIds` is the explicit work set, while `cursor` is an opaque
  * resumption offset for very large scans — at least one of the two must be
@@ -76,6 +94,11 @@ export const Job = z
     bookmarkIds: z.array(z.string().min(1)).optional(),
     cursor: z.number().int().min(0).optional(),
     usage: JobUsage,
+    /**
+     * `restructure` jobs only: the vetted proposal + committed assignments.
+     * Required on a `restructure` job, rejected on any other kind.
+     */
+    restructure: RestructureJobPlan.optional(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     error: z.string().max(1_000).optional(),
@@ -100,6 +123,20 @@ export const Job = z
         code: "custom",
         path: ["progress", "committedBatches"],
         message: "committedBatches must not exceed totalBatches",
+      });
+    }
+    if (job.kind === "restructure" && job.restructure === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["restructure"],
+        message: "a restructure job must carry its vetted proposal",
+      });
+    }
+    if (job.kind !== "restructure" && job.restructure !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["restructure"],
+        message: "only a restructure job may carry a plan",
       });
     }
   });

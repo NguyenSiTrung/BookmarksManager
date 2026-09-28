@@ -718,3 +718,117 @@ describe("job adapter user-blocklist threading", () => {
     expect(result).toEqual({ sent: false, reason: "blocklisted" });
   });
 });
+
+
+describe("restructure jobs", () => {
+  const proposal = {
+    folders: [
+      { path: "dev/tools", description: "Developer utilities." },
+      { path: "news", description: "News." },
+    ],
+  };
+  const work: AnalysisBookmark[] = [
+    { id: "bm-1", title: "A", url: "https://a-site.io/" },
+    { id: "bm-2", title: "B", url: "https://b-site.io/" },
+    { id: "bm-3", title: "C", url: "https://c-site.io/" },
+  ];
+
+  /** An analyzer that records calls and writes a resolved assignment. */
+  function assigner(seen: string[]) {
+    return async ({ bookmark }: { bookmark: AnalysisBookmark }) => {
+      seen.push(bookmark.id);
+      const { mergeRestructureAssignments } = await import(
+        "../../src/jobs/queue"
+      );
+      await mergeRestructureAssignments(jobFor(bookmark.id).id, [
+        { bookmarkId: bookmark.id, proposedPath: "news", confidence: 0.9 },
+      ]);
+      return { sent: true, model: "jev-latest", decisions: [], usage: null } as const;
+    };
+  }
+  // The analyzer needs the job id; captured per test via this holder.
+  let jobForId: Record<string, string> = {};
+  function jobFor(bookmarkId: string): { id: string } {
+    return { id: jobForId[bookmarkId]! };
+  }
+
+  it("enqueues with the vetted proposal and completes with assignments", async () => {
+    const job = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: work.map((b) => b.id),
+      batchSize: 2,
+      restructureProposal: proposal,
+      now,
+    });
+    jobForId = Object.fromEntries(work.map((b) => [b.id, job.id]));
+    const seen: string[] = [];
+    const runner = new JobRunner({ analyze: assigner(seen) });
+    const done = await runner.run(job.id, { bookmarks: work });
+    expect(done.status).toBe("completed");
+    expect(seen).toEqual(["bm-1", "bm-2", "bm-3"]);
+    const { getJob } = await import("../../src/jobs/queue");
+    const stored = (await getJob(job.id))!;
+    expect(stored.restructure?.proposal).toEqual(proposal);
+    expect(stored.restructure?.assignments).toHaveLength(3);
+  });
+
+  it("resumes without re-sending committed batches", async () => {
+    const job = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: work.map((b) => b.id),
+      batchSize: 2,
+      restructureProposal: proposal,
+      now,
+    });
+    jobForId = Object.fromEntries(work.map((b) => [b.id, job.id]));
+    const seen: string[] = [];
+    const analyze = async ({ bookmark }: { bookmark: AnalysisBookmark }) => {
+      seen.push(bookmark.id);
+      if (bookmark.id === "bm-2") await pauseJob(job.id);
+      const { mergeRestructureAssignments } = await import(
+        "../../src/jobs/queue"
+      );
+      await mergeRestructureAssignments(job.id, [
+        { bookmarkId: bookmark.id, proposedPath: "news", confidence: 0.9 },
+      ]);
+      return { sent: true, model: "jev-latest", decisions: [], usage: null } as const;
+    };
+    const runner = new JobRunner({ analyze });
+    const paused = await runner.run(job.id, { bookmarks: work });
+    expect(paused.status).toBe("paused");
+    expect(seen).toEqual(["bm-1", "bm-2"]);
+    expect(paused.progress.committedBatches).toBe(1);
+
+    // Fresh runner instance over the same Dexie state — the restart.
+    await resumeJob(job.id);
+    const runner2 = new JobRunner({ analyze });
+    const done = await runner2.run(job.id, { bookmarks: work });
+    expect(done.status).toBe("completed");
+    // bm-1/bm-2's committed batch is not re-sent; only bm-3's batch ran.
+    expect(seen).toEqual(["bm-1", "bm-2", "bm-3"]);
+    const { getJob } = await import("../../src/jobs/queue");
+    const stored = (await getJob(job.id))!;
+    expect(stored.restructure?.assignments).toHaveLength(3);
+  });
+
+  it("rejects enqueue of a restructure job without a proposal", async () => {
+    await expect(
+      enqueueJob({
+        kind: "restructure",
+        bookmarkIds: ["bm-1"],
+        now,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  it("rejects a restructure plan on a non-restructure job", async () => {
+    await expect(
+      enqueueJob({
+        kind: "analyze_selection",
+        bookmarkIds: ["bm-1"],
+        restructureProposal: proposal,
+        now,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+});

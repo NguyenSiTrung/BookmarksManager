@@ -1,7 +1,13 @@
 import type { AnalysisCheck } from "../decisions/pipeline";
 import { db } from "../db/database";
 import { Job, JobUsage } from "../schemas/job";
-import type { JobKind, JobProgress, JobStatus } from "../schemas/job";
+import type {
+  JobKind,
+  JobProgress,
+  JobStatus,
+  RestructureJobPlan,
+} from "../schemas/job";
+import type { RestructureAssignment } from "../schemas/restructure";
 import { DEFAULT_BATCH_SIZE } from "./estimate";
 
 /**
@@ -77,6 +83,11 @@ export type JobCheck = AnalysisCheck | typeof NEAR_DUPLICATE_CHECK;
  * near-duplicate pair phase (FR7).
  */
 export function jobChecks(kind: JobKind): readonly JobCheck[] {
+  if (kind === "restructure") {
+    // A restructure job runs no analysis checks — its per-bookmark work is
+    // the proposed-folder assignment the injected analyzer performs.
+    return [];
+  }
   return kind === "library_scan"
     ? ["categorize", "tags", "misfiled", NEAR_DUPLICATE_CHECK]
     : ["categorize", "tags"];
@@ -148,6 +159,12 @@ export interface EnqueueJobOptions {
   readonly id?: string;
   /** Injectable clock for deterministic timestamps. */
   readonly now?: () => string;
+  /**
+   * `restructure` jobs only: the vetted proposal persisted on the row so a
+   * resume never re-sends the proposal LLM call. Rejected for other kinds
+   * by the `Job` schema's superRefine.
+   */
+  readonly restructureProposal?: RestructureJobPlan["proposal"];
 }
 
 /**
@@ -190,6 +207,14 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
         : { bookmarkIds: [...options.bookmarkIds] }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
       usage: { inputTokens: 0, outputTokens: 0, requests: 0 },
+      ...(options.restructureProposal === undefined
+        ? {}
+        : {
+            restructure: {
+              proposal: options.restructureProposal,
+              assignments: [],
+            },
+          }),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -277,6 +302,42 @@ export async function commitJobProgress(
     ...job,
     progress,
     usage,
+    updatedAt: nowIso(now),
+  });
+  await db.jobs.put(updated);
+  return updated;
+}
+
+/**
+ * Merge committed per-bookmark restructure assignments into the job's plan —
+ * keyed by `bookmarkId`, last write wins, so a resume after a mid-batch
+ * suspension never duplicates an assignment. Rejects non-restructure jobs
+ * and unknown rows via `Job.parse`.
+ */
+export async function mergeRestructureAssignments(
+  id: string,
+  rows: readonly RestructureAssignment[],
+  now?: () => string,
+): Promise<Job> {
+  const job = await requireJob(id);
+  if (job.kind !== "restructure" || job.restructure === undefined) {
+    throw new JobQueueError(
+      "illegal_transition",
+      "Only a restructure job carries assignments.",
+    );
+  }
+  const merged = new Map(
+    job.restructure.assignments.map((a) => [a.bookmarkId, a]),
+  );
+  for (const row of rows) {
+    merged.set(row.bookmarkId, row);
+  }
+  const updated = Job.parse({
+    ...job,
+    restructure: {
+      proposal: job.restructure.proposal,
+      assignments: [...merged.values()],
+    },
     updatedAt: nowIso(now),
   });
   await db.jobs.put(updated);
