@@ -43,6 +43,7 @@ import {
   type SettingsSnapshot,
 } from "../messages/decisions";
 import { handleLlmProviderMessage } from "../messages/llm-provider";
+import { handleLlmFeatureMessage } from "../messages/llm-features";
 import { handleProviderMessage } from "../messages/provider";
 import { PRESETS } from "../net/presets";
 import {
@@ -543,7 +544,15 @@ export default defineBackground(() => {
             sendResponse(llmResponse);
             return;
           }
-          void handleProviderMessage(message, sender).then(sendResponse);
+          void handleLlmFeatureMessage(message, sender).then(
+            (featureResponse) => {
+              if (featureResponse !== undefined) {
+                sendResponse(featureResponse);
+                return;
+              }
+              void handleProviderMessage(message, sender).then(sendResponse);
+            },
+          );
         });
       },
     );
