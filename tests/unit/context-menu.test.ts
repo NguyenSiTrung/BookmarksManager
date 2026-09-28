@@ -362,6 +362,54 @@ describe("context-menu click saves", () => {
     expect(saved).toEqual([]);
   });
 
+  it("refuses to store a blocked-scheme link URL and flashes the error badge", async () => {
+    installChrome();
+
+    for (const linkUrl of [
+      "javascript:alert(1)",
+      "data:text/html,<h1>hi</h1>",
+      "VBSCRIPT:msgbox(1)",
+      "java\tscript:alert(1)", // obfuscated spelling browsers still execute
+    ]) {
+      await handleContextMenuClick(
+        {
+          menuItemId: SAVE_LINK_MENU_ID,
+          pageUrl: "https://page.example/",
+          linkUrl,
+          linkText: "Click me",
+        },
+        { title: "Page", incognito: false },
+      );
+    }
+
+    const saved = (await fake.getChildren(OTHER_BOOKMARKS_ID)).filter(
+      (node) => node.url !== undefined,
+    );
+    expect(saved).toEqual([]);
+    expect(setBadgeText).toHaveBeenLastCalledWith({
+      text: BADGE_ERROR_TEXT,
+    });
+  });
+
+  it("still saves ordinary link URLs alongside the blocked checks", async () => {
+    installChrome();
+
+    await handleContextMenuClick(
+      {
+        menuItemId: SAVE_LINK_MENU_ID,
+        pageUrl: "https://page.example/",
+        linkUrl: "https://link.example/ok",
+      },
+      { title: "Page", incognito: false },
+    );
+
+    const saved = (await fake.getChildren(OTHER_BOOKMARKS_ID)).filter(
+      (node) => node.url !== undefined,
+    );
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ url: "https://link.example/ok" });
+  });
+
   it("is wired through the registered onClicked listener", async () => {
     installChrome();
     registerContextMenus();

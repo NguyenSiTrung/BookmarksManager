@@ -1,4 +1,5 @@
 import { getTree } from "./chrome-bookmarks";
+import { isBlockedScheme } from "../io/netscape";
 import {
   getLastFolderId,
   resolveSaveFolder,
@@ -42,7 +43,10 @@ import { flattenTree } from "./tree";
  * ("✓") and a `setTimeout` clears it after {@link BADGE_CLEAR_DELAY_MS}. A
  * failed save and a click with nothing to save (an empty/whitespace URL) both
  * show {@link BADGE_ERROR_TEXT} ("✕") the same way, so no user-initiated click
- * is silent. No `alarms` permission is requested, so the timer lives only in
+ * is silent. A blocked-scheme URL (`javascript:`/`data:`/`vbscript:`, via the
+ * shared `isBlockedScheme` write boundary from `src/io/netscape.ts`) is refused
+ * with the same error badge — scriptable URLs never enter the tree no matter
+ * which surface offered them. No `alarms` permission is requested, so the timer lives only in
  * the worker. Trade-off: an MV3 worker evicted inside that window cannot fire
  * the timeout and would leave a stale badge on the toolbar. Mitigation: every
  * worker start clears the badge at registration time (the `void
@@ -248,10 +252,12 @@ export async function handleContextMenuClick(
     }
 
     const url = (isPage ? info.pageUrl : info.linkUrl)?.trim() ?? "";
-    if (url === "") {
-      // Nothing to save. This used to be fully silent; a click the user made
-      // must always produce visible feedback, so it gets the same error badge
-      // as a failed save (the badge text carries no URL, so nothing leaks).
+    if (url === "" || isBlockedScheme(url)) {
+      // Nothing to save — or a URL the shared write boundary refuses:
+      // `javascript:`/`data:`/`vbscript:` links must never enter the tree
+      // (same blocklist the import writer enforces, plus its obfuscation
+      // stripping). The click still gets the error badge so it is never
+      // silent; the badge text carries no URL, so nothing leaks.
       flashBadge(BADGE_ERROR_TEXT);
       return;
     }
