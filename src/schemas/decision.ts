@@ -28,6 +28,8 @@ const DecisionBase = z.object({
     .object({
       llmVerdict: z.enum(["agree", "disagree", "unsure"]),
       llmModel: z.string(),
+      /** The allowed-option id the LLM picked when it disagreed. */
+      llmAlternative: z.string().min(1).max(64).optional(),
     })
     .optional(),
   createdAt: z.iso.datetime(),

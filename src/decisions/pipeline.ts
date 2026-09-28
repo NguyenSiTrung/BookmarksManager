@@ -40,6 +40,8 @@ import type {
 } from "./policy";
 import { DecisionStoreError, persistDecision } from "./store";
 import type { DecisionRow } from "./store";
+import { maybeEscalateDecision } from "../llm/escalate";
+import type { EscalationOption } from "../llm/escalate";
 
 /**
  * Analyze pipeline (spec FR2–FR6, PROJECT_PLAN.md §6.2/§9.1/§10.2): the
@@ -458,6 +460,14 @@ function crossCheckAnswers(
 // Answer interpretation → decision drafts
 // ---------------------------------------------------------------------------
 
+/** What a second opinion may see, carried alongside the draft it describes. */
+interface EscalationDraftInput {
+  readonly question: string;
+  /** The allowed options: the model may only echo one of these ids. */
+  readonly options: readonly EscalationOption[];
+  readonly jevAnswer: string;
+}
+
 /** A decision ready to be persisted, before its status is decided. */
 type DecisionDraft =
   | {
@@ -466,6 +476,7 @@ type DecisionDraft =
       readonly confidence: number;
       readonly probabilities: Record<string, number>;
       readonly questionSetVersion: string;
+      readonly escalation: EscalationDraftInput;
     }
   | {
       readonly kind: "add_tags";
@@ -473,6 +484,7 @@ type DecisionDraft =
       readonly confidence: number;
       readonly probabilities: Record<string, number>;
       readonly questionSetVersion: string;
+      readonly escalation: EscalationDraftInput;
     }
   | {
       readonly kind: "move";
@@ -481,6 +493,7 @@ type DecisionDraft =
       readonly probabilities: Record<string, number>;
       readonly questionSetVersion: string;
       readonly occasion: PolicyOccasion;
+      readonly escalation: EscalationDraftInput;
     };
 
 interface ChoiceAnswer {
@@ -520,6 +533,12 @@ function interpret(
           confidence: answer.confidence,
           probabilities: answer.probabilities,
           questionSetVersion: check.questionSetVersion,
+          escalation: {
+            question:
+              "Which single category should this bookmark be filed under?",
+            options: Category.options.map((id) => ({ id, label: id })),
+            jevAnswer: answer.choice,
+          },
         });
         break;
       }
@@ -549,6 +568,17 @@ function interpret(
             confidence,
             probabilities,
             questionSetVersion: check.questionSetVersion,
+            escalation: {
+              question: "Which of the offered tags apply to this bookmark?",
+              options: check.candidates.tags.map((tag) => ({
+                id: tag.nameKey,
+                label: tag.name,
+                ...(tag.description !== undefined
+                  ? { description: tag.description }
+                  : {}),
+              })),
+              jevAnswer: selected.join(", "),
+            },
           });
         }
         break;
@@ -569,6 +599,14 @@ function interpret(
           questionSetVersion: check.questionSetVersion,
           occasion:
             check.candidates.mode === "misfiled" ? "misfiled_scan" : "on_save",
+          escalation: {
+            question: "Which folder should this bookmark live in?",
+            options: (check.state.candidateFolders ?? []).map((folder) => ({
+              id: folder.id,
+              label: folder.path.join(" / "),
+            })),
+            jevAnswer: answer.choice,
+          },
         });
         break;
       }
@@ -648,11 +686,34 @@ async function persistDraft(
   draft: DecisionDraft,
   options: AnalyzeBookmarkOptions,
   model: string,
+  sent: SentBookmark,
 ): Promise<DecisionRow> {
   const outcome = policyOutcome(draft, options.context.settings);
   const status: DecisionDocument["status"] =
     outcome === "unsure" ? "unsure" : "pending";
   const document = toDocument(draft, options, model, status);
+  // Second opinion (spec FR6): only the unsure band is eligible, and the
+  // result never changes the outcome — it rides the row as advisory
+  // escalation fields plus the rationale. `null` = ordinary review.
+  if (outcome === "unsure") {
+    const escalation = await maybeEscalateDecision(document, {
+      bookmarks: [sent],
+      question: draft.escalation.question,
+      options: draft.escalation.options,
+      probabilities: draft.probabilities,
+      jevAnswer: draft.escalation.jevAnswer,
+    });
+    if (escalation !== null) {
+      document.escalation = {
+        llmVerdict: escalation.verdict,
+        llmModel: escalation.model,
+        ...(escalation.alternative !== undefined
+          ? { llmAlternative: escalation.alternative }
+          : {}),
+      };
+      document.rationale = escalation.rationale;
+    }
+  }
   let row: DecisionRow;
   try {
     row = await persistDecision(document);
@@ -775,7 +836,7 @@ async function runAnalysis(
   const usage = await recordUsage(result);
   const decisions: DecisionRow[] = [];
   for (const draft of drafts) {
-    decisions.push(await persistDraft(draft, options, result.model));
+    decisions.push(await persistDraft(draft, options, result.model, sent));
   }
 
   return { sent: true, model: result.model, decisions, usage };

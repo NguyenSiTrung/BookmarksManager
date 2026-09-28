@@ -90,8 +90,16 @@ function usageFrom(text: string | null): {
 export function createLlmClient(
   providerId: string,
   config: LlmClientConfig,
-): { send: (request: unknown) => Promise<unknown> } {
+): {
+  send: (request: unknown) => Promise<unknown>;
+  /** The reservation id of the most recent admitted request — the usage trail. */
+  readonly lastReservationId: string | undefined;
+} {
+  let lastReservationId: string | undefined;
   return {
+    get lastReservationId() {
+      return lastReservationId;
+    },
     async send(request: unknown): Promise<unknown> {
       const { response, reservation } = await sendLlmConsented(
         {
@@ -108,6 +116,7 @@ export function createLlmClient(
           fetchImpl: config.fetchImpl,
         },
       );
+      lastReservationId = reservation.id;
 
       if (response.status >= 400) {
         const text = await readBoundedBody(response);

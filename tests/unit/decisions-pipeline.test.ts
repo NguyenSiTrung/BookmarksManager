@@ -13,7 +13,15 @@ import type { TagDef } from "../../src/schemas/meta";
 import { flattenTree } from "../../src/sync/tree";
 import type { FlattenedTree } from "../../src/sync/tree";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { startMockJevServer } from "../mock-servers/jev";
+import { grantConsentAtOrigin } from "../../src/consent/records";
+import {
+  writeLlmEscalationSettings,
+} from "../../src/llm/escalate";
+import { saveLlmProvider } from "../../src/llm/settings";
+import type { LlmProviderRecord } from "../../src/schemas/llm";
+import { makeOpenAiServer } from "../mock-servers/openai";
 import type { MockJevServer } from "../mock-servers/jev";
 
 /**
@@ -64,6 +72,7 @@ const corpus = {
 let server: MockJevServer;
 let scopeSeen: string[];
 let tree: FlattenedTree;
+let fake: FakeBookmarksApi;
 
 beforeAll(async () => {
   await db.open();
@@ -73,7 +82,7 @@ beforeEach(async () => {
   resetJevClientPools();
   scopeSeen = [];
   server = await startMockJevServer();
-  const fake = installBookmarksFake({
+  fake = installBookmarksFake({
     bookmarksBar: [
       {
         id: "f-dev",
@@ -445,5 +454,219 @@ describe("analyzeBookmark", () => {
     expect(error).toBeInstanceOf(DecisionPipelineError);
     expect((error as DecisionPipelineError).code).toBe("invalid_input");
     expect(server.requests).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Automatic second opinions (spec FR6): a low-confidence draft may be
+// escalated to the configured LLM provider — only inside this user-started
+// analysis, only with the feature enabled, a monthly budget, consent and
+// permission, and always landing back in the review queue (never auto-apply).
+// ---------------------------------------------------------------------------
+
+const LLM_ORIGIN = "https://llm.example.com";
+const LLM_PROVIDER_ID = "custom:https://llm.example.com/v1";
+
+const LOW_CONFIDENCE = {
+  category: {
+    type: "choice" as const,
+    choice: "docs",
+    probabilities: { docs: 0.35, other: 0.3 },
+    confidence: 0.3,
+  },
+};
+
+function llmCompletion(payload: Record<string, unknown>) {
+  return (body: { model: string }) => ({
+    id: "chatcmpl-x",
+    object: "chat.completion",
+    model: body.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: JSON.stringify(payload) },
+        finish_reason: "stop",
+      },
+    ],
+    usage: { prompt_tokens: 30, completion_tokens: 12, total_tokens: 42 },
+  });
+}
+
+describe("low-confidence escalation", () => {
+  let llmServer: ReturnType<typeof makeOpenAiServer>;
+  let realFetch: typeof fetch;
+
+  async function seedEscalation(opts: { enabled?: boolean; consent?: boolean } = {}) {
+    const { enabled = true, consent = true } = opts;
+    // The bookmarks fake owns the chrome global from the outer beforeEach —
+    // compose the LLM surface onto it.
+    const store: Record<string, unknown> = {};
+    vi.stubGlobal("chrome", {
+      bookmarks: fake,
+      storage: {
+        local: {
+          async get(keys?: string | string[] | null) {
+            const wanted =
+              keys === undefined || keys === null
+                ? Object.keys(store)
+                : Array.isArray(keys)
+                  ? keys
+                  : [keys];
+            const out: Record<string, unknown> = {};
+            for (const k of wanted) {
+              if (k in store) out[k] = store[k];
+            }
+            return out;
+          },
+          async set(items: Record<string, unknown>) {
+            Object.assign(store, items);
+          },
+          async remove(keys: string | string[]) {
+            for (const k of Array.isArray(keys) ? keys : [keys]) {
+              delete store[k];
+            }
+          },
+        },
+      },
+      permissions: { contains: async () => true },
+    });
+    realFetch = globalThis.fetch;
+    llmServer = makeOpenAiServer({
+      completion: llmCompletion({ verdict: "agree", rationale: "Looks right." }),
+    });
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(LLM_ORIGIN)
+        ? llmServer.fetch(input, init)
+        : realFetch(input, init),
+    );
+    const record: LlmProviderRecord = {
+      providerId: LLM_PROVIDER_ID,
+      provider: {
+        kind: "custom",
+        baseUrl: "https://llm.example.com/v1",
+        model: "m",
+        auth: "none",
+        pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      },
+      configuredAt: "2026-09-15T00:00:00.000Z",
+      monthlyBudgetUsd: 5,
+    };
+    await db.metadata.clear();
+    await db.llmUsage.clear();
+    await db.llmReservations.clear();
+    await saveLlmProvider(record);
+    if (consent) await grantConsentAtOrigin("llm_escalate", LLM_ORIGIN);
+    await writeLlmEscalationSettings({ enabled, providerId: LLM_PROVIDER_ID });
+  }
+
+  function lowConfidenceOptions() {
+    server.queue({
+      kind: "answer",
+      answers: { category: LOW_CONFIDENCE.category },
+    });
+    return options({ checks: ["categorize"] });
+  }
+
+  it("persists an agree verdict, model, and rationale on the unsure decision", async () => {
+    await seedEscalation();
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    const row = result.decisions[0];
+    expect(row?.status).toBe("unsure");
+    expect(row?.escalation).toEqual({
+      llmVerdict: "agree",
+      llmModel: "m",
+    });
+    expect(row?.rationale).toBe("Looks right.");
+    expect(llmServer.requests).toHaveLength(1);
+    // The escalated call is the one usage row recorded.
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it("persists a disagree verdict with the allowed alternative", async () => {
+    await seedEscalation();
+    llmServer = makeOpenAiServer({
+      completion: llmCompletion({
+        verdict: "disagree",
+        alternative: "other",
+        rationale: "Not docs.",
+      }),
+    });
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(LLM_ORIGIN)
+        ? llmServer.fetch(input, init)
+        : realFetch(input, init),
+    );
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    const row = result.decisions[0];
+    expect(row?.escalation).toEqual({
+      llmVerdict: "disagree",
+      llmModel: "m",
+      llmAlternative: "other",
+    });
+    // Still review-only: escalation never applies anything.
+    expect(row?.status).toBe("unsure");
+  });
+
+  it("rejects an invented alternative and leaves the decision unexplained", async () => {
+    await seedEscalation();
+    llmServer = makeOpenAiServer({
+      completion: llmCompletion({
+        verdict: "disagree",
+        alternative: "not-a-real-category",
+        rationale: "invented",
+      }),
+    });
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(LLM_ORIGIN)
+        ? llmServer.fetch(input, init)
+        : realFetch(input, init),
+    );
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    const row = result.decisions[0];
+    expect(row?.status).toBe("unsure");
+    expect(row?.escalation).toBeUndefined();
+    expect(row?.rationale).toBeUndefined();
+  });
+
+  it("a failed escalation still lands the decision in the review queue", async () => {
+    await seedEscalation();
+    llmServer = makeOpenAiServer({
+      failures: [{ status: 500 }],
+    });
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith(LLM_ORIGIN)
+        ? llmServer.fetch(input, init)
+        : realFetch(input, init),
+    );
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    const row = result.decisions[0];
+    expect(row?.status).toBe("unsure");
+    expect(row?.escalation).toBeUndefined();
+  });
+
+  it("does not escalate at all when the feature is off", async () => {
+    await seedEscalation({ enabled: false });
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    expect(result.decisions[0]?.status).toBe("unsure");
+    expect(result.decisions[0]?.escalation).toBeUndefined();
+    expect(llmServer.requests).toHaveLength(0);
+  });
+
+  it("never escalates a decision at or above the review floor", async () => {
+    await seedEscalation();
+    server.queue({
+      kind: "answer",
+      answers: { category: HIGH_CONFIDENCE.category },
+    });
+    const result = await analyzeBookmark(options({ checks: ["categorize"] }));
+    if (!result.sent) throw new Error("expected sent");
+    expect(result.decisions[0]?.status).toBe("pending");
+    expect(result.decisions[0]?.escalation).toBeUndefined();
+    expect(llmServer.requests).toHaveLength(0);
   });
 });
