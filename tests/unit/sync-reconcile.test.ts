@@ -82,6 +82,32 @@ describe("reconcileMetadata", () => {
     expect(await reconcileMetadata()).toBe(0);
   });
 
+  it("refuses to delete when the tree resolves completely empty", async () => {
+    // A getTree() result with zero ids while rows are stored can only be a
+    // failed/restricted read — a real mass delete still leaves the roots.
+    vi.stubGlobal("chrome", {
+      bookmarks: { getTree: vi.fn(async () => []) },
+    });
+    await putMeta("live-1", { notes: "keep" });
+    await putMeta("live-2", { tags: ["keep"] });
+
+    expect(await reconcileMetadata()).toBe(0);
+    expect((await listMeta()).map((m) => m.id)).toEqual([
+      "live-1",
+      "live-2",
+    ]);
+  });
+
+  it("still deletes orphans when the tree has roots but no live bookmarks", async () => {
+    // Root-only tree = the user genuinely removed every bookmark — the
+    // guard must NOT suppress this reconcile.
+    installBookmarksFake();
+    await putMeta("ghost", { notes: "dead" });
+
+    expect(await reconcileMetadata()).toBe(1);
+    expect(await listMeta()).toEqual([]);
+  });
+
   it("reaps schema-invalid stored rows whose ids are dead", async () => {
     installBookmarksFake({
       bookmarksBar: [{ id: "live", title: "l", url: "https://l.example/" }],
