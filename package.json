@@ -1,6 +1,6 @@
 {
   "name": "bookmarks-manager",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,8 @@
     "check:manifest": "node scripts/check-manifest.mjs",
     "check:store": "node scripts/check-store.mjs",
     "check:site": "node scripts/check-site.mjs",
-    "check:bundle": "node scripts/check-bundle.mjs"
+    "check:bundle": "node scripts/check-bundle.mjs",
+    "zip": "wxt zip"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
