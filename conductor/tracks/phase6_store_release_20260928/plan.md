@@ -131,7 +131,7 @@ Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 
 ## Phase 2: Version 1.0 Compliance Baseline
 
-- [x] Task 1: Reconcile the approved broad-provider release scope
+- [x] Task 1: Reconcile the approved broad-provider release scope (08e35b0)
   - Files: modify `PROJECT_PLAN.md`, `conductor/product.md`,
     `store/permissions.md`, `store/privacy-policy.md`,
     `store/privacy-practices.md`, `store/listing.md`,
