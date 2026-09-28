@@ -147,6 +147,7 @@ function readAskConsent(): Promise<boolean> {
 export function useAskSearch(
   query: string,
   onRerankOrder?: (ids: readonly string[] | null) => void,
+  debounceMs: number = ASK_DEBOUNCE_MS,
 ): AskSearchApi {
   // undefined = read pending; the toggle stays hidden until Dexie answers.
   const consentRead = useLiveQuery(readAskConsent);
@@ -270,11 +271,11 @@ export function useAskSearch(
     reportLocalOrder();
     const timer = setTimeout(() => {
       void runRerank(settled, requestId);
-    }, ASK_DEBOUNCE_MS);
+    }, debounceMs);
     return () => {
       clearTimeout(timer);
     };
-  }, [active, query, reportLocalOrder, runRerank]);
+  }, [active, debounceMs, query, reportLocalOrder, runRerank]);
 
   // Derived (render-time) note: idle when inactive, the accepted reply's
   // note while it still answers the current query (compared TRIMMED — the

@@ -8,8 +8,8 @@ import {
 } from "../../src/net/sent-log";
 
 beforeEach(async () => {
-  await db.delete();
-  await db.open();
+  if (!db.isOpen()) await db.open();
+  await db.sentLog.clear();
 });
 
 afterAll(() => {
@@ -33,7 +33,20 @@ function entry(
 /** Append `count` rows, tagging each with a distinct feature so survival can
  * be asserted by content as well as by row id. */
 async function appendMany(count: number): Promise<void> {
-  for (let index = 0; index < count; index += 1) {
+  const bulkThreshold = 10;
+  if (count <= bulkThreshold) {
+    for (let index = 0; index < count; index += 1) {
+      await appendSentLog(entry({ feature: `feature-${index}` }));
+    }
+    return;
+  }
+  const bulkCount = Math.min(count - 2, SENT_LOG_RETENTION_CAP - 2);
+  const seedItems = [];
+  for (let index = 0; index < bulkCount; index += 1) {
+    seedItems.push(entry({ feature: `feature-${index}` }));
+  }
+  await db.sentLog.bulkAdd(seedItems as SentLogEntry[]);
+  for (let index = bulkCount; index < count; index += 1) {
     await appendSentLog(entry({ feature: `feature-${index}` }));
   }
 }

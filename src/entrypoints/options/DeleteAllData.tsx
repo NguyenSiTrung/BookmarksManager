@@ -7,7 +7,7 @@ import {
   NATIVE_BOOKMARKS_NOTICE,
   deleteAllExtensionData,
 } from "../../security/delete-all";
-import type { DeleteAllResult } from "../../security/delete-all";
+import type { DeleteAllOptions, DeleteAllResult } from "../../security/delete-all";
 import {
   Dialog,
   DialogClose,
@@ -54,7 +54,7 @@ const secondaryButtonClass =
   "hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-400 " +
   "focus-visible:outline-hidden";
 
-export function DeleteAllData() {
+export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DeleteAllResult | null>(null);
@@ -64,7 +64,7 @@ export function DeleteAllData() {
     if (busy) return;
     setBusy(true);
     setError(null);
-    void deleteAllExtensionData()
+    void deleteAllExtensionData(props?.deleteOptions)
       .then((outcome) => {
         setResult(outcome);
         setOpen(false);

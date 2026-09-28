@@ -7,9 +7,13 @@ import {
   NATIVE_BOOKMARKS_NOTICE,
   OPTIONAL_HOST_ORIGINS,
   RELEASE_DB_MESSAGE,
-  deleteAllExtensionData,
+  deleteAllExtensionData as rawDeleteAllExtensionData,
   registerDbReleaseListener,
 } from "../../src/security/delete-all";
+
+const deleteAllExtensionData = (
+  options?: Parameters<typeof rawDeleteAllExtensionData>[0],
+) => rawDeleteAllExtensionData({ releaseGraceMs: 0, ...options });
 import { PRESETS } from "../../src/net/presets";
 import { createFakeBookmarks, type FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 

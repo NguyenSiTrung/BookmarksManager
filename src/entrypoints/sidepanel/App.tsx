@@ -201,7 +201,7 @@ function applyRerankOrder(
   return [...ranked, ...items.filter((item) => !rankedIds.has(item.id))];
 }
 
-export function App() {
+export function App(props?: { askDebounceMs?: number }) {
   const tree = useBookmarkTree();
   // liveQuery emits fresh rows on any write to the touched tables; a missing
   // or failing IndexedDB degrades to an empty list instead of throwing the
@@ -877,6 +877,7 @@ export function App() {
                         : items.length
                   }
                   sources={suggestionSources}
+                  askDebounceMs={props?.askDebounceMs}
                 />
                 <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
                   <h2 className="text-sm font-medium">{title}</h2>

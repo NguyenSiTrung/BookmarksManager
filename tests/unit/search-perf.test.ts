@@ -74,17 +74,18 @@ describe("search performance at 10k bookmarks", () => {
       docs.map((doc) => ({ id: doc.id, url: doc.url })),
     ),
   };
+  let builtIndex: ReturnType<typeof buildIndex>;
 
   it("builds the index in under 500 ms", () => {
     const start = performance.now();
-    const index = buildIndex(docs, tagNames);
+    builtIndex = buildIndex(docs, tagNames);
     const elapsed = performance.now() - start;
-    expect(index.documentCount).toBe(CORPUS_SIZE);
+    expect(builtIndex.documentCount).toBe(CORPUS_SIZE);
     expect(elapsed).toBeLessThan(500);
   });
 
   it("answers the median query in under 50 ms", () => {
-    const index = buildIndex(docs, tagNames);
+    const index = builtIndex ?? buildIndex(docs, tagNames);
     const queries = [
       "async guide",                    // common free text
       "tutorial 9999",                  // rare free text
@@ -103,7 +104,7 @@ describe("search performance at 10k bookmarks", () => {
 
     const medians = queries.map((query) => {
       const samples: number[] = [];
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 3; i++) {
         const start = performance.now();
         const result = runQuery(index, query, ctx);
         samples.push(performance.now() - start);

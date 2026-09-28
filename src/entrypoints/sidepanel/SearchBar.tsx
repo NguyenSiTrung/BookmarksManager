@@ -47,18 +47,21 @@ export interface SearchBarProps {
    * resolve against the tree are the caller's concern.
    */
   onRerankOrder?: (ids: readonly string[] | null) => void;
-}
+  /** Debounce milliseconds for Ask rerank (defaults to ASK_DEBOUNCE_MS). */
+  askDebounceMs?: number;
+  }
 
-export function SearchBar({
+  export function SearchBar({
   value,
   onChange,
   resultCount,
   sources,
   ref,
   onRerankOrder,
-}: SearchBarProps) {
+  askDebounceMs,
+  }: SearchBarProps) {
   const warnings = value === "" ? [] : parseQuery(value).warnings;
-  const ask = useAskSearch(value, onRerankOrder);
+  const ask = useAskSearch(value, onRerankOrder, askDebounceMs);
   const askText = ask.askOn ? askNoteText(ask.note) : null;
   return (
     <div className="shrink-0 border-b border-border px-3 py-2">

@@ -209,8 +209,8 @@ function searchbox(): HTMLElement {
   return screen.getByRole("combobox", { name: "Search bookmarks" });
 }
 
-async function renderApp(): Promise<void> {
-  render(<App />);
+async function renderApp(debounceMs = 20): Promise<void> {
+  render(<App askDebounceMs={debounceMs} />);
   await waitFor(() => expect(results().length).toBeGreaterThan(0));
   await waitFor(() => expect(screen.queryByText("Indexing…")).toBeNull());
 }

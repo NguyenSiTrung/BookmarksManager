@@ -275,7 +275,11 @@ describe("DeleteAllData partial failures", () => {
     // A blocked `indexedDB.deleteDatabase` never settles; the module's timeout
     // turns that into `databaseDeleted: false` and the UI must say so.
     stubDatabaseDelete(() => new Promise<void>(() => {}));
-    render(<DeleteAllData />);
+    render(
+      <DeleteAllData
+        deleteOptions={{ databaseTimeoutMs: 30, releaseGraceMs: 5 }}
+      />,
+    );
     openDialog();
     fireEvent.click(
       await screen.findByRole("button", { name: /delete everything/i }),
@@ -284,8 +288,7 @@ describe("DeleteAllData partial failures", () => {
     const alert = await screen.findByRole(
       "alert",
       {},
-      // The production timeout (DB_DELETE_TIMEOUT_MS) plus the release grace.
-      { timeout: 10_000 },
+      { timeout: 1_000 },
     );
     expect(alert.textContent).toContain(DELETE_ALL_DATABASE_BLOCKED_MESSAGE);
     expect(screen.queryByText(DELETE_ALL_DONE_MESSAGE)).toBeNull();

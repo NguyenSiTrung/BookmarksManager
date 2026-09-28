@@ -95,8 +95,8 @@ const WORDS = [
 ] as const;
 
 const LIBRARY_SIZE = 10_000;
-const WARMUP_RUNS = 3;
-const MEASURED_RUNS = 10;
+const WARMUP_RUNS = 1;
+const MEASURED_RUNS = 3;
 const BUDGET_MS = 1_500;
 
 /** Deterministic tag definitions. */

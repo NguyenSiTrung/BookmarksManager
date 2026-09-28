@@ -138,6 +138,7 @@ async function seedConsent(version: number = CONSENT_VERSION): Promise<void> {
 /** Render SearchBar controlled, optionally observing the reranked order. */
 function renderSearchBar(
   onRerankOrder?: (ids: readonly string[] | null) => void,
+  debounceMs = 20,
 ): void {
   function Harness() {
     const [value, setValue] = useState("");
@@ -147,6 +148,7 @@ function renderSearchBar(
         onChange={setValue}
         resultCount={3}
         sources={{ tags: [], folders: [] }}
+        askDebounceMs={debounceMs}
         {...(onRerankOrder === undefined ? {} : { onRerankOrder })}
       />
     );
@@ -168,7 +170,7 @@ function typeQuery(text: string): void {
 }
 
 /** Wait out the rerank debounce (real timers; the wait is the assertion). */
-async function settle(ms = 360): Promise<void> {
+async function settle(ms = 35): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -402,7 +404,7 @@ describe("Ask rerank", () => {
 
     // The superseded reply lands late with a different order — dropped.
     stale.resolve?.(rankedReply([{ id: "b1", probability: 0.99 }]));
-    await settle(150);
+    await settle(35);
     expect(order).toHaveBeenLastCalledWith(["b9", "b8"]);
     expect(order).not.toHaveBeenCalledWith(["b1"]);
     expect(screen.getByTestId("ask-status").textContent).toMatch(/ranked/i);
@@ -488,7 +490,7 @@ describe("App integration (existing call site)", () => {
         "1 result",
       ),
     );
-    await settle();
+    await settle(360);
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });
