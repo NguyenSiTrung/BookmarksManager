@@ -18,6 +18,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Amp orb portals (machine-local URLs, written by `amp orb services ensure`)
+.amp/portals/
+
 # Agent parallel-worktree scratch
 .worktrees/
 

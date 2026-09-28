@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# .agents/resume — fast, idempotent repair for an orb that just woke.
+#
+# Amp runs this after initial activation and on every wake, and waits at most 10
+# seconds for it. Keep it to cheap, idempotent repair work: never install
+# dependencies and never start long-lived processes here.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# --- Beads (bd) issue database ---------------------------------------------
+# The Dolt database under .beads/ is machine-local and gitignored, so a fresh orb
+# starts without one and every bd command fails with "no beads database found".
+# `bd bootstrap` clones it from the Dolt remote configured in .beads/config.yaml:
+# a read-only clone that never pushes, so it does not "automatically sync it to
+# the remote" in the sense conductor/patterns.md warns about. A normal wake finds
+# the database already present and skips all of that.
+#
+# A failure is reported but not fatal: the repository is fully usable without the
+# issue tracker, and a wake should not fail because a remote is unreachable.
+if command -v bd >/dev/null 2>&1; then
+  # `bd ready` is the cheapest probe for a usable database (it exits non-zero
+  # with "no beads database found" and never creates one), so a normal wake
+  # costs a tenth of a second.
+  if bd ready >/dev/null 2>&1; then
+    printf 'beads: issue database ready\n'
+  else
+    # Without a reachable Dolt remote, `bd bootstrap` silently falls back to
+    # importing the tracked .beads/issues.jsonl export (or creating an empty
+    # database). This repository treats that JSONL as a passive export, not the
+    # source of truth, so an unreachable remote must leave the database
+    # unhydrated rather than give agents stale issue data.
+    sync_remote="$(bd config get sync.remote 2>/dev/null || true)"
+    if [ -n "$sync_remote" ] &&
+      ! GIT_TERMINAL_PROMPT=0 git ls-remote "${sync_remote#git+}" refs/dolt/data >/dev/null 2>&1; then
+      printf 'warning: cannot reach the beads Dolt remote; leaving the issue database unhydrated.\n' >&2
+      printf 'warning: run `bd bootstrap --yes` once %s is reachable.\n' "${sync_remote#git+}" >&2
+    # Output is captured so the clone's ANSI progress meter stays out of the
+    # wake log; it is replayed in full when bootstrap fails.
+    elif bootstrap_output="$(bd bootstrap --yes --quiet --no-color 2>&1)"; then
+      printf 'beads: issue database cloned from the Dolt remote\n'
+    else
+      printf '%s\n' "$bootstrap_output" >&2
+      printf 'warning: bd bootstrap failed - the beads issue database is not available in this orb.\n' >&2
+      printf 'warning: retry `bd bootstrap --yes` once the git remote is reachable.\n' >&2
+    fi
+  fi
+else
+  printf 'warning: bd is not installed; run .agents/setup (or `npm install -g @beads/bd`).\n' >&2
+fi
+
+# --- Dependencies -----------------------------------------------------------
+# setup installs these and a snapshot restores them. Report rather than repair:
+# installing here would blow the 10-second budget.
+if [ ! -d node_modules ]; then
+  printf 'warning: node_modules is missing; run `npm ci` before building or testing.\n' >&2
+fi
+if [ ! -d .wxt ]; then
+  printf 'warning: generated .wxt types are missing; run `npx wxt prepare`.\n' >&2
+fi

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+#
+# .agents/setup — prepare a fresh Amp orb to build, test, and run this repository.
+#
+# Amp runs this once when it builds a fresh orb snapshot and again whenever it
+# updates the repository inside a stale snapshot, so the script is
+# non-interactive, idempotent, and cheap on a warm filesystem. It must not leave
+# long-lived processes behind: anything still running when it exits is stopped
+# and never reaches the snapshot. Long-lived servers belong in
+# .amp/services.yaml instead.
+#
+# The steps mirror the toolchain in .github/workflows/ci.yml, so an orb can run
+# the same gate as CI.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# apt-get with the privileges orbs grant setup: passwordless sudo for the
+# unprivileged user, or no escalation when setup already runs as root.
+if [ "$(id -u)" -eq 0 ]; then
+  apt_get() { apt-get "$@"; }
+else
+  apt_get() { sudo -n apt-get "$@"; }
+fi
+
+step_started=$SECONDS
+step() {
+  printf '\n=== %s ===\n' "$1"
+  step_started=$SECONDS
+}
+step_done() {
+  printf '    -> %ss\n' "$((SECONDS - step_started))"
+}
+
+# --- 1. Node toolchain ------------------------------------------------------
+# The orb image provides Node and npm. package.json pins no version and CI uses
+# Node 22, so use what the image ships and only confirm it is usable.
+step "Node toolchain"
+node --version
+npm --version
+step_done
+
+# --- 2. System packages -----------------------------------------------------
+# - xvfb: tests/e2e launches a headed Chromium (channel: "chromium") for MV3
+#   fidelity, exactly as CI does, so `xvfb-run -a npm run test:e2e` needs a
+#   virtual display.
+# - zip: tests/unit/audit-release.test.ts shells out to `zip` to build a
+#   candidate package for the release gate (the orb image ships `unzip` only).
+# Playwright's own system libraries are handled by `--with-deps` in step 4.
+missing_packages=()
+command -v xvfb-run >/dev/null 2>&1 || missing_packages+=(xvfb)
+command -v zip >/dev/null 2>&1 || missing_packages+=(zip)
+
+if [ "${#missing_packages[@]}" -eq 0 ]; then
+  printf '\n=== system packages present, skipping apt-get ===\n'
+else
+  step "installing system packages: ${missing_packages[*]}"
+  apt_get update -qq
+  apt_get install -y --no-install-recommends "${missing_packages[@]}"
+  step_done
+fi
+
+# --- 3. Application dependencies --------------------------------------------
+# `npm ci` is the authoritative install: it always matches package-lock.json,
+# and a warm run costs only a few seconds, so no cache marker is needed that
+# could hide a lockfile change.
+step "npm ci"
+npm ci --no-audit --no-fund
+step_done
+
+# --- 4. Playwright Chromium -------------------------------------------------
+# The e2e specs load the built extension into Playwright's own Chromium, which
+# the orb image does not ship. `--with-deps` also installs the browser's system
+# libraries; both parts are no-ops once present. Browsers land in
+# ~/.cache/ms-playwright, which is part of the snapshot.
+step "Playwright Chromium + system libraries"
+npx playwright install --with-deps chromium
+step_done
+
+# --- 5. Generated WXT types -------------------------------------------------
+# `npm run typecheck` runs `wxt prepare` first; doing it here means the generated
+# type tree and `.wxt/tsconfig.json` exist as soon as the orb starts. This also
+# proves the WXT/Vite/Tailwind config loads.
+step "wxt prepare (generated types)"
+npx wxt prepare
+step_done
+
+# --- 6. Global agent CLIs ---------------------------------------------------
+# Neither ships in the orb image, and the repository's AGENTS.md depends on
+# both: `bd` is the issue tracker every task is tracked in, and `firecrawl`
+# backs the external-research workflow (`firecrawl developer "<query>"` works
+# without an API key). Re-running the install is ~2s when already current, which
+# keeps a stale snapshot from pinning an old CLI.
+step "global CLIs: bd (beads) and firecrawl"
+npm install -g @beads/bd firecrawl-cli --no-audit --no-fund
+step_done
+
+# bd recommends mode 0700 on .beads and warns on every command otherwise. The
+# mode is machine-local — git does not track directory permissions — so fix it
+# here rather than leaving the warning in every agent session.
+chmod 700 .beads
+
+# The beads database itself is machine-local and gitignored, and cloning it
+# needs the git credentials available at wake time, so `.agents/resume` bootstraps
+# it instead of setup. Do not create, reinitialize, or push it here.
+
+# --- 7. Orb notes for agents ------------------------------------------------
+# Facts an agent would otherwise rediscover the hard way. Idempotent: the block
+# is written once and matched by its own marker.
+guidance="$HOME/.config/amp/AGENTS.md"
+guidance_marker="<!-- bookmarks-manager orb notes -->"
+if ! grep -Fqx "$guidance_marker" "$guidance" 2>/dev/null; then
+  step "writing orb notes to $guidance"
+  mkdir -p "$(dirname "$guidance")"
+  cat >> "$guidance" <<'EOF'
+
+<!-- bookmarks-manager orb notes -->
+## BookmarksManager orb notes
+
+- The toolchain is preinstalled: `node`/`npm`, Playwright's Chromium in
+  `~/.cache/ms-playwright` with its system libraries and `xvfb`, plus the global
+  `bd` (beads) and `firecrawl` CLIs. `npm ci` has already run and `.wxt/` types
+  are generated.
+- The beads issue database is machine-local: `.agents/resume` clones it on the
+  first wake. If `bd` reports "no beads database found", run `bd bootstrap --yes`
+  — do not run `bd init`, which would reinitialize the workspace.
+- The e2e suite loads a built extension, so run `npm run build` before
+  `xvfb-run -a npm run test:e2e` (`E2E_HEADLESS=1` opts into headless). No build
+  is baked into the snapshot, so a stale `.output/` cannot hide your changes.
+<!-- bookmarks-manager orb notes: end -->
+EOF
+  step_done
+fi
+
+# --- summary ----------------------------------------------------------------
+printf '\n=== orb ready ===\n'
+printf 'node %s | npm %s | %s | firecrawl %s\n' \
+  "$(node --version)" \
+  "$(npm --version)" \
+  "$(bd --version 2>/dev/null | tail -1)" \
+  "$(firecrawl --version 2>/dev/null | tail -1)"
