@@ -595,3 +595,29 @@ elevated `phase3_jev_client_20260927` patterns. The ones most relevant to this t
     lint 0 errors (1 pre-existing TanStack warning) · typecheck clean · build 1.20 MB · `check:manifest`
     OK · `check:bundle` OK.
 ---
+
+## [2026-09-27] - Phase 5 Task 2: Performance and live smoke
+- **Implemented:** `tests/unit/decisions-perf.test.ts` (§15 analyze-on-save gate: worst-of-10 full SAVE_SUGGEST
+  round trip < 1.5 s against the mock server, deterministic 10k-bookmark library) and
+  `tests/live/decisions.live.test.ts` (key-gated live categorize smoke on 3 public fixtures per preset).
+- **Files changed:** the two files above only — no production code.
+- **Commit:** `e190e29` + review fixes `cacd084` (review: Approved-with-fixes — sentLog bypass disclosure
+  corrected and pinned with a zero-row assertion; corpus 250 → 10k; decisionCount:3 sanity pin; live
+  timeout arithmetic 3×8 s < 30 s testTimeout; toBeDefined on the chosen-key probability)
+- **Learnings:**
+  - Patterns: a perf gate must disclose what its harness bypasses — mocking `sendConsented` removes the egress
+    gate AND the only sentLog writer from the measured path; say so in the header and pin it
+    (`expect(sentLog.count()).toBe(0)`) so the bypass is a tested fact, not folklore. Gate on the WORST
+    measured run (one slow save is a user-facing miss), warm up JIT/Dexie separately, and seed at the same
+    corpus scale as the sibling gate (10k) so quadratic selector regressions trip here.
+  - Verified: mock server default answers (noul 0.9, first-option choice w/ peaked probabilities) pass the
+    pipeline cross-check — no scripted queue needed for through-path tests. Production categorize request for
+    live smoke = `minimizeBookmark → categorize({bookmark}) → set.decision.build(set.state, model)` — pure,
+    chrome-free, node-env-safe.
+  - Numbers: analyze-on-save at 10k corpus median 55.5 ms / max 67.0 ms vs the 1.5 s §15 budget (~22x
+    headroom; at 250 bookmarks it was 13/19 ms — the corpus scan is the library-size-scaling term). Popup-open
+    gate (< 150 ms, popup-save.test.tsx) and 10k search gate (search-perf.test.ts) green in the same run.
+  - Live smoke design: pin the category only for semantically unambiguous fixtures (react.dev → docs,
+    github repo → repo); contract-only for debatable ones (Tokio tutorial: article vs docs) — a live model
+    regression on canonical pages SHOULD fail, wording ambiguity SHOULD NOT.
+---

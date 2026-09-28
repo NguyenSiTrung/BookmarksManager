@@ -329,10 +329,14 @@ all behind a new per-provider bookmark-data consent.
         `tests/e2e/helpers/provider.ts` (copy-once extension root, `tabs` injection, `--host-resolver-rules`
         for persistent profiles; backwards-compatible defaults, existing 13 specs untouched)
 
-- [ ] Task 2: Performance and live smoke
+- [x] Task 2: Performance and live smoke
   <!-- files: tests/unit/decisions-perf.test.ts, tests/live/decisions.live.test.ts -->
-  - [ ] Analyze-on-save under 1.5 s against the mock server; the popup-open and 10k search gates hold;
-        key-gated live categorize on fixture bookmarks against TypeSafe and OpenRouter, skipped when keyless
+  - [x] Analyze-on-save under 1.5 s against the mock server; the popup-open and 10k search gates hold; key-gated live
+        categorize on fixture bookmarks against TypeSafe and OpenRouter, skipped when keyless — `e190e29` + review
+        fixes `cacd084`; review Approved-with-fixes (sentLog bypass disclosure corrected + pinned; corpus 10k).
+        Observed: analyze-on-save median 55.5 ms / max 67.0 ms at 10k (budget 1.5 s); popup-open gate
+        (`popup-save.test.tsx` < 150 ms) and 10k search gate (`search-perf.test.ts`) green in the same run;
+        `npm run test:live` keyless → 4 skipped
 
 - [ ] Task 3: Docs sync and follow-ups
   - [ ] Update PROJECT_PLAN.md §1.1 / §13.3 / §15 (after asking about the pending user edits),
