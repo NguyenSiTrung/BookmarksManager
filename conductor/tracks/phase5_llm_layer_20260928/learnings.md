@@ -430,3 +430,18 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   Map) AND `permissions.contains` — both stubbed via `vi.stubGlobal`.
 - `ASSIGNMENT_CONFIDENCE_THRESHOLD = 0.5`: below it (or `none`/unknown key)
   → `{proposedPath: null, confidence: null}` = unresolved.
+
+## Phase 5 Task 3 — preview/apply/undo
+
+- `buildRestructureDiff(tree, plan)` walks the live tree once (id→{node,parent
+  path}) and returns rows in stable bookmarkId order; unresolved =
+  `proposedPath===null`, stale = absent from the live tree.
+- `applyRestructurePlan(jobId)` revalidates against the live tree at apply
+  time, creates folders parents-first (reusing existing same-path folders),
+  snapshots every moved bookmark's pre-move position BEFORE mutating, and on
+  mid-apply failure replays moves in reverse + removes created folders.
+- `UndoKind` gained `"restructure"`; `UndoSnapshot`/`UndoSnapshotInput` gained
+  `createdFolderIds` (parents-first). `runUndoLatest` restores moves then
+  removes each created folder iff still a folder and empty.
+- `Array.isArray` does NOT narrow a `ReadonlyMap | readonly T[]` union in the
+  false branch — use `"get" in metas` (in-narrowing) instead.

@@ -341,7 +341,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/restructure-propose.test.ts tests/unit/restructure-assign.test.ts tests/unit/jobs-runner.test.ts`.
 
-- [ ] Task 3: Preview, guarded apply, and undo
+- [x] Task 3: Preview, guarded apply, and undo
   - Files: `src/restructure/diff.ts`, `src/restructure/apply.ts`,
     `src/schemas/undo.ts`, `tests/unit/restructure-apply.test.ts`.
   - Interfaces: `buildRestructureDiff`, `applyRestructurePlan`,
