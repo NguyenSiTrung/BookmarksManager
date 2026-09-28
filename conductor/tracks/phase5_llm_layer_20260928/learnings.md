@@ -344,3 +344,17 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
     async provider-status load; mock LLM replies need casting through the
     stub worker's reply union (`asWorkerReply`).
 ---
+### Phase 4 Task 1 — Readability extractor
+  - WXT unlisted scripts are plain `entrypoints/*.ts` files exporting
+    `defineUnlistedScript` from `wxt/utils/define-unlisted-script` — the
+    `.content.ts` suffix forces manifest registration and fails the build;
+    the emitted asset lands at `.output/chrome-mv3/<name>.js` (root, not
+    `content-scripts/`).
+  - `extractActivePage` order: tabs.get → incognito/refused-URL checks →
+    executeScript → Zod → caps. `chrome.scripting` never runs for a page
+    that can't receive it; Readability returns `null` → `empty` refusal.
+  - `@mozilla/readability` 0.6 types mark `article.excerpt`/`siteName`/
+    `byline` as `string | null` — narrow all three before assignment.
+  - jsdom types aren't installed; unit tests use
+    `document.implementation.createHTMLDocument` (vitest env is jsdom).
+---

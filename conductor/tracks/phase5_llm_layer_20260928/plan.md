@@ -261,7 +261,7 @@ reservations protect every egress path.
 ## Phase 4: Opt-in page extraction and verified summaries
 <!-- execution: parallel -->
 
-- [ ] Task 1: On-demand Readability extractor
+- [x] Task 1: On-demand Readability extractor
   <!-- files: package.json, package-lock.json, wxt.config.ts, src/extract/page.ts, src/extract/readability.ts, tests/unit/page-extraction.test.ts, store/permissions.md -->
   - Install `@mozilla/readability@0.6.0`; add `scripting` with no static content
     scripts.
