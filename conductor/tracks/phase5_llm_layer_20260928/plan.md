@@ -386,7 +386,7 @@ reservations protect every egress path.
     `chrome.permissions.request` limitation and retain a real-Chrome manual step.
   - Verify: `xvfb-run -a npm run test:e2e -- tests/e2e/llm.spec.ts`.
 
-- [ ] Task 2: Live, performance, and accessibility gates
+- [x] Task 2: Live, performance, and accessibility gates
   <!-- files: tests/live/llm-live.test.ts, tests/unit/llm-performance.test.ts, tests/components/llm-accessibility.test.tsx, vitest.live.config.ts -->
   - Add key-gated OpenAI/OpenRouter strict-output smokes; custom compatibility
     stays on the scripted server.

@@ -501,3 +501,27 @@ pattern entries from Phases 0–4. The ones most relevant to this track:
   `context.route` fixture HTML + `chrome.tabs.query` for the tabId;
   `chrome.scripting` is covered by the install-time host grant for the
   fixture origin.
+
+## Phase 6 Task 2 — Live, performance, and accessibility gates
+
+- `tests/live/llm-live.test.ts` adds key-gated strict-output smokes for
+  OpenAI and OpenRouter: a `json_schema` response_format request with
+  `credentials: "omit"` and `redirect: "error"`, asserting the reply parses
+  to a Zod `{verdict}` object. Both tests `it.skipIf(KEY === undefined)` —
+  `npm run test:live` stays green with zero keys. Custom-provider
+  compatibility stays on the scripted server (P6T1 e2e covers it).
+- `tests/unit/llm-performance.test.ts` gates the two payload bounds that
+  reach a provider: `buildLibrarySynopsis` (folderPaths, per-folder
+  representativeTitles, domains, title truncation — built from
+  `BookmarksTreeNode`, whose `title` is a required string) and the
+  `SummaryVerificationState` schema (rejects excerpt >20k, >50 headings,
+  heading >200, summary >2000, bookmark title >500).
+- `tests/components/llm-accessibility.test.tsx` gates the new surfaces:
+  SummaryDialog (aria-modal dialog labelled by `summary-dialog-title`,
+  focus-in to Close on open, focus-restore to the trigger on close, live
+  region for progress, keyboard-reachable controls) and RestructureView
+  (role=progressbar with aria-value* bounds, aria-live announcements, real
+  buttons). jsdom has no jest-dom matchers here — assert with
+  `getAttribute`/`querySelector`, not `toHaveAttribute`. `RestructureView`'s
+  root is a `div` with `aria-label` (not a landmark); query it by attribute
+  selector rather than `findByRole("region")`.
