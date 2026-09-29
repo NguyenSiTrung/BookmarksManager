@@ -32,5 +32,4 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Options page redesign — guided panels + visual refresh
-*Link: [./conductor/tracks/options_redesign_20260929/](conductor/tracks/options_redesign_20260929/)*
+<!-- Archived: 2026-09-29 — Options redesign completed: guided four-panel shell (Connections/Permissions/Activity/Data) with left icon rail, hidden-mounted panels + hash deep links, live setup checklist from Dexie consent reads, unified provider cards with collapsible verbatim disclosures, Radix Switch automations, chip blocklist, stat-tile usage/LLM budget, structured sent-log rows, Geist fonts + teal-accent .options-root palette, inline SVG icon set — full gate green (5 unrelated flakes pass in isolation) with visual verification in Chromium light/dark/mobile (see conductor/archive/options_redesign_20260929/) -->

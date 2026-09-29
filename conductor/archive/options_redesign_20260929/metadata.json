@@ -1,12 +1,12 @@
 {
   "track_id": "options_redesign_20260929",
   "type": "feature",
-  "status": "new",
+  "status": "archived",
   "priority": "medium",
   "depends_on": [],
   "estimated_hours": null,
   "created_at": "2026-09-29T00:00:00Z",
-  "updated_at": "2026-09-29T00:00:00Z",
+  "updated_at": "2026-09-29T11:15:00Z",
   "description": "Redesign/restructure Options page into a guided four-panel settings surface (Connections/Permissions/Activity/Data) with refined visual system \u2014 presentation only, all consent/egress logic untouched",
   "beads_epic": "BookmarksManager-8sc",
   "beads_tasks": {

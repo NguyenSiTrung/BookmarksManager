@@ -198,3 +198,23 @@ _Last refreshed: 2026-09-27_
 - **Generate release assets and archives deterministically from committed sources** so the recorded ZIP checksum and visual materials are reproducible.
 - **A release record must bind source commit, archive size, and SHA-256**; the record is a validation artifact, not a post-it.
 - **Key-gated live/eval suites must record exact model IDs, skipped surfaces, and pass/skip counts** rather than implying unexecuted provider coverage.
+
+## Elevated at archive — track `options_redesign_20260929` (2026-09-29)
+
+- **`<details>` as a named region:** put `role="region"` + `aria-label` on
+  the inner content div, not the `<details>` element — jsdom renders closed
+  `<details>` content to text queries but the role belongs on the wrapper.
+- **`findByText` returns the innermost text owner** — when a test asserts
+  `role`/`id`/`aria-describedby` linkage on a warning, those attributes must
+  live on the element that directly wraps the text, not its parent.
+- **`chrome.runtime.getManifest()` throws (ReferenceError) under jsdom** —
+  guard behind try/catch and render nothing when absent.
+- **Radix Switch = `button[role=switch]` + `aria-checked`** — checkbox tests
+  migrating to switches must use `getByRole("switch")` and `aria-checked`,
+  not `.checked`.
+- **Splitting run-on metrics into stat tiles breaks `findByText` sentence
+  assertions** — label the aggregate `<dl>` (`aria-label`) and assert tile
+  values inside it.
+- **`@font-face` URLs in `src/ui/styles.css` resolve through Vite into
+  `.output` assets automatically** for woff2 vendored under `src/` — no
+  manifest or `web_accessible_resources` entry needed on extension pages.
