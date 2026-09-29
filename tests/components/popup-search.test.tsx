@@ -141,6 +141,13 @@ function searchInput(): HTMLInputElement {
   }) as HTMLInputElement;
 }
 
+async function openSearch(): Promise<void> {
+  fireEvent.click(
+    screen.getByRole("button", { name: "Search bookmarks" }),
+  );
+  await screen.findByRole("combobox", { name: "Search bookmarks" });
+}
+
 function results(): HTMLElement[] {
   const list = screen.queryByRole("listbox", { name: "Popup results" });
   return list === null ? [] : Array.from(list.querySelectorAll('[role="option"]'));
@@ -154,6 +161,7 @@ describe("popup search", () => {
         query="alpha"
         onQueryChange={() => {}}
         onOpen={() => {}}
+        onClose={() => {}}
       />,
     );
     expect(screen.getByText("Indexing…")).toBeTruthy();
@@ -161,6 +169,7 @@ describe("popup search", () => {
 
   it("replaces the save form with top-10 results while typing", async () => {
     await renderPopup();
+    await openSearch();
     // Form state survives being swapped out.
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Custom title" },
@@ -182,6 +191,7 @@ describe("popup search", () => {
 
   it("Enter opens the highlighted result in a new tab; click does too", async () => {
     await renderPopup();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: "alpha" } });
     await waitFor(() => expect(results().length).toBe(1));
 
@@ -196,6 +206,7 @@ describe("popup search", () => {
 
   it("Ctrl/Cmd+Enter retargets the current tab", async () => {
     await renderPopup();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: "delta" } });
     await waitFor(() => expect(results().length).toBe(1));
 
@@ -207,6 +218,7 @@ describe("popup search", () => {
 
   it("arrow keys move the highlight before Enter", async () => {
     await renderPopup();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: "filler" } });
     await waitFor(() => expect(results().length).toBe(10));
 
@@ -223,6 +235,7 @@ describe("popup search", () => {
 
   it("javascript: results render but cannot be opened", async () => {
     await renderPopup();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: "payload" } });
     await waitFor(() => expect(results().length).toBe(1));
 
@@ -236,10 +249,76 @@ describe("popup search", () => {
 
   it("filter syntax works from the popup (folder:)", async () => {
     await renderPopup();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: "folder:reading" } });
     await waitFor(() => {
       const texts = results().map((el) => el.textContent ?? "");
       expect(texts).toEqual([expect.stringContaining("Delta")]);
     });
+  });
+
+  it("hides the search row until the header icon is clicked", async () => {
+    await renderPopup();
+    expect(
+      screen.queryByRole("combobox", { name: "Search bookmarks" }),
+    ).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Search bookmarks" }),
+    );
+    await screen.findByRole("combobox", { name: "Search bookmarks" });
+  });
+
+  it("focuses the input on open and keeps form state across a close", async () => {
+    await renderPopup();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Search bookmarks" }),
+    );
+    const input = await screen.findByRole("combobox", {
+      name: "Search bookmarks",
+    });
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Kept" },
+    });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(
+      screen.queryByRole("combobox", { name: "Search bookmarks" }),
+    ).toBeNull();
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+      "Kept",
+    );
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Search bookmarks" }),
+    );
+  });
+
+  it("Escape with a live query clears it; a second Escape closes the row", async () => {
+    await renderPopup();
+    await openSearch();
+    fireEvent.change(searchInput(), { target: { value: "alpha" } });
+    await waitFor(() => expect(results().length).toBe(1));
+    fireEvent.keyDown(searchInput(), { key: "Escape" });
+    expect(searchInput().value).toBe("");
+    // The form is back (empty query shows the form again, row still open).
+    expect(screen.getByLabelText("Title")).toBeTruthy();
+    fireEvent.keyDown(searchInput(), { key: "Escape" });
+    expect(
+      screen.queryByRole("combobox", { name: "Search bookmarks" }),
+    ).toBeNull();
+  });
+
+  it("× clears a live query, then closes the row and returns focus", async () => {
+    await renderPopup();
+    await openSearch();
+    fireEvent.change(searchInput(), { target: { value: "alpha" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(searchInput().value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    expect(
+      screen.queryByRole("combobox", { name: "Search bookmarks" }),
+    ).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Search bookmarks" }),
+    );
   });
 });

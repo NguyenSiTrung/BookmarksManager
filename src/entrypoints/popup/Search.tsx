@@ -27,8 +27,9 @@ import { hostOf } from "./PageCard";
  * gesture. Results run through `runQuery`, so the full filter syntax
  * (`tag:`, `folder:`, `in:`, `is:`, negation, quotes) works here too.
  *
- * Escape clears the query (returning to the save form); the active row is
- * scrolled into view so long result lists stay keyboard-navigable.
+ * Escape clears a non-empty query; on an empty query it closes the row
+ * through onClose. The active row is scrolled into view so long result
+ * lists stay keyboard-navigable.
  */
 
 const TOP_N = 10;
@@ -39,6 +40,8 @@ export interface PopupSearchProps {
   query: string;
   onQueryChange(query: string): void;
   onOpen(url: string, disposition: OpenUrlDisposition): void;
+  /** Escape on an empty query (or × once clear): close the search row. */
+  onClose(): void;
 }
 
 export function PopupSearch({
@@ -46,6 +49,7 @@ export function PopupSearch({
   query,
   onQueryChange,
   onOpen,
+  onClose,
 }: PopupSearchProps) {
   const listId = "popup-search-results";
   const optionRefs = useRef<(HTMLLIElement | null)[]>([]);
@@ -85,9 +89,13 @@ export function PopupSearch({
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActive(Math.max(active - 1, 0));
-    } else if (event.key === "Escape" && query !== "") {
+    } else if (event.key === "Escape") {
       event.preventDefault();
-      onQueryChange("");
+      if (query !== "") {
+        onQueryChange("");
+      } else {
+        onClose();
+      }
     } else if (event.key === "Enter" && activeHit !== undefined) {
       event.preventDefault();
       openHit(
@@ -103,6 +111,7 @@ export function PopupSearch({
         <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
           role="combobox"
+          autoFocus
           aria-label="Search bookmarks"
           aria-expanded={query !== ""}
           aria-controls={listId}
@@ -115,16 +124,15 @@ export function PopupSearch({
           placeholder="Search bookmarks…"
           className="h-9 w-full rounded-lg border border-transparent bg-secondary pr-8 pl-9 text-sm outline-hidden transition-colors placeholder:text-muted-foreground focus:border-ring focus:bg-background focus:ring-2 focus:ring-ring/30"
         />
-        {query !== "" && (
-          <button
-            type="button"
-            aria-label="Clear search"
-            onClick={() => onQueryChange("")}
-            className="absolute top-1/2 right-1.5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <XIcon className="size-3.5" />
-          </button>
-        )}
+        <button
+          type="button"
+          aria-label={query !== "" ? "Clear search" : "Close search"}
+          title={query !== "" ? "Clear search" : "Close search"}
+          onClick={() => (query !== "" ? onQueryChange("") : onClose())}
+          className="absolute top-1/2 right-1.5 grid size-6 -translate-y-1/2 place-items-center rounded-md text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <XIcon className="size-3.5" />
+        </button>
       </div>
 
       {query !== "" &&

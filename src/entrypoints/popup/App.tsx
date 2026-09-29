@@ -40,6 +40,7 @@ import {
   ChevronDownIcon,
   FolderIcon,
   PanelRightIcon,
+  SearchIcon,
 } from "../../ui/components/icons";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
 import { openBookmarkUrl } from "../../sync/tabs";
@@ -206,6 +207,7 @@ export function App() {
   const savingRef = useRef(false);
   /** Search box text; while non-empty the results list replaces the form. */
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   /** Meta/tag rows for the search index — loaded lazily post-paint. */
   const [metas, setMetas] = useState<readonly BookmarkMeta[]>([]);
   const [tagDefs, setTagDefs] = useState<readonly TagDef[]>([]);
@@ -542,6 +544,14 @@ export function App() {
     openSidePanel(windowIdRef.current);
   };
 
+  const searchIconButtonRef = useRef<HTMLButtonElement>(null);
+  // Closing with a live query clears it; focus returns to the header icon.
+  const closeSearch = (): void => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    searchIconButtonRef.current?.focus();
+  };
+
   /**
    * Result opens route through the typed tabs slice: foreground/click →
    * `tabs.create`, Ctrl/Cmd+Enter → `tabs.update` on the current tab. No
@@ -589,9 +599,26 @@ export function App() {
         <h1 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
           Bookmarks Manager
         </h1>
-        <button type="button" onClick={handleOpenManager} className={ghostButton}>
-          <PanelRightIcon className="size-3.5" />
-          Open manager
+        <button
+          type="button"
+          aria-label="Search bookmarks"
+          aria-expanded={searchOpen}
+          aria-controls="popup-search-row"
+          title="Search bookmarks"
+          ref={searchIconButtonRef}
+          onClick={() => setSearchOpen(true)}
+          className={cn(ghostButton, "w-8 justify-center px-0")}
+        >
+          <SearchIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="Open manager"
+          title="Open manager"
+          onClick={handleOpenManager}
+          className={cn(ghostButton, "w-8 justify-center px-0")}
+        >
+          <PanelRightIcon className="size-4" />
         </button>
         <button
           type="button"
@@ -604,14 +631,17 @@ export function App() {
         </button>
       </header>
 
-      <div className="shrink-0 px-4 pb-3">
-        <PopupSearch
-          search={search}
-          query={searchQuery}
-          onQueryChange={setSearchQuery}
-          onOpen={handleOpenResult}
-        />
-      </div>
+      {searchOpen && (
+        <div id="popup-search-row" className="shrink-0 px-4 pb-3">
+          <PopupSearch
+            search={search}
+            query={searchQuery}
+            onQueryChange={setSearchQuery}
+            onOpen={handleOpenResult}
+            onClose={closeSearch}
+          />
+        </div>
+      )}
 
       {!ready ? (
         <div aria-busy="true" className="animate-pulse space-y-3 px-4 pb-4">
