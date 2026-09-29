@@ -7,8 +7,13 @@ import { Favicon } from "../../ui/components/favicon";
  * rarely edited, so it lives behind the form's "Details" disclosure instead of
  * taking a full-width field here.
  *
+ * When the active tab offered nothing saveable (`urlEditable`, e.g. a new-tab
+ * page) the URL field replaces the domain line right here, so the empty state
+ * is "paste a link" rather than a disabled Save with the cause tucked away.
+ *
  * The title input is focused once the prefill settles so "open popup, press
- * Enter" saves the page without touching the mouse.
+ * Enter" saves the page without touching the mouse; in URL mode the URL field
+ * takes focus instead, since that is the only thing left to provide.
  */
 
 export interface PageCardProps {
@@ -18,7 +23,10 @@ export interface PageCardProps {
   /** The typed URL, used only to ask Chrome for the favicon. */
   url: string;
   disabled?: boolean;
+  /** Show a URL input in place of the domain line. */
+  urlEditable?: boolean;
   onTitleChange(value: string): void;
+  onUrlChange?(value: string): void;
 }
 
 /** Hostname of a typed URL, or `null` when it is empty or does not parse. */
@@ -36,11 +44,16 @@ export function PageCard({
   host,
   url,
   disabled = false,
+  urlEditable = false,
   onTitleChange,
+  onUrlChange,
 }: PageCardProps) {
   const titleRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    titleRef.current?.focus();
+    (urlEditable ? urlRef : titleRef).current?.focus();
+    // Focus once on mount; `urlEditable` is fixed for the popup's lifetime.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -71,9 +84,25 @@ export function PageCard({
           onChange={(event) => onTitleChange(event.target.value)}
           className="-mx-1.5 w-[calc(100%+0.75rem)] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[15px] leading-snug font-semibold outline-hidden transition-colors placeholder:font-normal hover:bg-secondary focus:bg-background focus:ring-2 focus:ring-ring/40 disabled:opacity-100"
         />
-        <p className="truncate text-xs text-muted-foreground">
-          {host ?? "No valid URL yet"}
-        </p>
+        {urlEditable ? (
+          <>
+            <label htmlFor="popup-url" className="sr-only">
+              URL
+            </label>
+            <input
+              ref={urlRef}
+              id="popup-url"
+              value={url}
+              disabled={disabled}
+              spellCheck={false}
+              placeholder="Paste a link to save"
+              onChange={(event) => onUrlChange?.(event.target.value)}
+              className="mt-1.5 h-8 w-full rounded-md border border-input bg-background px-2.5 text-xs outline-hidden transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-70"
+            />
+          </>
+        ) : (
+          <p className="truncate text-xs text-muted-foreground">{host}</p>
+        )}
       </div>
     </section>
   );

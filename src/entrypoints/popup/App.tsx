@@ -189,10 +189,17 @@ export function App() {
   const [savedFolder, setSavedFolder] = useState<string | null>(null);
   /**
    * The "Details" disclosure (URL, category, notes). Collapsed by default so
-   * the common case is title → Save; it opens by itself when there is no URL
-   * to save or a save fails on the URL, since that is the field to fix.
+   * the common case is title → Save.
    */
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /**
+   * True when the active tab gave us nothing saveable (a new-tab / chrome://
+   * page, or no URL at all). The URL field then lives in the page card so the
+   * popup reads "paste a link to save" instead of hiding the one field that
+   * matters inside Details. Decided once at prefill — flipping it while the
+   * user types would move the input out from under them.
+   */
+  const [urlInCard, setUrlInCard] = useState(false);
   /** The popup window's id, captured with the active tab for `sidePanel.open`. */
   const windowIdRef = useRef<number | undefined>(undefined);
   /** Synchronous re-entrancy guard — `busy` state lags a fast double submit. */
@@ -255,7 +262,8 @@ export function App() {
       setTree(flat);
       setTitle(tab?.title ?? "");
       setUrl(tab?.url ?? "");
-      setDetailsOpen((tab?.url ?? "").trim() === "");
+      const tabUrl = tab?.url ?? "";
+      setUrlInCard(hostOf(tabUrl) === null || isBlockedScheme(tabUrl.trim()));
       setFolderId(
         resolveSaveFolder(new Set(flat.folders.keys()), lastFolderId),
       );
@@ -463,11 +471,9 @@ export function App() {
       const trimmedUrl = url.trim();
       const trimmedTitle = title.trim();
       if (trimmedUrl === "") {
-        setDetailsOpen(true);
         throw new Error("Enter a URL to save.");
       }
       if (isBlockedScheme(trimmedUrl)) {
-        setDetailsOpen(true);
         throw new Error("This URL scheme cannot be saved as a bookmark.");
       }
       // Resolve-or-create every staged chip's def BEFORE the bookmark
@@ -571,9 +577,9 @@ export function App() {
   return (
     <main
       data-testid="popup-quick-save"
-      className="popup-root w-[380px] bg-background text-sm text-foreground"
+      className="popup-root flex max-h-[600px] w-[380px] flex-col overflow-hidden bg-background text-sm text-foreground"
     >
-      <header className="flex items-center gap-2 px-4 pt-3.5 pb-3">
+      <header className="flex shrink-0 items-center gap-2 px-4 pt-3.5 pb-3">
         <span
           aria-hidden="true"
           className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-card"
@@ -598,40 +604,45 @@ export function App() {
         </button>
       </header>
 
-      <div className="space-y-3 px-4 pb-4">
+      <div className="shrink-0 px-4 pb-3">
         <PopupSearch
           search={search}
           query={searchQuery}
           onQueryChange={setSearchQuery}
           onOpen={handleOpenResult}
         />
+      </div>
 
-        {!ready ? (
-          <div aria-busy="true" className="animate-pulse space-y-3">
-            <p className="sr-only">Loading…</p>
-            <div className="h-[68px] rounded-xl bg-secondary" />
-            <div className="h-10 rounded-lg bg-secondary" />
-            <div className="h-10 rounded-lg bg-secondary" />
-            <div className="h-10 rounded-lg bg-secondary" />
-          </div>
-        ) : searchQuery !== "" ? null : (
-          <form
-            className="space-y-3"
-            onSubmit={(event) => {
+      {!ready ? (
+        <div aria-busy="true" className="animate-pulse space-y-3 px-4 pb-4">
+          <p className="sr-only">Loading…</p>
+          <div className="h-[68px] rounded-xl bg-secondary" />
+          <div className="h-10 rounded-lg bg-secondary" />
+          <div className="h-10 rounded-lg bg-secondary" />
+          <div className="h-10 rounded-lg bg-secondary" />
+        </div>
+      ) : searchQuery !== "" ? null : (
+        <form
+          className="flex min-h-0 flex-col"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleSave();
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              (event.ctrlKey || event.metaKey) &&
+              !saved
+            ) {
               event.preventDefault();
               void handleSave();
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.ctrlKey || event.metaKey) &&
-                !saved
-              ) {
-                event.preventDefault();
-                void handleSave();
-              }
-            }}
-          >
+            }
+          }}
+        >
+          {/* Only this region scrolls: the Save footer below stays put, so
+              the primary action can never be pushed under Chrome's popup
+              height cap. */}
+          <div className="min-h-0 space-y-3 overflow-y-auto px-4 pb-3">
             {duplicate !== null && !saved && (
               <DuplicateNotice
                 location={duplicateLocation}
@@ -645,7 +656,9 @@ export function App() {
                 host={pageHost}
                 url={url}
                 disabled={saved}
+                urlEditable={urlInCard}
                 onTitleChange={setTitle}
+                onUrlChange={setUrl}
               />
 
               <div className="relative">
@@ -714,18 +727,20 @@ export function App() {
                   hidden={!detailsOpen}
                   className="mt-1 space-y-3 rounded-xl border border-border bg-card p-3"
                 >
-                  <div className="space-y-1.5">
-                    <label htmlFor="popup-url" className={captionClass}>
-                      URL
-                    </label>
-                    <input
-                      id="popup-url"
-                      value={url}
-                      onChange={(event) => setUrl(event.target.value)}
-                      spellCheck={false}
-                      className={cn(fieldClass, "h-9")}
-                    />
-                  </div>
+                  {!urlInCard && (
+                    <div className="space-y-1.5">
+                      <label htmlFor="popup-url" className={captionClass}>
+                        URL
+                      </label>
+                      <input
+                        id="popup-url"
+                        value={url}
+                        onChange={(event) => setUrl(event.target.value)}
+                        spellCheck={false}
+                        className={cn(fieldClass, "h-9")}
+                      />
+                    </div>
+                  )}
                   <CategorySelect
                     label="Category"
                     value={category === "" ? null : category}
@@ -749,7 +764,9 @@ export function App() {
                 </div>
               </div>
             </fieldset>
+          </div>
 
+          <div className="shrink-0 space-y-2 border-t border-border bg-background px-4 py-3">
             {error !== null && <ErrorAlert message={error} />}
 
             {saved ? (
@@ -777,9 +794,9 @@ export function App() {
                 )}
               </button>
             )}
-          </form>
-        )}
-      </div>
+          </div>
+        </form>
+      )}
     </main>
   );
 }

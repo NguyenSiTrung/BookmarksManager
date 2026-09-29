@@ -478,6 +478,36 @@ describe("PopupApp — duplicate discipline", () => {
 // Open manager
 // ---------------------------------------------------------------------------
 
+describe("PopupApp — URL placement", () => {
+  it("keeps the URL inside Details when the tab has a URL", async () => {
+    await renderPopup();
+    expect(urlInput().closest("#popup-details")).not.toBeNull();
+  });
+
+  it("puts the URL in the page card when the tab has none, and gates Save on it", async () => {
+    tabsQuery.mockResolvedValue([{ id: 13, windowId: 7 }]);
+    render(<PopupApp />);
+    await screen.findByLabelText("Title");
+
+    // Not tucked away in the collapsed panel — it is the field to fill.
+    expect(urlInput().closest("#popup-details")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Save" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.change(urlInput(), {
+      target: { value: "https://typed.example/page" },
+    });
+    // Typing must not move the input (it would lose focus mid-keystroke).
+    expect(urlInput().closest("#popup-details")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Save" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+});
+
 describe("PopupApp — open manager", () => {
   it("opens the side panel for the active tab's window", async () => {
     await renderPopup();
