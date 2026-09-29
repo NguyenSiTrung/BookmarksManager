@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Open in a full tab, not Chrome's fixed-width embedded options dialog:
+         the dialog pins the viewport to ~434px (forcing the mobile layout)
+         and renders its own "Bookmarks Manager" title bar, duplicating the
+         page's h1. -->
+    <meta name="manifest.open_in_tab" content="true" />
     <title>Bookmarks Manager Options</title>
   </head>
   <body>
