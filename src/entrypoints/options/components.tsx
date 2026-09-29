@@ -377,13 +377,13 @@ export function ConsentFacts(props: {
   const labelClass =
     "text-xs font-medium tracking-wide text-foreground uppercase";
   return (
-    <div className="space-y-2.5 text-sm text-muted-foreground">
+    <div className="space-y-2.5 text-sm break-words text-muted-foreground">
       <dl className="space-y-2.5">
         <div>
           <dt className={labelClass}>Recipient</dt>
           <dd className="mt-1">
             {props.recipientName} at{" "}
-            <code className={consentFactChipClass}>{props.origin}</code> —
+            <code className={`${consentFactChipClass} break-all`}>{props.origin}</code> —
             the only destination this consent covers.
             {props.recipientNote !== undefined && ` ${props.recipientNote}`}
           </dd>
