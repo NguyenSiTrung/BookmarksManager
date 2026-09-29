@@ -1048,20 +1048,22 @@ export function DecisionSettings() {
             </div>
           </>
         )}
-        <Disclosure
-          title={`Built-in blocklist — ${BUILTIN_SENSITIVE_SITES.length} sites`}
-          subtitle="Always applies, not editable."
-          open={false}
-          regionLabel="Built-in blocklist"
-        >
-          <ul className="flex flex-wrap gap-1.5">
-            {BUILTIN_SENSITIVE_SITES.map((site) => (
-              <li key={site}>
-                <Chip>{site}</Chip>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
+        <div className="mt-4">
+          <Disclosure
+            title={`Built-in blocklist — ${BUILTIN_SENSITIVE_SITES.length} sites`}
+            subtitle="Always applies, not editable."
+            open={false}
+            regionLabel="Built-in blocklist"
+          >
+            <ul className="flex flex-wrap gap-1.5">
+              {BUILTIN_SENSITIVE_SITES.map((site) => (
+                <li key={site}>
+                  <Chip>{site}</Chip>
+                </li>
+              ))}
+            </ul>
+          </Disclosure>
+        </div>
       </section>
 
       {notice !== null && (
