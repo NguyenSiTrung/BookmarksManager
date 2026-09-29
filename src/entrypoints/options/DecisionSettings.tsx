@@ -42,6 +42,7 @@ import {
   CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
   LLM_ESCALATE_SCOPE,
+  JEV_PROVIDER_IDS,
   type JevProviderId,
   PresetId,
 } from "../../schemas/provider";
@@ -185,6 +186,10 @@ export function DecisionSettings() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /** Selected provider under the cursor — lets a user click win the race
+   *  against the mount-time restore probe (same guard as ProviderSetup). */
+  const currentPreset = useRef<JevProviderId>(presetId);
+
   // Synchronous reentrancy guard — `busy` state lags a fast double click.
   const inFlight = useRef(false);
 
@@ -286,27 +291,49 @@ export function DecisionSettings() {
     });
   }, [loadSettings]);
 
-  // The custom provider's egress origin comes from the worker's status
-  // reply — the same resolved destination the egress gate would see. When
-  // no custom provider is configured the card below stays hidden.
+  /**
+   * Probe every provider once on mount: reopen the provider the user
+   * actually configured instead of always landing on the first preset —
+   * the same restore order `ProviderSetup` uses (first fully enabled, then
+   * the first that still has saved settings, then the default). The custom
+   * provider's egress origin is captured from its status reply — the same
+   * resolved destination the egress gate would see — so the consent card
+   * below names the real recipient. A click that lands while the probe is
+   * in flight wins, because `currentPreset` would no longer be the initial
+   * default when the probe resolves.
+   */
   useEffect(() => {
     queueMicrotask(() => {
-      void chrome.runtime
-        .sendMessage(
-          ProviderMessage.parse({
-            type: "PROVIDER_STATUS",
-            preset: CUSTOM_PROVIDER_ID,
-          }),
-        )
-        .then((raw) => {
+      const probe = async (id: JevProviderId) => {
+        try {
+          const raw = await chrome.runtime.sendMessage(
+            ProviderMessage.parse({ type: "PROVIDER_STATUS", preset: id }),
+          );
           const result = ProviderMessageResult.safeParse(raw);
-          if (result.success && result.data.ok && "status" in result.data) {
-            setCustomOrigin(result.data.status.origin ?? null);
+          return result.success && result.data.ok && "status" in result.data
+            ? result.data.status
+            : null;
+        } catch {
+          return null;
+        }
+      };
+      void Promise.all(
+        JEV_PROVIDER_IDS.map(async (id) => ({ id, status: await probe(id) })),
+      ).then((results) => {
+        for (const { id, status } of results) {
+          if (id === CUSTOM_PROVIDER_ID) {
+            setCustomOrigin(status?.origin ?? null);
           }
-        })
-        .catch(() => {
-          // A missing worker surface leaves the card hidden.
-        });
+        }
+        if (currentPreset.current !== "typesafe") return;
+        const pick =
+          results.find((entry) => entry.status?.enabled === true) ??
+          results.find((entry) => entry.status?.model !== undefined);
+        if (pick !== undefined && pick.id !== currentPreset.current) {
+          currentPreset.current = pick.id;
+          setPresetId(pick.id);
+        }
+      });
     });
   }, []);
 
@@ -437,6 +464,7 @@ export function DecisionSettings() {
   };
 
   const onPresetChange = (next: JevProviderId) => {
+    currentPreset.current = next;
     setPresetId(next);
     setAgreed(false);
     setNewEntry("");

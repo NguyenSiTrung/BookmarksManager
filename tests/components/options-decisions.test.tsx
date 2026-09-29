@@ -238,6 +238,37 @@ describe("decisions consent disclosure", () => {
     expect(agree.checked).toBe(false);
     expect(allowButton().disabled).toBe(true);
   });
+
+  it("reopens the configured custom provider instead of the first preset", async () => {
+    sendMessageSpy.mockImplementation((message: unknown) => {
+      const msg = message as { type: string; preset?: string };
+      if (msg.type === "PROVIDER_STATUS") {
+        const configured = msg.preset === "custom";
+        return Promise.resolve({
+          ok: true,
+          status: {
+            enabled: configured,
+            consentGranted: configured,
+            ...(configured
+              ? { origin: "https://jev.example.com", model: "jev-latest" }
+              : {}),
+          },
+        } as unknown as DecisionMessageResult);
+      }
+      return workerReply(message);
+    });
+    render(<DecisionSettings />);
+    // Before the probe the picker sat on TypeSafe regardless of what the
+    // worker holds — the consent would have been written to the wrong origin.
+    const radio = (await screen.findByRole("radio", {
+      name: /custom jev provider/i,
+    })) as HTMLInputElement;
+    await waitFor(() => expect(radio.checked).toBe(true));
+    const disclosure = await screen.findByRole("region", {
+      name: /custom jev provider bookmark data disclosure/i,
+    });
+    expect(disclosure.textContent).toContain("https://jev.example.com");
+  });
 });
 
 describe("decisions consent grant and revoke", () => {
