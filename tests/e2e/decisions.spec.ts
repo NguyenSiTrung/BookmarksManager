@@ -19,6 +19,8 @@ import {
 } from "./helpers/provider";
 import { createBookmark, createFolder, getChildren } from "./helpers/seed";
 import {
+  chooseTool,
+  openMoreView,
   openOptionsPanel,
   waitForPopupReady,
   waitForSidePanelReady,
@@ -82,7 +84,7 @@ async function analyzeFromRowMenu(
 
 /** Open the side panel's library-scan dialog and return its locator. */
 async function openScanDialog(sidepanel: Page): Promise<Locator> {
-  await sidepanel.getByRole("button", { name: "Scan library…" }).click();
+  await chooseTool(sidepanel, "Scan library…");
   const dialog = sidepanel.getByRole("dialog");
   await expect(
     dialog.getByRole("heading", { name: "Scan library" }),
@@ -186,9 +188,7 @@ test("Analyze queues reviewable suggestions; Approve applies, Undo reverts", asy
   assertEgressBodiesClean(route.requests, ["SECRET123"]);
 
   // The review queue holds both kinds per analyzed bookmark.
-  await sidepanel
-    .getByRole("button", { name: "Review suggestions" })
-    .click();
+  await openMoreView(sidepanel, "Review suggestions");
   const queue = sidepanel.getByRole("listbox", {
     name: "Pending suggestions",
   });

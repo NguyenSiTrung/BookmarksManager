@@ -62,6 +62,21 @@ export async function waitForSidePanelReady(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
+/** Choose one entry of the side panel's Tools (⋯) menu. */
+export async function chooseTool(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: "Tools" }).click();
+  await page.getByRole("menuitem", { name }).click();
+}
+
+/** Open the view chips' More menu and switch to one of its views. */
+export async function openMoreView(page: Page, name: string): Promise<void> {
+  await page
+    .getByRole("navigation", { name: "Views" })
+    .getByRole("button", { name: /^More/ })
+    .click();
+  await page.getByRole("menuitem", { name }).click();
+}
+
 /**
  * Expand the popup's "Details" disclosure (URL, category, notes), which is
  * collapsed by default. Idempotent: it leaves an already-open panel alone.
@@ -96,7 +111,7 @@ export async function quickSaveFromPopup(
 
 /** Open the side panel's Import dialog and return its file input. */
 export async function openImportDialog(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "Import…" }).click();
+  await chooseTool(page, "Import…");
   const input = page.getByTestId("import-file-input");
   await expect(input).toBeVisible();
   return input;
@@ -104,7 +119,7 @@ export async function openImportDialog(page: Page): Promise<Locator> {
 
 /** Open the side panel's Export dialog (JSON is the default format). */
 export async function openExportDialog(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Export…" }).click();
+  await chooseTool(page, "Export…");
   await expect(page.getByRole("radio", { name: "JSON (.json)" })).toBeVisible();
 }
 

@@ -85,7 +85,7 @@ test("extension loads, renders all three surfaces, and sends no requests", async
       sidepanel.getByRole("heading", { name: "Bookmarks Manager" }),
     ).toBeVisible();
     await expect(
-      sidepanel.getByRole("button", { name: "Review suggestions" }),
+      sidepanel.getByRole("button", { name: "Tools" }),
     ).toBeVisible();
 
     const options = await context.newPage();
