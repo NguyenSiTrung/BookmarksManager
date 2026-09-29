@@ -1,169 +1,192 @@
 import { useEffect, useState } from "react";
 import { cn } from "../../ui/lib/cn";
+import {
+  DatabaseIcon,
+  PlugIcon,
+  PulseIcon,
+  ShieldIcon,
+} from "../../ui/components/icons";
 import { DecisionSettings } from "./DecisionSettings";
 import { DeleteAllData } from "./DeleteAllData";
 import { LlmProviderSetup } from "./LlmProviderSetup";
+import { PrivacyDraft } from "./PrivacyDraft";
 import { ProviderSetup } from "./ProviderSetup";
 import { SentLog } from "./SentLog";
 
 /**
- * Options page shell: a header, a sticky section navigation, and one
- * scrolling column. Every section stays mounted (the nav only scrolls), so
- * in-progress form state — a typed API key, an unchecked consent box — is
- * never lost by moving around the page.
+ * `getManifest` may be absent (tests, non-extension contexts): read the
+ * version defensively so the footer simply hides rather than crash.
  */
-const SECTIONS = [
-  { id: "providers", label: "AI providers" },
-  { id: "decisions", label: "Decisions" },
-  { id: "activity", label: "Activity" },
-  { id: "data", label: "Data" },
-] as const;
+declare const chrome: {
+  runtime: { getManifest(): { version: string } };
+};
 
-type SectionId = (typeof SECTIONS)[number]["id"];
-
-/**
- * Track which section is nearest the top of the viewport. Without
- * `IntersectionObserver` (tests, very old browsers) the nav simply keeps its
- * initial highlight; the links still work.
- */
-function useActiveSection(): SectionId {
-  const [active, setActive] = useState<SectionId>(SECTIONS[0].id);
-
-  useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") {
-      return;
-    }
-    const visible = new Set<SectionId>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const id = entry.target.id as SectionId;
-          if (entry.isIntersecting) visible.add(id);
-          else visible.delete(id);
-        }
-        // Prefer the first section, in page order, that is on screen.
-        const first = SECTIONS.find((section) => visible.has(section.id));
-        if (first !== undefined) setActive(first.id);
-      },
-      // A band across the upper part of the viewport, so a section becomes
-      // active as its heading nears the top rather than when it first peeks in.
-      { rootMargin: "-10% 0px -70% 0px" },
-    );
-    for (const section of SECTIONS) {
-      const element = document.getElementById(section.id);
-      if (element !== null) observer.observe(element);
-    }
-    return () => observer.disconnect();
-  }, []);
-
-  return active;
+function extensionVersion(): string | null {
+  try {
+    return chrome.runtime.getManifest().version;
+  } catch {
+    return null;
+  }
 }
 
-function SectionGroup(props: {
-  id: SectionId;
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section
-      id={props.id}
-      aria-labelledby={`${props.id}-group-heading`}
-      className="scroll-mt-24 space-y-4 md:scroll-mt-10"
-    >
-      <div className="px-1">
-        <p
-          id={`${props.id}-group-heading`}
-          className="text-xs font-semibold tracking-wider text-muted-foreground uppercase"
-        >
-          {props.title}
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {props.description}
-        </p>
-      </div>
-      {props.children}
-    </section>
-  );
+/**
+ * Options page shell (track options_redesign_20260929): a left icon rail with
+ * one item per panel and a content column that shows exactly one panel at a
+ * time. Panels stay mounted — `hidden` toggles visibility — so in-progress
+ * form state (a typed API key, an unchecked consent box) is never lost by
+ * moving around the page. The rail collapses to a horizontal bar on narrow
+ * viewports.
+ */
+const PANELS = [
+  {
+    id: "connections",
+    label: "Connections",
+    icon: PlugIcon,
+    description:
+      "Optional. Connect a provider to power suggestions, summaries and " +
+      "search re-ranking.",
+  },
+  {
+    id: "permissions",
+    label: "Permissions",
+    icon: ShieldIcon,
+    description: "Decide what may leave this device, and for what.",
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    icon: PulseIcon,
+    description: "What has left this device, and what it cost.",
+  },
+  {
+    id: "data",
+    label: "Data",
+    icon: DatabaseIcon,
+    description: "Remove everything this extension has stored.",
+  },
+] as const;
+
+type PanelId = (typeof PANELS)[number]["id"];
+
+function isPanelId(value: string): value is PanelId {
+  return PANELS.some((panel) => panel.id === value);
+}
+
+/** The panel a `#hash` deep link names, or the default. */
+function panelFromHash(hash: string): PanelId {
+  const id = hash.replace(/^#/, "");
+  return isPanelId(id) ? id : PANELS[0].id;
 }
 
 export function OptionsApp() {
-  const active = useActiveSection();
+  const [active, setActive] = useState<PanelId>(() =>
+    typeof location === "undefined" ? PANELS[0].id : panelFromHash(location.hash),
+  );
+
+  // Keep the URL hash in sync so a panel is linkable/restorable.
+  useEffect(() => {
+    history.replaceState(null, "", `#${active}`);
+  }, [active]);
 
   return (
-    <div className="options-root min-h-dvh bg-background text-foreground">
-      <div className="mx-auto max-w-5xl px-4 pt-10 pb-16 sm:px-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Bookmarks Manager Options
-          </h1>
-          <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-            Your bookmarks stay on this device. Nothing is sent anywhere
-            unless you enable a provider and consent.
-          </p>
-        </header>
+    <div className="options-root min-h-dvh bg-background font-options-sans text-foreground">
+      <div className="mx-auto flex min-h-dvh max-w-6xl flex-col md:flex-row">
+        <nav
+          aria-label="Options sections"
+          className={cn(
+            "sticky top-0 z-10 flex shrink-0 flex-col gap-1",
+            "border-b border-border bg-background/90 px-4 py-2 backdrop-blur",
+            "md:top-0 md:h-dvh md:w-60 md:flex-col md:items-stretch md:gap-0",
+            "md:overflow-visible md:border-r md:border-b-0 md:bg-transparent",
+            "md:px-4 md:py-8 md:backdrop-blur-none",
+          )}
+        >
+          <div className="flex items-center gap-2.5 px-2">
+            <img
+              src="/icon/32.png"
+              alt=""
+              className="size-7 rounded-md"
+            />
+            <div className="min-w-0">
+              <h1 className="text-sm leading-tight font-semibold tracking-tight">
+                Bookmarks Manager{" "}
+                <span className="font-normal text-muted-foreground">
+                  Options
+                </span>
+              </h1>
+            </div>
+          </div>
 
-        <div className="mt-8 flex flex-col gap-6 md:flex-row md:gap-10">
-          <nav
-            aria-label="Options sections"
-            className="sticky top-0 z-10 -mx-4 shrink-0 border-b border-border bg-background/90 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 md:top-10 md:mx-0 md:w-48 md:self-start md:border-b-0 md:bg-transparent md:p-0 md:backdrop-blur-none"
-          >
-            <ul className="flex gap-1 overflow-x-auto md:flex-col md:overflow-visible">
-              {SECTIONS.map((section) => (
-                <li key={section.id} className="shrink-0">
+          <ul className="mt-2 flex gap-1 overflow-x-auto pb-1 md:mt-8 md:flex-col md:overflow-visible md:pb-0">
+            {PANELS.map((panel) => {
+              const Icon = panel.icon;
+              const isActive = active === panel.id;
+              return (
+                <li key={panel.id} className="shrink-0">
                   <a
-                    href={`#${section.id}`}
-                    aria-current={active === section.id ? "true" : undefined}
+                    href={`#${panel.id}`}
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      setActive(panel.id);
+                    }}
                     className={cn(
-                      "block rounded-md px-3 py-1.5 text-sm outline-hidden transition-colors",
+                      "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm",
+                      "outline-hidden transition-colors duration-150",
                       "focus-visible:ring-2 focus-visible:ring-ring",
-                      active === section.id
+                      isActive
                         ? "bg-accent font-medium text-accent-foreground"
-                        : "text-muted-foreground hover:bg-accent/60 hover:text-accent-foreground",
+                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                     )}
                   >
-                    {section.label}
+                    <Icon
+                      className={cn(
+                        "size-4",
+                        isActive ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                    {panel.label}
                   </a>
                 </li>
-              ))}
-            </ul>
-          </nav>
+              );
+            })}
+          </ul>
 
-          <main className="min-w-0 flex-1 space-y-12">
-            <SectionGroup
-              id="providers"
-              title="AI providers"
-              description="Optional. Connect a provider to power suggestions, summaries and search re-ranking."
-            >
-              <ProviderSetup />
-              <LlmProviderSetup />
-            </SectionGroup>
+          <p className="mt-auto hidden px-2 text-xs text-muted-foreground md:block">
+            {extensionVersion() !== null && `v${extensionVersion()} · `}your
+            data stays on this device
+          </p>
+        </nav>
 
-            <SectionGroup
-              id="decisions"
-              title="Decisions"
-              description="Decide what AI suggestions may do on their own."
+        <main className="min-w-0 flex-1 px-4 py-8 sm:px-8 md:py-10">
+          {PANELS.map((panel) => (
+            <div
+              key={panel.id}
+              id={panel.id}
+              hidden={active !== panel.id}
+              className="space-y-8"
             >
-              <DecisionSettings />
-            </SectionGroup>
-
-            <SectionGroup
-              id="activity"
-              title="Activity"
-              description="What has left this device, and what it cost."
-            >
-              <SentLog />
-            </SectionGroup>
-
-            <SectionGroup
-              id="data"
-              title="Data"
-              description="Remove everything this extension has stored."
-            >
-              <DeleteAllData />
-            </SectionGroup>
-          </main>
-        </div>
+              <header>
+                <h2 className="text-xl font-semibold tracking-tight">
+                  {panel.label}
+                </h2>
+                <p className="mt-1 max-w-prose text-sm text-muted-foreground">
+                  {panel.description}
+                </p>
+              </header>
+              {panel.id === "connections" && (
+                <>
+                  <ProviderSetup />
+                  <LlmProviderSetup />
+                  <PrivacyDraft />
+                </>
+              )}
+              {panel.id === "permissions" && <DecisionSettings />}
+              {panel.id === "activity" && <SentLog />}
+              {panel.id === "data" && <DeleteAllData />}
+            </div>
+          ))}
+        </main>
       </div>
     </div>
   );

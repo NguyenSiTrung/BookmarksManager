@@ -103,7 +103,7 @@
   --card-foreground: oklch(0.19 0.012 255);
   --popover: oklch(0.99 0.002 90);
   --popover-foreground: oklch(0.19 0.012 255);
-  --primary: oklch(0.55 0.1 195);
+  --primary: oklch(0.52 0.11 198);
   --primary-foreground: oklch(0.985 0.005 200);
   --secondary: oklch(0.95 0.006 90);
   --secondary-foreground: oklch(0.24 0.015 255);
@@ -115,7 +115,7 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.9 0.008 90);
   --input: oklch(0.9 0.008 90);
-  --ring: oklch(0.55 0.1 195);
+  --ring: oklch(0.52 0.11 198);
   /* Tinted, ambient shadow — a hint of the accent hue instead of flat gray. */
   --shadow-color: oklch(0.3 0.04 220 / 8%);
 }

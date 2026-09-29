@@ -335,3 +335,99 @@ export function Disclosure(props: {
     </details>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* SetupChecklist                                                      */
+/* ------------------------------------------------------------------ */
+
+export type ChecklistState = "done" | "current" | "pending";
+
+/**
+ * Guided setup strip: ordered steps rendered done/current/pending, each
+ * optionally clickable to jump to the panel that completes it. This is the
+ * device that makes the consent chain legible — connect → consent →
+ * automate reads as one flow instead of three scattered screens.
+ */
+export function SetupChecklist(props: {
+  steps: readonly {
+    id: string;
+    title: string;
+    description: string;
+    state: ChecklistState;
+    onGo?: () => void;
+  }[];
+}) {
+  return (
+    <ol
+      aria-label="Setup progress"
+      className="grid gap-2 sm:grid-cols-3"
+    >
+      {props.steps.map((step, index) => {
+        const inner = (
+          <>
+            <span className="flex items-center gap-2">
+              {step.state === "done" ? (
+                <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <CheckIcon className="size-3" />
+                </span>
+              ) : (
+                <span
+                  className={cn(
+                    "flex size-5 items-center justify-center rounded-full",
+                    "border text-xs font-medium",
+                    step.state === "current"
+                      ? "border-primary text-primary"
+                      : "border-border text-muted-foreground",
+                  )}
+                >
+                  {index + 1}
+                </span>
+              )}
+              <span
+                className={cn(
+                  "text-sm font-medium",
+                  step.state === "pending"
+                    ? "text-muted-foreground"
+                    : "text-foreground",
+                )}
+              >
+                {step.title}
+              </span>
+            </span>
+            <span className="mt-1 block pl-7 text-xs text-muted-foreground">
+              {step.description}
+            </span>
+          </>
+        );
+        return (
+          <li key={step.id}>
+            {step.onGo !== undefined ? (
+              <button
+                type="button"
+                onClick={step.onGo}
+                className={cn(
+                  "w-full rounded-xl border border-border bg-card p-3",
+                  "text-left transition-colors hover:border-primary/40",
+                  "hover:bg-accent/50",
+                  step.state === "current" && "border-primary/50 bg-accent/40",
+                  focusRing,
+                )}
+              >
+                {inner}
+              </button>
+            ) : (
+              <div
+                className={cn(
+                  "rounded-xl border border-border bg-card p-3",
+                  step.state === "current" && "border-primary/50 bg-accent/40",
+                )}
+              >
+                {inner}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}

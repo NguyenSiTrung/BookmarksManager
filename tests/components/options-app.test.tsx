@@ -1,7 +1,7 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-// The sections have their own suites; the shell test only needs stand-ins.
+// The panels have their own suites; the shell test only needs stand-ins.
 vi.mock("../../src/entrypoints/options/ProviderSetup", () => ({
   ProviderSetup: () => <section aria-label="stub provider" />,
 }));
@@ -28,16 +28,19 @@ beforeAll(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  location.hash = "";
 });
 
 describe("OptionsApp shell", () => {
-  it("has one page title and puts every section inside the main landmark", () => {
+  it("has one page title and keeps every panel mounted inside main", () => {
     render(<OptionsApp />);
 
     expect(
       screen.getAllByRole("heading", { level: 1 }).map((h) => h.textContent),
     ).toEqual(["Bookmarks Manager Options"]);
 
+    // Hidden panels stay mounted (form state survives navigation) — find
+    // them with hidden: true rather than expecting them invisible forever.
     const main = screen.getByRole("main");
     for (const name of [
       "stub provider",
@@ -46,18 +49,20 @@ describe("OptionsApp shell", () => {
       "stub sent log",
       "stub delete all",
     ]) {
-      expect(within(main).getByRole("region", { name })).toBeTruthy();
+      expect(
+        within(main).getByRole("region", { name, hidden: true }),
+      ).toBeTruthy();
     }
   });
 
-  it("links each nav entry to a section that exists on the page", () => {
+  it("links each nav entry to a panel that exists on the page", () => {
     const { container } = render(<OptionsApp />);
     const nav = screen.getByRole("navigation", { name: "Options sections" });
     const links = within(nav).getAllByRole("link");
 
     expect(links.map((link) => link.textContent)).toEqual([
-      "AI providers",
-      "Decisions",
+      "Connections",
+      "Permissions",
       "Activity",
       "Data",
     ]);
@@ -67,17 +72,51 @@ describe("OptionsApp shell", () => {
     }
   });
 
-  it("marks the first section current until scrolling says otherwise", () => {
-    // jsdom has no IntersectionObserver; the shell must still render.
-    vi.stubGlobal("IntersectionObserver", undefined);
+  it("shows the Connections panel by default and marks its nav item current", () => {
     render(<OptionsApp />);
     const nav = screen.getByRole("navigation", { name: "Options sections" });
 
     expect(
       within(nav)
         .getAllByRole("link")
-        .filter((link) => link.getAttribute("aria-current") === "true")
+        .filter((link) => link.getAttribute("aria-current") === "page")
         .map((link) => link.textContent),
-    ).toEqual(["AI providers"]);
+    ).toEqual(["Connections"]);
+
+    // Connections content is visible; another panel's is not.
+    expect(
+      screen.getByRole("region", { name: "stub provider" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "stub sent log" }),
+    ).toBeNull();
+  });
+
+  it("switches panels when a nav entry is clicked", () => {
+    render(<OptionsApp />);
+    const nav = screen.getByRole("navigation", { name: "Options sections" });
+
+    fireEvent.click(within(nav).getByRole("link", { name: /Activity/ }));
+
+    expect(
+      screen.getByRole("region", { name: "stub sent log" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "stub provider" })).toBeNull();
+    expect(location.hash).toBe("#activity");
+    expect(
+      within(nav)
+        .getByRole("link", { name: /Activity/ })
+        .getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
+  it("restores the panel named by the hash on load", () => {
+    location.hash = "#data";
+    render(<OptionsApp />);
+
+    expect(
+      screen.getByRole("region", { name: "stub delete all" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "stub provider" })).toBeNull();
   });
 });

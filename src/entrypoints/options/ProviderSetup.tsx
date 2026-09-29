@@ -24,7 +24,6 @@ import {
   PRESET_MODELS,
   PresetId,
 } from "../../schemas/provider";
-import { PrivacyDraft } from "./PrivacyDraft";
 import {
   cardClass,
   dangerButtonClass,
@@ -347,8 +346,7 @@ export function ProviderSetup() {
   };
 
   return (
-    <>
-      <section aria-labelledby="provider-heading" className={cardClass}>
+    <section aria-labelledby="provider-heading" className={cardClass}>
         <div className="flex items-center justify-between gap-3">
           <h2 id="provider-heading" className={sectionHeadingClass}>
             AI provider connection
@@ -593,8 +591,6 @@ export function ProviderSetup() {
             {error}
           </p>
         )}
-      </section>
-      <PrivacyDraft />
-    </>
+    </section>
   );
 }
