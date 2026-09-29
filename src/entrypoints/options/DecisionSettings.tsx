@@ -760,10 +760,14 @@ export function DecisionSettings() {
             Checking consent…
           </p>
         ) : consentGranted ? (
+          // flex-wrap plus a non-shrinking, non-wrapping button: the longest
+          // provider name ("Custom Jev provider") otherwise squeezed the
+          // revoke label onto two lines inside its own border. When the pair
+          // does not fit, the button drops to its own row instead.
           <div
             role="group"
             aria-label={`${disclosure.name} analysis consent`}
-            className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-accent/40 px-3 py-2.5"
+            className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-primary/30 bg-accent/40 px-3 py-2.5"
           >
             <p className="text-sm text-foreground">
               {disclosure.name} may receive the bookmark metadata listed above.
@@ -772,7 +776,7 @@ export function DecisionSettings() {
               type="button"
               onClick={onRevoke}
               disabled={busy}
-              className={ghostDangerButtonClass}
+              className={`${ghostDangerButtonClass} shrink-0 whitespace-nowrap`}
             >
               Revoke {disclosure.name} analysis consent
             </button>
