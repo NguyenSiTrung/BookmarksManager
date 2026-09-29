@@ -274,6 +274,7 @@ The wire format is small (section 8.2), so an own client of about 150 lines is s
 
 ```
 BookmarksManager/
+├── README.md
 ├── PROJECT_PLAN.md
 ├── package.json
 ├── wxt.config.ts
