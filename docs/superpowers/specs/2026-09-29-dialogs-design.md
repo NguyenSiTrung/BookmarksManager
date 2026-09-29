@@ -28,8 +28,9 @@ Files: new `src/ui/components/drop-zone.tsx`,
 `src/entrypoints/sidepanel/ImportDialog.tsx` (pick stage only).
 
 - The pick stage's labelled file input becomes a themed drop zone: a
-  dashed-border box with a down-into-tray inline SVG (the `XIcon` pattern in
-  `dialog.tsx`), the line "Drop your bookmarks file here" and the hint
+  dashed-border box with a down-into-tray inline SVG (`FileImportIcon`, the
+  `Icon` wrapper in `src/ui/components/icons.tsx`), the line "Drop your
+  bookmarks file here" and the hint
   "or click to browse — JSON, Netscape HTML, or CSV · up to 20 MiB".
   Drag-over swaps the border/background to accent and the line to
   "Drop to import". Theme tokens only.
@@ -101,10 +102,10 @@ File: `src/ui/components/CostConfirmationDialog.tsx`.
 ## Testing
 
 - Component: `DropZone` renders its line and hint, highlights on
-  drag-over, routes a dropped file and a picked file to `onFile`, opens
-  the picker from the keyboard, and shows the friendly error for a
-  disallowed extension; `ImportDialog` reaches the preview from a dropped
-  JSON and keeps its existing input-change flow; `ScanPanel` assertions
+  drag-over, routes a dropped file and a picked file to `onFile`, and
+  opens the picker from its button; `ImportDialog` reaches the preview
+  from a dropped JSON, keeps its existing input-change flow, and shows
+  the friendly error for a disallowed extension; `ScanPanel` assertions
   move to the new copy (requests first, tokens secondary, dollar omitted
   without cost, progress without batch counters) with behavioural
   assertions untouched; `CostConfirmationDialog` renders the new copy,
