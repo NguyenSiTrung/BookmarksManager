@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { getMetaByIds } from "../../db/meta";
 import type { DuplicateGroup, DuplicateGroupKind } from "../../duplicates/group";
 import { mergeGroup } from "../../duplicates/merge";
@@ -6,9 +7,11 @@ import type { MergeSuccess } from "../../duplicates/merge";
 import type { Category } from "../../schemas/bookmark";
 import type { BookmarkMeta } from "../../schemas/meta";
 import type { BookmarkItem } from "../../sync/tree";
+import { ExternalLinkIcon } from "../../ui/components/icons";
 import { Favicon } from "../../ui/components/favicon";
 import { cn } from "../../ui/lib/cn";
 import { undoLatest } from "../../undo/restore";
+import { displayDomain, folderLabel, formatAdded } from "./row-text";
 
 /**
  * Grouped duplicates view (spec §6): each `DuplicateGroup<BookmarkItem>`
@@ -57,6 +60,8 @@ export interface DuplicatesViewProps {
   ) => void;
   /** Open-bookmark affordance; adds an "Open" button per member row. */
   onActivateItem?: (item: BookmarkItem) => void;
+  /** Shown when there are no groups. Defaults to the plain "No duplicates" line. */
+  empty?: ReactNode;
   className?: string;
 }
 
@@ -166,6 +171,8 @@ interface MemberRowProps {
   item: BookmarkItem;
   meta?: BookmarkMeta;
   tagNameByKey?: ReadonlyMap<string, string>;
+  /** The group header's title — a member repeating it is omitted. */
+  groupTitle: string;
   keepState: MemberKeepState;
   merging: boolean;
   onKeep: () => void;
@@ -176,12 +183,17 @@ function MemberRow({
   item,
   meta,
   tagNameByKey,
+  groupTitle,
   keepState,
   merging,
   onKeep,
   onActivate,
 }: MemberRowProps) {
   const tags = meta?.tags ?? [];
+  const folder = folderLabel(item.path);
+  const primary = folder === "" ? displayTitle(item) : folder;
+  const showTitle = folder !== "" && displayTitle(item) !== groupTitle;
+  const added = formatAdded(item.dateAdded);
   return (
     <li
       data-testid="duplicate-member"
@@ -194,13 +206,17 @@ function MemberRow({
     >
       <Favicon pageUrl={item.url} size={16} className="shrink-0" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">{displayTitle(item)}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {item.url}
+        <div className="truncate text-sm" title={item.path.join(" / ")}>
+          {primary}
         </div>
-        {item.path.length > 0 && (
+        {added !== undefined && (
           <div className="truncate text-xs text-muted-foreground">
-            {item.path.join(" / ")}
+            Added {added}
+          </div>
+        )}
+        {showTitle && (
+          <div className="truncate text-xs text-muted-foreground">
+            {displayTitle(item)}
           </div>
         )}
       </div>
@@ -258,9 +274,9 @@ function MemberRow({
             aria-label={`Open ${displayTitle(item)}`}
             title={item.url}
             onClick={() => onActivate(item)}
-            className={secondaryButtonClass}
+            className={cn(secondaryButtonClass, "px-1.5")}
           >
-            Open
+            <ExternalLinkIcon className="size-3.5" />
           </button>
         )}
       </span>
@@ -435,6 +451,7 @@ export function DuplicatesView({
   onRequestUndo,
   onMerged,
   onActivateItem,
+  empty,
   className,
 }: DuplicatesViewProps) {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -640,9 +657,11 @@ export function DuplicatesView({
           Scanning for duplicates…
         </p>
       ) : groups.length === 0 ? (
-        <p className="p-4 text-sm text-muted-foreground">
-          No duplicates — every bookmark URL is unique.
-        </p>
+        (empty ?? (
+          <p className="p-4 text-sm text-muted-foreground">
+            No duplicates — every bookmark URL is unique.
+          </p>
+        ))
       ) : (
         <>
           <p className="shrink-0 px-3 pt-3 text-xs text-muted-foreground">
@@ -656,6 +675,11 @@ export function DuplicatesView({
               const failure = failures.get(id);
               const confirming =
                 confirm !== null && groupIdOf(confirm.group) === id;
+              const first = group.items[0];
+              const groupTitle =
+                first === undefined ? group.key : displayTitle(first);
+              const groupDomain =
+                first === undefined ? "" : displayDomain(first.url);
               return (
                 <section
                   key={id}
@@ -665,15 +689,21 @@ export function DuplicatesView({
                   aria-label={`${kindLabel(group.kind)} duplicate group`}
                   className="rounded-md border border-border bg-card"
                 >
-                  <header className="flex items-center gap-2 border-b border-border px-3 py-2">
+                  <header
+                    title={group.key}
+                    className="flex items-center gap-2 border-b border-border px-3 py-2"
+                  >
                     <span className={badgeClass(group.kind)}>
                       {kindLabel(group.kind)}
                     </span>
-                    <span
-                      className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
-                      title={group.key}
-                    >
-                      {group.key}
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {groupTitle}
+                      {groupDomain !== "" && (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          · {groupDomain}
+                        </span>
+                      )}
                     </span>
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {group.items.length}{" "}
@@ -703,6 +733,7 @@ export function DuplicatesView({
                               item={item}
                               meta={metaById?.get(item.id)}
                               tagNameByKey={tagNameByKey}
+                              groupTitle={groupTitle}
                               keepState={keepState}
                               merging={merging}
                               onKeep={() => requestKeep(group, item.id)}

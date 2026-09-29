@@ -256,12 +256,19 @@ describe("DuplicatesView rendering", () => {
 
     const exact = groupCard("https://x.example/");
     expect(within(exact).getByText("Exact")).toBeTruthy();
-    expect(exact.textContent).toContain("https://x.example/");
+    expect(exact.textContent).toContain("Exact One");
+    expect(exact.textContent).toContain("x.example");
+    expect(exact.querySelector("header")?.getAttribute("title")).toBe(
+      "https://x.example/",
+    );
     expect(exact.textContent).toMatch(/3 (members|duplicates)/);
 
     const normalized = groupCard("a.example/page");
     expect(within(normalized).getByText("Normalized")).toBeTruthy();
-    expect(normalized.textContent).toContain("a.example/page");
+    expect(normalized.textContent).toContain("a.example");
+    expect(normalized.querySelector("header")?.getAttribute("title")).toBe(
+      "a.example/page",
+    );
     expect(normalized.textContent).toMatch(/2 (members|duplicates)/);
 
     // Different visual weight: the two badge styles must not be identical.
@@ -286,10 +293,11 @@ describe("DuplicatesView rendering", () => {
     );
 
     const row = memberRow("x1");
-    expect(row.textContent).toContain("Exact One");
-    expect(row.textContent).toContain("https://x.example/");
-    // Folder path: x1 sits at the top of the Bookmarks bar.
+    // Folder-led: x1 sits at the top of the Bookmarks bar. Its title equals
+    // the group header's, so it is not repeated; the URL is not shown.
     expect(row.textContent).toContain("Bookmarks bar");
+    expect(row.textContent).not.toContain("Exact One");
+    expect(row.textContent).not.toContain("https://x.example/");
     // Display names from tagNameByKey, plus a count.
     expect(row.textContent).toContain("Dev");
     expect(row.textContent).toContain("Ops");
@@ -306,17 +314,42 @@ describe("DuplicatesView rendering", () => {
 
     const x2 = memberRow("x2");
     expect(x2.textContent).toContain("notes");
+    // A member whose title differs from the group's keeps its title.
+    expect(x2.textContent).toContain("Exact Two");
 
-    // Nested path: "Bookmarks bar / Dev / Deep" for n2.
+    // Deep paths show the last two segments; the tooltip has the full path.
     const n2 = memberRow("n2");
-    expect(n2.textContent).toContain("Bookmarks bar");
-    expect(n2.textContent).toContain("Dev");
-    expect(n2.textContent).toContain("Deep");
+    expect(n2.textContent).toContain("… / Dev / Deep");
+    expect(
+      n2.querySelector('[title="Bookmarks bar / Dev / Deep"]'),
+    ).not.toBeNull();
   });
 
   it("shows the empty state when there are no groups", () => {
     render(<DuplicatesView groups={[]} />);
     expect(screen.getByText(/No duplicates/)).toBeTruthy();
+  });
+
+  it("shows when each member was added", async () => {
+    const groups = await groupsFromFake();
+    render(<DuplicatesView groups={groups} />);
+    expect(memberRow("x1").textContent).toMatch(/Added [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+
+  it("uses an icon-only Open button that keeps its accessible name", async () => {
+    const groups = await groupsFromFake();
+    render(<DuplicatesView groups={groups} onActivateItem={() => {}} />);
+    const open = within(memberRow("x1")).getByRole("button", {
+      name: "Open Exact One",
+    });
+    expect(open.textContent).toBe("");
+    expect(open.querySelector("svg")).not.toBeNull();
+  });
+
+  it("renders a custom empty node when there are no groups", () => {
+    render(<DuplicatesView groups={[]} empty={<p>Custom empty</p>} />);
+    expect(screen.getByText("Custom empty")).toBeTruthy();
+    expect(screen.queryByText(/No duplicates/)).toBeNull();
   });
 
   it("shows a loading affordance while the tree loads", async () => {
