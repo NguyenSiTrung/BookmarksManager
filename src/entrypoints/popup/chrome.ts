@@ -68,6 +68,7 @@ export interface ChromeStorageChangedEvent {
 }
 
 declare const chrome: {
+  runtime?: { openOptionsPage?: () => Promise<void> | void } | null;
   tabs?: ChromeTabsApi;
   sidePanel?: ChromeSidePanelApi;
   storage?: {
@@ -111,6 +112,21 @@ export function openSidePanel(windowId?: number): void {
       // No user gesture / API unavailable — nothing to recover here.
     }
   })();
+}
+
+/**
+ * Open the extension's Options page in a tab. Total: a missing
+ * `runtime.openOptionsPage` (or a throw) is a no-op.
+ */
+export function openOptionsPage(): void {
+  try {
+    const runtime = chrome.runtime;
+    if (typeof runtime?.openOptionsPage === "function") {
+      void runtime.openOptionsPage();
+    }
+  } catch {
+    // No runtime surface — nothing to open.
+  }
 }
 
 /** The session storage area, or `null` when it is unavailable. */

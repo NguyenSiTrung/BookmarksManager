@@ -80,6 +80,7 @@ let storageListeners: ((
 ) => void)[];
 let tabsQuery: ReturnType<typeof vi.fn>;
 let sidePanelOpen: ReturnType<typeof vi.fn>;
+let openOptionsPage: ReturnType<typeof vi.fn>;
 
 /** Emit one `chrome.storage.onChanged` event, as Chrome does after a write. */
 function emitStorageChange(
@@ -156,6 +157,7 @@ beforeEach(async () => {
   storageListeners = [];
   tabsQuery = vi.fn(async () => [ACTIVE_TAB]);
   sidePanelOpen = vi.fn(async () => undefined);
+  openOptionsPage = vi.fn();
   vi.stubGlobal("chrome", {
     bookmarks: fake,
     tabs: { query: tabsQuery },
@@ -182,7 +184,10 @@ beforeEach(async () => {
         },
       },
     },
-    runtime: { getURL: (path: string) => `chrome-extension://test/${path}` },
+    runtime: {
+      getURL: (path: string) => `chrome-extension://test/${path}`,
+      openOptionsPage,
+    },
   });
   stubElementRects();
 });
@@ -456,6 +461,12 @@ describe("PopupApp — open manager", () => {
     await waitFor(() =>
       expect(sidePanelOpen).toHaveBeenCalledWith({ windowId: 7 }),
     );
+  });
+
+  it("opens the Options page from the Settings button", async () => {
+    await renderPopup();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(openOptionsPage).toHaveBeenCalledTimes(1);
   });
 });
 

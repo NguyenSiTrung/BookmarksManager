@@ -68,6 +68,7 @@ import {
   reviewQueue,
   sendDecisionMessage,
 } from "./ReviewView";
+import { SettingsIcon } from "../../ui/components/settings-icon";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import type { ToastApi, ToastState } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
@@ -747,6 +748,15 @@ export function App(props?: { askDebounceMs?: number }) {
                   {pendingCount}
                 </span>
               )}
+            </button>
+            <button
+              type="button"
+              aria-label="Settings"
+              title="Settings"
+              onClick={openOptionsPage}
+              className="shrink-0 rounded-sm p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <SettingsIcon />
             </button>
           </header>
           <DndProvider tree={tree} selection={selection}>

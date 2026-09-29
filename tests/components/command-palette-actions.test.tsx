@@ -245,6 +245,12 @@ describe("palette commands", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
   });
 
+  it("opens the Options page from the header Settings button", async () => {
+    await renderApp();
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(openOptionsPage).toHaveBeenCalledTimes(1);
+  });
+
   it("runs Export and Options without a dialog trace left open", async () => {
     await renderApp();
     const el = await openPalette();

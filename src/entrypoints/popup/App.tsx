@@ -37,7 +37,13 @@ import { CategorySelect } from "../../ui/components/category-select";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
 import { openBookmarkUrl } from "../../sync/tabs";
 import type { OpenUrlDisposition } from "../../sync/tabs";
-import { openSidePanel, queryActiveTab, setPendingEditId } from "./chrome";
+import { SettingsIcon } from "../../ui/components/settings-icon";
+import {
+  openOptionsPage,
+  openSidePanel,
+  queryActiveTab,
+  setPendingEditId,
+} from "./chrome";
 import { PopupSearch } from "./Search";
 import { Suggestions } from "./Suggestions";
 import type { SuggestionStatus } from "./Suggestions";
@@ -518,13 +524,24 @@ export function App() {
     >
       <header className="flex items-center justify-between gap-2">
         <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
-        <button
-          type="button"
-          onClick={handleOpenManager}
-          className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Open manager
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleOpenManager}
+            className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Open manager
+          </button>
+          <button
+            type="button"
+            aria-label="Settings"
+            title="Settings"
+            onClick={openOptionsPage}
+            className="rounded-sm border border-border p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <SettingsIcon />
+          </button>
+        </div>
       </header>
 
       <PopupSearch
