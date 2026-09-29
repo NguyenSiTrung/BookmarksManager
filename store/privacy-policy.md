@@ -102,7 +102,8 @@ until you turn them on, and neither sends anything unless you start it.
   `Authorization: Bearer` header. No bookmark titles, URLs, notes, tags,
   categories, page content, or browsing history are ever sent.
 - **To whom:** exactly one provider origin that you picked —
-  `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
+  `https://api.typesafe.ai` (TypeSafe), `https://openrouter.ai` (OpenRouter),
+  or the custom System One-compatible endpoint you configured.
   The corresponding optional host permission is requested only from a direct
   click on the provider's Enable button in Options, and is revocable at any
   time.
@@ -127,10 +128,12 @@ until you enable it.
   only under the `llm_summary` and `jev_summary_verify` scopes — a bounded
   excerpt — and only after you click Summarize on a saved page.
 - **To whom:** exactly one provider origin you chose —
-  `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter)
+  `https://api.typesafe.ai` (TypeSafe), `https://openrouter.ai` (OpenRouter),
+  or the custom endpoint you configured
   — whose own privacy policy governs what it receives
   (`https://typesafe.ai/legal/privacy-policy` and
-  `https://openrouter.ai/privacy`).
+  `https://openrouter.ai/privacy`; a custom endpoint is governed by its own
+  policy — review it before enabling).
 - **Why:** to categorize, tag, folder pre-select, run a near-duplicate check,
   run a misfiled scan, and search re-rank.
 - **When:** only on a user-started action — saving a bookmark, clicking

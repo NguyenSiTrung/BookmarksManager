@@ -33,3 +33,7 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-29 — Options redesign completed: guided four-panel shell (Connections/Permissions/Activity/Data) with left icon rail, hidden-mounted panels + hash deep links, live setup checklist from Dexie consent reads, unified provider cards with collapsible verbatim disclosures, Radix Switch automations, chip blocklist, stat-tile usage/LLM budget, structured sent-log rows, Geist fonts + teal-accent .options-root palette, inline SVG icon set — full gate green (5 unrelated flakes pass in isolation) with visual verification in Chromium light/dark/mobile (see conductor/archive/options_redesign_20260929/) -->
+
+---
+
+<!-- Archived: 2026-09-29 — Custom Jev provider completed: a third provider slot (`providerId: "custom"`) for any System One-compatible endpoint — user-configured base URL (LlmBaseUrl canonical rules: HTTPS, loopback HTTP only) and free model id pinned as its own allowlist; ProviderSettings discriminated union, per-call destination resolution in the single egress gate (presets from the frozen registry, custom from the stored row, fail-closed `unlisted_origin`), per-origin consent/permission, Options custom card + decisions consent card, origin-aware status — full gate green (2348 unit/component, 28 e2e) (see conductor/archive/custom_jev_provider_20260929/) -->

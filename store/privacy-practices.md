@@ -63,11 +63,13 @@ Use the justification column of `store/permissions.md` verbatim; CI
   connection and bookmark decisions) to the OpenRouter provider, started by
   the user.
 - `https://*/*` (optional) — capability only: lets the user grant the exact
-  origin of a custom OpenAI-compatible LLM provider at runtime, from a
-  direct click; no request can fire without a per-scope consent record and
-  the exact-origin permission check.
-- `http://localhost/*` (optional) — optional LLM provider on a loopback
-  endpoint (e.g. a local model server), granted per exact origin.
+  origin of a custom OpenAI-compatible LLM provider or a custom
+  System One-compatible Jev endpoint at runtime, from a direct click; no
+  request can fire without a per-scope consent record and the exact-origin
+  permission check.
+- `http://localhost/*` (optional) — optional LLM or custom Jev provider on
+  a loopback endpoint (e.g. a local model server), granted per exact
+  origin.
 - `http://127.0.0.1/*` (optional) — same, via the IPv4 loopback literal.
 - `http://[::1]/*` (optional) — same, via the IPv6 loopback literal.
 
@@ -76,7 +78,7 @@ the synthetic Test connection and the bookmark-data `jev_decisions` flow.
 `https://*/*` is capability only, not default access: it grants the exact
 custom origin at runtime from a direct click, and the egress gate re-checks
 the exact origin, its consent scope, and the request schema before any send.
-The three loopback literals cover local LLM servers — Chrome patterns cannot
+The three loopback literals cover local LLM or Jev servers — Chrome patterns cannot
 express ports, so the gate enforces the port itself. The extension requests
 no host access at install time and reads no page content on any site.)
 
@@ -120,9 +122,11 @@ Conservative declaration — under-declaring is the risky direction:
   saving a bookmark, clicking Analyze, starting a library scan, or running an
   Ask search — and only when you start them — never on install, on a timer, or
   in the background. To whom: exactly one provider origin you chose —
-  `https://api.typesafe.ai` (TypeSafe) or `https://openrouter.ai` (OpenRouter).
+  `https://api.typesafe.ai` (TypeSafe), `https://openrouter.ai` (OpenRouter),
+  or the custom System One-compatible endpoint you configured.
   Links: the provider's privacy policy (`https://typesafe.ai/legal/privacy-policy`
-  or `https://openrouter.ai/privacy`) and this extension's privacy policy
+  or `https://openrouter.ai/privacy`; a custom endpoint is governed by its
+  own policy) and this extension's privacy policy
   (https://nguyensitrung.github.io/BookmarksManager/privacy/). The
   consent is versioned (`consentVersion`, currently 3); revoking a provider
   deletes every consent grant for its origin — `jev_test`, `jev_decisions`,

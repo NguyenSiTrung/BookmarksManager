@@ -59,8 +59,9 @@ What you can do:
   only what the extension stored for itself; your native bookmarks are
   untouched.
 
-There is also an optional, off-by-default AI connection for the Jev providers
-TypeSafe and OpenRouter, using your own API key: a clear disclosure naming the
+There is also an optional, off-by-default AI connection for the Jev providers —
+TypeSafe, OpenRouter, or a custom System One-compatible endpoint you configure
+(HTTPS; loopback HTTP allowed) — using your own API key: a clear disclosure naming the
 recipient, an unchecked consent checkbox, the browser's host-permission
 prompt, encrypted on-device key storage, and revoke-at-any-time control. A
 synthetic Test connection sends one fixed payload — never your bookmarks — only

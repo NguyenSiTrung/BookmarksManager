@@ -133,8 +133,9 @@ needs a real provider key:
   and saves nothing.
 - Once enabled, click **Test connection**: the worker sends exactly one POST
   of the fixed synthetic payload to the chosen origin's System One endpoint
-  (`https://api.typesafe.ai/v1/systemone` or
-  `https://openrouter.ai/api/v1/systemone`) over HTTPS with
+  (`https://api.typesafe.ai/v1/systemone`,
+  `https://openrouter.ai/api/v1/systemone`, or `<baseUrl>/systemone` for a
+  configured custom endpoint) over HTTPS with
   `Authorization: Bearer <key>` — cookies omitted, redirects refused.
   Success shows the returned model id and latency (plus the reported cost
   for OpenRouter); failures show a redacted code (`auth`, `incompatible`,
@@ -202,14 +203,15 @@ The bookmark-data flow is shipped behind a separate, per-provider
   paths; candidate bookmarks; the near-duplicate partner; and the Ask search
   query — and states plainly that notes and page text are never sent. It
   names the recipient and its literal origin
-  (`https://api.typesafe.ai` or `https://openrouter.ai`), the purpose
+  (`https://api.typesafe.ai`, `https://openrouter.ai`, or the configured
+  custom origin), the purpose
   (categorize, tag, folder pre-select, near-duplicate check, misfiled scan,
   search re-rank), the triggers (saving a bookmark, clicking Analyze,
   starting a library scan, running an Ask search — user-started only, never
   on install, on a timer, or in the background), and links the provider's
   privacy policy and this extension's privacy policy.
 - The agree checkbox starts unchecked and Enable is a separate action. The
-  consent is versioned (`consentVersion`, currently 2); a stale v1 record
+  consent is versioned (`consentVersion`, currently 3); a stale record
   re-shows the disclosure before the next request.
 - Once consented, a decision request is sent only on a user-started action
   and only to the chosen origin's System One endpoint over HTTPS with

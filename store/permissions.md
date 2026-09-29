@@ -37,17 +37,17 @@ settings or from the provider's Revoke action in Options.
 |---|---|---|
 | `https://api.typesafe.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the TypeSafe provider, started by the user |
 | `https://openrouter.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the OpenRouter provider, started by the user |
-| `https://*/*` | optional | Capability only — lets the user grant the exact origin of a custom OpenAI-compatible LLM provider at runtime from a direct click; the egress gate re-checks the exact origin and a per-scope consent record before any request can fire |
-| `http://localhost/*` | optional | Optional LLM provider on a loopback endpoint (e.g. a local model server); Chrome patterns cannot express ports, so the gate enforces the full origin (host + port) itself |
-| `http://127.0.0.1/*` | optional | Same loopback LLM endpoint via the IPv4 literal |
-| `http://[::1]/*` | optional | Same loopback LLM endpoint via the IPv6 literal |
+| `https://*/*` | optional | Capability only — lets the user grant the exact origin of a custom OpenAI-compatible LLM provider or a custom System One-compatible Jev endpoint at runtime from a direct click; the egress gate re-checks the exact origin and a per-scope consent record before any request can fire |
+| `http://localhost/*` | optional | Optional LLM or custom Jev provider on a loopback endpoint (e.g. a local model server); Chrome patterns cannot express ports, so the gate enforces the full origin (host + port) itself |
+| `http://127.0.0.1/*` | optional | Same loopback provider endpoint via the IPv4 literal |
+| `http://[::1]/*` | optional | Same loopback provider endpoint via the IPv6 literal |
 
 _The first two patterns back the shipped, consent-gated Jev provider flow — the
 synthetic Test connection and the bookmark-data `jev_decisions` flow. The
-remaining four back the optional LLM provider: `https://*/*` is a
-capability pattern, not default access — it grants the exact configured
-origin at runtime from a direct click, and the loopback patterns cover local
-model servers. Every grant is scoped to the exact configured origin
+remaining four back the optional LLM provider and custom Jev endpoints:
+`https://*/*` is a capability pattern, not default access — it grants the
+exact configured origin at runtime from a direct click, and the loopback
+patterns cover local model servers. Every grant is scoped to the exact configured origin
 (scheme + host + port), requires its own consent record, keeps credentials
 in the authentication header only, refuses redirects and URL credentials,
 and revokes cleanly with the provider. Any change here must update the
