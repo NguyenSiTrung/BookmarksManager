@@ -41,7 +41,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 1: Design system foundation
 <!-- execution: parallel -->
 
-- [ ] Task 1: Vendor font + palette tokens
+- [x] Task 1: Vendor font + palette tokens
   <!-- files: src/entrypoints/options/fonts/, src/ui/styles.css, src/entrypoints/options/main.tsx -->
   - Download Geist Variable + Geist Mono Variable woff2 into
     `src/entrypoints/options/fonts/`; add `@font-face` (`font-display: swap`)
@@ -50,14 +50,14 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
     `OptionsApp` root. Popup/sidepanel tokens untouched.
   - Verify: `build` succeeds; font lands in output assets; visual check.
 
-- [ ] Task 2: Icon set `src/ui/components/icons.tsx`
+- [x] Task 2: Icon set `src/ui/components/icons.tsx`
   <!-- files: src/ui/components/icons.tsx, tests/components/icons.test.tsx -->
   - Inline stroke SVG icon components (plug/connection, shield/permissions,
     pulse/activity, trash/data, check, x, warning, info, chevron-down, zap,
     key, external-link, plus). 2px stroke, `aria-hidden`, `size-4` default,
     `focusable="false"`. Unit test: renders svg, no accessible name.
 
-- [ ] Task 3: Options primitive components
+- [x] Task 3: Options primitive components
   <!-- files: src/entrypoints/options/components.tsx, src/entrypoints/options/ui.ts, tests/components/options-primitives.test.tsx -->
   - `Switch` on `radix-ui` Switch (focus ring, disabled state); `Alert`
     (status/alert roles, icon, tinted inset); `Field` (label/hint/error);
@@ -74,7 +74,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 2: Panel navigation shell
 <!-- execution: sequential -->
 
-- [ ] Task 1: Rail + panel shell in `OptionsApp`
+- [x] Task 1: Rail + panel shell in `OptionsApp`
   <!-- files: src/entrypoints/options/OptionsApp.tsx, tests/components/options-app.test.tsx -->
   - Left rail (wordmark, 4 nav items with icons + status dots, version
     footer); mobile top-bar collapse; `hidden`-panel switching with hash deep
@@ -89,7 +89,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 3: Connections panel
 <!-- execution: parallel -->
 
-- [ ] Task 1: Jev provider card redesign (`ProviderSetup`)
+- [x] Task 1: Jev provider card redesign (`ProviderSetup`)
   <!-- files: src/entrypoints/options/ProviderSetup.tsx, tests/components/provider-setup.test.tsx -->
   - Unified card: icon + name + StatusBadge header; `ProviderCard` preset
     picker with descriptions; `Disclosure` wrapping the verbatim disclosure
@@ -98,7 +98,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
     Revoke; setup form via `Field` components with inline validation;
     `Alert` for notices/errors. Logic/message layer untouched.
 
-- [ ] Task 2: LLM provider card redesign (`LlmProviderSetup` + `LlmBudget`)
+- [x] Task 2: LLM provider card redesign (`LlmProviderSetup` + `LlmBudget`)
   <!-- files: src/entrypoints/options/LlmProviderSetup.tsx, src/entrypoints/options/LlmBudget.tsx, tests/components/options-llm-provider.test.tsx -->
   - Same unified card treatment: preset cards (OpenAI / OpenRouter / Custom),
     collapsible `Disclosure`, `Field`-based form (base URL, auth, pricing,
@@ -107,7 +107,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
   - Update `options-llm-provider.test.tsx` + `options-llm-settings.test.tsx`
     selectors to new semantics.
 
-- [ ] Task 3: Setup checklist wiring + PrivacyDraft placement
+- [x] Task 3: Setup checklist wiring + PrivacyDraft placement
   <!-- files: src/entrypoints/options/OptionsApp.tsx, src/entrypoints/options/PrivacyDraft.tsx -->
   - Wire checklist to provider status + decisions consent reads
     (`useLiveQuery` against consents, mirroring DecisionSettings' stale-read
@@ -119,7 +119,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 4: Permissions panel
 <!-- execution: sequential -->
 
-- [ ] Task 1: Restructure `DecisionSettings` into Permissions
+- [x] Task 1: Restructure `DecisionSettings` into Permissions
   <!-- files: src/entrypoints/options/DecisionSettings.tsx, tests/components/options-decisions.test.tsx -->
   - Four sub-cards: Bookmark analysis consent (per-preset picker + verbatim
     disclosure + allow/revoke), Automations (Radix Switches + threshold note),
@@ -133,13 +133,13 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 5: Activity + Data panels
 <!-- execution: parallel -->
 
-- [ ] Task 1: `SentLog` → stat cards + structured log rows
+- [x] Task 1: `SentLog` → stat cards + structured log rows
   <!-- files: src/entrypoints/options/SentLog.tsx, tests/components/sent-log.test.tsx -->
   - Stat cards (requests, tokens in/out, reported cost, unpriced count) with
     tabular-nums; log rows: mono timestamp, destination chip, feature tag,
     muted fields; icon empty state; retention-cap note + Clear preserved.
 
-- [ ] Task 2: `DeleteAllData` visual pass
+- [x] Task 2: `DeleteAllData` visual pass
   <!-- files: src/entrypoints/options/DeleteAllData.tsx, tests/components/delete-all.test.tsx -->
   - Danger card restyle (destructive accent, warning icon), dialog pass.
     Behavior identical.
@@ -149,7 +149,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 ## Phase 6: Gate + visual verification
 <!-- execution: sequential -->
 
-- [ ] Task 1: Full gate + Chromium visual pass
+- [x] Task 1: Full gate + Chromium visual pass
   - `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` →
     `check:bundle`. Open built `options.html` in Chromium; screenshot light +
     dark, all four panels, enabled and unconfigured states; fix visual
