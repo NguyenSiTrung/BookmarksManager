@@ -5,6 +5,7 @@ import {
   CONSENT_TRIGGER,
   CUSTOM_JEV_PROVIDER_NAME,
   customJevDisclosure,
+  NO_DEVELOPER_SERVER_NOTE,
   PROVIDER_DISCLOSURES,
   SYNTHETIC_DESCRIPTION,
   SYNTHETIC_FIELDS,
@@ -504,7 +505,7 @@ export function ProviderSetup() {
           <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
             <li>
               Recipient: {disclosure.name} at {disclosure.origin} — the only
-              destination this consent covers.
+              destination this consent covers. {NO_DEVELOPER_SERVER_NOTE}
             </li>
             <li>
               What is sent: {SYNTHETIC_DESCRIPTION}, with exactly the fields{" "}

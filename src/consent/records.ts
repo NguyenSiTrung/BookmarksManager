@@ -14,10 +14,11 @@ export type { ConsentScope };
  * Version of the consent grant, shared by every scope. Bump this whenever the
  * set of sent fields or the set of recipients changes (plan §Global
  * Constraints): rows recorded under older versions then fail `hasConsent`
- * and the user must re-accept the disclosure. Version 2 introduced the
- * `jev_decisions` bookmark-metadata scope; version 3 introduces the Phase 5
- * LLM scopes and the dynamic-origin grants behind them, so every earlier
- * row is re-disclosed.
+ * and the user must re-accept the disclosure. Clarifying disclosure wording
+ * that changes neither (e.g. `NO_DEVELOPER_SERVER_NOTE`) does not bump it.
+ * Version 2 introduced the `jev_decisions` bookmark-metadata scope; version
+ * 3 introduces the Phase 5 LLM scopes and the dynamic-origin grants behind
+ * them, so every earlier row is re-disclosed.
  */
 export const CONSENT_VERSION = 3;
 

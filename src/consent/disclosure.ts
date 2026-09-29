@@ -182,6 +182,15 @@ export const EXTENSION_PRIVACY_POLICY_REFERENCE = `this extension's privacy poli
 export const BROAD_HOST_CAPABILITY_NOTE =
   "the broad optional host pattern is capability only — it grants the exact configured origin at runtime, never default access";
 
+/**
+ * The one fact every consent card states but the policy's length can bury:
+ * requests go straight to the user's configured origin — this extension and
+ * its developer are never a destination, relay, or middleman. Rendered
+ * verbatim in every provider disclosure and quoted by the store docs.
+ */
+export const NO_DEVELOPER_SERVER_NOTE =
+  "This extension has no server of its own — the developer receives nothing; every request goes only to the origin you configured.";
+
 // --- Phase 5: dynamic LLM provider disclosures ---------------------------
 // One typed disclosure per LLM consent scope (spec §3, FR2.8). The recipient
 // is the *configured* provider — not a preset — so the disclosure states

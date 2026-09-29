@@ -228,6 +228,32 @@ describe("disclosure", () => {
     // No network while rendering the disclosure.
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("names the stored custom origin once enabled — not the preset default", async () => {
+    render(<LlmProviderSetup />);
+    fireEvent.click(customRadio());
+    fireEvent.change(screen.getByLabelText(/base url/i), {
+      target: { value: "https://llm.example.com/v1" },
+    });
+    fireEvent.change(screen.getByLabelText(/^model$/i), {
+      target: { value: "local-model" },
+    });
+    fireEvent.change(await screen.findByLabelText(/api key/i), {
+      target: { value: "sk-live-abcdef" },
+    });
+    fireEvent.click(agreeCheckbox());
+    await waitFor(() => expect(enableButton().disabled).toBe(false));
+    fireEvent.click(enableButton());
+
+    // Enabled state folded the disclosure; it must name the grant's real
+    // origin — before the fix it still read api.openai.com from the form's
+    // untouched preset kind.
+    const disclosure = await screen.findByRole("region", {
+      name: /data disclosure/i,
+    });
+    expect(disclosure.textContent).toContain("https://llm.example.com");
+    expect(disclosure.textContent).not.toContain("api.openai.com");
+  });
 });
 
 describe("enable flow", () => {

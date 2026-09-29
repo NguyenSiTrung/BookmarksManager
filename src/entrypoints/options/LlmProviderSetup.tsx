@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LLM_SCOPE_DISCLOSURES,
   LLM_NEVER_SENT,
+  NO_DEVELOPER_SERVER_NOTE,
 } from "../../consent/disclosure";
 import {
   LlmProviderMessage,
@@ -412,16 +413,24 @@ export function LlmProviderSetup() {
       });
   };
 
+  // The disclosure must name the destination consent actually covers. With
+  // a provider live, that is the stored grant's resolved origin —
+  // `kind`/`baseUrl` reset to "openai" on mount, so deriving from the form
+  // would name a stale origin for a previously configured custom endpoint.
+  // In the setup form the pending grant is exactly what `buildSettings()`
+  // resolves from the current fields, so derive it there instead.
   const disclosureOrigin =
-    kind === "custom"
-      ? (() => {
-          try {
-            return new URL(baseUrl.trim()).origin;
-          } catch {
-            return "the configured origin";
-          }
-        })()
-      : presetOrigin(kind);
+    status?.enabled === true && status.origin !== undefined
+      ? status.origin
+      : kind === "custom"
+        ? (() => {
+            try {
+              return new URL(baseUrl.trim()).origin;
+            } catch {
+              return "the configured origin";
+            }
+          })()
+        : presetOrigin(kind);
 
   return (
     <section aria-labelledby="llm-provider-heading" className={cardClass}>
@@ -453,7 +462,8 @@ export function LlmProviderSetup() {
             <li>
               Recipient: your configured provider at{" "}
               <code className="rounded bg-muted px-1">{disclosureOrigin}</code>{" "}
-              — the only destination this consent covers.
+              — the only destination this consent covers.{" "}
+              {NO_DEVELOPER_SERVER_NOTE}
             </li>
             <li>
               What is sent during setup: {TEST_DISCLOSURE.purpose}, with

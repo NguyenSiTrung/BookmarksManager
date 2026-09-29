@@ -13,6 +13,7 @@ import {
   LLM_CREDENTIAL_USE,
   LLM_NEVER_SENT,
   LLM_SCOPE_DISCLOSURES,
+  NO_DEVELOPER_SERVER_NOTE,
   PROVIDER_DISCLOSURES,
   SYNTHETIC_FIELDS,
 } from "../../src/consent/disclosure";
@@ -232,6 +233,13 @@ describe("store disclosures match the disclosure constants", () => {
     (_name, text) => {
       expect(text).toContain("jev_decisions");
       expect(text.toLowerCase()).toContain("consentversion");
+    },
+  );
+
+  it.each(STORE_TEXTS)(
+    "%s states the developer runs no server and is never a destination",
+    (_name, text) => {
+      expect(text).toContain(NO_DEVELOPER_SERVER_NOTE);
     },
   );
 

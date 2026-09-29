@@ -93,6 +93,9 @@ build on any hit.
 
 Conservative declaration — under-declaring is the risky direction:
 
+This extension has no server of its own — the developer receives nothing;
+every request goes only to the origin you configured.
+
 - **Authentication information: yes, only if you set up the optional AI
   provider.** The user's own API key is stored encrypted on the device and sent
   only to the provider that issued it, in the `Authorization: Bearer` header,

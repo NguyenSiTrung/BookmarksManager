@@ -16,6 +16,7 @@ import {
   DECISIONS_TRIGGER_NOTE,
   DECISIONS_TRIGGERS,
   EXTENSION_PRIVACY_POLICY_REFERENCE,
+  NO_DEVELOPER_SERVER_NOTE,
   PROVIDER_DISCLOSURES,
 } from "../../consent/disclosure";
 import {
@@ -677,7 +678,7 @@ export function DecisionSettings() {
             <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
               <li>
                 Recipient: {disclosure.name} at {disclosure.origin} — the only
-                destination this consent covers.
+                destination this consent covers. {NO_DEVELOPER_SERVER_NOTE}
               </li>
               <li>
                 What is sent: {DECISIONS_DESCRIPTION}. A request may carry:
