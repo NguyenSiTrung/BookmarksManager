@@ -52,12 +52,19 @@ import {
   LlmProviderMessageResult,
 } from "../../messages/llm-provider";
 import {
+  Alert,
+  Chip,
+  Disclosure,
+  Field,
+  ProviderCard,
+  Switch,
+} from "./components";
+import { PulseIcon, ShieldIcon, ZapIcon } from "../../ui/components/icons";
+import {
   cardClass,
-  dangerButtonClass,
+  ghostDangerButtonClass,
   inputClass,
-  insetClass,
   primaryButtonClass,
-  radioCardClass,
   radioGroupClass,
   sectionHeadingClass,
   smallButtonClass,
@@ -552,89 +559,94 @@ export function DecisionSettings() {
   };
 
   return (
-    <section
-      aria-labelledby="decisions-heading"
-      className={cardClass}
-    >
-      <h2 id="decisions-heading" className={sectionHeadingClass}>
-        AI bookmark analysis
-      </h2>
-
+    <div className="space-y-4">
+      {/* Sub-card 1 — per-preset bookmark-analysis consent */}
       <section
         aria-labelledby="decisions-consent-heading"
-        className="mt-4"
+        className={cardClass}
       >
-        <h3 id="decisions-consent-heading" className="font-medium">
-          Consent to send bookmark metadata
-        </h3>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ShieldIcon className="size-4" />
+          </span>
+          <h2 id="decisions-consent-heading" className={sectionHeadingClass}>
+            Bookmark analysis consent
+          </h2>
+        </div>
 
-        <fieldset className="mt-3">
+        <fieldset className="mt-4">
           <legend className="text-sm font-medium">Provider</legend>
           <div className={radioGroupClass}>
-          {PRESET_IDS.map((id) => (
-            <label key={id} className={radioCardClass}>
-              <input
-                type="radio"
+            {PRESET_IDS.map((id) => (
+              <ProviderCard
+                key={id}
                 name="decisions-provider"
                 value={id}
                 checked={presetId === id}
                 onChange={() => onPresetChange(id)}
+                title={PROVIDER_DISCLOSURES[id].name}
+                inputLabel={PROVIDER_DISCLOSURES[id].name}
+                description={
+                  consentRead !== undefined && consentRead.preset === id
+                    ? consentRead.granted
+                      ? "Consent granted"
+                      : "Not consented"
+                    : undefined
+                }
               />
-              {PROVIDER_DISCLOSURES[id].name}
-            </label>
-          ))}
+            ))}
           </div>
         </fieldset>
 
-        <section
-          aria-label={`${disclosure.name} bookmark data disclosure`}
-          className={`mt-4 ${insetClass}`}
-        >
-          <h4 className="font-medium">
-            What bookmark analysis sends to {disclosure.name}
-          </h4>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>
-              Recipient: {disclosure.name} at {disclosure.origin} — the only
-              destination this consent covers.
-            </li>
-            <li>
-              What is sent: {DECISIONS_DESCRIPTION}. A request may carry:
-              <ul className="mt-1 list-disc space-y-1 pl-5">
-                {DECISIONS_SENT_FIELDS.map((field) => (
-                  <li key={field}>{field}</li>
+        <div className="mt-4">
+          <Disclosure
+            title={`What bookmark analysis sends to ${disclosure.name}`}
+            open={consentGranted !== true}
+            regionLabel={`${disclosure.name} bookmark data disclosure`}
+          >
+            <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
+              <li>
+                Recipient: {disclosure.name} at {disclosure.origin} — the only
+                destination this consent covers.
+              </li>
+              <li>
+                What is sent: {DECISIONS_DESCRIPTION}. A request may carry:
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {DECISIONS_SENT_FIELDS.map((field) => (
+                    <li key={field}>{field}</li>
+                  ))}
+                </ul>
+              </li>
+              <li>
+                Never sent, under any scope:{" "}
+                {DECISIONS_NEVER_SENT_FIELDS.map((field, index) => (
+                  <Fragment key={field}>
+                    {index > 0 && " and "}
+                    <code className="rounded bg-muted px-1">{field}</code>
+                  </Fragment>
                 ))}
-              </ul>
-            </li>
-            <li>
-              Never sent, under any scope:{" "}
-              {DECISIONS_NEVER_SENT_FIELDS.map((field, index) => (
-                <Fragment key={field}>
-                  {index > 0 && " and "}
-                  <code className="rounded bg-muted px-1">{field}</code>
-                </Fragment>
-              ))}
-              .
-            </li>
-            <li>Why: {DECISIONS_PURPOSES.join(", ")}.</li>
-            <li>
-              When: {DECISIONS_TRIGGERS.join(", ")} — {DECISIONS_TRIGGER_NOTE}.
-            </li>
-            <li>{disclosure.dataNote}</li>
-            <li>
-              Read the{" "}
-              <a
-                href={disclosure.privacyPolicyUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
-              >
-                {disclosure.name} privacy policy
-              </a>{" "}
-              and {EXTENSION_PRIVACY_POLICY_REFERENCE}.
-            </li>
-          </ul>
-        </section>
+                .
+              </li>
+              <li>Why: {DECISIONS_PURPOSES.join(", ")}.</li>
+              <li>
+                When: {DECISIONS_TRIGGERS.join(", ")} — {DECISIONS_TRIGGER_NOTE}.
+              </li>
+              <li>{disclosure.dataNote}</li>
+              <li>
+                Read the{" "}
+                <a
+                  href={disclosure.privacyPolicyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                >
+                  {disclosure.name} privacy policy
+                </a>{" "}
+                and {EXTENSION_PRIVACY_POLICY_REFERENCE}.
+              </li>
+            </ul>
+          </Disclosure>
+        </div>
 
         {consentGranted === undefined ? (
           <p role="status" className="mt-3 text-sm text-muted-foreground">
@@ -644,35 +656,32 @@ export function DecisionSettings() {
           <div
             role="group"
             aria-label={`${disclosure.name} analysis consent`}
-            className="mt-4"
+            className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/30 bg-accent/40 px-3 py-2.5"
           >
-            <p className="text-sm">
-              {disclosure.name} may receive the bookmark metadata listed
-              above.
+            <p className="text-sm text-foreground">
+              {disclosure.name} may receive the bookmark metadata listed above.
             </p>
             <button
               type="button"
               onClick={onRevoke}
               disabled={busy}
-              className={`mt-3 ${dangerButtonClass}`}
+              className={ghostDangerButtonClass}
             >
               Revoke {disclosure.name} analysis consent
             </button>
           </div>
         ) : (
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={agreed}
-                  onChange={(event) => setAgreed(event.target.checked)}
-                />
-                I have read the disclosure above and agree to send bookmark
-                metadata to {disclosure.name}.
-              </label>
-            </div>
+          <div className="mt-4 space-y-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={agreed}
+                onChange={(event) => setAgreed(event.target.checked)}
+              />
+              I have read the disclosure above and agree to send bookmark
+              metadata to {disclosure.name}.
+            </label>
             <button
               type="button"
               onClick={onGrant}
@@ -690,11 +699,17 @@ export function DecisionSettings() {
         )}
       </section>
 
-      <section aria-labelledby="auto-apply-heading" className="mt-6">
-        <h3 id="auto-apply-heading" className="font-medium">
-          Auto-apply decisions
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
+      {/* Sub-card 2 — auto-apply switches */}
+      <section aria-labelledby="auto-apply-heading" className={cardClass}>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ZapIcon className="size-4" />
+          </span>
+          <h2 id="auto-apply-heading" className={sectionHeadingClass}>
+            Automations
+          </h2>
+        </div>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           A decision can apply itself only at confidence {">="}{" "}
           {AUTO_APPLY_THRESHOLD} and only for the kinds enabled here — every
           other suggestion always waits for review. Both toggles stay off
@@ -707,30 +722,36 @@ export function DecisionSettings() {
             onRetry={onRetryLoad}
           />
         ) : (
-          <div className="mt-2 space-y-2">
+          <div className="mt-3 divide-y divide-border">
             {AUTO_APPLY_KINDS.map(({ kind, label }) => (
-              <label
+              <div
                 key={kind}
-                className="flex items-center gap-2 text-sm"
+                className="flex items-center justify-between gap-4 py-3 first:pt-0"
               >
-                <input
-                  type="checkbox"
+                <span className="text-sm">{label}</span>
+                <Switch
+                  aria-label={label}
                   checked={settings.autoApply[kind]}
                   disabled={busy}
-                  onChange={() => onToggle(kind)}
+                  onCheckedChange={() => onToggle(kind)}
                 />
-                {label}
-              </label>
+              </div>
             ))}
           </div>
         )}
       </section>
 
-      <section aria-labelledby="escalation-heading" className="mt-6">
-        <h3 id="escalation-heading" className="font-medium">
-          Automatic second opinions
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
+      {/* Sub-card 3 — second opinions (escalation) */}
+      <section aria-labelledby="escalation-heading" className={cardClass}>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <PulseIcon className="size-4" />
+          </span>
+          <h2 id="escalation-heading" className={sectionHeadingClass}>
+            Automatic second opinions
+          </h2>
+        </div>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           When enabled, a suggestion whose confidence falls below the review
           floor may get a second opinion from the LLM provider configured
           above — inside a Save, Analyze, or library scan you started, and
@@ -738,17 +759,18 @@ export function DecisionSettings() {
           suggestion still waits for your review.
         </p>
         {llmOrigin === null ? (
-          <p className="mt-2 text-sm text-muted-foreground">
+          <p className="mt-3 text-sm text-muted-foreground">
             Configure and enable an LLM provider above to use second
             opinions.
           </p>
         ) : (
-          <div className="mt-2 space-y-3">
-            <div>
-              <p className="text-sm font-medium text-foreground">
-                {escalationDisclosure.title}
-              </p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+          <div className="mt-3 space-y-3">
+            <Disclosure
+              title={escalationDisclosure.title}
+              open={escalationConsentRead !== true}
+              regionLabel="Second opinion disclosure"
+            >
+              <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
                 <li>Purpose: {escalationDisclosure.purpose}.</li>
                 <li>
                   Sends: {escalationDisclosure.fields.join(", ")} — never page
@@ -757,42 +779,47 @@ export function DecisionSettings() {
                 <li>When: {escalationDisclosure.trigger}.</li>
                 <li>{escalationDisclosure.credentialUse}</li>
               </ul>
-              {escalationConsentRead === null ? null : !escalationConsentRead ? (
-                <div className="mt-2">
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={escalationAgreed}
-                      disabled={escalationBusy}
-                      onChange={(event) =>
-                        setEscalationAgreed(event.target.checked)
-                      }
-                    />
-                    I allow second opinions to be sent to {llmOrigin}
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => onEscalationConsent(true)}
-                    disabled={!escalationAgreed || escalationBusy}
-                    className={`mt-2 ${primaryButtonClass}`}
-                  >
-                    Allow second opinions
-                  </button>
-                </div>
-              ) : (
+            </Disclosure>
+
+            {escalationConsentRead === null ? null : !escalationConsentRead ? (
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={escalationAgreed}
+                    disabled={escalationBusy}
+                    onChange={(event) =>
+                      setEscalationAgreed(event.target.checked)
+                    }
+                  />
+                  I allow second opinions to be sent to {llmOrigin}
+                </label>
                 <button
                   type="button"
-                  onClick={() => onEscalationConsent(false)}
-                  disabled={escalationBusy}
-                  className={`mt-2 ${smallButtonClass}`}
+                  onClick={() => onEscalationConsent(true)}
+                  disabled={!escalationAgreed || escalationBusy}
+                  className={smallButtonClass}
                 >
-                  Revoke second-opinion consent
+                  Allow second opinions
                 </button>
-              )}
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onEscalationConsent(false)}
+                disabled={escalationBusy}
+                className={ghostDangerButtonClass}
+              >
+                Revoke second-opinion consent
+              </button>
+            )}
+
+            <div className="flex items-center justify-between gap-4 border-t border-border pt-3">
+              <span className="text-sm">
+                Ask the provider for a second opinion on unsure suggestions
+              </span>
+              <Switch
+                aria-label="Ask the provider for a second opinion on unsure suggestions"
                 checked={escalation?.enabled ?? false}
                 disabled={
                   escalationBusy ||
@@ -801,14 +828,11 @@ export function DecisionSettings() {
                   escalationConsentRead !== true ||
                   escalation.monthlyBudgetUsd === null
                 }
-                onChange={(event) =>
-                  onEscalationToggle(event.target.checked)
-                }
+                onCheckedChange={(enabled) => onEscalationToggle(enabled)}
               />
-              Ask the provider for a second opinion on unsure suggestions
-            </label>
+            </div>
             {escalation !== null && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {escalation.monthlyBudgetUsd === null
                   ? "No monthly cap is set — escalation cannot run. Set one in the LLM provider section above."
                   : `Monthly cap: $${escalation.monthlyBudgetUsd.toFixed(2)}.`}
@@ -821,11 +845,17 @@ export function DecisionSettings() {
         )}
       </section>
 
-      <section aria-labelledby="blocklist-heading" className="mt-6">
-        <h3 id="blocklist-heading" className="font-medium">
-          Never send these sites
-        </h3>
-        <p className="mt-1 text-sm text-muted-foreground">
+      {/* Sub-card 4 — blocklist */}
+      <section aria-labelledby="blocklist-heading" className={cardClass}>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ShieldIcon className="size-4" />
+          </span>
+          <h2 id="blocklist-heading" className={sectionHeadingClass}>
+            Never send these sites
+          </h2>
+        </div>
+        <p className="mt-1.5 text-sm text-muted-foreground">
           Bookmarks on these hosts are never sent to a provider, no matter
           what is consented above.
         </p>
@@ -838,42 +868,34 @@ export function DecisionSettings() {
         ) : (
           <>
             {blocklist.length === 0 ? (
-              <p className="mt-2 text-sm text-muted-foreground">
+              <p className="mt-3 text-sm text-muted-foreground">
                 No sites blocked yet.
               </p>
             ) : (
-              <ul className="mt-2 space-y-1">
+              <ul className="mt-3 flex flex-wrap gap-1.5">
                 {blocklist.map((entry) => (
-                  <li
-                    key={entry}
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    <code className="rounded bg-muted px-1">{entry}</code>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${entry}`}
-                      onClick={() => onRemoveEntry(entry)}
-                      disabled={busy}
-                      className={smallButtonClass}
+                  <li key={entry}>
+                    <Chip
+                      onRemove={() => onRemoveEntry(entry)}
+                      removeLabel={`Remove ${entry}`}
                     >
-                      Remove
-                    </button>
+                      {entry}
+                    </Chip>
                   </li>
                 ))}
               </ul>
             )}
-            <div className="mt-3 flex items-center gap-2">
-              <label htmlFor="blocklist-entry" className="text-sm">
-                Block a host
-              </label>
-              <input
-                id="blocklist-entry"
-                type="text"
-                value={newEntry}
-                onChange={(event) => setNewEntry(event.target.value)}
-                placeholder="example.com"
-                className={inputClass}
-              />
+            <div className="mt-4 flex items-end gap-2">
+              <Field label="Block a host" htmlFor="blocklist-entry" className="min-w-0 flex-1">
+                <input
+                  id="blocklist-entry"
+                  type="text"
+                  value={newEntry}
+                  onChange={(event) => setNewEntry(event.target.value)}
+                  placeholder="example.com"
+                  className={inputClass}
+                />
+              </Field>
               <button
                 type="button"
                 onClick={onAddEntry}
@@ -885,31 +907,32 @@ export function DecisionSettings() {
             </div>
           </>
         )}
-        <details className="mt-3 text-sm">
-          <summary className="cursor-pointer text-muted-foreground">
-            Built-in blocklist — {BUILTIN_SENSITIVE_SITES.length} sites
-            (always applies, not editable)
-          </summary>
-          <ul className="mt-1 list-disc space-y-1 pl-5">
+        <Disclosure
+          title={`Built-in blocklist — ${BUILTIN_SENSITIVE_SITES.length} sites`}
+          subtitle="Always applies, not editable."
+          open={false}
+          regionLabel="Built-in blocklist"
+        >
+          <ul className="flex flex-wrap gap-1.5">
             {BUILTIN_SENSITIVE_SITES.map((site) => (
               <li key={site}>
-                <code className="rounded bg-muted px-1">{site}</code>
+                <Chip>{site}</Chip>
               </li>
             ))}
           </ul>
-        </details>
+        </Disclosure>
       </section>
 
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
-          {notice}
-        </p>
+        <div className="mt-4">
+          <Alert tone="success">{notice}</Alert>
+        </div>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-destructive">
-          {error}
-        </p>
+        <div className="mt-4">
+          <Alert tone="error">{error}</Alert>
+        </div>
       )}
-    </section>
+    </div>
   );
 }

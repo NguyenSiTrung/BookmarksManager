@@ -322,14 +322,14 @@ describe("decisions consent grant and revoke", () => {
 describe("auto-apply toggles", () => {
   it("renders both toggles off by default and explains the confidence bar", async () => {
     render(<DecisionSettings />);
-    const addTags = (await screen.findByRole("checkbox", {
+    const addTags = await screen.findByRole("switch", {
       name: /tag additions/i,
-    })) as HTMLInputElement;
-    const setCategory = screen.getByRole("checkbox", {
+    });
+    const setCategory = screen.getByRole("switch", {
       name: /category/i,
-    }) as HTMLInputElement;
-    expect(addTags.checked).toBe(false);
-    expect(setCategory.checked).toBe(false);
+    });
+    expect(addTags.getAttribute("aria-checked")).toBe("false");
+    expect(setCategory.getAttribute("aria-checked")).toBe("false");
     expect(screen.getByText(/0\.85/)).toBeTruthy();
     // Mount reads settings once.
     expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
@@ -337,7 +337,7 @@ describe("auto-apply toggles", () => {
 
   it("persists a flip via SET_SETTINGS carrying the whole DecisionSettings object", async () => {
     render(<DecisionSettings />);
-    const addTags = await screen.findByRole("checkbox", {
+    const addTags = await screen.findByRole("switch", {
       name: /tag additions/i,
     });
     fireEvent.click(addTags);
@@ -356,7 +356,7 @@ describe("auto-apply toggles", () => {
     });
     // The worker's echoed snapshot flips the rendered checkbox.
     await waitFor(() =>
-      expect((addTags as HTMLInputElement).checked).toBe(true),
+      expect(addTags.getAttribute("aria-checked")).toBe("true"),
     );
     expect(workerSettings.autoApply.add_tags).toBe(true);
   });
@@ -364,7 +364,7 @@ describe("auto-apply toggles", () => {
   it("toggles set_category independently of add_tags", async () => {
     workerSettings = { autoApply: { add_tags: true, set_category: false } };
     render(<DecisionSettings />);
-    const setCategory = await screen.findByRole("checkbox", {
+    const setCategory = await screen.findByRole("switch", {
       name: /category/i,
     });
     fireEvent.click(setCategory);
@@ -556,7 +556,7 @@ describe("protocol discipline", () => {
     await screen.findByRole("checkbox", { name: /agree/i });
     await grantDecisionsConsent();
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /tag additions/i }),
+      await screen.findByRole("switch", { name: /tag additions/i }),
     );
     await waitFor(() =>
       expect(sentDecisionTypes()).toContain("SET_SETTINGS"),
@@ -606,7 +606,7 @@ describe("settings load failure", () => {
     expect(retries).toHaveLength(2);
     fireEvent.click(retries[0]!);
     // The retry re-reads through the worker and recovers both sections.
-    await screen.findByRole("checkbox", { name: /tag additions/i });
+    await screen.findByRole("switch", { name: /tag additions/i });
     await screen.findByLabelText(/block a host/i);
     expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "GET_SETTINGS"]);
     expect(screen.queryByRole("alert")).toBeNull();

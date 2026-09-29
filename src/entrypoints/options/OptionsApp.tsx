@@ -101,6 +101,14 @@ export function OptionsApp() {
     history.replaceState(null, "", `#${active}`);
   }, [active]);
 
+  // External #hash links (e.g. options.html#permissions from another
+  // surface) switch panels without a reload.
+  useEffect(() => {
+    const onHash = () => setActive(panelFromHash(location.hash));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
   /**
    * Setup checklist state — read straight from Dexie so the strip updates
    * live as consents are granted or revoked in any panel. A missing table or

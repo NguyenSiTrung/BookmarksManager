@@ -177,10 +177,10 @@ async function section(): Promise<HTMLElement> {
     .parentElement as HTMLElement;
 }
 
-async function escalateToggle(): Promise<HTMLInputElement> {
-  return (await screen.findByRole("checkbox", {
+async function escalateToggle(): Promise<HTMLElement> {
+  return await screen.findByRole("switch", {
     name: /second opinion on unsure suggestions/i,
-  })) as HTMLInputElement;
+  });
 }
 
 describe("escalation section", () => {
@@ -188,7 +188,7 @@ describe("escalation section", () => {
     render(<DecisionSettings />);
     await section();
     const toggle = await escalateToggle();
-    await waitFor(() => expect(toggle.checked).toBe(false));
+    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
     expect(
       screen.getByText(/give a second opinion on a low-confidence/i),
     ).toBeTruthy();
@@ -202,7 +202,7 @@ describe("escalation section", () => {
     render(<DecisionSettings />);
     await section();
     const toggle = await escalateToggle();
-    await waitFor(() => expect(toggle.disabled).toBe(true));
+    await waitFor(() => expect(toggle).toHaveProperty("disabled", true));
     // Grant the llm_escalate scope at the provider's origin.
     fireEvent.click(
       await screen.findByRole("checkbox", {
@@ -217,7 +217,7 @@ describe("escalation section", () => {
         hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
       ).resolves.toBe(true),
     );
-    await waitFor(async () => expect((await escalateToggle()).disabled).toBe(false));
+    await waitFor(async () => expect((await escalateToggle())).toHaveProperty("disabled", false));
   });
 
   it("enabling sends LLM_ESCALATION_SET and reflects the reply", async () => {
@@ -230,7 +230,7 @@ describe("escalation section", () => {
       consentVersion: CONSENT_VERSION,
       acceptedAt: new Date().toISOString(),
     });
-    await waitFor(async () => expect((await escalateToggle()).disabled).toBe(false));
+    await waitFor(async () => expect((await escalateToggle())).toHaveProperty("disabled", false));
     fireEvent.click(await escalateToggle());
     await waitFor(() =>
       expect(sendMessageSpy).toHaveBeenCalledWith({
@@ -238,7 +238,7 @@ describe("escalation section", () => {
         enabled: true,
       }),
     );
-    await waitFor(async () => expect((await escalateToggle()).checked).toBe(true));
+    await waitFor(async () => expect((await escalateToggle()).getAttribute("aria-checked")).toBe("true"));
   });
 
   it("shows 'no provider' guidance when nothing is configured", async () => {
@@ -261,7 +261,7 @@ describe("escalation section", () => {
         screen.getByText(/configure and enable an llm provider above/i),
       ).toBeTruthy(),
     );
-    expect(screen.queryByRole("checkbox", {
+    expect(screen.queryByRole("switch", {
       name: /second opinion on unsure suggestions/i,
     })).toBeNull();
   });
@@ -286,7 +286,7 @@ describe("escalation section", () => {
         screen.getByText(/no monthly cap is set — escalation cannot run/i),
       ).toBeTruthy(),
     );
-    expect((await escalateToggle()).disabled).toBe(true);
+    expect((await escalateToggle())).toHaveProperty("disabled", true);
   });
 
   it("renders the worker's {ok:false} verbatim in the page alert", async () => {
@@ -302,7 +302,7 @@ describe("escalation section", () => {
       consentVersion: CONSENT_VERSION,
       acceptedAt: new Date().toISOString(),
     });
-    await waitFor(async () => expect((await escalateToggle()).disabled).toBe(false));
+    await waitFor(async () => expect((await escalateToggle())).toHaveProperty("disabled", false));
     fireEvent.click(await escalateToggle());
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toContain(
