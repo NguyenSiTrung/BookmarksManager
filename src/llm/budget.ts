@@ -1,4 +1,8 @@
-import type { ModelPricing } from "../schemas/llm";
+import type {
+  BudgetChoice,
+  LlmProviderRecord,
+  ModelPricing,
+} from "../schemas/llm";
 
 /**
  * Pure monthly budget and usage accounting for the dynamic LLM layer
@@ -41,6 +45,16 @@ export interface LlmUsageRow {
 export type ReservationStatus = "active" | "settled" | "released";
 export type CostProvenance = "reported" | "estimated" | "unknown";
 export type RequestKind = "manual" | "automatic";
+
+/**
+ * Classify a provider record's spend-ceiling decision. Mirrors the
+ * {@link BudgetChoice} schema; kept as a plain function so the budget math
+ * stays free of schema parsing.
+ */
+export function budgetChoiceOf(record: LlmProviderRecord): BudgetChoice {
+  if (record.monthlyBudgetUnlimited === true) return "unlimited";
+  return record.monthlyBudgetUsd !== undefined ? "capped" : "unset";
+}
 
 /**
  * A pending-cost placeholder created before a request. `reservedUsd` is the

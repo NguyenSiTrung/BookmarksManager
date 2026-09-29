@@ -195,11 +195,13 @@ export async function sendLlmMessage(
 }
 
 /**
- * Drive the real Options custom-endpoint enable flow — the only branch that
- * exposes the optional per-million-token pricing fields. `baseUrl` must be
- * canonical HTTPS (or loopback HTTP) and its origin pattern must already be
- * install-time granted via `extraHostPatterns`. The form lives in the
- * Connections panel, so the helper selects that panel first.
+ * Drive the real Options custom-endpoint enable flow, including the optional
+ * per-million-token pricing fields (shared by both provider branches: a
+ * preset pre-fills nothing, its default model is priced by the built-in
+ * table). `baseUrl` must be canonical HTTPS (or loopback HTTP) and its origin
+ * pattern must already be install-time granted via `extraHostPatterns`. The
+ * form lives in the Connections panel, so the helper selects that panel
+ * first.
  */
 export async function enableCustom(
   page: Page,
@@ -262,7 +264,13 @@ export async function enableCustom(
  */
 export async function enableOpenAi(
   page: Page,
-  details: { key: string; model?: string; budgetCap?: string },
+  details: {
+    key: string;
+    model?: string;
+    budgetCap?: string;
+    /** Pick the explicit "no monthly cap" ceiling instead of a cap. */
+    budgetUnlimited?: boolean;
+  },
 ): Promise<void> {
   await openOptionsPanel(page, "Connections");
   await expect(
@@ -274,6 +282,11 @@ export async function enableOpenAi(
   }
   if (details.budgetCap !== undefined) {
     await page.locator("#llm-budget-cap").fill(details.budgetCap);
+  }
+  if (details.budgetUnlimited === true) {
+    await page
+      .getByLabel(/no monthly cap — spend without a limit/i)
+      .check();
   }
   await page.locator("#llm-api-key").fill(details.key);
   await page

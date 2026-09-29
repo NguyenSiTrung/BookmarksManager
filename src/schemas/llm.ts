@@ -11,6 +11,15 @@ export const LlmPresetId = z.enum(["openai", "openrouter"]);
 export type LlmPresetId = z.infer<typeof LlmPresetId>;
 
 /**
+ * The user's spend-ceiling decision for a provider: a monthly `capped` USD
+ * amount, an explicitly chosen `unlimited` ceiling, or `unset` — never
+ * decided. Unattended (automatic) requests refuse while `unset`: an
+ * unbounded background spend must be a choice, not a default.
+ */
+export const BudgetChoice = z.enum(["capped", "unlimited", "unset"]);
+export type BudgetChoice = z.infer<typeof BudgetChoice>;
+
+/**
  * The only authentication modes a provider may use. `bearer` sends
  * `Authorization: Bearer <token>`; `api-key` sends `api-key: <token>`;
  * `none` sends no credential header. Arbitrary headers are never allowed.
@@ -95,17 +104,19 @@ export const LlmBaseUrl = z
 export type LlmBaseUrl = z.infer<typeof LlmBaseUrl>;
 
 /**
- * Persisted LLM provider configuration. Presets carry only their id and the
- * selected model (auth and endpoints are fixed by the preset); custom
- * providers carry the canonical base URL, model, auth mode, and optional
- * pricing. Strict objects reject unknown keys so misconfigured or hostile
- * stored rows fail closed.
+ * Persisted LLM provider configuration. Presets carry their id, the selected
+ * model, and an optional pricing override (the built-in table covers the
+ * preset default model; anything else needs the user's own numbers before an
+ * unattended request may run); custom providers carry the canonical base URL,
+ * model, auth mode, and optional pricing. Strict objects reject unknown keys
+ * so misconfigured or hostile stored rows fail closed.
  */
 export const LlmProviderSettings = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("preset"),
     preset: LlmPresetId,
     model: z.string().trim().min(1).optional(),
+    pricing: ModelPricing.optional(),
   }),
   z.strictObject({
     kind: z.literal("custom"),
@@ -123,15 +134,38 @@ export type LlmProviderSettings = z.infer<typeof LlmProviderSettings>;
  * (e.g. `…wxyz`) and must never hold a raw credential; `tier` is the
  * structured-output capability discovered by Test Connection. Strict — a
  * stored row carrying extra fields (e.g. a raw key) fails closed.
+ *
+ * The spend ceiling is a deliberate three-state choice (see
+ * {@link budgetChoiceOf}): a capped `monthlyBudgetUsd`, an explicit
+ * `monthlyBudgetUnlimited: true`, or — with neither — "not chosen yet",
+ * which refuses unattended (automatic) requests. An explicit unlimited
+ * state exists so "no ceiling" is something the user picked and the UI can
+ * warn about, never a silent default.
  */
-export const LlmProviderRecord = z.strictObject({
-  providerId: z.string().min(1).max(300),
-  provider: LlmProviderSettings,
-  keySuffix: z.string().min(1).max(8).optional(),
-  tier: StructuredOutputTier.optional(),
-  /** Monthly spend cap in USD; requests without reliable pricing refuse
-   *  unless the user explicitly confirms an unknown-cost request (FR7). */
-  monthlyBudgetUsd: z.number().nonnegative().optional(),
-  configuredAt: z.iso.datetime(),
-});
+export const LlmProviderRecord = z
+  .strictObject({
+    providerId: z.string().min(1).max(300),
+    provider: LlmProviderSettings,
+    keySuffix: z.string().min(1).max(8).optional(),
+    tier: StructuredOutputTier.optional(),
+    /** Monthly spend cap in USD; requests without reliable pricing refuse
+     *  unless the user explicitly confirms an unknown-cost request (FR7). */
+    monthlyBudgetUsd: z.number().nonnegative().optional(),
+    /** The user chose to spend without a monthly ceiling. */
+    monthlyBudgetUnlimited: z.literal(true).optional(),
+    configuredAt: z.iso.datetime(),
+  })
+  .superRefine((record, ctx) => {
+    if (
+      record.monthlyBudgetUnlimited === true &&
+      record.monthlyBudgetUsd !== undefined
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["monthlyBudgetUnlimited"],
+        message:
+          "a provider cannot be both capped and unlimited; drop monthlyBudgetUsd",
+      });
+    }
+  });
 export type LlmProviderRecord = z.infer<typeof LlmProviderRecord>;

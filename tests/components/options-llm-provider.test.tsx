@@ -256,6 +256,64 @@ describe("disclosure", () => {
   });
 });
 
+describe("spending ceiling", () => {
+  it("sends neither a cap nor unlimited when the form is left untouched", async () => {
+    render(<LlmProviderSetup />);
+    await fillPresetAndAgree();
+    fireEvent.click(enableButton());
+    await screen.findByRole("group", { name: /enabled provider/i });
+    const configure = callsOfType("LLM_CONFIGURE")[0] as Record<
+      string,
+      unknown
+    >;
+    // "Not chosen" must never be sent as an unlimited ceiling.
+    expect(configure).not.toHaveProperty("monthlyBudgetUsd");
+    expect(configure).not.toHaveProperty("monthlyBudgetUnlimited");
+  });
+
+  it("sends the typed cap", async () => {
+    render(<LlmProviderSetup />);
+    // Await the mount status read before interacting (keeps updates in act).
+    fireEvent.change(await screen.findByLabelText(/monthly cap \(usd\)/i), {
+      target: { value: "5" },
+    });
+    await fillPresetAndAgree();
+    fireEvent.click(enableButton());
+    await screen.findByRole("group", { name: /enabled provider/i });
+    expect(callsOfType("LLM_CONFIGURE")[0]).toMatchObject({
+      monthlyBudgetUsd: 5,
+    });
+  });
+
+  it("sends an explicit unlimited choice and warns about it", async () => {
+    render(<LlmProviderSetup />);
+    const cap = (await screen.findByLabelText(
+      /monthly cap \(usd\)/i,
+    )) as HTMLInputElement;
+    fireEvent.change(cap, { target: { value: "5" } });
+    fireEvent.click(
+      screen.getByLabelText(/no monthly cap — spend without a limit/i),
+    );
+    // Choosing unlimited clears and disables the cap field, and states the
+    // consequence rather than hiding it.
+    expect(cap.disabled).toBe(true);
+    expect(cap.value).toBe("");
+    expect(
+      screen.getByText(/library scan can send a request per bookmark/i),
+    ).toBeTruthy();
+
+    await fillPresetAndAgree();
+    fireEvent.click(enableButton());
+    await screen.findByRole("group", { name: /enabled provider/i });
+    const configure = callsOfType("LLM_CONFIGURE")[0] as Record<
+      string,
+      unknown
+    >;
+    expect(configure).toMatchObject({ monthlyBudgetUnlimited: true });
+    expect(configure).not.toHaveProperty("monthlyBudgetUsd");
+  });
+});
+
 describe("enable flow", () => {
   it("mount sends only a status lookup — never a test request", async () => {
     render(<LlmProviderSetup />);

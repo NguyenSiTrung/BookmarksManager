@@ -1,6 +1,6 @@
 import { grantConsentAtOrigin } from "../consent/records";
 import { db } from "../db/database";
-import { monthlyBudgetSnapshot } from "../llm/budget";
+import { budgetChoiceOf, monthlyBudgetSnapshot } from "../llm/budget";
 import type { MonthlyBudgetSnapshot } from "../llm/budget";
 import { ExplainError, explainDecision } from "../llm/explain";
 import {
@@ -8,11 +8,13 @@ import {
   writeLlmEscalationSettings,
 } from "../llm/escalate";
 import { LlmHttpError } from "../llm/client";
+import { resolveProviderPricing } from "../llm/pricing";
 import { resolveLlmDestination } from "../llm/providers";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import type { TokenUsage } from "../llm/wire";
 import { LlmGateError } from "../net/llm-send";
+import { BudgetChoice } from "../schemas/llm";
 import { z } from "../schemas/z";
 
 /**
@@ -106,8 +108,19 @@ export const LlmEscalationStatusResult = z.object({
   providerId: z.string().optional(),
   /** A stored provider record exists for `providerId`. */
   providerConfigured: z.boolean(),
-  /** The configured monthly cap; `null` when none — escalation cannot run. */
+  /** The configured monthly cap; `null` when unlimited or not yet chosen. */
   monthlyBudgetUsd: z.number().nonnegative().nullable(),
+  /**
+   * The spend-ceiling decision: `capped`, an explicit `unlimited`, or
+   * `unset`. Escalation (unattended spend) refuses in `unset`.
+   */
+  budget: BudgetChoice,
+  /**
+   * Whether requests to this provider can be priced at all — a built-in
+   * preset price or a user-entered override. Automatic requests refuse
+   * without it, so the panel must say so instead of failing silently.
+   */
+  pricingKnown: z.boolean(),
 });
 export type LlmEscalationStatusResult = z.infer<
   typeof LlmEscalationStatusResult
@@ -244,7 +257,13 @@ async function escalationStatus(): Promise<LlmFeatureMessageResult> {
   const escalation: LlmEscalationStatusResult = {
     enabled: settings.enabled,
     providerConfigured: record !== null,
-    monthlyBudgetUsd: record?.monthlyBudgetUsd ?? null,
+    monthlyBudgetUsd:
+      record !== null && record.monthlyBudgetUsd !== undefined
+        ? record.monthlyBudgetUsd
+        : null,
+    budget: record === null ? "unset" : budgetChoiceOf(record),
+    pricingKnown:
+      record !== null && resolveProviderPricing(record.provider) !== undefined,
     ...(settings.providerId !== undefined
       ? { providerId: settings.providerId }
       : {}),

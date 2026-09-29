@@ -390,8 +390,9 @@ test("unsure analyze escalates automatically under the cap", async () => {
   const page = await openSurface(ext.context, ext.id, "options");
   await enableTypesafe(page, { key: "e2e-jev-key" });
   await grantDecisionsConsent(page);
-  // Escalation needs a priced provider WITH a monthly cap — only the
-  // custom branch exposes both fields.
+  // Escalation needs a priced provider WITH a chosen ceiling. A custom
+  // endpoint needs both rates entered (nothing built-in prices it); the
+  // preset default model gets its price from the built-in table.
   await enableCustom(page, {
     baseUrl: "https://llm-custom.test/v1",
     key: "sk-e2e",
@@ -456,6 +457,118 @@ test("unsure analyze escalates automatically under the cap", async () => {
   }>(panel, "decisions");
   expect(rows.some((r) => r.status === "unsure")).toBe(true);
   expect(rows.some((r) => r.escalation?.llmVerdict === "agree")).toBe(true);
+
+  await ext.context.close();
+  ext.dispose();
+});
+
+test("an explicit unlimited ceiling unlocks preset escalation, and the ceiling stays editable", async () => {
+  test.setTimeout(150_000);
+  const ext = await launchLlmExtension();
+  const openai = await routeFakeOpenAi(ext.context, {
+    content: JSON.stringify({
+      verdict: "agree",
+      rationale: "Second opinion agrees.",
+    }),
+  });
+  await routeFakeDecisions(ext.context, {
+    choices: {},
+    noul: {},
+    confidence: 0.3,
+  });
+  const page = await openSurface(ext.context, ext.id, "options");
+  await enableTypesafe(page, { key: "e2e-jev-key" });
+  await grantDecisionsConsent(page);
+
+  // The OpenAI preset's default model carries a built-in price, so no rates
+  // are typed here: the ceiling is the only choice, and "unlimited" is a
+  // deliberate one. Before the pricing table existed this combination could
+  // never escalate, because nothing could price a preset's request.
+  await openOptionsPanel(page, "Connections");
+  await page
+    .getByLabel(/no monthly cap — spend without a limit/i)
+    .check();
+  await expect(
+    page.getByText(/library scan can send a request per bookmark/i),
+  ).toBeVisible();
+  await page.locator("#llm-api-key").fill("sk-e2e");
+  await page.getByLabel(/agree to enable this LLM provider/).check();
+  await page.getByRole("button", { name: "Enable LLM provider" }).click();
+  await expect(
+    page.getByRole("group", { name: "LLM enabled provider" }),
+  ).toBeVisible({ timeout: 15_000 });
+
+  // DecisionSettings reads the provider + escalation status on mount.
+  await page.reload();
+  await openOptionsPanel(page, "Permissions");
+  await page
+    .getByLabel(/I allow second opinions to be sent to https:\/\/api\.openai\.com/)
+    .check();
+  await page
+    .getByRole("button", { name: "Allow second opinions" })
+    .click();
+  await expect(page.getByText(/Second-opinion consent recorded/)).toBeVisible({
+    timeout: 15_000,
+  });
+  const toggle = page.getByLabel(
+    "Ask the provider for a second opinion on unsure suggestions",
+  );
+  // Unlimited + built-in pricing is enough to unlock the unattended path.
+  await expect(toggle).toBeEnabled({ timeout: 15_000 });
+  await toggle.click();
+  await expect(toggle).toBeChecked({ timeout: 15_000 });
+  await expect(page.getByText(/this can spend without a limit/i)).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // The unattended send really happens: analyze a low-confidence bookmark.
+  const panel = await openSurface(ext.context, ext.id, "sidepanel");
+  const bm = await createBookmark(panel, {
+    title: "Preset escalation",
+    url: "https://lowconf-preset.io/",
+  });
+  const analyzed = (await sendLlmMessage(panel, {
+    type: "ANALYZE_BOOKMARK",
+    bookmarkId: bm.id,
+  })) as { ok: boolean; result?: { sent: boolean } };
+  expect(analyzed.ok, JSON.stringify(analyzed)).toBe(true);
+  const deadline = Date.now() + 15_000;
+  let escalated = false;
+  while (Date.now() < deadline) {
+    if (openai.requests.length > 0) {
+      escalated = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  expect(escalated).toBe(true);
+
+  // The ceiling is editable on the enabled provider — no revoke, no key
+  // re-entry. The budget panel lives in the Connections panel, so switch
+  // back to it; the cap field stays disabled until "unlimited" is unticked.
+  await openOptionsPanel(page, "Connections");
+  const budgetPanel = page.getByRole("region", { name: "LLM budget" });
+  const panelCap = budgetPanel.getByLabel("Monthly cap (USD)");
+  await expect(panelCap).toBeVisible({ timeout: 15_000 });
+  await expect(panelCap).toBeDisabled();
+  await budgetPanel
+    .getByLabel(/no monthly cap — spend without a limit/i)
+    .uncheck();
+  await expect(panelCap).toBeEnabled();
+  await panelCap.fill("7.5");
+  await budgetPanel.getByRole("button", { name: "Save ceiling" }).click();
+  await expect(budgetPanel.getByText("$7.50", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  const status = (await sendLlmMessage(page, {
+    type: "LLM_ESCALATION_STATUS",
+  })) as {
+    ok: boolean;
+    escalation?: { budget?: string; monthlyBudgetUsd?: number | null };
+  };
+  expect(status.ok, JSON.stringify(status)).toBe(true);
+  expect(status.escalation?.budget).toBe("capped");
+  expect(status.escalation?.monthlyBudgetUsd).toBe(7.5);
 
   await ext.context.close();
   ext.dispose();

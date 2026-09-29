@@ -172,8 +172,9 @@ message body are never sent under any scope.
 - **Automatic second opinions** (`llm_escalate`) — sends the decision state,
   the question, the allowed options, the Jev probabilities, and the Jev
   answer for a second opinion on a low-confidence decision. Runs only inside
-  a Save, Analyze, or library scan you started, within the monthly budget
-  you set; it never applies changes by itself.
+  a Save, Analyze, or library scan you started, within the spending ceiling
+  you chose — a monthly cap, or an explicit "no cap"; it never applies
+  changes by itself.
 - **Restructure proposals** (`llm_restructure`) — sends folder paths,
   category counts, tag counts, domains, and representative titles (capped)
   to propose a folder structure. Proposals are plans for your review —
@@ -192,10 +193,12 @@ message body are never sent under any scope.
 Each grant is tied to the exact configured origin (including the port for a
 loopback endpoint). Revoking the provider deletes every consent scope at its
 origin, removes the host permission, and deletes the stored credential.
-LLM spending is metered: when reliable per-token pricing is configured, each
-request first reserves an estimated cost; when it is not, requests run only
-inside the unknown-cost mode you chose. Nothing is sent on install, on a
-timer, or in the background.
+LLM spending is metered: each request first reserves an estimated cost from
+per-token prices — the built-in price for a preset's default model, or the
+rates you enter for any other model. When no price is known, automatic
+(unattended) requests refuse to run, and on-demand ones ask for an explicit
+confirmation before sending. Nothing is sent on install, on a timer, or in
+the background.
 
 The consent is versioned — `consentVersion`, currently 3 — so a change to the
 sent fields or recipients re-shows the disclosure before the next request.

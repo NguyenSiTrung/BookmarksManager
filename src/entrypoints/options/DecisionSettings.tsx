@@ -46,6 +46,7 @@ import {
   type JevProviderId,
   PresetId,
 } from "../../schemas/provider";
+import type { BudgetChoice } from "../../schemas/llm";
 import {
   ProviderMessage,
   ProviderMessageResult,
@@ -202,6 +203,8 @@ export function DecisionSettings() {
     enabled: boolean;
     providerConfigured: boolean;
     monthlyBudgetUsd: number | null;
+    budget: BudgetChoice;
+    pricingKnown: boolean;
   } | null>(null);
   const [escalationAgreed, setEscalationAgreed] = useState(false);
   const [escalationBusy, setEscalationBusy] = useState(false);
@@ -414,7 +417,7 @@ export function DecisionSettings() {
         setEscalationAgreed(false);
         setNotice(
           grant
-            ? "Second-opinion consent recorded. Escalation still needs the toggle below and a monthly cap on the provider."
+            ? "Second-opinion consent recorded. Escalation still needs the toggle below plus a spending ceiling (a monthly cap or unlimited) on the provider."
             : "Second-opinion consent revoked — escalation can no longer send.",
         );
       })
@@ -937,16 +940,21 @@ export function DecisionSettings() {
                   escalation === null ||
                   !escalation.providerConfigured ||
                   escalationConsentRead !== true ||
-                  escalation.monthlyBudgetUsd === null
+                  escalation.budget === "unset" ||
+                  escalation.pricingKnown !== true
                 }
                 onCheckedChange={(enabled) => onEscalationToggle(enabled)}
               />
             </div>
             {escalation !== null && (
               <p className="text-xs text-muted-foreground">
-                {escalation.monthlyBudgetUsd === null
-                  ? "No monthly cap is set — escalation cannot run. Set one in the LLM provider section above."
-                  : `Monthly cap: $${escalation.monthlyBudgetUsd.toFixed(2)}.`}
+                {escalation.budget === "unset"
+                  ? "No spending ceiling is chosen — escalation cannot run. Set a monthly cap or pick unlimited in the LLM provider section above."
+                  : escalation.pricingKnown !== true
+                    ? "No per-token price is known for this model — unattended requests refuse. Set the input/output prices in the LLM provider section above."
+                    : escalation.budget === "unlimited"
+                      ? "No monthly cap — this can spend without a limit."
+                      : `Monthly cap: $${(escalation.monthlyBudgetUsd ?? 0).toFixed(2)}.`}
                 {escalation.providerConfigured
                   ? ""
                   : " The stored provider is gone — configure it again above."}

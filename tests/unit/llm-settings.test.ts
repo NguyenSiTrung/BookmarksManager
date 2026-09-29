@@ -120,6 +120,39 @@ describe("saveLlmProvider / readLlmProvider", () => {
     expect(await readLlmProvider("preset:openai")).toBeNull();
   });
 
+  it("rejects a record that is both capped and unlimited", async () => {
+    await expect(
+      saveLlmProvider(
+        record({ monthlyBudgetUsd: 5, monthlyBudgetUnlimited: true }),
+      ),
+    ).rejects.toThrow();
+    expect(await readLlmProvider("preset:openai")).toBeNull();
+  });
+
+  it("round-trips an explicitly unlimited ceiling", async () => {
+    await saveLlmProvider(record({ monthlyBudgetUnlimited: true }));
+    const stored = await readLlmProvider("preset:openai");
+    expect(stored?.monthlyBudgetUnlimited).toBe(true);
+    expect(stored?.monthlyBudgetUsd).toBeUndefined();
+  });
+
+  it("round-trips a preset pricing override", async () => {
+    await saveLlmProvider(
+      record({
+        provider: {
+          kind: "preset",
+          preset: "openai",
+          model: "gpt-4o-2024-11-20",
+          pricing: { inputPerMillion: 2.5, outputPerMillion: 10 },
+        },
+      }),
+    );
+    const stored = await readLlmProvider("preset:openai");
+    expect(stored?.provider).toMatchObject({
+      pricing: { inputPerMillion: 2.5, outputPerMillion: 10 },
+    });
+  });
+
   it("never persists raw credential material in IndexedDB", async () => {
     const secret = "sk-live-secret-value";
     await saveCredential("preset:openai", secret);

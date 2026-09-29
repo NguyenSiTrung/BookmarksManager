@@ -13,6 +13,7 @@ import {
   type RequestKind,
 } from "../llm/budget";
 import { resolveLlmDestination } from "../llm/providers";
+import { resolveProviderPricing } from "../llm/pricing";
 import { ChatCompletionRequest } from "../llm/wire";
 import { LLM_CONSENT_SCOPES } from "../schemas/provider";
 import { readCredential } from "../security/credentials";
@@ -324,16 +325,14 @@ export async function sendLlmConsented(
           liveReservations.push(row);
         }
       }
+      const pricing = resolveProviderPricing(record.provider);
       const result = reserveBudget({
         reservationId,
         providerId: record.providerId,
         model: destination.model,
         maxInputTokens: input.maxInputTokens,
         maxOutputTokens: input.maxOutputTokens,
-        ...(record.provider.kind === "custom" &&
-        record.provider.pricing !== undefined
-          ? { pricing: record.provider.pricing }
-          : {}),
+        ...(pricing !== undefined ? { pricing } : {}),
         kind: input.kind,
         ...(record.monthlyBudgetUsd !== undefined
           ? { monthlyBudgetUsd: record.monthlyBudgetUsd }

@@ -114,11 +114,16 @@ test("command palette opens with Ctrl+K and Enter opens the hit", async () => {
       results.getByRole("option", { name: /Palette target page/ }),
     ).toBeVisible({ timeout: 15_000 });
 
-    // Enter opens the highlighted bookmark hit in a real new tab.
+    // Enter opens the highlighted bookmark hit in a real new tab. The
+    // Options shell rewrites its own URL to `#connections` (its default
+    // panel) as soon as it mounts, so asserting a frozen hash-free URL is a
+    // race — assert the page, tolerating the shell's default hash.
     const tabPromise = context.waitForEvent("page", { timeout: 15_000 });
     await paletteInput.press("Enter");
     const tab = await tabPromise;
-    await expect(tab).toHaveURL(targetUrl);
+    await expect(tab).toHaveURL(
+      new RegExp(`${targetUrl.replace(/\./g, "\\.")}(#connections)?$`),
+    );
     await tab.close();
   } finally {
     await context.close();

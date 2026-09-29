@@ -24,6 +24,8 @@ vi.stubGlobal("crypto", webcrypto);
 const PROVIDER_ID = "preset:openai";
 const ORIGIN = "https://api.openai.com";
 const MODEL = "gpt-4o-mini";
+/** A preset model id with no built-in price — the unknown-cost path. */
+const UNPRICED_MODEL = "gpt-4o-mini-2024-07-18";
 const NOW = new Date("2026-09-15T12:00:00.000Z");
 
 let containsSpy: ReturnType<typeof vi.fn>;
@@ -309,20 +311,69 @@ describe("sendLlmConsented happy path", () => {
   });
 
   it("manual request without pricing needs confirmation_required", async () => {
-    await saveLlmProvider(providerRecord()); // preset: no pricing
-    const { result, fetch } = send({}, { unknownCostConfirmed: false });
+    // A preset model with no built-in price and no override — the built-in
+    // table covers the preset's default model only.
+    await saveLlmProvider(
+      providerRecord({
+        provider: { kind: "preset", preset: "openai", model: UNPRICED_MODEL },
+      }),
+    );
+    const { result, fetch } = send({ request: validRequest(UNPRICED_MODEL) }, {
+      unknownCostConfirmed: false,
+    });
     await expectGateBlock(result, "confirmation_required");
     expect(fetch.requests).toHaveLength(0);
   });
 
   it("automatic requests can never use the unknown-cost override", async () => {
-    await saveLlmProvider(providerRecord());
-    const { result, fetch } = send({
-      kind: "automatic",
-      unknownCostConfirmed: true,
-    });
+    await saveLlmProvider(
+      providerRecord({
+        provider: { kind: "preset", preset: "openai", model: UNPRICED_MODEL },
+      }),
+    );
+    const { result, fetch } = send(
+      { kind: "automatic", request: validRequest(UNPRICED_MODEL) },
+      { unknownCostConfirmed: true },
+    );
     await expectGateBlock(result, "pricing_required");
     expect(fetch.requests).toHaveLength(0);
+  });
+
+  it("prices a preset from the built-in table without a confirmation", async () => {
+    // The preset default model is priced out of the box, so neither the
+    // unknown-cost confirmation nor a manual override is needed.
+    await saveLlmProvider(providerRecord());
+    const { result, fetch } = send({ kind: "automatic" }, {
+      unknownCostConfirmed: false,
+    });
+    const { response, reservation } = await result;
+    expect(response.status).toBe(200);
+    expect(fetch.requests).toHaveLength(1);
+    expect(reservation.reservedUsd).toBeGreaterThan(0);
+    // 0.15 USD/1M × 100 tokens + 0.60 USD/1M × 50 tokens = 0.000045.
+    expect(reservation.reservedUsd).toBeCloseTo(0.000045, 8);
+  });
+
+  it("a manual price override beats the built-in preset table", async () => {
+    await saveLlmProvider(
+      providerRecord({
+        provider: {
+          kind: "preset",
+          preset: "openai",
+          model: UNPRICED_MODEL,
+          pricing: { inputPerMillion: 3, outputPerMillion: 4 },
+        },
+      }),
+    );
+    const { result, fetch } = send(
+      { kind: "automatic", request: validRequest(UNPRICED_MODEL) },
+      { unknownCostConfirmed: false },
+    );
+    const { response, reservation } = await result;
+    expect(response.status).toBe(200);
+    expect(fetch.requests).toHaveLength(1);
+    // 3 USD/1M × 100 tokens + 4 USD/1M × 50 tokens = 0.0005.
+    expect(reservation.reservedUsd).toBeCloseTo(0.0005, 8);
   });
 
   it("retries a transport failure once, then succeeds", async () => {

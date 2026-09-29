@@ -134,10 +134,15 @@ yet installed are marked **[planned]**.
   egress gate; `structured.ts` runs the three-tier output cascade
   (json_schema → json_object → prompt_only) with capability-only fallback
   on 400/404/422 responses; `budget.ts` meters spending with reservations
-  and an unpriced manual-confirmation escape; `escalate.ts` routes unsure
-  decisions for a second opinion without applying anything. `src/extract/`
-  holds the click-triggered Readability page extraction; `src/restructure/`
-  the bounded synopsis, proposal, Jev assignment, diff, and guarded apply.
+  and an unpriced manual-confirmation escape, and classifies the record's
+  explicit ceiling (`budgetChoiceOf`: capped / unlimited / unset);
+  `pricing.ts` resolves the per-token price a reservation uses — the
+  built-in table for a preset's default model, else the user's override;
+  `escalate.ts` routes unsure decisions for a second opinion without
+  applying anything, and only when a ceiling is chosen and pricing is known.
+  `src/extract/` holds the click-triggered Readability page extraction;
+  `src/restructure/` the bounded synopsis, proposal, Jev assignment, diff,
+  and guarded apply.
 
 ## Quality and Delivery
 

@@ -6,10 +6,12 @@ import {
 } from "../consent/records";
 import { db } from "../db/database";
 import {
+  budgetChoiceOf,
   monthlyBudgetSnapshot,
   type MonthlyBudgetSnapshot,
 } from "../llm/budget";
 import { createLlmClient, LlmHttpError } from "../llm/client";
+import { resolveProviderPricing } from "../llm/pricing";
 import { resolveLlmDestination } from "../llm/providers";
 import {
   readActiveLlmProvider,
@@ -22,10 +24,12 @@ import {
   type ChatCompletionRequest,
 } from "../llm/wire";
 import {
+  BudgetChoice,
   LlmProviderRecord,
   LlmProviderSettings,
   StructuredOutputTier,
   LlmAuthMode,
+  ModelPricing,
 } from "../schemas/llm";
 import { z } from "../schemas/z";
 import {
@@ -68,6 +72,7 @@ export const LlmProviderMessage = z.discriminatedUnion("type", [
     settings: LlmProviderSettings,
     key: z.string().min(1).optional(),
     monthlyBudgetUsd: z.number().nonnegative().optional(),
+    monthlyBudgetUnlimited: z.literal(true).optional(),
   }),
   z.strictObject({
     type: z.literal("LLM_PROVIDER_STATUS"),
@@ -89,6 +94,24 @@ export const LlmProviderMessage = z.discriminatedUnion("type", [
     type: z.literal("LLM_BUDGET_SNAPSHOT"),
     providerId: z.string().min(1).optional(),
   }),
+  // Change the spend ceiling (and, for a preset whose model has no built-in
+  // price, the per-token rates) on an already-configured provider. Exists so
+  // the choice is editable without revoking the provider and re-entering the
+  // credential — the setup form is only reachable while disabled.
+  z.strictObject({
+    type: z.literal("LLM_BUDGET_SET"),
+    providerId: z.string().min(1),
+    budget: z.discriminatedUnion("kind", [
+      z.strictObject({
+        kind: z.literal("capped"),
+        usd: z.number().nonnegative(),
+      }),
+      z.strictObject({ kind: z.literal("unlimited") }),
+      z.strictObject({ kind: z.literal("unset") }),
+    ]),
+    /** Manual per-token override; `null` clears it back to the built-in table. */
+    pricing: ModelPricing.nullable().optional(),
+  }),
 ]);
 export type LlmProviderMessage = z.infer<typeof LlmProviderMessage>;
 
@@ -99,6 +122,7 @@ const LLM_MESSAGE_TYPES = new Set([
   "LLM_TEST",
   "LLM_REVOKE",
   "LLM_BUDGET_SNAPSHOT",
+  "LLM_BUDGET_SET",
 ]);
 
 /**
@@ -161,6 +185,10 @@ export const LlmProviderStatus = z.object({
   keySuffix: z.string().optional(),
   tier: StructuredOutputTier.optional(),
   monthlyBudgetUsd: z.number().nonnegative().optional(),
+  /** The spend-ceiling decision; `unset` blocks unattended requests. */
+  budget: BudgetChoice.optional(),
+  /** `true` when a reservation can be priced (built-in table or override). */
+  pricingKnown: z.boolean().optional(),
 });
 export type LlmProviderStatus = z.infer<typeof LlmProviderStatus>;
 
@@ -324,7 +352,83 @@ async function readStatus(
   if (record.monthlyBudgetUsd !== undefined) {
     status.monthlyBudgetUsd = record.monthlyBudgetUsd;
   }
+  status.budget = budgetChoiceOf(record);
+  status.pricingKnown = resolveProviderPricing(record.provider) !== undefined;
   return status;
+}
+
+/**
+ * Change the spend ceiling (and the manual pricing override) of an
+ * already-configured provider. Only those two record fields are touched —
+ * provider settings, key material, consent rows, and the host permission
+ * stay exactly as they are, so this never re-prompts and never re-sends the
+ * credential.
+ */
+async function setBudget(message: {
+  providerId: string;
+  budget:
+    | { kind: "capped"; usd: number }
+    | { kind: "unlimited" }
+    | { kind: "unset" };
+  pricing?: ModelPricing | null;
+}): Promise<LlmProviderMessageResult> {
+  const record = await readLlmProvider(message.providerId);
+  if (record === null) {
+    return failure(
+      "not_configured",
+      "That provider is not configured; enable it first.",
+    );
+  }
+
+  const { budget } = message;
+  const next: LlmProviderRecord = {
+    ...record,
+    provider: applyPricingOverride(record.provider, message.pricing),
+  };
+  // Exactly one ceiling state survives: set the chosen one, drop the other.
+  if (budget.kind === "capped") {
+    next.monthlyBudgetUsd = budget.usd;
+    delete next.monthlyBudgetUnlimited;
+  } else if (budget.kind === "unlimited") {
+    next.monthlyBudgetUnlimited = true;
+    delete next.monthlyBudgetUsd;
+  } else {
+    delete next.monthlyBudgetUsd;
+    delete next.monthlyBudgetUnlimited;
+  }
+
+  // Re-validate the whole row: the record refinement rejects a contradictory
+  // capped-and-unlimited pair, so a bad combination can never be persisted.
+  const parsed = LlmProviderRecord.safeParse(next);
+  if (!parsed.success) {
+    return failure(
+      "malformed_message",
+      "The budget change did not match the provider record contract.",
+    );
+  }
+  await saveLlmProvider(parsed.data);
+  return { ok: true, status: await readStatus(record.providerId) };
+}
+
+/** Apply a manual pricing override, or clear it with `null`. */
+function applyPricingOverride(
+  provider: LlmProviderSettings,
+  pricing: ModelPricing | null | undefined,
+): LlmProviderSettings {
+  if (pricing === undefined) return provider;
+  if (pricing !== null) return { ...provider, pricing };
+  // Clearing rebuilds the variant rather than destructuring the key away, so
+  // the dropped field can never leak back in as an explicit `undefined`.
+  return provider.kind === "custom"
+    ? {
+        kind: "custom",
+        baseUrl: provider.baseUrl,
+        model: provider.model,
+        auth: provider.auth,
+      }
+    : provider.model === undefined
+      ? { kind: "preset", preset: provider.preset }
+      : { kind: "preset", preset: provider.preset, model: provider.model };
 }
 
 /** Undo a partial configure: drop only the rows this flow just wrote. */
@@ -348,7 +452,17 @@ async function configureProvider(message: {
   settings: LlmProviderSettings;
   key?: string;
   monthlyBudgetUsd?: number;
+  monthlyBudgetUnlimited?: true;
 }): Promise<LlmProviderMessageResult> {
+  if (
+    message.monthlyBudgetUsd !== undefined &&
+    message.monthlyBudgetUnlimited === true
+  ) {
+    return failure(
+      "malformed_message",
+      "A provider cannot be both capped and unlimited.",
+    );
+  }
   let destination;
   try {
     destination = resolveLlmDestination(message.settings);
@@ -380,6 +494,9 @@ async function configureProvider(message: {
       : {}),
     ...(message.monthlyBudgetUsd !== undefined
       ? { monthlyBudgetUsd: message.monthlyBudgetUsd }
+      : {}),
+    ...(message.monthlyBudgetUnlimited === true
+      ? { monthlyBudgetUnlimited: true as const }
       : {}),
     configuredAt: new Date().toISOString(),
   });
@@ -717,6 +834,8 @@ export async function handleLlmProviderMessage(
         return await revokeProvider(parsed.data);
       case "LLM_BUDGET_SNAPSHOT":
         return await budgetSnapshot(parsed.data);
+      case "LLM_BUDGET_SET":
+        return await setBudget(parsed.data);
     }
   } catch {
     return failure(

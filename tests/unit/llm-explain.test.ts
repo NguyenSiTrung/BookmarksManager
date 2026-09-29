@@ -81,10 +81,10 @@ function decision(over: Record<string, unknown> = {}) {
   });
 }
 
-async function seedEnabledProvider(consent = true) {
+async function seedEnabledProvider(consent = true, model = "gpt-4o-mini") {
   const record: LlmProviderRecord = {
     providerId: PROVIDER_ID,
-    provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+    provider: { kind: "preset", preset: "openai", model },
     keySuffix: "1234",
     configuredAt: "2026-09-15T00:00:00.000Z",
   };
@@ -225,12 +225,22 @@ describe("explainDecision", () => {
   });
 
   it("requires a one-shot unknown-cost confirmation when pricing is absent", async () => {
-    await seedEnabledProvider();
+    // An unlisted preset model has no built-in price, so the manual request
+    // must stop at the unknown-cost confirmation.
+    await seedEnabledProvider(true, "gpt-4o-mini-2024-07-18");
     await persistDecision(decision());
     await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
       code: "confirmation_required",
     });
     expect(server.requests).toHaveLength(0);
+  });
+
+  it("explains a priced preset model without any confirmation", async () => {
+    await seedEnabledProvider();
+    await persistDecision(decision());
+    const result = await explainDecision(UUID, PROVIDER_ID);
+    expect(result).toMatchObject({ rationale: expect.any(String) });
+    expect(server.requests).toHaveLength(1);
   });
 
   it("redacts provider failures — no credential or body content leaks", async () => {

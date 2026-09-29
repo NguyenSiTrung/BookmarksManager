@@ -95,11 +95,13 @@ function pendingDecision(over: Record<string, unknown> = {}) {
   });
 }
 
-async function seedProvider(opts: { consent?: boolean } = {}) {
-  const { consent = true } = opts;
+async function seedProvider(
+  opts: { consent?: boolean; model?: string } = {},
+) {
+  const { consent = true, model = "gpt-4o-mini" } = opts;
   const record: LlmProviderRecord = {
     providerId: PROVIDER_ID,
-    provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+    provider: { kind: "preset", preset: "openai", model },
     keySuffix: "1234",
     configuredAt: "2026-09-15T00:00:00.000Z",
     monthlyBudgetUsd: 5,
@@ -183,6 +185,8 @@ describe("handleLlmFeatureMessage", () => {
           enabled: false,
           providerConfigured: false,
           monthlyBudgetUsd: null,
+          budget: "unset",
+          pricingKnown: false,
         },
       });
     });
@@ -204,6 +208,7 @@ describe("handleLlmFeatureMessage", () => {
           providerId: PROVIDER_ID,
           providerConfigured: true,
           monthlyBudgetUsd: 5,
+          budget: "capped",
         },
       });
     });
@@ -298,7 +303,9 @@ describe("handleLlmFeatureMessage", () => {
     });
 
     it("requires the manual cost confirmation, then honors the resend flag", async () => {
-      await seedProvider();
+      // A preset model with no built-in price (and no override) is the only
+      // way a manual request still needs the unknown-cost confirmation.
+      await seedProvider({ model: "gpt-4o-mini-2024-07-18" });
       await persistDecision(pendingDecision());
       // An unpriced manual request stops at confirmation_required — the
       // CostConfirmationDialog path; nothing was sent yet.
@@ -323,11 +330,26 @@ describe("handleLlmFeatureMessage", () => {
         result: {
           decisionId: UUID,
           rationale: "Because it reads like docs.",
-          model: "gpt-4o-mini",
+          model: "gpt-4o-mini-2024-07-18",
         },
       });
       const row = await getDecision(UUID);
       expect(row?.rationale).toBe("Because it reads like docs.");
+      expect(server.requests).toHaveLength(1);
+    });
+
+    it("explains without a confirmation when the preset model is priced", async () => {
+      await seedProvider();
+      await persistDecision(pendingDecision());
+      const reply = await handleLlmFeatureMessage(
+        { type: "LLM_EXPLAIN", decisionId: UUID },
+        TRUSTED,
+      );
+      expect(reply).toMatchObject({
+        ok: true,
+        code: "explain_ok",
+        result: { decisionId: UUID, model: "gpt-4o-mini" },
+      });
       expect(server.requests).toHaveLength(1);
     });
 
@@ -365,7 +387,7 @@ describe("handleLlmFeatureMessage", () => {
     });
 
     it("grants llm_explain at the click, then hits the next gate", async () => {
-      await seedProvider({ consent: false });
+      await seedProvider({ consent: false, model: "gpt-4o-mini-2024-07-18" });
       await persistDecision(pendingDecision());
       const reply = await handleLlmFeatureMessage(
         { type: "LLM_EXPLAIN", decisionId: UUID },

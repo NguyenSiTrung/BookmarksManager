@@ -10,6 +10,7 @@ import {
   type EscalationContext,
 } from "../../src/llm/escalate";
 import { saveLlmProvider } from "../../src/llm/settings";
+import { saveCredential } from "../../src/security/credentials";
 import { Decision } from "../../src/schemas/decision";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import { makeOpenAiServer } from "../mock-servers/openai";
@@ -94,9 +95,15 @@ const CONTEXT: EscalationContext = {
   jevAnswer: "article",
 };
 
-/** Priced custom provider + monthly cap + optional llm_escalate consent. */
-async function seedProvider(opts: { consent?: boolean; pricing?: boolean; budget?: boolean } = {}) {
-  const { consent = true, pricing = true, budget = true } = opts;
+/** Priced custom provider + spend ceiling + optional llm_escalate consent. */
+async function seedProvider(
+  opts: {
+    consent?: boolean;
+    pricing?: boolean;
+    budget?: "capped" | "unlimited" | "unset";
+  } = {},
+) {
+  const { consent = true, pricing = true, budget = "capped" } = opts;
   const record: LlmProviderRecord = {
     providerId: PROVIDER_ID,
     provider: {
@@ -107,7 +114,8 @@ async function seedProvider(opts: { consent?: boolean; pricing?: boolean; budget
       ...(pricing ? { pricing: { inputPerMillion: 1, outputPerMillion: 2 } } : {}),
     },
     configuredAt: "2026-09-15T00:00:00.000Z",
-    ...(budget ? { monthlyBudgetUsd: 5 } : {}),
+    ...(budget === "capped" ? { monthlyBudgetUsd: 5 } : {}),
+    ...(budget === "unlimited" ? { monthlyBudgetUnlimited: true as const } : {}),
   };
   await saveLlmProvider(record);
   if (consent) await grantConsentAtOrigin("llm_escalate", ORIGIN);
@@ -248,9 +256,61 @@ describe("maybeEscalateDecision", () => {
     expect(server.requests).toHaveLength(0);
   });
 
-  it("falls back when no monthly budget is configured", async () => {
-    await seedProvider({ budget: false });
+  it("falls back when no spending ceiling has been chosen", async () => {
+    await seedProvider({ budget: "unset" });
     await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    expect(await maybeEscalateDecision(lowConfidence(), CONTEXT)).toBeNull();
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("runs without a cap when the ceiling is explicitly unlimited", async () => {
+    await seedProvider({ budget: "unlimited" });
+    await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    const result = await maybeEscalateDecision(lowConfidence(), CONTEXT);
+    expect(result).toMatchObject({ verdict: "agree" });
+    expect(server.requests).toHaveLength(1);
+    // No cap means no reservation ceiling — the request is still priced, so
+    // the reservation carries a real estimate rather than a null amount.
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]!.reservedUsd).toBeGreaterThan(0);
+  });
+
+  it("runs on a preset provider whose model has a built-in price", async () => {
+    // Before the built-in table a preset could never be priced (its settings
+    // variant has no `pricing` field), so escalation was unreachable there
+    // even with a cap set. This pins the fix.
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      configuredAt: "2026-09-15T00:00:00.000Z",
+      monthlyBudgetUsd: 5,
+    });
+    // A preset authenticates with a bearer credential; the gate refuses
+    // `no_key` without one.
+    await saveCredential("preset:openai", "sk-test-1234");
+    await grantConsentAtOrigin("llm_escalate", "https://api.openai.com");
+    await writeLlmEscalationSettings({
+      enabled: true,
+      providerId: "preset:openai",
+    });
+    const result = await maybeEscalateDecision(lowConfidence(), CONTEXT);
+    expect(result).toMatchObject({ verdict: "agree", model: "gpt-4o-mini" });
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it("falls back on a preset model with no built-in price and no override", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini-2024-07-18" },
+      configuredAt: "2026-09-15T00:00:00.000Z",
+      monthlyBudgetUsd: 5,
+    });
+    await grantConsentAtOrigin("llm_escalate", "https://api.openai.com");
+    await writeLlmEscalationSettings({
+      enabled: true,
+      providerId: "preset:openai",
+    });
     expect(await maybeEscalateDecision(lowConfidence(), CONTEXT)).toBeNull();
     expect(server.requests).toHaveLength(0);
   });

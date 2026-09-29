@@ -14,6 +14,7 @@ import {
   LlmAuthMode,
   LlmProviderSettings,
   type LlmPresetId,
+  type ModelPricing,
 } from "../../schemas/llm";
 import {
   Alert,
@@ -23,7 +24,7 @@ import {
   ProviderCard,
   StatusBadge,
 } from "./components";
-import { ZapIcon } from "../../ui/components/icons";
+import { WarningIcon, ZapIcon } from "../../ui/components/icons";
 import { LlmBudget } from "./LlmBudget";
 import {
   cardClass,
@@ -90,6 +91,7 @@ export function LlmProviderSetup() {
   const [inputPrice, setInputPrice] = useState("");
   const [outputPrice, setOutputPrice] = useState("");
   const [budgetCap, setBudgetCap] = useState("");
+  const [budgetUnlimited, setBudgetUnlimited] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
   const [status, setStatus] = useState<LlmProviderStatus | null>(null);
@@ -151,43 +153,55 @@ export function LlmProviderSetup() {
     setTestOutcome(null);
   };
 
+  /**
+   * Parse the optional per-token price override. Both fields must be filled
+   * together: a half-entered rate would silently mis-estimate the cap.
+   */
+  function parsePricing():
+    | { pricing: ModelPricing | undefined }
+    | { error: string } {
+    const pricingInput = inputPrice.trim();
+    const pricingOutput = outputPrice.trim();
+    if (pricingInput === "" && pricingOutput === "") {
+      return { pricing: undefined };
+    }
+    const inputPerMillion = Number(pricingInput);
+    const outputPerMillion = Number(pricingOutput);
+    if (
+      pricingInput === "" ||
+      pricingOutput === "" ||
+      !Number.isFinite(inputPerMillion) ||
+      !Number.isFinite(outputPerMillion) ||
+      inputPerMillion < 0 ||
+      outputPerMillion < 0
+    ) {
+      return {
+        error:
+          "Pricing must be two nonnegative USD-per-million-token numbers, or both fields left empty.",
+      };
+    }
+    return { pricing: { inputPerMillion, outputPerMillion } };
+  }
+
   /** Assemble and validate the settings for the selected kind. */
   function buildSettings():
     | { settings: LlmProviderSettings }
     | { error: string } {
+    const priced = parsePricing();
+    if ("error" in priced) return { error: priced.error };
+    const { pricing } = priced;
+
     if (kind !== "custom") {
       const parsed = LlmProviderSettings.safeParse({
         kind: "preset",
         preset: kind,
         model: model.trim() || LLM_PRESETS[kind].defaultModel,
+        ...(pricing !== undefined ? { pricing } : {}),
       });
       if (!parsed.success) {
         return { error: "The selected model is not valid." };
       }
       return { settings: parsed.data };
-    }
-    const pricingInput = inputPrice.trim();
-    const pricingOutput = outputPrice.trim();
-    let pricing:
-      | { inputPerMillion: number; outputPerMillion: number }
-      | undefined;
-    if (pricingInput !== "" || pricingOutput !== "") {
-      const inputPerMillion = Number(pricingInput);
-      const outputPerMillion = Number(pricingOutput);
-      if (
-        pricingInput === "" ||
-        pricingOutput === "" ||
-        !Number.isFinite(inputPerMillion) ||
-        !Number.isFinite(outputPerMillion) ||
-        inputPerMillion < 0 ||
-        outputPerMillion < 0
-      ) {
-        return {
-          error:
-            "Pricing must be two nonnegative USD-per-million-token numbers, or both fields left empty.",
-        };
-      }
-      pricing = { inputPerMillion, outputPerMillion };
     }
     const parsed = LlmProviderSettings.safeParse({
       kind: "custom",
@@ -265,7 +279,12 @@ export function LlmProviderSetup() {
           return;
         }
         const cap = budgetCap.trim();
-        const monthlyBudgetUsd = cap === "" ? undefined : Number(cap);
+        // An explicit "unlimited" tick wins; otherwise a filled cap is the
+        // ceiling, and a blank one stays "not chosen" — which blocks
+        // unattended features until the user decides (never a silent
+        // unlimited default).
+        const monthlyBudgetUsd =
+          budgetUnlimited || cap === "" ? undefined : Number(cap);
         if (
           monthlyBudgetUsd !== undefined &&
           (!Number.isFinite(monthlyBudgetUsd) || monthlyBudgetUsd < 0)
@@ -279,6 +298,7 @@ export function LlmProviderSetup() {
             settings: built.settings,
             ...(needsKey ? { key: apiKey } : {}),
             ...(monthlyBudgetUsd !== undefined ? { monthlyBudgetUsd } : {}),
+            ...(budgetUnlimited ? { monthlyBudgetUnlimited: true } : {}),
           }),
         );
         if (epoch.current !== mine) return;
@@ -639,51 +659,6 @@ export function LlmProviderSetup() {
                     <option value="none">None (local endpoints)</option>
                   </select>
                 </Field>
-                <Field
-                  label="Monthly budget cap (USD, optional)"
-                  htmlFor="llm-budget-cap"
-                >
-                  <input
-                    id="llm-budget-cap"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={budgetCap}
-                    onChange={(event) => setBudgetCap(event.target.value)}
-                    className={inputClass}
-                  />
-                </Field>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  label="Input price (USD / 1M tokens)"
-                  htmlFor="llm-input-price"
-                  hint="Optional — for cost estimates when the provider reports none."
-                >
-                  <input
-                    id="llm-input-price"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={inputPrice}
-                    onChange={(event) => setInputPrice(event.target.value)}
-                    className={inputClass}
-                  />
-                </Field>
-                <Field
-                  label="Output price (USD / 1M tokens)"
-                  htmlFor="llm-output-price"
-                >
-                  <input
-                    id="llm-output-price"
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    value={outputPrice}
-                    onChange={(event) => setOutputPrice(event.target.value)}
-                    className={inputClass}
-                  />
-                </Field>
               </div>
             </>
           )}
@@ -716,23 +691,96 @@ export function LlmProviderSetup() {
             </Field>
           )}
 
-          {kind !== "custom" && (
+          {/* The spend ceiling is an explicit choice: a typed cap or a
+              deliberate "unlimited". Leaving both unset is allowed — the
+              provider still works for manual features, but unattended
+              (automatic) requests refuse until one is chosen. */}
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-medium">Spending ceiling</legend>
             <Field
-              label="Monthly budget cap (USD, optional)"
+              label="Monthly cap (USD)"
               htmlFor="llm-budget-cap"
-              hint="Second opinions and other spend-capped features stop at this."
+              hint="Second opinions and other unattended features stop here."
             >
               <input
                 id="llm-budget-cap"
                 type="text"
                 inputMode="decimal"
                 autoComplete="off"
+                disabled={budgetUnlimited}
                 value={budgetCap}
                 onChange={(event) => setBudgetCap(event.target.value)}
                 className={inputClass}
               />
             </Field>
-          )}
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={budgetUnlimited}
+                onChange={(event) => {
+                  setBudgetUnlimited(event.target.checked);
+                  if (event.target.checked) setBudgetCap("");
+                }}
+              />
+              No monthly cap — spend without a limit
+            </label>
+            {budgetUnlimited ? (
+              <p
+                role="status"
+                className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400"
+              >
+                <WarningIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>
+                  Second opinions run unattended inside actions you start — a
+                  library scan can send a request per bookmark with no
+                  ceiling. Your provider bills every one of them.
+                </span>
+              </p>
+            ) : (
+              budgetCap.trim() === "" && (
+                <p className="text-xs text-muted-foreground">
+                  With neither a cap nor unlimited chosen, unattended features
+                  stay off; on-demand ones still ask before spending.
+                </p>
+              )
+            )}
+          </fieldset>
+
+          {/* Per-token rates drive the cost estimate every reservation uses.
+              Presets have a built-in price for their default model; any
+              other model needs these numbers, or automatic requests refuse. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Input price (USD / 1M tokens)"
+              htmlFor="llm-input-price"
+              hint="Optional — overrides the built-in price; required for a model without one."
+            >
+              <input
+                id="llm-input-price"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={inputPrice}
+                onChange={(event) => setInputPrice(event.target.value)}
+                className={inputClass}
+              />
+            </Field>
+            <Field
+              label="Output price (USD / 1M tokens)"
+              htmlFor="llm-output-price"
+            >
+              <input
+                id="llm-output-price"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={outputPrice}
+                onChange={(event) => setOutputPrice(event.target.value)}
+                className={inputClass}
+              />
+            </Field>
+          </div>
 
           <label className="flex items-start gap-2 text-sm">
             <input

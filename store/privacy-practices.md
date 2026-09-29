@@ -150,8 +150,8 @@ every request goes only to the origin you configured.
     click "Explain" on a pending decision.
   - Automatic second opinions (`llm_escalate`): decision state, question,
     allowed options, Jev probabilities, Jev answer — only inside a Save,
-    Analyze, or library scan you started, within your monthly budget; never
-    applies changes.
+    Analyze, or library scan you started, within the spending ceiling you
+    chose (a monthly cap or an explicit "no cap"); never applies changes.
   - Restructure proposals (`llm_restructure`): folder paths, category
     counts, tag counts, domains, representative titles (capped) — only when
     you start "Restructure"; proposals are review-only.

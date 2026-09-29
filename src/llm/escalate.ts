@@ -4,6 +4,8 @@ import { REVIEW_FLOOR } from "../decisions/policy";
 import type { Decision } from "../schemas/decision";
 import type { SentBookmark } from "../schemas/decision-state";
 import { createLlmClient } from "./client";
+import { budgetChoiceOf } from "./budget";
+import { resolveProviderPricing } from "./pricing";
 import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
 import { readLlmProvider } from "./settings";
@@ -123,7 +125,11 @@ export async function maybeEscalateDecision(
     const settings = await readLlmEscalationSettings();
     if (!settings.enabled || settings.providerId === undefined) return null;
     const record = await readLlmProvider(settings.providerId);
-    if (record === null || record.monthlyBudgetUsd === undefined) return null;
+    // Unattended spend needs a deliberate ceiling (capped or explicitly
+    // unlimited) and reliable pricing — without either, the gate would
+    // refuse the send anyway, so fail here before building a request.
+    if (record === null || budgetChoiceOf(record) === "unset") return null;
+    if (resolveProviderPricing(record.provider) === undefined) return null;
 
     const payload = {
       question: context.question,

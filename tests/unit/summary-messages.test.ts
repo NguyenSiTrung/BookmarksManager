@@ -103,10 +103,10 @@ function installChromeStub(bookmarks: unknown) {
   });
 }
 
-async function seedProvider() {
+async function seedProvider(model = "gpt-4o-mini") {
   const record: LlmProviderRecord = {
     providerId: PROVIDER_ID,
-    provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+    provider: { kind: "preset", preset: "openai", model },
     keySuffix: "1234",
     configuredAt: "2026-09-15T00:00:00.000Z",
   };
@@ -224,7 +224,9 @@ describe("handleSummarizeMessage", () => {
   });
 
   it("grants both consents at the click, then hits the cost gate", async () => {
-    await seedProvider();
+    // An unlisted preset model has no built-in price, so the click stops at
+    // the unknown-cost confirmation instead of sending.
+    await seedProvider("gpt-4o-mini-2024-07-18");
     const reply = await handleSummarizeMessage(
       { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID },
       TRUSTED,
@@ -265,7 +267,7 @@ describe("handleSummarizeMessage", () => {
   });
 
   it("asks for confirmation and names the destination on unpriced providers", async () => {
-    await seedProvider();
+    await seedProvider("gpt-4o-mini-2024-07-18");
     await grantConsentAtOrigin("llm_summary", LLM_ORIGIN);
     await grantConsentAtOrigin("jev_summary_verify", JEV_ORIGIN);
     const reply = await handleSummarizeMessage(

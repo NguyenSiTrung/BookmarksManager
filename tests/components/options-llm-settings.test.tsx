@@ -53,6 +53,8 @@ interface FakeWorkerState {
     enabled: boolean;
     providerConfigured: boolean;
     monthlyBudgetUsd: number | null;
+    budget: "capped" | "unlimited" | "unset";
+    pricingKnown: boolean;
     providerId?: string;
   };
   escalationSetError?: { code: string; message: string };
@@ -76,6 +78,8 @@ const IDLE_ESCALATION = {
   enabled: false,
   providerConfigured: true,
   monthlyBudgetUsd: 5,
+  budget: "capped" as const,
+  pricingKnown: true,
   providerId: "preset:openai",
 };
 
@@ -253,6 +257,8 @@ describe("escalation section", () => {
       enabled: false,
       providerConfigured: false,
       monthlyBudgetUsd: null,
+      budget: "unset",
+      pricingKnown: false,
     };
     render(<DecisionSettings />);
     await section();
@@ -266,11 +272,13 @@ describe("escalation section", () => {
     })).toBeNull();
   });
 
-  it("blocks the toggle and explains it when no monthly cap is set", async () => {
+  it("blocks the toggle and explains it when no spending ceiling is chosen", async () => {
     workerState.escalation = {
       enabled: false,
       providerConfigured: true,
       monthlyBudgetUsd: null,
+      budget: "unset",
+      pricingKnown: true,
       providerId: "preset:openai",
     };
     render(<DecisionSettings />);
@@ -283,7 +291,57 @@ describe("escalation section", () => {
     });
     await waitFor(() =>
       expect(
-        screen.getByText(/no monthly cap is set — escalation cannot run/i),
+        screen.getByText(/no spending ceiling is chosen/i),
+      ).toBeTruthy(),
+    );
+    expect((await escalateToggle())).toHaveProperty("disabled", true);
+  });
+
+  it("unlocks on an explicitly unlimited ceiling and says so", async () => {
+    workerState.escalation = {
+      enabled: false,
+      providerConfigured: true,
+      monthlyBudgetUsd: null,
+      budget: "unlimited",
+      pricingKnown: true,
+      providerId: "preset:openai",
+    };
+    render(<DecisionSettings />);
+    await section();
+    await db.consents.put({
+      scope: LLM_ESCALATE_SCOPE,
+      origin: LLM_ORIGIN,
+      consentVersion: CONSENT_VERSION,
+      acceptedAt: new Date().toISOString(),
+    });
+    await waitFor(async () =>
+      expect(await escalateToggle()).toHaveProperty("disabled", false),
+    );
+    expect(
+      screen.getByText(/no monthly cap — this can spend without a limit/i),
+    ).toBeTruthy();
+  });
+
+  it("blocks the toggle when the provider has no per-token price", async () => {
+    workerState.escalation = {
+      enabled: false,
+      providerConfigured: true,
+      monthlyBudgetUsd: 5,
+      budget: "capped",
+      pricingKnown: false,
+      providerId: "preset:openai",
+    };
+    render(<DecisionSettings />);
+    await section();
+    await db.consents.put({
+      scope: LLM_ESCALATE_SCOPE,
+      origin: LLM_ORIGIN,
+      consentVersion: CONSENT_VERSION,
+      acceptedAt: new Date().toISOString(),
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByText(/no per-token price is known for this model/i),
       ).toBeTruthy(),
     );
     expect((await escalateToggle())).toHaveProperty("disabled", true);

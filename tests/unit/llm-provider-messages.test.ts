@@ -315,6 +315,114 @@ describe("LLM_CONFIGURE", () => {
     expect(record?.provider).toMatchObject({ kind: "custom", auth: "none" });
     expect(record?.keySuffix).toBeUndefined();
   });
+
+  it("stores an explicitly unlimited ceiling and reports it", async () => {
+    const result = await call({
+      type: "LLM_CONFIGURE",
+      settings: PRESET_SETTINGS,
+      key: "sk-live-key-9",
+      monthlyBudgetUnlimited: true,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      status: { budget: "unlimited", pricingKnown: true },
+    });
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.monthlyBudgetUnlimited).toBe(true);
+    expect(record?.monthlyBudgetUsd).toBeUndefined();
+  });
+
+  it("rejects a message carrying both a cap and unlimited", async () => {
+    await expectFailure(
+      {
+        type: "LLM_CONFIGURE",
+        settings: PRESET_SETTINGS,
+        key: "sk-live-key-9",
+        monthlyBudgetUsd: 5,
+        monthlyBudgetUnlimited: true,
+      },
+      "malformed_message",
+    );
+    expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
+  });
+});
+
+describe("LLM_BUDGET_SET", () => {
+  it("switches an enabled provider from a cap to unlimited without re-consent", async () => {
+    await seedEnabledProvider();
+    await saveLlmProvider(storedRecord({ monthlyBudgetUsd: 5 }));
+    const result = await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "unlimited" },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      status: { enabled: true, budget: "unlimited" },
+    });
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.monthlyBudgetUnlimited).toBe(true);
+    expect(record?.monthlyBudgetUsd).toBeUndefined();
+    // Consent and credential are untouched — no re-prompt, no re-entry.
+    expect(await hasConsentAtOrigin("llm_test", ORIGIN)).toBe(true);
+    expect(await readCredential(PROVIDER_ID)).not.toBeNull();
+  });
+
+  it("can go back to a cap, and to no choice at all", async () => {
+    await seedEnabledProvider();
+    await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "capped", usd: 12.5 },
+    });
+    expect((await readLlmProvider(PROVIDER_ID))?.monthlyBudgetUsd).toBe(12.5);
+
+    const cleared = await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "unset" },
+    });
+    expect(cleared).toMatchObject({ ok: true, status: { budget: "unset" } });
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.monthlyBudgetUsd).toBeUndefined();
+    expect(record?.monthlyBudgetUnlimited).toBeUndefined();
+  });
+
+  it("applies a pricing override and can clear it again", async () => {
+    await seedEnabledProvider();
+    await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "capped", usd: 5 },
+      pricing: { inputPerMillion: 3, outputPerMillion: 4 },
+    });
+    let record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.provider).toMatchObject({
+      pricing: { inputPerMillion: 3, outputPerMillion: 4 },
+    });
+
+    await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "capped", usd: 5 },
+      pricing: null,
+    });
+    record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.provider).not.toHaveProperty("pricing");
+    // The built-in table still prices the preset default model.
+    expect(record?.provider).toEqual(PRESET_SETTINGS);
+  });
+
+  it("refuses an unconfigured provider", async () => {
+    await expectFailure(
+      {
+        type: "LLM_BUDGET_SET",
+        providerId: PROVIDER_ID,
+        budget: { kind: "unlimited" },
+      },
+      "not_configured",
+    );
+  });
 });
 
 describe("LLM_PROVIDER_STATUS", () => {
