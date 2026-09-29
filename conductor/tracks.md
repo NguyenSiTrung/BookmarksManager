@@ -29,3 +29,8 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-28 — Phase 6 Store readiness and 1.0 trusted-tester release completed: pinned Jev 1.13 evaluation evidence and confidence policy, intentional broad-provider disclosures, strict local store/site gates, self-contained GitHub Pages site, reproducible store assets, audited 1.0.0 trusted-tester ZIP with recorded checksum, and user-confirmed manual verification; public submission remained out of scope (see conductor/archive/phase6_store_release_20260928/) -->
+
+---
+
+## [ ] Track: Options page redesign — guided panels + visual refresh
+*Link: [./conductor/tracks/options_redesign_20260929/](conductor/tracks/options_redesign_20260929/)*

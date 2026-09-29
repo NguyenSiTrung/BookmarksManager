@@ -18,6 +18,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { PrivacyDraft } from "../../src/entrypoints/options/PrivacyDraft";
 import { ProviderSetup } from "../../src/entrypoints/options/ProviderSetup";
 import type {
   ProviderMessageResult,
@@ -166,7 +167,10 @@ describe("disclosure", () => {
     expect(providerLink.href).toBe(
       "https://typesafe.ai/legal/privacy-policy",
     );
-    // The draft policy is bundled — rendered with zero network requests.
+    // The draft policy lives in the shell (bundled, zero network) — assert
+    // it renders from its own component here.
+    cleanup();
+    render(<PrivacyDraft />);
     expect(
       screen.getByText(/Privacy Policy — Bookmarks Manager/, {
         selector: "pre",

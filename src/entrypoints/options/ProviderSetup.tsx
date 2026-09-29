@@ -25,16 +25,29 @@ import {
   PresetId,
 } from "../../schemas/provider";
 import {
+  Alert,
+  Chip,
+  Disclosure,
+  Field,
+  ProviderCard,
+  StatusBadge,
+} from "./components";
+import { InfoIcon, PlugIcon, WarningIcon } from "../../ui/components/icons";
+import {
   cardClass,
-  dangerButtonClass,
+  ghostDangerButtonClass,
   inputClass,
-  insetClass,
   primaryButtonClass,
-  radioCardClass,
   radioGroupClass,
+  secondaryButtonClass,
   sectionHeadingClass,
-  statusBadgeClass,
 } from "./ui";
+
+/** One-line context shown on each provider picker card. */
+const PROVIDER_CARD_DESCRIPTIONS: Record<PresetId, string> = {
+  typesafe: "The curated Jev endpoint — the reference provider.",
+  openrouter: "Jev via OpenRouter — use your own OpenRouter key.",
+};
 
 /**
  * Options-page provider consent flow (plan Phase 2 Task 4): disclosure →
@@ -347,43 +360,44 @@ export function ProviderSetup() {
 
   return (
     <section aria-labelledby="provider-heading" className={cardClass}>
-        <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <PlugIcon className="size-4" />
+          </span>
           <h2 id="provider-heading" className={sectionHeadingClass}>
             AI provider connection
           </h2>
-          {status !== null && (
-            <span className={statusBadgeClass(status.enabled)}>
-              {status.enabled ? "Active" : "Not set up"}
-            </span>
-          )}
         </div>
+        {status !== null && <StatusBadge on={status.enabled} />}
+      </div>
 
-        <fieldset className="mt-3">
-          <legend className="text-sm font-medium">Provider</legend>
-          <div className={radioGroupClass}>
+      <fieldset className="mt-4">
+        <legend className="text-sm font-medium">Provider</legend>
+        <div className={radioGroupClass}>
           {PRESET_IDS.map((id) => (
-            <label key={id} className={radioCardClass}>
-              <input
-                type="radio"
-                name="provider"
-                value={id}
-                checked={presetId === id}
-                onChange={() => onPresetChange(id)}
-              />
-              {PROVIDER_DISCLOSURES[id].name}
-            </label>
+            <ProviderCard
+              key={id}
+              name="provider"
+              value={id}
+              checked={presetId === id}
+              onChange={() => onPresetChange(id)}
+              title={PROVIDER_DISCLOSURES[id].name}
+              inputLabel={PROVIDER_DISCLOSURES[id].name}
+              description={PROVIDER_CARD_DESCRIPTIONS[id]}
+            />
           ))}
-          </div>
-        </fieldset>
+        </div>
+      </fieldset>
 
-        <section
-          aria-label={`${disclosure.name} data disclosure`}
-          className={`mt-4 ${insetClass}`}
+      <div className="mt-4">
+        <Disclosure
+          title={`What enabling ${disclosure.name} means`}
+          subtitle="Read before enabling — this is what your consent covers."
+          open={!status?.enabled}
+          regionLabel={`${disclosure.name} data disclosure`}
         >
-          <h3 className="font-medium">
-            What enabling {disclosure.name} means
-          </h3>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
+          <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
             <li>
               Recipient: {disclosure.name} at {disclosure.origin} — the only
               destination this consent covers.
@@ -391,10 +405,7 @@ export function ProviderSetup() {
             <li>
               What is sent: {SYNTHETIC_DESCRIPTION}, with exactly the fields{" "}
               {SYNTHETIC_FIELDS.map((field) => (
-                <code
-                  key={field}
-                  className="rounded bg-muted px-1"
-                >
+                <code key={field} className="rounded bg-muted px-1">
                   {field}
                 </code>
               ))}
@@ -424,173 +435,180 @@ export function ProviderSetup() {
               ; this extension&apos;s own draft policy is bundled below.
             </li>
           </ul>
-        </section>
+        </Disclosure>
+      </div>
 
-        {status?.enabled ? (
-          <div
-            role="group"
-            aria-label={`${disclosure.name} enabled provider`}
-            className="mt-4"
-          >
-            <p className="text-sm">
-              {disclosure.name} is enabled — model{" "}
-              <code className="rounded bg-muted px-1">{status.model}</code>,
-              key ending in{" "}
-              <code className="rounded bg-muted px-1">
-                {status.keySuffix}
-              </code>
-              .
+      {status?.enabled ? (
+        <div
+          role="group"
+          aria-label={`${disclosure.name} enabled provider`}
+          className="mt-5"
+        >
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+            <span className="text-sm text-muted-foreground">
+              {disclosure.name} is enabled
+            </span>
+            <span className="hidden text-border sm:inline">·</span>
+            <Chip>{status.model}</Chip>
+            <Chip>…{status.keySuffix}</Chip>
+            <Chip>{disclosure.origin}</Chip>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={busy}
+              className={secondaryButtonClass}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+            <p className="text-xs text-muted-foreground">
+              Sends the disclosed synthetic request to {disclosure.origin} —
+              nothing else leaves this device.
             </p>
+          </div>
+
+          {testOutcome !== null && (
             <div className="mt-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={deleteStoredKey}
-                  onChange={(event) =>
-                    setDeleteStoredKey(event.target.checked)
-                  }
-                />
-                Also delete the stored provider key from this device
-              </label>
+              <Alert tone={testOutcome.ok ? "success" : "error"}>
+                {testOutcome.ok ? (
+                  <>
+                    Connection test succeeded — model{" "}
+                    <code className="rounded bg-muted px-1">
+                      {testOutcome.model}
+                    </code>{" "}
+                    answered in {Math.round(testOutcome.latencyMs)} ms
+                    {testOutcome.cost !== undefined &&
+                      `; request cost $${testOutcome.cost}`}
+                    .
+                  </>
+                ) : (
+                  <>
+                    Connection test failed ({testOutcome.code}):{" "}
+                    {testOutcome.message}
+                  </>
+                )}
+              </Alert>
             </div>
+          )}
+
+          <div className="mt-5 border-t border-border pt-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={deleteStoredKey}
+                onChange={(event) =>
+                  setDeleteStoredKey(event.target.checked)
+                }
+              />
+              Also delete the stored provider key from this device
+            </label>
             <button
               type="button"
               onClick={onRevoke}
               disabled={busy}
-              className={`mt-3 ${dangerButtonClass}`}
+              className={`mt-3 ${ghostDangerButtonClass}`}
             >
               Revoke {disclosure.name} access
             </button>
-            <div className="mt-4 border-t border-border pt-3">
-              <button
-                type="button"
-                onClick={onTest}
-                disabled={busy}
-                className={primaryButtonClass}
-              >
-                {testing ? "Testing…" : "Test connection"}
-              </button>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Sends the disclosed synthetic request to {disclosure.origin}{" "}
-                — nothing else leaves this device.
-              </p>
-              {testOutcome !== null && testOutcome.ok && (
-                <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                  Connection test succeeded — model{" "}
-                  <code className="rounded bg-muted px-1">
-                    {testOutcome.model}
-                  </code>{" "}
-                  answered in {Math.round(testOutcome.latencyMs)} ms
-                  {testOutcome.cost !== undefined &&
-                    `; request cost $${testOutcome.cost}`}
-                  .
-                </p>
-              )}
-              {testOutcome !== null && !testOutcome.ok && (
-                <p role="alert" className="mt-2 text-sm text-destructive">
-                  Connection test failed ({testOutcome.code}):{" "}
-                  {testOutcome.message}
-                </p>
-              )}
-            </div>
           </div>
-        ) : (
-          <div className="mt-4 space-y-4">
-            <div>
-              <label htmlFor="provider-model" className="block text-sm font-medium">
-                Model
-              </label>
-              <select
-                id="provider-model"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-                aria-describedby={
-                  isMovingAlias(presetId, model)
-                    ? "provider-model-alias-warning"
-                    : isPinnedReleaseModel(presetId, model)
-                      ? "provider-model-pinned-note"
-                      : undefined
-                }
-                className={`mt-1 ${inputClass}`}
-              >
-                {models.map((allowed) => (
-                  <option key={allowed} value={allowed}>
-                    {allowed}
-                  </option>
-                ))}
-              </select>
-              {isMovingAlias(presetId, model) && (
-                <p
-                  role="status"
-                  id="provider-model-alias-warning"
-                  className="mt-1 text-xs text-amber-700 dark:text-amber-400"
-                >
-                  <code className="rounded bg-muted px-1">{model}</code>{" "}
-                  {MOVING_ALIAS_WARNING}
-                </p>
-              )}
-              {isPinnedReleaseModel(presetId, model) && (
-                <p
-                  role="status"
-                  id="provider-model-pinned-note"
-                  className="mt-1 text-xs text-muted-foreground"
-                >
-                  <code className="rounded bg-muted px-1">{model}</code>{" "}
-                  {PINNED_RELEASE_NOTE}
-                </p>
-              )}
-            </div>
-            <div>
-              <label htmlFor="api-key" className="block text-sm font-medium">
-                API key
-              </label>
-              <input
-                id="api-key"
-                type="password"
-                autoComplete="off"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                className={`mt-1 ${inputClass}`}
-              />
-            </div>
-            <div>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={agreed}
-                  onChange={(event) => setAgreed(event.target.checked)}
-                />
-                I have read the disclosure above and agree to enable{" "}
-                {disclosure.name}.
-              </label>
-            </div>
-            <button
-              type="button"
-              onClick={onEnable}
-              disabled={!canEnable}
-              className={primaryButtonClass}
+        </div>
+      ) : (
+        <div className="mt-5 space-y-4">
+          <Field label="Model" htmlFor="provider-model">
+            <select
+              id="provider-model"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              aria-describedby={
+                isMovingAlias(presetId, model)
+                  ? "provider-model-alias-warning"
+                  : isPinnedReleaseModel(presetId, model)
+                    ? "provider-model-pinned-note"
+                    : undefined
+              }
+              className={inputClass}
             >
-              Enable {disclosure.name}
-            </button>
-          </div>
-        )}
+              {models.map((allowed) => (
+                <option key={allowed} value={allowed}>
+                  {allowed}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {isMovingAlias(presetId, model) && (
+            <p className="-mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+              <WarningIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span role="status" id="provider-model-alias-warning">
+                <code className="rounded bg-muted px-1">{model}</code>{" "}
+                {MOVING_ALIAS_WARNING}
+              </span>
+            </p>
+          )}
+          {isPinnedReleaseModel(presetId, model) && (
+            <p
+              role="status"
+              id="provider-model-pinned-note"
+              className="-mt-2 flex items-start gap-1.5 text-xs text-muted-foreground"
+            >
+              <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                <code className="rounded bg-muted px-1">{model}</code>{" "}
+                {PINNED_RELEASE_NOTE}
+              </span>
+            </p>
+          )}
+          <Field
+            label="API key"
+            htmlFor="api-key"
+            hint="Stored encrypted on this device — never shown again."
+          >
+            <input
+              id="api-key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={agreed}
+              onChange={(event) => setAgreed(event.target.checked)}
+            />
+            I have read the disclosure above and agree to enable{" "}
+            {disclosure.name}.
+          </label>
+          <button
+            type="button"
+            onClick={onEnable}
+            disabled={!canEnable}
+            className={primaryButtonClass}
+          >
+            Enable {disclosure.name}
+          </button>
+        </div>
+      )}
 
-        {status === null && (
-          <p role="status" className="mt-3 text-sm text-muted-foreground">
-            Checking the current provider status…
-          </p>
-        )}
-        {notice !== null && (
-          <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
-            {notice}
-          </p>
-        )}
-        {error !== null && (
-          <p role="alert" className="mt-3 text-sm text-destructive">
-            {error}
-          </p>
-        )}
+      {status === null && (
+        <p role="status" className="mt-4 text-sm text-muted-foreground">
+          Checking the current provider status…
+        </p>
+      )}
+      {notice !== null && (
+        <div className="mt-4">
+          <Alert tone="success">{notice}</Alert>
+        </div>
+      )}
+      {error !== null && (
+        <div className="mt-4">
+          <Alert tone="error">{error}</Alert>
+        </div>
+      )}
     </section>
   );
 }

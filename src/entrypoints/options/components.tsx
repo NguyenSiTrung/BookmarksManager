@@ -228,6 +228,7 @@ export function Chip(props: {
  */
 export function ProviderCard(props: {
   name: string;
+
   value: string;
   checked: boolean;
   onChange: () => void;
@@ -235,6 +236,8 @@ export function ProviderCard(props: {
   icon?: ReactNode;
   title: string;
   description?: string;
+  /** Accessible name for the radio (defaults to title + description). */
+  inputLabel?: string;
   aside?: ReactNode;
 }) {
   return (
@@ -255,6 +258,7 @@ export function ProviderCard(props: {
         checked={props.checked}
         disabled={props.disabled}
         onChange={props.onChange}
+        aria-label={props.inputLabel ?? props.title}
         className="sr-only"
       />
       <span
@@ -299,6 +303,11 @@ export function Disclosure(props: {
   subtitle?: string;
   open: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * Accessible name for the panel region (tests + screen readers locate the
+   * disclosure body by it — e.g. "TypeSafe data disclosure").
+   */
+  regionLabel?: string;
   children: ReactNode;
 }) {
   return (
@@ -329,7 +338,11 @@ export function Disclosure(props: {
         </span>
         <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" />
       </summary>
-      <div className="border-t border-border px-4 py-3 text-sm">
+      <div
+        role={props.regionLabel !== undefined ? "region" : undefined}
+        aria-label={props.regionLabel}
+        className="border-t border-border px-4 py-3 text-sm"
+      >
         {props.children}
       </div>
     </details>
