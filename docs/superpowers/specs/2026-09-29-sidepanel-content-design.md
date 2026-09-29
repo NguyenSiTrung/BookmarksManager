@@ -67,10 +67,14 @@ New files: `src/ui/components/empty-state.tsx` and
 a heading-weight title, a muted hint and an optional secondary button. It is
 static content, so it has no live-region role.
 
-`emptyStateFor(view, query, ctx)` is pure and returns
-`{ title, hint?, action?: "import" | "clear-search" | "scan" | "setup-ai" }`
-or `undefined` when the view is not empty. `ctx` carries `aiConnected` and
-`libraryEmpty`.
+`emptyStateFor(view, ctx)` is pure and returns
+`{ title, hint?, action?: { kind: "import" | "clear-search" | "scan" | "set-up-ai"; label } }`.
+The typed query is already on the `search` view (`{ kind: "search", query }`),
+so there is no separate query argument. The caller decides whether the list
+is empty; the function only picks the copy. `ctx` carries `aiConnected` and
+`libraryEmpty`. While the tree (or the search index) is still loading, `App`
+shows a plain "Loading…" empty state instead, so "No bookmarks yet" never
+flashes.
 
 | Case | Title | Hint | Action |
 |---|---|---|---|
