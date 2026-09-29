@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-28 -->
+<!-- Last refreshed: 2026-09-29 -->
 
 # Codebase Patterns
 
@@ -27,11 +27,11 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 - Vitest 5: `tests/unit` + `tests/components` (RTL, `globals: false` — set `IS_REACT_ACT_ENVIRONMENT` and call `cleanup()` manually) + shared `tests/fixtures` + `tests/fakes` (in-memory `chrome.bookmarks` fake with fixed roots, managed nodes, indexes, and event emission).
 - Playwright persistent-context e2e in `tests/e2e` (`channel: "chromium"`, not branded Chrome; `E2E_HEADLESS=1` to opt into headless) with helpers under `tests/e2e/helpers` for launch/seed/surfaces/DB probes; extension pages can call `chrome.*` via `page.evaluate`, which is how specs seed and inspect state.
-- Full local gate mirrors CI: `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` → `check:bundle` → `xvfb-run -a test:e2e`.
+- Full local gate mirrors CI: `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` → `check:bundle` → `check:store` → `xvfb-run -a test:e2e` (`check:site` when touching `site/`).
 
 ---
 
-Last refreshed: 2026-09-26
+Last refreshed: 2026-09-29
 
 ---
 

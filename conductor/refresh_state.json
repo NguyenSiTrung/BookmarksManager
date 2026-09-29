@@ -1,10 +1,11 @@
 {
-  "lastRefresh": "2026-09-28T09:55:00Z",
+  "lastRefresh": "2026-09-29T00:00:00Z",
   "scope": "all",
   "changes": [
-    "tech-stack.md: @mozilla/readability [planned] -> installed (0.6; src/extract/readability.ts, Phase 5)",
-    "PROJECT_PLAN.md §6.3: removed @mozilla/readability from not-installed list",
-    "tracks.md: phase5_llm_layer_20260928 archived (done at archive step)",
-    "Beads drift: none — open issues are filed follow-ups only"
+    "tech-stack.md: Dexie v3 -> v4 (llmUsage, llmReservations); manifest permissions + scripting and broad/loopback optional hosts; radix-ui + Switch; Geist fonts + .options-root palette + inline SVG icons; test:eval, check:store, check:site, npm run zip; pages.yml workflow; header now anchored to options_redesign_20260929",
+    "product.md: added Phase 6 store-readiness 1.0.0 trusted-tester release bullet and Options redesign bullet; refresh marker",
+    "workflow.md: local gate slice gains check:store; check:site/test:eval/test:live gating notes",
+    "patterns.md: gate line gains check:store/check:site; refresh markers bumped. No new elevations needed — options_redesign learnings already consolidated at archive",
+    "Beads drift: none — 14 open issues are filed follow-ups; no active track plans"
   ]
 }

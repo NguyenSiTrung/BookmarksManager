@@ -1,13 +1,13 @@
-<!-- Last refreshed: 2026-09-28 -->
+<!-- Last refreshed: 2026-09-29 -->
 
 # Technology Stack
 
-The stack below reflects the **installed dependencies in `package.json`** as of the
-Phase 4 Jev-decisions track (`phase4_jev_decisions_20260927`, archived
-2026-09-28), after the archived Phase 3 Jev client track
-(`phase3_jev_client_20260927`), Phase 2 search track (`phase2_search_20260926`),
-Phase 1 core manager (`phase1_core_manager_20260926`), and the Phase 0 foundation
-(`phase0_foundation_20260925`). Items still planned in `PROJECT_PLAN.md` but not
+The stack below reflects the **installed dependencies in `package.json`** as of
+the Options redesign track (`options_redesign_20260929`, archived 2026-09-29),
+after the Phase 6 store-readiness/1.0 release track
+(`phase6_store_release_20260928`), Phase 5 LLM layer (`phase5_llm_layer_20260928`),
+Phase 4 Jev decisions (`phase4_jev_decisions_20260927`), and the earlier
+archived Phase 3/2/1/0 tracks. Items still planned in `PROJECT_PLAN.md` but not
 yet installed are marked **[planned]**.
 
 ## Platform
@@ -19,12 +19,14 @@ yet installed are marked **[planned]**.
 - Entrypoints: `src/entrypoints/background.ts` service worker plus React/HTML
   `popup/`, `sidepanel/` (emits the `side_panel` manifest key automatically), and
   `options/` surfaces.
-- Manifest permissions as of Phase 2: `activeTab`, `bookmarks`, `contextMenus`,
-  `favicon`, `storage`, `sidePanel`; `optional_host_permissions` for the
-  TypeSafe/OpenRouter preset origins; the `_execute_action` quick-save command
-  (`Ctrl+Shift+Y`); and `omnibox.keyword = "bm"` for address-bar search (no
-  permission needed). `npm run check:manifest` keeps `store/permissions.md`
-  justifications in sync.
+- Manifest permissions as of Phase 6 (1.0.0): `activeTab`, `bookmarks`,
+  `contextMenus`, `favicon`, `scripting` (Readability extraction), `storage`,
+  `sidePanel`; `optional_host_permissions` cover the TypeSafe/OpenRouter
+  presets, the broad `https://*/*` custom-LLM-origin capability, and loopback
+  patterns (`localhost`/`127.0.0.1`/`[::1]`); the `_execute_action` quick-save
+  command (`Ctrl+Shift+Y`); and `omnibox.keyword = "bm"` for address-bar
+  search (no permission needed). `npm run check:manifest` keeps
+  `store/permissions.md` justifications in sync.
 
 ## Interface and State
 
@@ -32,8 +34,12 @@ yet installed are marked **[planned]**.
   `wxt.config.ts`; `@import "tailwindcss"` in `src/ui/styles.css`; no tailwind
   config file needed).
 - **Radix primitives via the `radix-ui` umbrella 1.6.7** (Dialog, DropdownMenu,
-  Popover, Checkbox) — adopted in Phase 1 in place of shadcn/ui, which is no
-  longer planned. `clsx` 2.1 + `tailwind-merge` 3.7 compose class names.
+  Popover, Checkbox, Switch) — adopted in Phase 1 in place of shadcn/ui, which
+  is no longer planned. `clsx` 2.1 + `tailwind-merge` 3.7 compose class names.
+  The Options redesign (2026-09-29) vendors **Geist fonts** (woff2 under
+  `src/`, resolved through Vite) behind a scoped `.options-root` palette and an
+  inline decorative SVG icon set (`src/ui/components/settings-icon.tsx`
+  precedent — no icon dependency).
 - **`@dnd-kit/core` 6.3.1 + `@dnd-kit/sortable` 10.0** drive tree/list drag and
   drop (pointer + keyboard sensors); **`@tanstack/react-virtual` 3.14**
   virtualizes the bookmark list/grid; **`dexie-react-hooks` 4.4** backs live
@@ -46,13 +52,15 @@ yet installed are marked **[planned]**.
 - **Zod 4.6.5** in jitless mode for the MV3 CSP — single configuration site
   `src/schemas/z.ts`; every schema file imports `z` from there, never from `zod`
   directly.
-- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 3**): v1 tables
+- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 4**): v1 tables
   `metadata`, `decisions`, `consents`, `sentLog`, `keyMaterials`; v2 adds
-  `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), and `undo`
-  (`++id,createdAt`); v3 (Phase 4) adds the decisions-UI tables `jobs`
+  `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), and
+  `undo` (`++id,createdAt`); v3 (Phase 4) adds the decisions-UI tables `jobs`
   (`id,status,createdAt` — resumable batch jobs), `audit`
   (`++id,decisionId,changedAt` — decision lifecycle history), and `usage`
-  (`++id,jobId,recordedAt` — per-request cost rows). The metadata/tag
+  (`++id,jobId,recordedAt` — per-request cost rows); v4 (Phase 5) adds
+  `llmUsage` (`++id,providerId,recordedAt`) and `llmReservations`
+  (`id,providerId,status`) for LLM budget metering. The metadata/tag
   repository is `src/db/meta.ts`.
 - `chrome.storage.local` holds provider-key ciphertext envelopes only
   (`src/security/keys.ts`); non-extractable AES-GCM-256 `CryptoKey` material
@@ -142,7 +150,9 @@ yet installed are marked **[planned]**.
   (worst-of-10 < 1.5 s at a 10k-bookmark corpus); `tests/live/` is a
   key-gated smoke suite (synthetic probe + live categorize) run only via
   `npm run test:live` (separate `vitest.live.config.ts`, excluded from the
-  default run and CI; every test skips when its env key is absent).
+  default run and CI; every test skips when its env key is absent);
+  `npm run test:eval` (`vitest.eval.config.ts`) runs the separate key-gated
+  evaluation suite.
 - **Playwright 1.63** headed persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
   `tests/e2e/helpers/decisions.ts` fakes the provider at the WIRE level (a
@@ -153,11 +163,16 @@ yet installed are marked **[planned]**.
   react/react-hooks plugins; egress restriction rules ban `fetch` outside
   `src/net/**`.
 - Compliance scripts: `npm run check:manifest` (generated manifest ↔
-  `store/permissions.md`) and `npm run check:bundle` (whole-file scan for
-  `eval(`, `new Function`, remote `<script src>`).
+  `store/permissions.md`), `npm run check:bundle` (whole-file scan for
+  `eval(`, `new Function`, remote `<script src>`), `npm run check:store`
+  (release-strict store-readiness gate over `store/` docs, assets, and the
+  release record), `npm run check:site` (static-site gate for `site/`), and
+  `npm run zip` (reproducible `wxt zip` release archive).
 - GitHub Actions CI (`.github/workflows/ci.yml`, Node 22): lint → typecheck →
-  unit → build → manifest check → bundle check → headed Playwright under
-  `xvfb-run`.
+  unit → build → manifest check → bundle check → store-readiness gate →
+  headed Playwright under `xvfb-run`. A second workflow
+  (`.github/workflows/pages.yml`) gates `site/` via `check:site` and deploys
+  it to GitHub Pages on push to `main` or manual dispatch.
 - No project-owned backend, analytics, or remote code.
 
 See `PROJECT_PLAN.md` for the detailed architecture and staged permission
