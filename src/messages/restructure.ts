@@ -12,7 +12,7 @@ import type { Job } from "../schemas/job";
 import { LlmHttpError } from "../llm/client";
 import { grantConsentAtOrigin } from "../consent/records";
 import { resolveLlmDestination } from "../llm/providers";
-import { readLlmProvider } from "../llm/settings";
+import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import { LlmGateError } from "../net/llm-send";
 import { ApplyError, applyRestructurePlan } from "../restructure/apply";
@@ -49,6 +49,9 @@ declare const chrome: {
 export const RestructureMessage = z.discriminatedUnion("type", [
   // Propose a layout, enqueue the assignment job, and start it.
   // `unknownCostConfirmed` is the CostConfirmationDialog resend flag.
+  // `providerId` is either a stored provider id or the sentinel "active"
+  // (what the sidepanel view sends) — the worker resolves the sentinel to
+  // the active provider before any lookup.
   z.strictObject({
     type: z.literal("RESTRUCTURE_START"),
     providerId: z.string().min(1),
@@ -243,7 +246,13 @@ async function startRestructure(
   unknownCostConfirmed: boolean | undefined,
   deps: RestructureDeps,
 ): Promise<RestructureMessageResult> {
-  const record = await readLlmProvider(providerId);
+  // The sidepanel view sends the sentinel "active" — resolve it to the
+  // active provider's record here so every downstream lookup (consent
+  // origin, proposal, reservations) uses the record's own id.
+  const record =
+    providerId === "active"
+      ? await readActiveLlmProvider()
+      : await readLlmProvider(providerId);
   if (record === null) {
     return failure("no_provider", "No LLM provider is configured for restructure.");
   }
@@ -272,7 +281,7 @@ async function startRestructure(
       "llm_restructure",
       resolveLlmDestination(record.provider).origin,
     );
-    const { proposal } = await proposeLayout(providerId, synopsis, {
+    const { proposal } = await proposeLayout(record.providerId, synopsis, {
       ...(unknownCostConfirmed !== undefined ? { unknownCostConfirmed } : {}),
     });
     const job = await enqueueJob({

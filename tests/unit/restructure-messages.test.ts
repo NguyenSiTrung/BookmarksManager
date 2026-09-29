@@ -4,8 +4,14 @@ import { db } from "../../src/db/database";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import { handleRestructureMessage } from "../../src/messages/restructure";
 import type { RestructureDeps } from "../../src/messages/restructure";
+import { proposeLayout } from "../../src/restructure/propose";
+import { saveLlmProvider } from "../../src/llm/settings";
 import { enqueueJob } from "../../src/jobs/queue";
 import type { RestructureProposal } from "../../src/schemas/restructure";
+
+vi.mock("../../src/restructure/propose", () => ({
+  proposeLayout: vi.fn(),
+}));
 
 /**
  * `handleRestructureMessage` (spec FR8): the sidepanel-facing protocol —
@@ -81,6 +87,47 @@ describe("handleRestructureMessage boundary", () => {
       deps,
     );
     expect(malformed).toMatchObject({ ok: false, code: "malformed_message" });
+  });
+});
+
+describe("RESTRUCTURE_START", () => {
+  it("resolves the \"active\" sentinel to the active provider's id", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+
+    // The view sends the sentinel "active"; the worker must hand the
+    // resolved record's own id to the proposal (and job) layer.
+    expect(reply).toMatchObject({ ok: true, code: "job_ok" });
+    expect(proposeLayout).toHaveBeenCalledWith(
+      "preset:openai",
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(runJobCalls).toHaveLength(1);
+  });
+
+  it("reports no_provider when \"active\" names no active provider", async () => {
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "no_provider" });
+    expect(proposeLayout).not.toHaveBeenCalled();
   });
 });
 
