@@ -466,7 +466,7 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   await expect(dialog2.getByText("Scan: Completed")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(dialog2.getByText(/Batches 1 \/ 1/)).toBeVisible();
+  await expect(dialog2.getByText(/3 bookmarks processed \(100%\)/)).toBeVisible();
   await expect(dialog2.getByText(/3 bookmarks processed/)).toBeVisible();
   expect(route2.requests).toHaveLength(3);
   expect(await sentLogRows(sp2)).toHaveLength(3);
@@ -502,7 +502,7 @@ test("a restart auto-resumes a running scan from the committed batch only", asyn
   }
   const dialog1 = await openScanDialog(sp1);
   await dialog1.getByRole("button", { name: "Start scan" }).click();
-  await expect(dialog1.getByText(/Batches 1 \/ 2/)).toBeVisible({
+  await expect(dialog1.getByText(/5 bookmarks processed \(50%\)/)).toBeVisible({
     timeout: 60_000,
   });
   // Batch 1's 5 analyses auto-released; batch 2 began and its FIRST
