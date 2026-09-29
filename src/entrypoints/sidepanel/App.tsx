@@ -14,6 +14,7 @@ import {
 } from "../../ui/components/dropdown-menu";
 import { useBookmarkTree } from "../../ui/hooks/useBookmarkTree";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
+import { EmptyState } from "../../ui/components/empty-state";
 import { openBookmarkUrl } from "../../sync/tabs";
 import { isOpenableUrl } from "../../search/openable";
 import {
@@ -42,6 +43,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ScanPanel } from "./ScanPanel";
 import type { ScanBookmark } from "./ScanPanel";
 import { SearchBar } from "./SearchBar";
+import { emptyStateFor } from "./empty-state";
 import {
   Dialog,
   DialogContent,
@@ -574,6 +576,38 @@ export function App(props?: { askDebounceMs?: number }) {
   };
 
   /**
+   * The empty-state block for the active view, or a plain "Loading…" while
+   * the tree or the search index is still being built so "No bookmarks yet"
+   * never flashes.
+   */
+  const emptyNode = (() => {
+    const loading =
+      tree.folders.size === 0 ||
+      (activeView.kind === "search" && search === null);
+    if (loading) return <EmptyState title="Loading…" />;
+    const spec = emptyStateFor(activeView, {
+      aiConnected,
+      libraryEmpty: tree.bookmarks.size === 0,
+    });
+    const kind = spec.action?.kind;
+    const runAction = (): void => {
+      if (kind === "import") handleTools("import");
+      else if (kind === "scan") handleTools("scan");
+      else if (kind === "set-up-ai") handleTools("set-up-ai");
+      else if (kind === "clear-search") setSearchQuery("");
+    };
+    return (
+      <EmptyState
+        title={spec.title}
+        {...(spec.hint === undefined ? {} : { hint: spec.hint })}
+        {...(spec.action === undefined
+          ? {}
+          : { action: { label: spec.action.label, onSelect: runAction } })}
+      />
+    );
+  })();
+
+  /**
    * Summarize (spec FR10): resolves the active tab inside this click handler
    * (the `activeTab` grant), then opens `SummaryDialog` which sends the
    * explicit LLM_SUMMARIZE intent. A missing/inactive tab is a toast; the
@@ -817,6 +851,7 @@ export function App(props?: { askDebounceMs?: number }) {
                           undoable: true,
                         })
                       }
+                      empty={emptyNode}
                       className="flex-1"
                     />
                   </>
@@ -832,6 +867,7 @@ export function App(props?: { askDebounceMs?: number }) {
                       decisions={pendingDecisions}
                       tree={tree}
                       onApplied={armDecisionRevert}
+                      empty={emptyNode}
                       className="flex-1"
                     />
                   </>
@@ -857,6 +893,7 @@ export function App(props?: { askDebounceMs?: number }) {
                     renderItemActions={renderItemActions}
                     renderItemContextMenu={renderItemContextMenu}
                     leading={scopeHeading}
+                    empty={emptyNode}
                     className="flex-1"
                   />
                 )}

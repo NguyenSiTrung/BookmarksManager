@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
+  ReactNode,
 } from "react";
 import {
   AUTO_APPLY_THRESHOLD,
@@ -424,6 +425,11 @@ export interface ReviewViewProps {
    * handler decides what runs.
    */
   onApplied?: (decisionId: string) => void;
+  /**
+   * Shown when the queue is empty. Defaults to the plain "No pending
+   * suggestions" line.
+   */
+  empty?: ReactNode;
   className?: string;
 }
 
@@ -431,6 +437,7 @@ export function ReviewView({
   decisions,
   tree,
   onApplied,
+  empty,
   className,
 }: ReviewViewProps) {
   const toast = useToast();
@@ -766,9 +773,11 @@ export function ReviewView({
         className="min-h-0 flex-1 overflow-y-auto outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
       >
         {count === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">
-            No pending suggestions — the queue is empty.
-          </p>
+          (empty ?? (
+            <p className="p-4 text-sm text-muted-foreground">
+              No pending suggestions — the queue is empty.
+            </p>
+          ))
         ) : (
           rows.map((row, index) => (
             <ReviewRow
