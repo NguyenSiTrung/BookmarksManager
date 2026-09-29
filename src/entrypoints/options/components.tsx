@@ -349,6 +349,90 @@ export function Disclosure(props: {
   );
 }
 
+/** Chip styling shared by `ConsentFacts` rows and per-site extras. */
+export const consentFactChipClass =
+  "rounded bg-muted px-1.5 py-0.5 text-xs text-foreground";
+
+/**
+ * One rendering of the consent facts every disclosure shares
+ * (options-popup plan Task 2): Recipient, Sent, Never sent, Why, When —
+ * absent rows omitted, `children` carrying per-site extras (credential
+ * handling, data note, policy links) after the definition list. The facts
+ * stay verbatim from `src/consent/disclosure.ts`; presentation only,
+ * pinned by `tests/unit/consent-snapshot.test.ts`.
+ */
+export function ConsentFacts(props: {
+  recipientName: string;
+  origin: string;
+  /** Rendered inside the Recipient row (e.g. `NO_DEVELOPER_SERVER_NOTE`). */
+  recipientNote?: string;
+  sent: readonly string[];
+  /** Lead-in line inside the Sent row (e.g. the synthetic-payload note). */
+  sentNote?: string;
+  neverSent?: readonly string[];
+  why?: string;
+  when?: string;
+  children?: ReactNode;
+}) {
+  const labelClass =
+    "text-xs font-medium tracking-wide text-foreground uppercase";
+  return (
+    <div className="space-y-2.5 text-sm text-muted-foreground">
+      <dl className="space-y-2.5">
+        <div>
+          <dt className={labelClass}>Recipient</dt>
+          <dd className="mt-1">
+            {props.recipientName} at{" "}
+            <code className={consentFactChipClass}>{props.origin}</code> —
+            the only destination this consent covers.
+            {props.recipientNote !== undefined && ` ${props.recipientNote}`}
+          </dd>
+        </div>
+        <div>
+          <dt className={labelClass}>Sent</dt>
+          <dd className="mt-1.5">
+            {props.sentNote !== undefined && (
+              <p className="mb-1.5">{props.sentNote}</p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {props.sent.map((field) => (
+                <code key={field} className={consentFactChipClass}>
+                  {field}
+                </code>
+              ))}
+            </div>
+          </dd>
+        </div>
+        {props.neverSent !== undefined && (
+          <div>
+            <dt className={labelClass}>Never sent</dt>
+            <dd className="mt-1.5 flex flex-wrap gap-1.5">
+              {props.neverSent.map((field) => (
+                <code key={field} className={consentFactChipClass}>
+                  {field}
+                </code>
+              ))}
+            </dd>
+          </div>
+        )}
+        {props.why !== undefined && (
+          <div>
+            <dt className={labelClass}>Why</dt>
+            <dd className="mt-1">{props.why}.</dd>
+          </div>
+        )}
+        {props.when !== undefined && (
+          <div>
+            <dt className={labelClass}>When</dt>
+            <dd className="mt-1">{props.when}.</dd>
+          </div>
+        )}
+      </dl>
+      {props.children}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* SetupChecklist                                                      */
 /* ------------------------------------------------------------------ */

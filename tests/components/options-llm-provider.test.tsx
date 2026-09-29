@@ -223,8 +223,8 @@ describe("disclosure", () => {
     expect(view.getByText("messages")).toBeTruthy();
     expect(view.getByText("response_format")).toBeTruthy();
     expect(view.getByText(/Authorization/)).toBeTruthy();
-    expect(view.getByText(/why:/i)).toBeTruthy();
-    expect(view.getByText(/when:/i)).toBeTruthy();
+    expect(view.getByText("Why")).toBeTruthy();
+    expect(view.getByText("When")).toBeTruthy();
     // No network while rendering the disclosure.
     expect(fetchSpy).not.toHaveBeenCalled();
   });

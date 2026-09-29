@@ -33,10 +33,12 @@ import {
 import {
   Alert,
   Chip,
+  ConsentFacts,
   Disclosure,
   Field,
   ProviderCard,
   StatusBadge,
+  consentFactChipClass,
 } from "./components";
 import { InfoIcon, PlugIcon, WarningIcon } from "../../ui/components/icons";
 import {
@@ -502,33 +504,26 @@ export function ProviderSetup() {
           open={!status?.enabled}
           regionLabel={`${disclosure.name} data disclosure`}
         >
-          <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
-            <li>
-              Recipient: {disclosure.name} at {disclosure.origin} — the only
-              destination this consent covers. {NO_DEVELOPER_SERVER_NOTE}
-            </li>
-            <li>
-              What is sent: {SYNTHETIC_DESCRIPTION}, with exactly the fields{" "}
-              {SYNTHETIC_FIELDS.map((field) => (
-                <code key={field} className="rounded bg-muted px-1">
-                  {field}
-                </code>
-              ))}
-              .
-            </li>
-            <li>
+          <ConsentFacts
+            recipientName={disclosure.name}
+            origin={disclosure.origin}
+            recipientNote={NO_DEVELOPER_SERVER_NOTE}
+            sent={[...SYNTHETIC_FIELDS]}
+            sentNote={SYNTHETIC_DESCRIPTION}
+            why={CONSENT_PURPOSE}
+            when={CONSENT_TRIGGER}
+          >
+            <p>
               Your API key travels only in the{" "}
-              <code className="rounded bg-muted px-1">
+              <code className={consentFactChipClass}>
                 {AUTHORIZATION_HEADER}
               </code>{" "}
               header to {disclosure.origin}. It is stored encrypted on this
               device and never shown again.
-            </li>
-            <li>Why: {CONSENT_PURPOSE}.</li>
-            <li>When: {CONSENT_TRIGGER}.</li>
-            <li>{disclosure.dataNote}</li>
+            </p>
+            <p>{disclosure.dataNote}</p>
             {disclosure.privacyPolicyUrl !== undefined ? (
-              <li>
+              <p>
                 Read the{" "}
                 <a
                   href={disclosure.privacyPolicyUrl}
@@ -539,15 +534,15 @@ export function ProviderSetup() {
                   {disclosure.name} privacy policy
                 </a>
                 ; this extension&apos;s own draft policy is bundled below.
-              </li>
+              </p>
             ) : (
-              <li>
+              <p>
                 A custom endpoint has no bundled policy link — review that
                 provider&apos;s own privacy policy; this extension&apos;s
                 draft policy is bundled below.
-              </li>
+              </p>
             )}
-          </ul>
+          </ConsentFacts>
         </Disclosure>
       </div>
 

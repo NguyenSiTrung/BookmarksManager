@@ -154,7 +154,7 @@ describe("disclosure", () => {
     expect(
       view.getAllByText(/https:\/\/api\.typesafe\.ai/).length,
     ).toBeGreaterThan(0);
-    expect(view.getByText(/Recipient:/)).toBeTruthy();
+    expect(view.getByText("Recipient")).toBeTruthy();
     // The exact synthetic field names.
     expect(view.getByText("model")).toBeTruthy();
     expect(view.getByText("state")).toBeTruthy();
@@ -162,8 +162,8 @@ describe("disclosure", () => {
     // The key travels only in the Authorization header.
     expect(view.getByText(/Authorization/)).toBeTruthy();
     // Reason and trigger in plain language.
-    expect(view.getByText(/why:/i)).toBeTruthy();
-    expect(view.getByText(/when:/i)).toBeTruthy();
+    expect(view.getByText("Why")).toBeTruthy();
+    expect(view.getByText("When")).toBeTruthy();
     // Provider privacy-policy link plus the bundled local draft.
     const providerLink = view.getByRole("link", {
       name: /privacy policy/i,

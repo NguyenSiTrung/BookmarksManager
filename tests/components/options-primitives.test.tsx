@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Alert,
   Chip,
+  ConsentFacts,
   Disclosure,
   Field,
   ProviderCard,
@@ -142,6 +143,74 @@ describe("options primitives", () => {
       );
       fireEvent.click(screen.getByText("OpenRouter"));
       expect(onChange).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("ConsentFacts", () => {
+    it("renders every provided row and the children", () => {
+      render(
+        <ConsentFacts
+          recipientName="TypeSafe"
+          origin="https://api.typesafe.ai"
+          recipientNote="This extension has no server of its own."
+          sent={["model", "state"]}
+          neverSent={["notes"]}
+          why="check that your key works"
+          when="only on Test connection"
+        >
+          <p>Stored encrypted on this device.</p>
+        </ConsentFacts>,
+      );
+      expect(screen.getByText("Recipient")).toBeTruthy();
+      expect(screen.getByText("Sent")).toBeTruthy();
+      expect(screen.getByText("Never sent")).toBeTruthy();
+      expect(screen.getByText("Why")).toBeTruthy();
+      expect(screen.getByText("When")).toBeTruthy();
+      expect(screen.getByText("model")).toBeTruthy();
+      expect(screen.getByText("state")).toBeTruthy();
+      expect(screen.getByText("notes")).toBeTruthy();
+      expect(screen.getByText(/check that your key works/)).toBeTruthy();
+      expect(screen.getByText(/only on Test connection/)).toBeTruthy();
+      expect(screen.getByText("Stored encrypted on this device.")).toBeTruthy();
+      expect(
+        screen.getByText(/the only destination this consent covers/),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(/This extension has no server of its own/),
+      ).toBeTruthy();
+    });
+
+    it("omits absent rows", () => {
+      render(
+        <ConsentFacts
+          recipientName="your provider"
+          origin="https://llm.example.com"
+          sent={["model"]}
+        />,
+      );
+      expect(screen.getByText("Recipient")).toBeTruthy();
+      expect(screen.getByText("Sent")).toBeTruthy();
+      expect(screen.queryByText("Never sent")).toBeNull();
+      expect(screen.queryByText("Why")).toBeNull();
+      expect(screen.queryByText("When")).toBeNull();
+    });
+
+    it("renders each fact exactly once (no sent/never-sent duplication)", () => {
+      render(
+        <ConsentFacts
+          recipientName="TypeSafe"
+          origin="https://api.typesafe.ai"
+          sent={["bookmark title", "domain"]}
+          neverSent={["notes", "page text"]}
+          why="categorize"
+          when="saving a bookmark"
+        />,
+      );
+      // The merged-duplication regression: the never-sent facts appear only
+      // in the Never sent row, never echoed in the Sent row's prose.
+      expect(screen.getAllByText("notes")).toHaveLength(1);
+      expect(screen.getAllByText("page text")).toHaveLength(1);
+      expect(screen.getAllByText("bookmark title")).toHaveLength(1);
     });
   });
 

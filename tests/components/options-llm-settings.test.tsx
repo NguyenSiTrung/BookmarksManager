@@ -196,9 +196,11 @@ describe("escalation section", () => {
     expect(
       screen.getByText(/give a second opinion on a low-confidence/i),
     ).toBeTruthy();
-    expect(
-      screen.getByText(/decision state.*Jev answer/s),
-    ).toBeTruthy();
+    const region = screen.getByRole("region", {
+      name: "Second opinion disclosure",
+    });
+    expect(region.textContent).toContain("decision state");
+    expect(region.textContent).toContain("Jev answer");
     expect(screen.getByText(/Monthly cap: \$5\.00/)).toBeTruthy();
   });
 

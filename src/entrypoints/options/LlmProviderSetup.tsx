@@ -19,10 +19,12 @@ import {
 import {
   Alert,
   Chip,
+  ConsentFacts,
   Disclosure,
   Field,
   ProviderCard,
   StatusBadge,
+  consentFactChipClass,
 } from "./components";
 import { WarningIcon, ZapIcon } from "../../ui/components/icons";
 import { LlmBudget } from "./LlmBudget";
@@ -478,34 +480,23 @@ export function LlmProviderSetup() {
           open={!status?.enabled}
           regionLabel="LLM provider data disclosure"
         >
-          <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
-            <li>
-              Recipient: your configured provider at{" "}
-              <code className="rounded bg-muted px-1">{disclosureOrigin}</code>{" "}
-              — the only destination this consent covers.{" "}
-              {NO_DEVELOPER_SERVER_NOTE}
-            </li>
-            <li>
-              What is sent during setup: {TEST_DISCLOSURE.purpose}, with
-              exactly the fields{" "}
-              {TEST_DISCLOSURE.fields.map((field) => (
-                <code key={field} className="rounded bg-muted px-1">
-                  {field}
-                </code>
-              ))}
-              .
-            </li>
-            <li>Why: to {TEST_DISCLOSURE.purpose}.</li>
-            <li>When: {TEST_DISCLOSURE.trigger}.</li>
-            <li>{TEST_DISCLOSURE.credentialUse}.</li>
-            <li>
+          <ConsentFacts
+            recipientName="your configured provider"
+            origin={disclosureOrigin}
+            recipientNote={NO_DEVELOPER_SERVER_NOTE}
+            sent={[...TEST_DISCLOSURE.fields]}
+            neverSent={[...LLM_NEVER_SENT]}
+            why={TEST_DISCLOSURE.purpose}
+            when={TEST_DISCLOSURE.trigger}
+          >
+            <p>{TEST_DISCLOSURE.credentialUse}.</p>
+            <p>
               With a credential configured it travels only in the{" "}
-              <code className="rounded bg-muted px-1">Authorization</code> or{" "}
-              <code className="rounded bg-muted px-1">api-key</code> request
+              <code className={consentFactChipClass}>Authorization</code> or{" "}
+              <code className={consentFactChipClass}>api-key</code> request
               header to {disclosureOrigin}.
-            </li>
-            <li>Never sent: {LLM_NEVER_SENT.join(", ")}.</li>
-          </ul>
+            </p>
+          </ConsentFacts>
         </Disclosure>
       </div>
 

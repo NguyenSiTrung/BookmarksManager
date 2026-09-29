@@ -1,15 +1,8 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   CUSTOM_JEV_PROVIDER_NAME,
   customJevDisclosure,
-  DECISIONS_DESCRIPTION,
   DECISIONS_NEVER_SENT_FIELDS,
   DECISIONS_PURPOSES,
   DECISIONS_SENT_FIELDS,
@@ -63,6 +56,7 @@ import {
 import {
   Alert,
   Chip,
+  ConsentFacts,
   Disclosure,
   Field,
   ProviderCard,
@@ -706,36 +700,18 @@ export function DecisionSettings() {
             open={consentGranted !== true}
             regionLabel={`${disclosure.name} bookmark data disclosure`}
           >
-            <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
-              <li>
-                Recipient: {disclosure.name} at {disclosure.origin} — the only
-                destination this consent covers. {NO_DEVELOPER_SERVER_NOTE}
-              </li>
-              <li>
-                What is sent: {DECISIONS_DESCRIPTION}. A request may carry:
-                <ul className="mt-1 list-disc space-y-1 pl-5">
-                  {DECISIONS_SENT_FIELDS.map((field) => (
-                    <li key={field}>{field}</li>
-                  ))}
-                </ul>
-              </li>
-              <li>
-                Never sent, under any scope:{" "}
-                {DECISIONS_NEVER_SENT_FIELDS.map((field, index) => (
-                  <Fragment key={field}>
-                    {index > 0 && " and "}
-                    <code className="rounded bg-muted px-1">{field}</code>
-                  </Fragment>
-                ))}
-                .
-              </li>
-              <li>Why: {DECISIONS_PURPOSES.join(", ")}.</li>
-              <li>
-                When: {DECISIONS_TRIGGERS.join(", ")} — {DECISIONS_TRIGGER_NOTE}.
-              </li>
-              <li>{disclosure.dataNote}</li>
+            <ConsentFacts
+              recipientName={disclosure.name}
+              origin={disclosure.origin}
+              recipientNote={NO_DEVELOPER_SERVER_NOTE}
+              sent={[...DECISIONS_SENT_FIELDS]}
+              neverSent={[...DECISIONS_NEVER_SENT_FIELDS]}
+              why={DECISIONS_PURPOSES.join(", ")}
+              when={`${DECISIONS_TRIGGERS.join(", ")} — ${DECISIONS_TRIGGER_NOTE}`}
+            >
+              <p>{disclosure.dataNote}</p>
               {disclosure.privacyPolicyUrl !== undefined ? (
-                <li>
+                <p>
                   Read the{" "}
                   <a
                     href={disclosure.privacyPolicyUrl}
@@ -746,15 +722,15 @@ export function DecisionSettings() {
                     {disclosure.name} privacy policy
                   </a>{" "}
                   and {EXTENSION_PRIVACY_POLICY_REFERENCE}.
-                </li>
+                </p>
               ) : (
-                <li>
+                <p>
                   A custom endpoint has no bundled policy link — review that
                   provider&apos;s own privacy policy, and{" "}
                   {EXTENSION_PRIVACY_POLICY_REFERENCE}.
-                </li>
+                </p>
               )}
-            </ul>
+            </ConsentFacts>
           </Disclosure>
         </div>
 
@@ -884,15 +860,16 @@ export function DecisionSettings() {
               open={escalationConsentRead !== true}
               regionLabel="Second opinion disclosure"
             >
-              <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
-                <li>Purpose: {escalationDisclosure.purpose}.</li>
-                <li>
-                  Sends: {escalationDisclosure.fields.join(", ")} — never page
-                  content or full URLs.
-                </li>
-                <li>When: {escalationDisclosure.trigger}.</li>
-                <li>{escalationDisclosure.credentialUse}</li>
-              </ul>
+              <ConsentFacts
+                recipientName="your LLM provider"
+                origin={llmOrigin}
+                sent={[...escalationDisclosure.fields]}
+                neverSent={["page content", "full URLs"]}
+                why={escalationDisclosure.purpose}
+                when={escalationDisclosure.trigger}
+              >
+                <p>{escalationDisclosure.credentialUse}.</p>
+              </ConsentFacts>
             </Disclosure>
 
             {escalationConsentRead === null ? null : !escalationConsentRead ? (
