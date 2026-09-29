@@ -195,6 +195,19 @@ function keyInput(): HTMLInputElement {
 function agreeCheckbox(): HTMLInputElement {
   return screen.getByRole("checkbox", { name: /agree/i }) as HTMLInputElement;
 }
+/**
+ * The disclosure read gate (Task 3): the agree checkbox is disabled until
+ * the disclosure has been opened once. jsdom does not toggle `<details>` on
+ * summary clicks, so flip the DOM attribute and fire `toggle` directly —
+ * the same pattern options-primitives uses for Disclosure.
+ */
+function openDisclosure(): void {
+  const details = screen
+    .getByRole("region", { name: /data disclosure/i })
+    .closest("details") as HTMLDetailsElement;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+}
 function enableButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: /^enable/i }) as HTMLButtonElement;
 }
@@ -206,6 +219,7 @@ async function fillPresetAndAgree(key = "sk-live-abcdef") {
   fireEvent.change(await screen.findByLabelText(/api key/i), {
     target: { value: key },
   });
+  openDisclosure();
   fireEvent.click(agreeCheckbox());
   await waitFor(() => expect(enableButton().disabled).toBe(false));
 }
@@ -241,6 +255,7 @@ describe("disclosure", () => {
     fireEvent.change(await screen.findByLabelText(/api key/i), {
       target: { value: "sk-live-abcdef" },
     });
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     await waitFor(() => expect(enableButton().disabled).toBe(false));
     fireEvent.click(enableButton());
@@ -331,6 +346,7 @@ describe("enable flow", () => {
     expect(agreeCheckbox().checked).toBe(false);
     fireEvent.change(keyInput(), { target: { value: "sk-live-abcdef" } });
     expect(enableButton().disabled).toBe(true);
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     await waitFor(() => expect(enableButton().disabled).toBe(false));
   });
@@ -379,6 +395,7 @@ describe("enable flow", () => {
       target: { value: "m" },
     });
     fireEvent.change(keyInput(), { target: { value: "sk-x" } });
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     fireEvent.click(enableButton());
     const alert = await screen.findByRole("alert");
@@ -401,6 +418,7 @@ describe("enable flow", () => {
       target: { value: "-1" },
     });
     fireEvent.change(keyInput(), { target: { value: "sk-x" } });
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     fireEvent.click(enableButton());
     const alert = await screen.findByRole("alert");
@@ -423,6 +441,7 @@ describe("enable flow", () => {
     });
     // auth:none — no key input rendered at all.
     expect(screen.queryByLabelText(/api key/i)).toBeNull();
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     await waitFor(() => expect(enableButton().disabled).toBe(false));
     fireEvent.click(enableButton());
@@ -560,5 +579,31 @@ describe("enabled provider", () => {
         { type: "LLM_REVOKE", providerId: "preset:openai", deleteKey: false },
       ]),
     );
+  });
+});
+
+describe("disclosure read gate", () => {
+  it("keeps the agree checkbox disabled with a reason until the disclosure opens", async () => {
+    render(<LlmProviderSetup />);
+    await screen.findByRole("button", { name: /^enable/i });
+    expect(agreeCheckbox().disabled).toBe(true);
+    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    expect(
+      screen.queryByText("Open the disclosure above first."),
+    ).toBeNull();
+  });
+
+  it("re-arms the gate when the provider kind changes", async () => {
+    render(<LlmProviderSetup />);
+    await screen.findByRole("button", { name: /^enable/i });
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    fireEvent.click(customRadio());
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(true));
+    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
   });
 });

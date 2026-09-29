@@ -95,6 +95,15 @@ export function LlmProviderSetup() {
   const [budgetCap, setBudgetCap] = useState("");
   const [budgetUnlimited, setBudgetUnlimited] = useState(false);
   const [agreed, setAgreed] = useState(false);
+  // Read gate (options-popup plan Task 3): see ProviderSetup. Keyed to the
+  // provider kind; switching kind, enabling, or revoking re-arms.
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const [openedKind, setOpenedKind] = useState<ProviderKind | null>(null);
+  const disclosureRead = openedKind === kind;
+  const armDisclosureGate = (): void => {
+    setDisclosureOpen(false);
+    setOpenedKind(null);
+  };
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
   const [status, setStatus] = useState<LlmProviderStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -153,6 +162,7 @@ export function LlmProviderSetup() {
     setError(null);
     setNotice(null);
     setTestOutcome(null);
+    armDisclosureGate();
   };
 
   /**
@@ -314,6 +324,7 @@ export function LlmProviderSetup() {
           setStatus(result.data.status);
           setApiKey("");
           setAgreed(false);
+          armDisclosureGate();
           setNotice("The LLM provider is enabled.");
         } else {
           setError("The extension worker returned an unexpected response.");
@@ -362,6 +373,7 @@ export function LlmProviderSetup() {
         } else if ("status" in result.data) {
           setStatus(result.data.status);
           setAgreed(false);
+          armDisclosureGate();
           setNotice("LLM provider consent and browser access were removed.");
         } else {
           setError("The extension worker returned an unexpected response.");
@@ -477,7 +489,11 @@ export function LlmProviderSetup() {
         <Disclosure
           title="What enabling an LLM provider means"
           subtitle="Read before enabling — this is what your consent covers."
-          open={!status?.enabled}
+          open={disclosureOpen}
+          onOpenChange={(open) => {
+            setDisclosureOpen(open);
+            if (open) setOpenedKind(kind);
+          }}
           regionLabel="LLM provider data disclosure"
         >
           <ConsentFacts
@@ -778,11 +794,17 @@ export function LlmProviderSetup() {
               type="checkbox"
               className="mt-0.5"
               checked={agreed}
+              disabled={!disclosureRead}
               onChange={(event) => setAgreed(event.target.checked)}
             />
             I have read the disclosure above and agree to enable this LLM
             provider.
           </label>
+          {!disclosureRead && (
+            <p className="text-xs text-muted-foreground">
+              Open the disclosure above first.
+            </p>
+          )}
           <button
             type="button"
             onClick={onEnable}

@@ -101,6 +101,17 @@ export function ProviderSetup() {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [agreed, setAgreed] = useState(false);
+  // Read gate (options-popup plan Task 3): the disclosure starts folded and
+  // the agreement checkbox stays disabled until it has been opened for the
+  // currently selected preset. Switching presets, enabling, or revoking
+  // re-arms the gate.
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const [openedPreset, setOpenedPreset] = useState<JevProviderId | null>(null);
+  const disclosureRead = openedPreset === presetId;
+  const armDisclosureGate = (): void => {
+    setDisclosureOpen(false);
+    setOpenedPreset(null);
+  };
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -233,6 +244,7 @@ export function ProviderSetup() {
     setBaseUrl("");
     setApiKey("");
     setAgreed(false);
+    armDisclosureGate();
     setError(null);
     setNotice(null);
     setTestOutcome(null);
@@ -326,6 +338,7 @@ export function ProviderSetup() {
           setStatus(result.data.status);
           setApiKey("");
           setAgreed(false);
+          armDisclosureGate();
           setNotice(`${disclosure.name} is enabled.`);
         } else {
           // A test_ok reply to an enable call is a protocol mix-up — treat it
@@ -379,6 +392,7 @@ export function ProviderSetup() {
         } else if ("status" in result.data) {
           setStatus(result.data.status);
           setAgreed(false);
+          armDisclosureGate();
           setNotice(
             `${disclosure.name} consent and browser access were removed.`,
           );
@@ -501,7 +515,11 @@ export function ProviderSetup() {
         <Disclosure
           title={`What enabling ${disclosure.name} means`}
           subtitle="Read before enabling — this is what your consent covers."
-          open={!status?.enabled}
+          open={disclosureOpen}
+          onOpenChange={(open) => {
+            setDisclosureOpen(open);
+            if (open) setOpenedPreset(presetId);
+          }}
           regionLabel={`${disclosure.name} data disclosure`}
         >
           <ConsentFacts
@@ -723,11 +741,17 @@ export function ProviderSetup() {
               type="checkbox"
               className="mt-0.5"
               checked={agreed}
+              disabled={!disclosureRead}
               onChange={(event) => setAgreed(event.target.checked)}
             />
             I have read the disclosure above and agree to enable{" "}
             {disclosure.name}.
           </label>
+          {!disclosureRead && (
+            <p className="text-xs text-muted-foreground">
+              Open the disclosure above first.
+            </p>
+          )}
           <button
             type="button"
             onClick={onEnable}

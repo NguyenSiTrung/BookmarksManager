@@ -200,6 +200,10 @@ export async function routeFakeDecisions(
  */
 export async function grantDecisionsConsent(page: Page): Promise<void> {
   await openOptionsPanel(page, "Permissions");
+  // Task 3 read gate: open the disclosure before the agree box.
+  await page
+    .locator("summary", { hasText: "What bookmark analysis sends to TypeSafe" })
+    .click();
   // "agree to send bookmark metadata" uniquely names the Jev consent — the
   // LLM provider section has its own near-identical disclosure checkbox.
   const checkbox = page.getByLabel(

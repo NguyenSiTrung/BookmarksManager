@@ -153,6 +153,10 @@ test("without consent the Test connection path sends zero requests", async () =>
     await jev.getByLabel("API key").fill(E2E_API_KEY);
     const enable = jev.getByRole("button", { name: "Enable TypeSafe" });
     await expect(enable).toBeDisabled();
+    // Task 3 read gate: open the disclosure before the agree checkbox.
+    await jev
+      .locator("summary", { hasText: "What enabling TypeSafe means" })
+      .click();
     await jev.getByLabel(/agree to enable/).check();
     await expect(enable).toBeEnabled();
     await expect(

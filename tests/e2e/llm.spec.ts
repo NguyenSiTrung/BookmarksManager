@@ -407,6 +407,10 @@ test("unsure analyze escalates automatically under the cap", async () => {
   // re-select the Permissions panel the consent controls live in.
   await page.reload();
   await openOptionsPanel(page, "Permissions");
+  // Task 3 read gate: open the escalation disclosure before the checkbox.
+  await page
+    .locator("summary", { hasText: "Automatic second opinions" })
+    .click();
   await page
     .getByLabel(/I allow second opinions to be sent to https:\/\/llm-custom\.test/)
     .check();
@@ -492,6 +496,11 @@ test("an explicit unlimited ceiling unlocks preset escalation, and the ceiling s
     page.getByText(/library scan can send a request per bookmark/i),
   ).toBeVisible();
   await page.locator("#llm-api-key").fill("sk-e2e");
+  // Task 3 read gate: open the disclosure before the agree checkbox.
+  await page
+    .getByRole("region", { name: "Optional LLM provider" })
+    .locator("summary", { hasText: "What enabling an LLM provider means" })
+    .click();
   await page.getByLabel(/agree to enable this LLM provider/).check();
   await page.getByRole("button", { name: "Enable LLM provider" }).click();
   await expect(
@@ -501,6 +510,10 @@ test("an explicit unlimited ceiling unlocks preset escalation, and the ceiling s
   // DecisionSettings reads the provider + escalation status on mount.
   await page.reload();
   await openOptionsPanel(page, "Permissions");
+  // Task 3 read gate: open the escalation disclosure before the checkbox.
+  await page
+    .locator("summary", { hasText: "Automatic second opinions" })
+    .click();
   await page
     .getByLabel(/I allow second opinions to be sent to https:\/\/api\.openai\.com/)
     .check();

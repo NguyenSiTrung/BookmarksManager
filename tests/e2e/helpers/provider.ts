@@ -325,6 +325,11 @@ export async function enableTypesafe(
     await region.getByLabel("Model").selectOption(details.model);
   }
   await region.getByLabel("API key").fill(details.key);
+  // Task 3 read gate: the agree checkbox is disabled until the disclosure
+  // has been opened once — click its summary first.
+  await region
+    .locator("summary", { hasText: "What enabling TypeSafe means" })
+    .click();
   await region.getByLabel(/agree to enable/).check();
   const enable = region.getByRole("button", { name: "Enable TypeSafe" });
   await expect(enable).toBeEnabled();

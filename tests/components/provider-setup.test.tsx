@@ -120,6 +120,19 @@ function keyInput(): HTMLInputElement {
 function agreeCheckbox(): HTMLInputElement {
   return screen.getByRole("checkbox", { name: /agree/i }) as HTMLInputElement;
 }
+/**
+ * The disclosure read gate (Task 3): the agree checkbox is disabled until
+ * the disclosure has been opened once. jsdom does not toggle `<details>` on
+ * summary clicks, so flip the DOM attribute and fire `toggle` directly —
+ * the same pattern options-primitives uses for Disclosure.
+ */
+function openDisclosure(): void {
+  const details = screen
+    .getByRole("region", { name: /data disclosure/i })
+    .closest("details") as HTMLDetailsElement;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+}
 function enableButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: /enable/i }) as HTMLButtonElement;
 }
@@ -137,6 +150,7 @@ async function fillAndAgree() {
   fireEvent.change(await screen.findByLabelText(/api key/i), {
     target: { value: "sk-live-abcdef" },
   });
+  openDisclosure();
   fireEvent.click(agreeCheckbox());
   // Enable also waits for the initial status load — allow it to settle.
   await waitFor(() => expect(enableButton().disabled).toBe(false));
@@ -240,6 +254,7 @@ describe("enable flow", () => {
     // Entering the key alone is not enough — the box gates the request.
     fireEvent.change(keyInput(), { target: { value: "sk-live-abcdef" } });
     expect(enableButton().disabled).toBe(true);
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     await waitFor(() => expect(enableButton().disabled).toBe(false));
   });
@@ -677,6 +692,7 @@ describe("custom provider enable", () => {
     fireEvent.change(await screen.findByLabelText(/api key/i), {
       target: { value: "sk-live-abcdef" },
     });
+    openDisclosure();
     fireEvent.click(agreeCheckbox());
     // Wait for the status probe to settle — key + agreement alone are not
     // enough while the endpoint fields are empty.
@@ -696,5 +712,31 @@ describe("custom provider enable", () => {
       target: { value: "jev-edge" },
     });
     await waitFor(() => expect(enableButton().disabled).toBe(false));
+  });
+});
+
+describe("disclosure read gate", () => {
+  it("keeps the agree checkbox disabled with a reason until the disclosure opens", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    expect(agreeCheckbox().disabled).toBe(true);
+    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    expect(
+      screen.queryByText("Open the disclosure above first."),
+    ).toBeNull();
+  });
+
+  it("re-arms the gate when the provider preset changes", async () => {
+    render(<ProviderSetup />);
+    await screen.findByRole("button", { name: /enable/i });
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(true));
+    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
+    openDisclosure();
+    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
   });
 });

@@ -181,6 +181,20 @@ async function section(): Promise<HTMLElement> {
     .parentElement as HTMLElement;
 }
 
+/**
+ * The escalation disclosure read gate (Task 3): the second-opinion agree
+ * checkbox is disabled until the disclosure has been opened once. jsdom
+ * does not toggle `<details>` on summary clicks, so flip the DOM attribute
+ * and fire `toggle` directly.
+ */
+function openEscalationDisclosure(): void {
+  const details = screen
+    .getByRole("region", { name: "Second opinion disclosure" })
+    .closest("details") as HTMLDetailsElement;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+}
+
 async function escalateToggle(): Promise<HTMLElement> {
   return await screen.findByRole("switch", {
     name: /second opinion on unsure suggestions/i,
@@ -207,6 +221,7 @@ describe("escalation section", () => {
   it("asks for consent before the toggle unlocks", async () => {
     render(<DecisionSettings />);
     await section();
+    openEscalationDisclosure();
     const toggle = await escalateToggle();
     await waitFor(() => expect(toggle).toHaveProperty("disabled", true));
     // Grant the llm_escalate scope at the provider's origin.
@@ -224,6 +239,60 @@ describe("escalation section", () => {
       ).resolves.toBe(true),
     );
     await waitFor(async () => expect((await escalateToggle())).toHaveProperty("disabled", false));
+  });
+
+  it("gates the second-opinion checkbox on the disclosure and re-arms on revoke", async () => {
+    render(<DecisionSettings />);
+    await section();
+    const box = (await screen.findByRole("checkbox", {
+      name: /allow second opinions to be sent to/i,
+    })) as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    // Scoped to the escalation gate's reason <p> (basis-full): the
+    // bookmark-analysis gate on the same page renders the same sentence.
+    expect(
+      screen.getByText("Open the disclosure above first.", {
+        selector: "p.basis-full",
+      }),
+    ).toBeTruthy();
+    openEscalationDisclosure();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("checkbox", {
+            name: /allow second opinions to be sent to/i,
+          }) as HTMLInputElement
+        ).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /allow second opinions to be sent to/i,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Allow second opinions$/ }),
+    );
+    await waitFor(() =>
+      expect(
+        hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
+      ).resolves.toBe(true),
+    );
+    // Revoking returns the consent row with the gate re-armed.
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Revoke second-opinion consent",
+      }),
+    );
+    const back = (await screen.findByRole("checkbox", {
+      name: /allow second opinions to be sent to/i,
+    })) as HTMLInputElement;
+    await waitFor(() => expect(back.disabled).toBe(true));
+    expect(
+      screen.getByText("Open the disclosure above first.", {
+        selector: "p.basis-full",
+      }),
+    ).toBeTruthy();
   });
 
   it("enabling sends LLM_ESCALATION_SET and reflects the reply", async () => {

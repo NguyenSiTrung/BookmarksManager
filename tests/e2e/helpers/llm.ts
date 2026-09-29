@@ -244,6 +244,11 @@ export async function enableCustom(
     await page.locator("#llm-output-price").fill(details.outputPrice);
   }
   await page.locator("#llm-api-key").fill(details.key);
+  // Task 3 read gate: open the disclosure before the agree checkbox. The
+  // section has a single disclosure regardless of provider kind.
+  await llm
+    .locator("summary", { hasText: "What enabling an LLM provider means" })
+    .click();
   await page
     .getByLabel(/agree to enable this LLM provider/)
     .check();
@@ -289,6 +294,11 @@ export async function enableOpenAi(
       .check();
   }
   await page.locator("#llm-api-key").fill(details.key);
+  // Task 3 read gate: open the disclosure before the agree checkbox.
+  await page
+    .getByRole("region", { name: "Optional LLM provider" })
+    .locator("summary", { hasText: "What enabling an LLM provider means" })
+    .click();
   await page
     .getByLabel(/agree to enable this LLM provider/)
     .check();

@@ -173,6 +173,16 @@ export function DecisionSettings() {
    */
   const [customOrigin, setCustomOrigin] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
+  // Read gate (options-popup plan Task 3): see ProviderSetup. Keyed to the
+  // selected preset; switching presets, granting, or revoking re-arms.
+  const [consentDisclosureOpen, setConsentDisclosureOpen] = useState(false);
+  const [openedConsentPreset, setOpenedConsentPreset] =
+    useState<JevProviderId | null>(null);
+  const consentDisclosureRead = openedConsentPreset === presetId;
+  const armConsentDisclosureGate = (): void => {
+    setConsentDisclosureOpen(false);
+    setOpenedConsentPreset(null);
+  };
   const [settings, setSettings] = useState<DecisionSettingsValue | null>(null);
   const [blocklist, setBlocklist] = useState<readonly string[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -202,6 +212,15 @@ export function DecisionSettings() {
   } | null>(null);
   const [escalationAgreed, setEscalationAgreed] = useState(false);
   const [escalationBusy, setEscalationBusy] = useState(false);
+  // Read gate for the escalation disclosure, keyed to the LLM origin so a
+  // provider change re-arms it automatically; granting or revoking re-arms.
+  const [escalationDisclosureOpen, setEscalationDisclosureOpen] =
+    useState(false);
+  const [escalationOpenedOrigin, setEscalationOpenedOrigin] = useState<
+    string | null
+  >(null);
+  const escalationDisclosureRead =
+    llmOrigin !== null && escalationOpenedOrigin === llmOrigin;
   const escalationDisclosure = LLM_SCOPE_DISCLOSURES[LLM_ESCALATE_SCOPE];
 
   /**
@@ -409,6 +428,8 @@ export function DecisionSettings() {
     void write
       .then(() => {
         setEscalationAgreed(false);
+        setEscalationDisclosureOpen(false);
+        setEscalationOpenedOrigin(null);
         setNotice(
           grant
             ? "Second-opinion consent recorded. Escalation still needs the toggle below plus a spending ceiling (a monthly cap or unlimited) on the provider."
@@ -464,6 +485,7 @@ export function DecisionSettings() {
     currentPreset.current = next;
     setPresetId(next);
     setAgreed(false);
+    armConsentDisclosureGate();
     setNewEntry("");
     setNotice(null);
     setError(null);
@@ -507,6 +529,7 @@ export function DecisionSettings() {
     void grantConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
       .then(() => {
         setAgreed(false);
+        armConsentDisclosureGate();
         setNotice(
           `Bookmark analysis consent recorded for ${disclosure.name}. It applies once ${disclosure.name} is connected above.`,
         );
@@ -532,6 +555,7 @@ export function DecisionSettings() {
     // stored key are untouched.
     void revokeConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
       .then(() => {
+        armConsentDisclosureGate();
         setNotice(
           `Bookmark analysis consent revoked for ${disclosure.name}. The provider connection is unchanged.`,
         );
@@ -697,7 +721,11 @@ export function DecisionSettings() {
         <div className="mt-4">
           <Disclosure
             title={`What bookmark analysis sends to ${disclosure.name}`}
-            open={consentGranted !== true}
+            open={consentDisclosureOpen}
+            onOpenChange={(open) => {
+              setConsentDisclosureOpen(open);
+              if (open) setOpenedConsentPreset(presetId);
+            }}
             regionLabel={`${disclosure.name} bookmark data disclosure`}
           >
             <ConsentFacts
@@ -767,11 +795,17 @@ export function DecisionSettings() {
                 type="checkbox"
                 className="mt-0.5"
                 checked={agreed}
+                disabled={!consentDisclosureRead}
                 onChange={(event) => setAgreed(event.target.checked)}
               />
               I have read the disclosure above and agree to send bookmark
               metadata to {disclosure.name}.
             </label>
+            {!consentDisclosureRead && (
+              <p className="text-xs text-muted-foreground">
+                Open the disclosure above first.
+              </p>
+            )}
             <button
               type="button"
               onClick={onGrant}
@@ -857,7 +891,13 @@ export function DecisionSettings() {
           <div className="mt-3 space-y-3">
             <Disclosure
               title={escalationDisclosure.title}
-              open={escalationConsentRead !== true}
+              open={escalationDisclosureOpen}
+              onOpenChange={(open) => {
+                setEscalationDisclosureOpen(open);
+                if (open && llmOrigin !== null) {
+                  setEscalationOpenedOrigin(llmOrigin);
+                }
+              }}
               regionLabel="Second opinion disclosure"
             >
               <ConsentFacts
@@ -878,13 +918,18 @@ export function DecisionSettings() {
                   <input
                     type="checkbox"
                     checked={escalationAgreed}
-                    disabled={escalationBusy}
+                    disabled={escalationBusy || !escalationDisclosureRead}
                     onChange={(event) =>
                       setEscalationAgreed(event.target.checked)
                     }
                   />
                   I allow second opinions to be sent to {llmOrigin}
                 </label>
+                {!escalationDisclosureRead && (
+                  <p className="basis-full text-xs text-muted-foreground">
+                    Open the disclosure above first.
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => onEscalationConsent(true)}
