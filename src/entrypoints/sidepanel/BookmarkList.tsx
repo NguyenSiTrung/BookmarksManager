@@ -19,6 +19,7 @@ import type { BookmarkItem } from "../../sync/tree";
 import { Favicon } from "../../ui/components/favicon";
 import { cn } from "../../ui/lib/cn";
 import { DragHandle, useDndState, useDropZone } from "./dnd";
+import { displayDomain, visibleTags } from "./row-text";
 
 /**
  * Virtualized bookmark list/grid for the right pane, plus the selection
@@ -56,6 +57,23 @@ const OVERSCAN = 6;
 const CONTEXT_MENU_CONTENT_CLASS =
   "z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover p-1 " +
   "text-popover-foreground shadow-md";
+
+/** Max tag chips on a row before the rest fold into a `+N` chip. */
+const MAX_ROW_TAGS = 2;
+
+/**
+ * Row controls are drawn but transparent until the row is hovered, holds
+ * focus, or is selected; touch devices (no hover) always show them. They keep
+ * their width so rows never shift.
+ */
+const REVEAL_CLASS =
+  "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 " +
+  "group-aria-selected/row:opacity-100 [@media(hover:none)]:opacity-100";
+
+/** Managed rows' drag handle is inert, so it reveals dimmed. */
+const REVEAL_DIMMED_CLASS =
+  "group-hover/row:opacity-40 group-focus-within/row:opacity-40 " +
+  "group-aria-selected/row:opacity-40 [@media(hover:none)]:opacity-40";
 
 // ---------------------------------------------------------------------------
 // Selection model
@@ -282,6 +300,7 @@ function Option({
   renderItemContextMenu,
 }: OptionProps) {
   const title = item.title === "" ? item.url : item.title;
+  const domain = displayDomain(item.url);
   const actions = renderItemActions?.(item);
   const menuContent = renderItemContextMenu?.(item);
   // P4.T4: the row doubles as a reorder drop slot ("insert before this row").
@@ -306,6 +325,7 @@ function Option({
       aria-posinset={index + 1}
       aria-setsize={setSize}
       tabIndex={active ? 0 : -1}
+      title={item.url}
       data-bookmark-id={item.id}
       data-dnd-drop={slotDisabled ? undefined : `slot:${item.id}`}
       data-drop-invalid={invalid ? "true" : undefined}
@@ -316,9 +336,10 @@ function Option({
       onClick={(event) => onSelect(event, item, index)}
       onDoubleClick={() => onActivate(item)}
       className={cn(
-        "h-full cursor-default overflow-hidden rounded-sm outline-hidden",
+        "group/row h-full cursor-default overflow-hidden rounded-sm outline-hidden",
         "focus-visible:ring-2 focus-visible:ring-ring",
         "aria-selected:bg-accent aria-selected:text-accent-foreground",
+        "hover:bg-row-hover",
         invalid && "ring-2 ring-destructive ring-inset",
         layout === "list"
           ? "flex items-center gap-2 px-2"
@@ -334,25 +355,43 @@ function Option({
         <div className="truncate text-sm">{title}</div>
         {layout === "list" && (
           <div className="truncate text-xs text-muted-foreground">
-            {item.url}
+            {domain}
           </div>
         )}
       </div>
       {layout === "list" && meta !== undefined && (
         <span className="flex shrink-0 items-center gap-1">
-          {meta.tags.map((nameKey) => (
-            <span
-              key={nameKey}
-              data-tag={nameKey}
-              className="rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground"
-            >
-              {tagNameByKey?.get(nameKey) ?? nameKey}
-            </span>
-          ))}
+          {(() => {
+            const { shown, hidden } = visibleTags(meta.tags, MAX_ROW_TAGS);
+            return (
+              <>
+                {shown.map((nameKey) => (
+                  <span
+                    key={nameKey}
+                    data-tag={nameKey}
+                    className="rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
+                  >
+                    {tagNameByKey?.get(nameKey) ?? nameKey}
+                  </span>
+                ))}
+                {hidden.length > 0 && (
+                  <span
+                    data-tag-more
+                    title={hidden
+                      .map((nameKey) => tagNameByKey?.get(nameKey) ?? nameKey)
+                      .join(", ")}
+                    className="rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
+                  >
+                    +{hidden.length}
+                  </span>
+                )}
+              </>
+            );
+          })()}
           {meta.category !== undefined && (
             <span
               data-category={meta.category}
-              className="rounded-sm bg-secondary px-1 py-0.5 text-[10px] text-secondary-foreground"
+              className="rounded-sm bg-primary/10 px-1 py-0.5 text-[11px] text-primary"
             >
               {meta.category}
             </span>
@@ -363,7 +402,8 @@ function Option({
         // Row-action control: its clicks/keys must never select or activate
         // the row underneath, so every event stops at this wrapper.
         <span
-          className="flex shrink-0 items-center"
+          data-row-controls
+          className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
@@ -382,6 +422,7 @@ function Option({
           parentId={item.parentId}
           index={item.index}
           disabled={item.isManaged}
+          className={cn(REVEAL_CLASS, item.isManaged && REVEAL_DIMMED_CLASS)}
         />
       )}
     </div>
@@ -434,6 +475,11 @@ export interface BookmarkListProps {
    * one line).
    */
   leading?: ReactNode;
+  /**
+   * Shown below the (empty) listbox when `items` is empty. Defaults to a plain
+   * "No bookmarks in this view." line.
+   */
+  empty?: ReactNode;
   className?: string;
 }
 
@@ -459,6 +505,7 @@ export function BookmarkList({
   renderItemActions,
   renderItemContextMenu,
   leading,
+  empty,
   className,
 }: BookmarkListProps) {
   const contextSelection = useSelection();
@@ -672,11 +719,6 @@ export function BookmarkList({
           className="relative w-full outline-hidden focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
           style={{ height: `${virtualizer.getTotalSize()}px` }}
         >
-          {items.length === 0 && (
-            <p className="p-4 text-sm text-muted-foreground">
-              No bookmarks in this view.
-            </p>
-          )}
           {virtualizer.getVirtualItems().map((virtualRow) => {
             const row = rows[virtualRow.index] ?? [];
             const first = row[0];
@@ -739,6 +781,12 @@ export function BookmarkList({
             );
           })}
         </div>
+        {items.length === 0 &&
+          (empty ?? (
+            <p className="p-4 text-sm text-muted-foreground">
+              No bookmarks in this view.
+            </p>
+          ))}
       </div>
     </div>
   );
