@@ -209,10 +209,10 @@ describe("ScanPanel launcher", () => {
     const section = screen.getByRole("region", { name: "Library scan" });
     expect(section.textContent).toContain("12 bookmarks");
     // The estimate comes from the same pure module, formatted en-US.
+    expect(section.textContent).toContain("at least 3 AI requests");
     expect(section.textContent).toContain(
-      `at least ~${FORMAT.format(ESTIMATE.inputTokens)} tokens`,
+      `(~${FORMAT.format(ESTIMATE.inputTokens)} tokens, likely more)`,
     );
-    expect(section.textContent).toContain("across 3 batches");
     expect(ESTIMATE.totalBatches).toBe(3);
     // No live status card before anything starts.
     expect(screen.queryByRole("status")).toBeNull();
@@ -237,7 +237,8 @@ describe("ScanPanel launcher", () => {
     await waitFor(() =>
       expect(status.textContent).toMatch(/running/i),
     );
-    expect(status.textContent).toContain("0 / 3");
+    expect(status.textContent).toContain("0 bookmarks processed");
+    expect(status.textContent).toContain("(0%)");
   });
 
   it("disables Start and explains when there is nothing to scan", async () => {
@@ -304,15 +305,14 @@ describe("ScanPanel live status", () => {
     const bar = screen.getByRole("progressbar", { name: "Scan progress" });
     expect(bar.getAttribute("max")).toBe("4");
     expect(bar.getAttribute("value")).toBe("2");
-    expect(status.textContent).toContain("2 / 4");
-    expect(status.textContent).toContain("10 bookmarks processed");
+    expect(status.textContent).toContain("10 bookmarks processed (50%)");
 
-    // Running cost from the job's usage roll-up: summed tokens and requests,
-    // the USD figure only because this row reported one.
-    expect(status.textContent).toContain("1,200");
-    expect(status.textContent).toContain("340");
+    // Running cost from the job's usage roll-up: requests first, then the
+    // reported USD figure, then the summed token estimate.
     expect(status.textContent).toContain("2 requests");
-    expect(status.textContent).toContain("$0.0123");
+    expect(status.textContent).toContain("$0.0123 so far");
+    expect(status.textContent).toContain("~1,540 tokens used");
+    expect(status.textContent).not.toContain("1,200");
   });
 
   it("Pause sends JOB_PAUSE for the live row and the card flips to paused", async () => {
@@ -388,8 +388,8 @@ describe("ScanPanel live status", () => {
 
     render(<ScanPanel bookmarks={SCAN_BOOKMARKS} />);
     const status = await screen.findByRole("status");
-    expect(status.textContent).toContain("500");
     expect(status.textContent).toContain("1 request");
+    expect(status.textContent).toContain("~550 tokens used");
     expect(status.textContent).not.toContain("$");
   });
 });
@@ -411,8 +411,8 @@ describe("ScanPanel terminal states", () => {
     );
     const status = await screen.findByRole("status");
     expect(status.textContent).toMatch(/completed/i);
-    expect(status.textContent).toContain("3 / 3");
-    expect(status.textContent).toContain("$0.0123");
+    expect(status.textContent).toContain("12 bookmarks processed (100%)");
+    expect(status.textContent).toContain("$0.0123 so far");
 
     fireEvent.click(screen.getByRole("button", { name: "View results" }));
     expect(onOpenReview).toHaveBeenCalledTimes(1);

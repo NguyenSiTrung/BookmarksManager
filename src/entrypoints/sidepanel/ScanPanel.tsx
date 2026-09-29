@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/database";
-import { DEFAULT_BATCH_SIZE, estimateJobCost } from "../../jobs/estimate";
+import { estimateJobCost } from "../../jobs/estimate";
 import { DecisionMessage } from "../../messages/decisions";
 import type { Job as JobDocument } from "../../schemas/job";
 import { cn } from "../../ui/lib/cn";
@@ -27,11 +27,12 @@ import { sendDecisionMessage } from "./ReviewView";
  * Design rules:
  *
  * - **Estimate before start.** The launcher renders `estimateJobCost`'s pure
- *   lower bound — "at least ~N tokens across M batches" at
- *   `DEFAULT_BATCH_SIZE` — plus the bookmark count, and Start is a distinct
- *   action (FR7). The estimate deliberately says "at least": it folds only
- *   the per-batch bookmark payloads, not the fixed question scaffolding the
- *   pipeline adds to every request.
+ *   lower bound — "N bookmarks · at least M AI requests (~T tokens, likely
+ *   more)" — and Start is a distinct action (FR7). The "at least" covers two
+ *   lower bounds: the token fold ignores the fixed question scaffolding the
+ *   pipeline adds to every request, and a library scan also runs a
+ *   near-duplicate pair phase whose request count is only known once the
+ *   job row exists.
  * - **Dexie in, messages out.** The live card streams the latest
  *   `library_scan` row from the `jobs` table through `useLiveQuery` (with a
  *   `.catch` inside the querier — dexie-react-hooks rethrows observable
@@ -236,15 +237,14 @@ export function ScanPanel({
                 value={job.progress.committedBatches}
               />
               <p className="text-xs text-muted-foreground">
-                Batches {job.progress.committedBatches} /{" "}
-                {job.progress.totalBatches} (
+                {job.progress.processedCount} bookmark
+                {job.progress.processedCount === 1 ? "" : "s"} processed (
                 {Math.round(
                   (job.progress.committedBatches /
                     job.progress.totalBatches) *
                     100,
                 )}
-                %) · {job.progress.processedCount} bookmark
-                {job.progress.processedCount === 1 ? "" : "s"} processed
+                %)
               </p>
             </>
           ) : (
@@ -252,12 +252,16 @@ export function ScanPanel({
           )}
 
           <p className="text-xs text-muted-foreground">
-            {NUMBER_FORMAT.format(job.usage.inputTokens)} input +{" "}
-            {NUMBER_FORMAT.format(job.usage.outputTokens)} output tokens ·{" "}
-            {job.usage.requests} {job.usage.requests === 1 ? "request" : "requests"}
+            {job.usage.requests} request
+            {job.usage.requests === 1 ? "" : "s"} ·{" "}
             {/* costUsd only where the provider reported one — never "$0.00". */}
             {job.usage.costUsd !== undefined &&
-              ` · $${job.usage.costUsd.toFixed(4)}`}
+              `$${job.usage.costUsd.toFixed(4)} so far · `}
+            ~
+            {NUMBER_FORMAT.format(
+              job.usage.inputTokens + job.usage.outputTokens,
+            )}{" "}
+            tokens used
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -316,11 +320,11 @@ export function ScanPanel({
           <p className="text-xs text-muted-foreground">
             {count === 0
               ? "Nothing to scan — the library is empty."
-              : `${count} bookmark${count === 1 ? "" : "s"} · at least ~${NUMBER_FORMAT.format(
+              : `${count} bookmark${count === 1 ? "" : "s"} · at least ${
+                  estimate.totalBatches
+                } AI request${estimate.totalBatches === 1 ? "" : "s"} (~${NUMBER_FORMAT.format(
                   estimate.inputTokens,
-                )} tokens across ${estimate.totalBatches} batch${
-                  estimate.totalBatches === 1 ? "" : "es"
-                } (batch size ${DEFAULT_BATCH_SIZE})`}
+                )} tokens, likely more)`}
           </p>
           <div>
             <button
