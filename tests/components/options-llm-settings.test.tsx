@@ -185,12 +185,15 @@ async function section(): Promise<HTMLElement> {
  * The escalation disclosure read gate (Task 3): the second-opinion agree
  * checkbox is disabled until the disclosure has been opened once. jsdom
  * does not toggle `<details>` on summary clicks, so flip the DOM attribute
- * and fire `toggle` directly.
+ * and fire `toggle` directly. `findByRole` because the disclosure mounts
+ * only after the provider-status effect lands `llmOrigin` — under a loaded
+ * worker that can trail the section heading by a beat.
  */
-function openEscalationDisclosure(): void {
-  const details = screen
-    .getByRole("region", { name: "Second opinion disclosure" })
-    .closest("details") as HTMLDetailsElement;
+async function openEscalationDisclosure(): Promise<void> {
+  const region = await screen.findByRole("region", {
+    name: "Second opinion disclosure",
+  });
+  const details = region.closest("details") as HTMLDetailsElement;
   details.open = true;
   fireEvent(details, new Event("toggle"));
 }
@@ -221,7 +224,7 @@ describe("escalation section", () => {
   it("asks for consent before the toggle unlocks", async () => {
     render(<DecisionSettings />);
     await section();
-    openEscalationDisclosure();
+    await openEscalationDisclosure();
     const toggle = await escalateToggle();
     await waitFor(() => expect(toggle).toHaveProperty("disabled", true));
     // Grant the llm_escalate scope at the provider's origin.
@@ -255,7 +258,7 @@ describe("escalation section", () => {
         selector: "p.basis-full",
       }),
     ).toBeTruthy();
-    openEscalationDisclosure();
+    await openEscalationDisclosure();
     await waitFor(() =>
       expect(
         (
