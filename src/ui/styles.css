@@ -90,13 +90,15 @@
 }
 
 /*
- * Options-page visual identity (track options_redesign_20260929). Scoped to
- * `.options-root` so the refined palette, fonts and shadows never leak into
- * the popup or side panel, which keep the stock neutral tokens above.
+ * Options-page visual identity (track options_redesign_20260929), shared with
+ * the quick-save popup via `.popup-root`. Scoped to those two roots so the
+ * refined palette, fonts and shadows never leak into the side panel, which
+ * keeps the stock neutral tokens above.
  * Warm-neutral surfaces + a single deep-teal accent; destructive/success/
  * warning keep their semantic hues.
  */
-.options-root {
+.options-root,
+.popup-root {
   --background: oklch(0.975 0.004 90);
   --foreground: oklch(0.19 0.012 255);
   --card: oklch(0.99 0.002 90);
@@ -121,7 +123,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  .options-root {
+  .options-root,
+  .popup-root {
     --background: oklch(0.16 0.008 250);
     --foreground: oklch(0.96 0.005 90);
     --card: oklch(0.2 0.008 250);
@@ -270,13 +273,15 @@
   }
   /* Options page: Geist + tabular numbers + a whisper of grain to keep the
      large warm surface from reading flat. The overlay is inert. */
-  .options-root {
+  .options-root,
+  .popup-root {
     font-family: var(--font-options-sans);
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
   .options-root code,
-  .options-root kbd {
+  .options-root kbd,
+  .popup-root code {
     font-family: var(--font-options-mono);
     font-variant-numeric: normal;
   }

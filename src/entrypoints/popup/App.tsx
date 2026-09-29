@@ -31,20 +31,33 @@ import { createBookmark, removeTree } from "../../sync/mutations";
 import { flattenTree } from "../../sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
 import { registerDbReleaseListener } from "../../security/delete-all";
-import { CategorySelect } from "../../ui/components/category-select";
+import {
+  CategorySelect,
+  humanizeCategory,
+} from "../../ui/components/category-select";
+import {
+  BookmarkIcon,
+  ChevronDownIcon,
+  FolderIcon,
+  PanelRightIcon,
+} from "../../ui/components/icons";
 import { useSearchIndex } from "../../ui/hooks/useSearchIndex";
 import { openBookmarkUrl } from "../../sync/tabs";
 import type { OpenUrlDisposition } from "../../sync/tabs";
 import { SettingsIcon } from "../../ui/components/settings-icon";
+import { cn } from "../../ui/lib/cn";
 import {
   openOptionsPage,
   openSidePanel,
   queryActiveTab,
   setPendingEditId,
 } from "./chrome";
+import { DuplicateNotice, ErrorAlert, SaveSuccess } from "./Notices";
+import { hostOf, PageCard } from "./PageCard";
 import { PopupSearch } from "./Search";
 import { Suggestions } from "./Suggestions";
 import type { SuggestionStatus } from "./Suggestions";
+import { TagField } from "./TagField";
 
 /**
  * Quick-save popup (spec §3).
@@ -151,6 +164,12 @@ async function loadTree(): Promise<BookmarksTreeNode[]> {
   }
 }
 
+/** Label for the Ctrl/Cmd+Enter save shortcut hint. */
+const SAVE_SHORTCUT =
+  typeof navigator !== "undefined" && /mac/i.test(navigator.platform)
+    ? "⌘ ↵"
+    : "Ctrl ↵";
+
 function describeError(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -168,6 +187,12 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedFolder, setSavedFolder] = useState<string | null>(null);
+  /**
+   * The "Details" disclosure (URL, category, notes). Collapsed by default so
+   * the common case is title → Save; it opens by itself when there is no URL
+   * to save or a save fails on the URL, since that is the field to fix.
+   */
+  const [detailsOpen, setDetailsOpen] = useState(false);
   /** The popup window's id, captured with the active tab for `sidePanel.open`. */
   const windowIdRef = useRef<number | undefined>(undefined);
   /** Synchronous re-entrancy guard — `busy` state lags a fast double submit. */
@@ -230,6 +255,7 @@ export function App() {
       setTree(flat);
       setTitle(tab?.title ?? "");
       setUrl(tab?.url ?? "");
+      setDetailsOpen((tab?.url ?? "").trim() === "");
       setFolderId(
         resolveSaveFolder(new Set(flat.folders.keys()), lastFolderId),
       );
@@ -437,9 +463,11 @@ export function App() {
       const trimmedUrl = url.trim();
       const trimmedTitle = title.trim();
       if (trimmedUrl === "") {
+        setDetailsOpen(true);
         throw new Error("Enter a URL to save.");
       }
       if (isBlockedScheme(trimmedUrl)) {
+        setDetailsOpen(true);
         throw new Error("This URL scheme cannot be saved as a bookmark.");
       }
       // Resolve-or-create every staged chip's def BEFORE the bookmark
@@ -479,6 +507,9 @@ export function App() {
       }
       await setLastFolderId(folderId);
       setSavedFolder(folderLabel(tree, folderId));
+      // Keeps the saved state inside Chrome's popup height cap; the Details
+      // summary line still lists what was set.
+      setDetailsOpen(false);
       await refreshTree();
     } catch (cause) {
       setError(describeError(cause));
@@ -517,212 +548,238 @@ export function App() {
     void openBookmarkUrl(resultUrl, disposition);
   };
 
+  const saved = savedFolder !== null;
+  const pageHost = hostOf(url);
+  const detailsSummary = [
+    category === "" ? null : humanizeCategory(category),
+    notes.trim() === "" ? null : "Notes",
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  const duplicateLocation =
+    duplicate === null
+      ? ""
+      : duplicate.path.filter((part) => part !== "").join(" / ") ||
+        folderLabel(tree, duplicate.parentId ?? "");
+
+  const fieldClass =
+    "w-full rounded-lg border border-input bg-background px-3 text-sm outline-hidden transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/30 disabled:opacity-70";
+  const captionClass = "text-xs font-medium text-muted-foreground";
+  const ghostButton =
+    "inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring";
+
   return (
     <main
       data-testid="popup-quick-save"
-      className="w-80 bg-background p-3 text-foreground"
+      className="popup-root w-[380px] bg-background text-sm text-foreground"
     >
-      <header className="flex items-center justify-between gap-2">
-        <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={handleOpenManager}
-            className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Open manager
-          </button>
-          <button
-            type="button"
-            aria-label="Settings"
-            title="Settings"
-            onClick={openOptionsPage}
-            className="rounded-sm border border-border p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <SettingsIcon />
-          </button>
-        </div>
+      <header className="flex items-center gap-2 px-4 pt-3.5 pb-3">
+        <span
+          aria-hidden="true"
+          className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground shadow-card"
+        >
+          <BookmarkIcon className="size-4" />
+        </span>
+        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
+          Bookmarks Manager
+        </h1>
+        <button type="button" onClick={handleOpenManager} className={ghostButton}>
+          <PanelRightIcon className="size-3.5" />
+          Open manager
+        </button>
+        <button
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={openOptionsPage}
+          className={cn(ghostButton, "w-8 justify-center px-0")}
+        >
+          <SettingsIcon />
+        </button>
       </header>
 
-      <PopupSearch
-        search={search}
-        query={searchQuery}
-        onQueryChange={setSearchQuery}
-        onOpen={handleOpenResult}
-      />
+      <div className="space-y-3 px-4 pb-4">
+        <PopupSearch
+          search={search}
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onOpen={handleOpenResult}
+        />
 
-      {!ready ? (
-        <p className="mt-3 text-xs text-muted-foreground">Loading…</p>
-      ) : searchQuery !== "" ? null : (
-        <form
-          className="mt-3 space-y-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void handleSave();
-          }}
-        >
-          <div className="space-y-1">
-            <label htmlFor="popup-title" className="text-sm font-medium">
-              Title
-            </label>
-            <input
-              id="popup-title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-            />
+        {!ready ? (
+          <div aria-busy="true" className="animate-pulse space-y-3">
+            <p className="sr-only">Loading…</p>
+            <div className="h-[68px] rounded-xl bg-secondary" />
+            <div className="h-10 rounded-lg bg-secondary" />
+            <div className="h-10 rounded-lg bg-secondary" />
+            <div className="h-10 rounded-lg bg-secondary" />
           </div>
-          <div className="space-y-1">
-            <label htmlFor="popup-url" className="text-sm font-medium">
-              URL
-            </label>
-            <input
-              id="popup-url"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="popup-folder" className="text-sm font-medium">
-              Folder
-            </label>
-            <select
-              id="popup-folder"
-              value={folderId}
-              onChange={(event) => handleFolderChange(event.target.value)}
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-            >
-              {destinations.map((destination) => (
-                <option key={destination.id} value={destination.id}>
-                  {destination.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <span className="text-sm font-medium" id="popup-tags-label">
-              Tags
-            </span>
-            <div
-              aria-labelledby="popup-tags-label"
-              className="flex flex-wrap items-center gap-1 rounded-md border border-input p-1"
-            >
-              {chips.length === 0 && (
-                <span className="text-xs text-muted-foreground">No tags</span>
-              )}
-              {chips.map((chip) => (
-                <span
-                  key={chip.key}
-                  className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-xs"
-                >
-                  {chip.label}
-                  <button
-                    type="button"
-                    aria-label={`Remove tag ${chip.label}`}
-                    onClick={() => removeChip(chip.key)}
-                    className="rounded-sm text-muted-foreground hover:text-foreground"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-            <div className="flex items-center gap-1">
-              <input
-                aria-label="New tag name"
-                value={tagInput}
-                onChange={(event) => setTagInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addChip();
-                  }
-                }}
-                className="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
+        ) : searchQuery !== "" ? null : (
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSave();
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                (event.ctrlKey || event.metaKey) &&
+                !saved
+              ) {
+                event.preventDefault();
+                void handleSave();
+              }
+            }}
+          >
+            {duplicate !== null && !saved && (
+              <DuplicateNotice
+                location={duplicateLocation}
+                onEdit={handleEditExisting}
               />
+            )}
+
+            <fieldset disabled={saved} className="min-w-0 space-y-3">
+              <PageCard
+                title={title}
+                host={pageHost}
+                url={url}
+                disabled={saved}
+                onTitleChange={setTitle}
+              />
+
+              <div className="relative">
+                <label htmlFor="popup-folder" className="sr-only">
+                  Folder
+                </label>
+                <FolderIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                <select
+                  id="popup-folder"
+                  value={folderId}
+                  onChange={(event) => handleFolderChange(event.target.value)}
+                  className={cn(fieldClass, "h-10 appearance-none pr-9 pl-9")}
+                >
+                  {destinations.map((destination) => (
+                    <option key={destination.id} value={destination.id}>
+                      {destination.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              </div>
+
+              <div className="space-y-2">
+                <TagField
+                  chips={chips}
+                  input={tagInput}
+                  disabled={saved}
+                  onInputChange={setTagInput}
+                  onCommit={addChip}
+                  onRemove={removeChip}
+                />
+                <Suggestions
+                  bookmarkId={suggestId}
+                  status={suggestionStatus}
+                  appliedTagKeys={appliedTagKeys}
+                  category={category}
+                  onFolderSuggestion={handleFolderSuggestion}
+                  onAcceptTag={handleAcceptTag}
+                  onAcceptCategory={handleAcceptCategory}
+                />
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  aria-expanded={detailsOpen}
+                  aria-controls="popup-details"
+                  onClick={() => setDetailsOpen((open) => !open)}
+                  className="flex w-full items-center gap-1.5 rounded-lg px-1 py-1.5 text-xs font-medium text-muted-foreground outline-hidden transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ChevronDownIcon
+                    className={cn(
+                      "size-3.5 transition-transform",
+                      !detailsOpen && "-rotate-90",
+                    )}
+                  />
+                  Details
+                  {detailsSummary !== "" && (
+                    <span className="font-normal">· {detailsSummary}</span>
+                  )}
+                </button>
+                {/* `hidden` (not unmounting) keeps the fields addressable and
+                    their state intact while collapsed. */}
+                <div
+                  id="popup-details"
+                  hidden={!detailsOpen}
+                  className="mt-1 space-y-3 rounded-xl border border-border bg-card p-3"
+                >
+                  <div className="space-y-1.5">
+                    <label htmlFor="popup-url" className={captionClass}>
+                      URL
+                    </label>
+                    <input
+                      id="popup-url"
+                      value={url}
+                      onChange={(event) => setUrl(event.target.value)}
+                      spellCheck={false}
+                      className={cn(fieldClass, "h-9")}
+                    />
+                  </div>
+                  <CategorySelect
+                    label="Category"
+                    value={category === "" ? null : category}
+                    onChange={(next) => setCategory(next ?? "")}
+                    disabled={saved}
+                    className="flex flex-col items-stretch gap-1.5 [&_label]:text-xs [&_label]:font-medium"
+                    selectClassName={cn(fieldClass, "h-9 px-2.5")}
+                  />
+                  <div className="space-y-1.5">
+                    <label htmlFor="popup-notes" className={captionClass}>
+                      Notes
+                    </label>
+                    <textarea
+                      id="popup-notes"
+                      value={notes}
+                      onChange={(event) => setNotes(event.target.value)}
+                      rows={2}
+                      className={cn(fieldClass, "resize-none py-2")}
+                    />
+                  </div>
+                </div>
+              </div>
+            </fieldset>
+
+            {error !== null && <ErrorAlert message={error} />}
+
+            {saved ? (
+              <SaveSuccess
+                folder={savedFolder}
+                onEdit={handleEditExisting}
+              />
+            ) : (
               <button
-                type="button"
-                onClick={addChip}
-                disabled={tagInput.trim() === ""}
-                className="rounded-md border border-input px-2 py-1 text-sm hover:bg-accent disabled:opacity-50"
+                type="submit"
+                aria-label="Save"
+                aria-busy={busy}
+                aria-keyshortcuts="Control+Enter Meta+Enter"
+                disabled={busy || url.trim() === ""}
+                className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground shadow-card outline-hidden transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50"
               >
-                Add tag
+                {busy ? "Saving…" : "Save"}
+                {!busy && (
+                  <kbd
+                    aria-hidden="true"
+                    className="rounded-sm bg-primary-foreground/15 px-1.5 py-0.5 text-[10px] font-medium"
+                  >
+                    {SAVE_SHORTCUT}
+                  </kbd>
+                )}
               </button>
-            </div>
-          </div>
-          <CategorySelect
-            label="Category"
-            value={category === "" ? null : category}
-            onChange={(next) => setCategory(next ?? "")}
-          />
-          <Suggestions
-            bookmarkId={suggestId}
-            status={suggestionStatus}
-            appliedTagKeys={appliedTagKeys}
-            category={category}
-            onFolderSuggestion={handleFolderSuggestion}
-            onAcceptTag={handleAcceptTag}
-            onAcceptCategory={handleAcceptCategory}
-          />
-          <div className="space-y-1">
-            <label htmlFor="popup-notes" className="text-sm font-medium">
-              Notes
-            </label>
-            <textarea
-              id="popup-notes"
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              rows={2}
-              className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={busy || url.trim() === ""}
-            className="w-full rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50"
-          >
-            Save
-          </button>
-        </form>
-      )}
-
-      {duplicate !== null && (
-        <div
-          data-testid="duplicate-notice"
-          role="status"
-          className="mt-3 space-y-1 rounded-md border border-border p-2"
-        >
-          <p className="text-xs">
-            Already saved in{" "}
-            {duplicate.path.filter((part) => part !== "").join(" / ") ||
-              folderLabel(tree, duplicate.parentId ?? "")}
-          </p>
-          <button
-            type="button"
-            onClick={handleEditExisting}
-            className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            Edit that bookmark
-          </button>
-        </div>
-      )}
-
-      {savedFolder !== null && (
-        <p
-          data-testid="save-confirmation"
-          role="status"
-          className="mt-3 text-xs text-muted-foreground"
-        >
-          Saved to {savedFolder}.
-        </p>
-      )}
-
-      {error !== null && (
-        <p role="alert" className="mt-3 text-xs text-destructive">
-          {error}
-        </p>
-      )}
+            )}
+          </form>
+        )}
+      </div>
     </main>
   );
 }

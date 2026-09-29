@@ -6,6 +6,7 @@ import type { DecisionRow } from "../../decisions/store";
 import type { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
 import { humanizeCategory } from "../../ui/components/category-select";
+import { InfoIcon } from "../../ui/components/icons";
 
 /**
  * Jev save suggestions for the quick-save form (spec FR10).
@@ -164,8 +165,9 @@ export function Suggestions({
       <p
         data-testid="suggestions-not-sent"
         role="status"
-        className="text-xs text-muted-foreground"
+        className="flex items-center gap-1.5 text-xs text-muted-foreground"
       >
+        <InfoIcon className="size-3.5 shrink-0" />
         Suggestions not sent — this page is on the blocklist.
       </p>
     );
@@ -176,12 +178,16 @@ export function Suggestions({
   }
 
   const chipClass =
-    "rounded-sm border border-dashed border-input px-1.5 py-0.5 text-xs text-muted-foreground outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring";
+    "rounded-full border border-dashed border-primary/40 px-2 py-0.5 text-xs font-medium text-primary outline-hidden transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring";
 
   return (
-    <div data-testid="save-suggestions" role="status" className="space-y-1">
-      <span className="text-xs text-muted-foreground">Suggested:</span>
-      <div className="flex flex-wrap items-center gap-1">
+    <div
+      data-testid="save-suggestions"
+      role="status"
+      className="flex flex-wrap items-center gap-1.5"
+    >
+      <span className="text-xs text-muted-foreground">Suggested</span>
+      <div className="flex flex-wrap items-center gap-1.5">
         {tagSuggestions.map((tag) => (
           <button
             key={tag.key}

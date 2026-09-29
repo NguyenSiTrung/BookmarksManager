@@ -352,7 +352,7 @@ describe("PopupApp — save suggestions", () => {
       screen.getByRole("button", { name: "Add suggested tag reading" }),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove tag focus" })).toBeNull();
-    expect(screen.getByText("No tags")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Add tags…")).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Add suggested tag reading" }),

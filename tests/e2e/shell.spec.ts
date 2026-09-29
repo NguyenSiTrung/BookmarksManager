@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, expect, test } from "@playwright/test";
 import { isInternalRequestUrl } from "./helpers/extension";
+import { openPopupDetails } from "./helpers/surfaces";
 
 const extensionDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,9 +67,11 @@ test("extension loads, renders all three surfaces, and sends no requests", async
     // "Open manager" actions (the fields render once the active-tab prefill
     // and tree load settle).
     await expect(popup.getByLabel("Title")).toBeVisible();
-    await expect(popup.getByLabel("URL")).toBeVisible();
     await expect(popup.getByLabel("Folder")).toBeVisible();
     await expect(popup.getByLabel("New tag name")).toBeVisible();
+    // URL, category and notes sit behind the "Details" disclosure (which
+    // opens itself when the active tab has no URL, as in this bare tab).
+    await openPopupDetails(popup);
     await expect(popup.getByLabel("Category")).toBeVisible();
     await expect(popup.getByLabel("Notes")).toBeVisible();
     await expect(popup.getByRole("button", { name: "Save" })).toBeVisible();

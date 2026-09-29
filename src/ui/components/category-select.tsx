@@ -26,6 +26,8 @@ export interface CategorySelectProps {
   id?: string;
   disabled?: boolean;
   className?: string;
+  /** Extra classes merged onto the `<select>` itself (last wins). */
+  selectClassName?: string;
 }
 
 /** "docs" → "Docs" — the enum is single lowercase words. */
@@ -40,6 +42,7 @@ export function CategorySelect({
   id,
   disabled,
   className,
+  selectClassName,
 }: CategorySelectProps) {
   const autoId = useId();
   const selectId = id ?? autoId;
@@ -62,7 +65,10 @@ export function CategorySelect({
           const next = event.target.value;
           onChange?.(next === "" ? null : (next as Category));
         }}
-        className="rounded-md border border-input bg-background px-2 py-1 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        className={cn(
+          "rounded-md border border-input bg-background px-2 py-1 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+          selectClassName,
+        )}
       >
         <option value="">None</option>
         {Category.options.map((category) => (

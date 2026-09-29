@@ -63,6 +63,18 @@ export async function waitForSidePanelReady(page: Page): Promise<void> {
 }
 
 /**
+ * Expand the popup's "Details" disclosure (URL, category, notes), which is
+ * collapsed by default. Idempotent: it leaves an already-open panel alone.
+ */
+export async function openPopupDetails(page: Page): Promise<void> {
+  const toggle = page.getByRole("button", { name: /^Details/ });
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  await expect(page.getByLabel("URL")).toBeVisible();
+}
+
+/**
  * Drive the quick-save popup end to end: fill the title/URL, optionally stage
  * one tag chip, submit, and wait for the save confirmation. Returns once the
  * bookmark exists and its `bookmarkMeta` sidecar has been written.
@@ -72,6 +84,7 @@ export async function quickSaveFromPopup(
   details: { title: string; url: string; tag?: string },
 ): Promise<void> {
   await page.getByLabel("Title").fill(details.title);
+  await openPopupDetails(page);
   await page.getByLabel("URL").fill(details.url);
   if (details.tag !== undefined) {
     await page.getByLabel("New tag name").fill(details.tag);

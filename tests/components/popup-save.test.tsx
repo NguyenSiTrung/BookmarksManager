@@ -443,10 +443,34 @@ describe("PopupApp — duplicate discipline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByTestId("save-confirmation");
 
-    // The tree snapshot was refreshed, so the popup now offers "Edit that
-    // bookmark" for what it just wrote.
-    const notice = await screen.findByTestId("duplicate-notice");
-    expect(notice.textContent).toContain("Already saved in");
+    // The tree snapshot was refreshed, so the popup recognises what it just
+    // wrote: the success state replaces the duplicate warning (which would
+    // read as an error right after a save) and offers "Edit that bookmark".
+    expect(screen.queryByTestId("duplicate-notice")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit that bookmark" }),
+    );
+    await waitFor(() => expect(session.get(PENDING_EDIT_KEY)).toBeDefined());
+    expect(sidePanelOpen).toHaveBeenCalledWith({ windowId: 7 });
+  });
+
+  it("locks the form and drops Save once the bookmark is saved", async () => {
+    await renderPopupForFreshTab();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByTestId("save-confirmation");
+
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(titleInput().disabled).toBe(true);
+  });
+
+  it("saves with Ctrl+Enter from anywhere in the form", async () => {
+    await renderPopupForFreshTab();
+    fireEvent.keyDown(titleInput(), { key: "Enter", ctrlKey: true });
+    await screen.findByTestId("save-confirmation");
+    const children = await fake.getChildren("2");
+    expect(children.filter((node) => node.url === FRESH_TAB.url)).toHaveLength(
+      1,
+    );
   });
 });
 
