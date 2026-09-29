@@ -3,6 +3,7 @@ import {
   LlmProviderMessage,
   LlmProviderMessageResult,
 } from "../../messages/llm-provider";
+import { insetClass } from "./ui";
 
 /**
  * Monthly LLM spend panel (spec FR7): reported vs estimated vs unknown-cost
@@ -56,15 +57,15 @@ export function LlmBudget() {
   }, []);
 
   return (
-    <section aria-label="LLM budget" className="mt-4 rounded border border-gray-300 p-3 text-sm">
+    <section aria-label="LLM budget" className={`mt-4 ${insetClass}`}>
       <h3 className="font-medium">Monthly budget</h3>
       {error && (
-        <p role="alert" className="mt-2 text-red-700">
+        <p role="alert" className="mt-2 text-destructive">
           Budget information is unavailable.
         </p>
       )}
       {snapshot === null && !error && (
-        <p role="status" className="mt-2 text-gray-600">
+        <p role="status" className="mt-2 text-muted-foreground">
           Loading budget…
         </p>
       )}

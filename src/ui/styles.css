@@ -165,4 +165,17 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+  /* Native form controls and scrollbars follow the OS theme. */
+  :root {
+    color-scheme: light dark;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-primary);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
 }

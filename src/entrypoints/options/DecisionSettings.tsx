@@ -51,6 +51,17 @@ import {
   LlmProviderMessage,
   LlmProviderMessageResult,
 } from "../../messages/llm-provider";
+import {
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  insetClass,
+  primaryButtonClass,
+  radioCardClass,
+  radioGroupClass,
+  sectionHeadingClass,
+  smallButtonClass,
+} from "./ui";
 
 /**
  * Options-page surface for the Phase 4 Jev decisions protocol (spec FR10):
@@ -123,18 +134,18 @@ function LoadState({
 }) {
   if (loading) {
     return (
-      <p role="status" className="mt-2 text-sm text-gray-700">
+      <p role="status" className="mt-2 text-sm text-muted-foreground">
         Loading {label}…
       </p>
     );
   }
   return (
-    <p className="mt-2 text-sm text-gray-700">
+    <p className="mt-2 text-sm text-muted-foreground">
       Could not load {label}.
       <button
         type="button"
         onClick={onRetry}
-        className="ml-2 rounded border border-gray-300 px-2 py-0.5 text-xs"
+        className={`ml-2 ${smallButtonClass}`}
       >
         Retry
       </button>
@@ -543,9 +554,9 @@ export function DecisionSettings() {
   return (
     <section
       aria-labelledby="decisions-heading"
-      className="mx-auto max-w-xl p-6"
+      className={cardClass}
     >
-      <h2 id="decisions-heading" className="text-lg font-medium">
+      <h2 id="decisions-heading" className={sectionHeadingClass}>
         AI bookmark analysis
       </h2>
 
@@ -559,8 +570,9 @@ export function DecisionSettings() {
 
         <fieldset className="mt-3">
           <legend className="text-sm font-medium">Provider</legend>
+          <div className={radioGroupClass}>
           {PRESET_IDS.map((id) => (
-            <label key={id} className="mt-1 flex items-center gap-2 text-sm">
+            <label key={id} className={radioCardClass}>
               <input
                 type="radio"
                 name="decisions-provider"
@@ -571,11 +583,12 @@ export function DecisionSettings() {
               {PROVIDER_DISCLOSURES[id].name}
             </label>
           ))}
+          </div>
         </fieldset>
 
         <section
           aria-label={`${disclosure.name} bookmark data disclosure`}
-          className="mt-4 rounded border border-gray-300 p-3 text-sm"
+          className={`mt-4 ${insetClass}`}
         >
           <h4 className="font-medium">
             What bookmark analysis sends to {disclosure.name}
@@ -598,7 +611,7 @@ export function DecisionSettings() {
               {DECISIONS_NEVER_SENT_FIELDS.map((field, index) => (
                 <Fragment key={field}>
                   {index > 0 && " and "}
-                  <code className="rounded bg-gray-100 px-1">{field}</code>
+                  <code className="rounded bg-muted px-1">{field}</code>
                 </Fragment>
               ))}
               .
@@ -614,7 +627,7 @@ export function DecisionSettings() {
                 href={disclosure.privacyPolicyUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-700 underline"
+                className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
               >
                 {disclosure.name} privacy policy
               </a>{" "}
@@ -624,7 +637,7 @@ export function DecisionSettings() {
         </section>
 
         {consentGranted === undefined ? (
-          <p role="status" className="mt-3 text-sm text-gray-700">
+          <p role="status" className="mt-3 text-sm text-muted-foreground">
             Checking consent…
           </p>
         ) : consentGranted ? (
@@ -641,7 +654,7 @@ export function DecisionSettings() {
               type="button"
               onClick={onRevoke}
               disabled={busy}
-              className="mt-3 rounded bg-red-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={`mt-3 ${dangerButtonClass}`}
             >
               Revoke {disclosure.name} analysis consent
             </button>
@@ -664,11 +677,11 @@ export function DecisionSettings() {
               type="button"
               onClick={onGrant}
               disabled={!agreed || busy}
-              className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={primaryButtonClass}
             >
               Allow {disclosure.name} bookmark analysis
             </button>
-            <p className="text-xs text-gray-600">
+            <p className="text-xs text-muted-foreground">
               Consent alone sends nothing — it takes effect once{" "}
               {disclosure.name} is connected above, and only for the actions
               listed.
@@ -681,7 +694,7 @@ export function DecisionSettings() {
         <h3 id="auto-apply-heading" className="font-medium">
           Auto-apply decisions
         </h3>
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="mt-1 text-sm text-muted-foreground">
           A decision can apply itself only at confidence {">="}{" "}
           {AUTO_APPLY_THRESHOLD} and only for the kinds enabled here — every
           other suggestion always waits for review. Both toggles stay off
@@ -717,7 +730,7 @@ export function DecisionSettings() {
         <h3 id="escalation-heading" className="font-medium">
           Automatic second opinions
         </h3>
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="mt-1 text-sm text-muted-foreground">
           When enabled, a suggestion whose confidence falls below the review
           floor may get a second opinion from the LLM provider configured
           above — inside a Save, Analyze, or library scan you started, and
@@ -725,17 +738,17 @@ export function DecisionSettings() {
           suggestion still waits for your review.
         </p>
         {llmOrigin === null ? (
-          <p className="mt-2 text-sm text-gray-600">
+          <p className="mt-2 text-sm text-muted-foreground">
             Configure and enable an LLM provider above to use second
             opinions.
           </p>
         ) : (
           <div className="mt-2 space-y-3">
             <div>
-              <p className="text-sm font-medium text-gray-800">
+              <p className="text-sm font-medium text-foreground">
                 {escalationDisclosure.title}
               </p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-gray-700">
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
                 <li>Purpose: {escalationDisclosure.purpose}.</li>
                 <li>
                   Sends: {escalationDisclosure.fields.join(", ")} — never page
@@ -761,7 +774,7 @@ export function DecisionSettings() {
                     type="button"
                     onClick={() => onEscalationConsent(true)}
                     disabled={!escalationAgreed || escalationBusy}
-                    className="mt-2 rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+                    className={`mt-2 ${primaryButtonClass}`}
                   >
                     Allow second opinions
                   </button>
@@ -771,7 +784,7 @@ export function DecisionSettings() {
                   type="button"
                   onClick={() => onEscalationConsent(false)}
                   disabled={escalationBusy}
-                  className="mt-2 rounded border border-gray-300 px-2 py-0.5 text-xs disabled:opacity-50"
+                  className={`mt-2 ${smallButtonClass}`}
                 >
                   Revoke second-opinion consent
                 </button>
@@ -795,7 +808,7 @@ export function DecisionSettings() {
               Ask the provider for a second opinion on unsure suggestions
             </label>
             {escalation !== null && (
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-muted-foreground">
                 {escalation.monthlyBudgetUsd === null
                   ? "No monthly cap is set — escalation cannot run. Set one in the LLM provider section above."
                   : `Monthly cap: $${escalation.monthlyBudgetUsd.toFixed(2)}.`}
@@ -812,7 +825,7 @@ export function DecisionSettings() {
         <h3 id="blocklist-heading" className="font-medium">
           Never send these sites
         </h3>
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="mt-1 text-sm text-muted-foreground">
           Bookmarks on these hosts are never sent to a provider, no matter
           what is consented above.
         </p>
@@ -825,7 +838,7 @@ export function DecisionSettings() {
         ) : (
           <>
             {blocklist.length === 0 ? (
-              <p className="mt-2 text-sm text-gray-600">
+              <p className="mt-2 text-sm text-muted-foreground">
                 No sites blocked yet.
               </p>
             ) : (
@@ -835,13 +848,13 @@ export function DecisionSettings() {
                     key={entry}
                     className="flex items-center gap-2 text-sm"
                   >
-                    <code className="rounded bg-gray-100 px-1">{entry}</code>
+                    <code className="rounded bg-muted px-1">{entry}</code>
                     <button
                       type="button"
                       aria-label={`Remove ${entry}`}
                       onClick={() => onRemoveEntry(entry)}
                       disabled={busy}
-                      className="rounded border border-gray-300 px-2 py-0.5 text-xs disabled:opacity-50"
+                      className={smallButtonClass}
                     >
                       Remove
                     </button>
@@ -859,13 +872,13 @@ export function DecisionSettings() {
                 value={newEntry}
                 onChange={(event) => setNewEntry(event.target.value)}
                 placeholder="example.com"
-                className="rounded border border-gray-300 px-2 py-1 text-sm"
+                className={inputClass}
               />
               <button
                 type="button"
                 onClick={onAddEntry}
                 disabled={busy || newEntry.trim() === ""}
-                className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+                className={primaryButtonClass}
               >
                 Add
               </button>
@@ -873,14 +886,14 @@ export function DecisionSettings() {
           </>
         )}
         <details className="mt-3 text-sm">
-          <summary className="cursor-pointer text-gray-700">
+          <summary className="cursor-pointer text-muted-foreground">
             Built-in blocklist — {BUILTIN_SENSITIVE_SITES.length} sites
             (always applies, not editable)
           </summary>
           <ul className="mt-1 list-disc space-y-1 pl-5">
             {BUILTIN_SENSITIVE_SITES.map((site) => (
               <li key={site}>
-                <code className="rounded bg-gray-100 px-1">{site}</code>
+                <code className="rounded bg-muted px-1">{site}</code>
               </li>
             ))}
           </ul>
@@ -888,12 +901,12 @@ export function DecisionSettings() {
       </section>
 
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-green-700">
+        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
           {notice}
         </p>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-red-700">
+        <p role="alert" className="mt-3 text-sm text-destructive">
           {error}
         </p>
       )}

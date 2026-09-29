@@ -15,6 +15,17 @@ import {
   type LlmPresetId,
 } from "../../schemas/llm";
 import { LlmBudget } from "./LlmBudget";
+import {
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  insetClass,
+  primaryButtonClass,
+  radioCardClass,
+  radioGroupClass,
+  sectionHeadingClass,
+  statusBadgeClass,
+} from "./ui";
 
 /**
  * Options-page LLM provider consent flow (plan Phase 2 Task 5): disclosure →
@@ -406,11 +417,18 @@ export function LlmProviderSetup() {
       : presetOrigin(kind);
 
   return (
-    <section aria-labelledby="llm-provider-heading" className="mt-8">
-      <h2 id="llm-provider-heading" className="text-lg font-medium">
-        Optional LLM provider
-      </h2>
-      <p className="mt-1 text-sm text-gray-600">
+    <section aria-labelledby="llm-provider-heading" className={cardClass}>
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="llm-provider-heading" className={sectionHeadingClass}>
+          Optional LLM provider
+        </h2>
+        {status !== null && (
+          <span className={statusBadgeClass(status.enabled)}>
+            {status.enabled ? "Active" : "Not set up"}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">
         A second, OpenAI-compatible provider for explanations, second
         opinions, summaries, and restructure proposals. Every feature is
         off until you enable a provider and grant consent per feature.
@@ -418,20 +436,20 @@ export function LlmProviderSetup() {
 
       <section
         aria-label="LLM provider data disclosure"
-        className="mt-4 rounded border border-gray-300 p-3 text-sm"
+        className={`mt-4 ${insetClass}`}
       >
         <h3 className="font-medium">What enabling an LLM provider means</h3>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>
             Recipient: your configured provider at{" "}
-            <code className="rounded bg-gray-100 px-1">{disclosureOrigin}</code>{" "}
+            <code className="rounded bg-muted px-1">{disclosureOrigin}</code>{" "}
             — the only destination this consent covers.
           </li>
           <li>
             What is sent during setup: {TEST_DISCLOSURE.purpose}, with
             exactly the fields{" "}
             {TEST_DISCLOSURE.fields.map((field) => (
-              <code key={field} className="rounded bg-gray-100 px-1">
+              <code key={field} className="rounded bg-muted px-1">
                 {field}
               </code>
             ))}
@@ -442,8 +460,8 @@ export function LlmProviderSetup() {
           <li>{TEST_DISCLOSURE.credentialUse}.</li>
           <li>
             With a credential configured it travels only in the{" "}
-            <code className="rounded bg-gray-100 px-1">Authorization</code> or{" "}
-            <code className="rounded bg-gray-100 px-1">api-key</code> request
+            <code className="rounded bg-muted px-1">Authorization</code> or{" "}
+            <code className="rounded bg-muted px-1">api-key</code> request
             header to {disclosureOrigin}.
           </li>
           <li>Never sent: {LLM_NEVER_SENT.join(", ")}.</li>
@@ -458,13 +476,13 @@ export function LlmProviderSetup() {
         >
           <p className="text-sm">
             The LLM provider is enabled — model{" "}
-            <code className="rounded bg-gray-100 px-1">{status.model}</code>{" "}
+            <code className="rounded bg-muted px-1">{status.model}</code>{" "}
             at{" "}
-            <code className="rounded bg-gray-100 px-1">{status.origin}</code>
+            <code className="rounded bg-muted px-1">{status.origin}</code>
             {status.keySuffix !== undefined && (
               <>
                 , key ending in{" "}
-                <code className="rounded bg-gray-100 px-1">
+                <code className="rounded bg-muted px-1">
                   {status.keySuffix}
                 </code>
               </>
@@ -472,7 +490,7 @@ export function LlmProviderSetup() {
             {status.tier !== undefined && (
               <>
                 , structured output tier{" "}
-                <code className="rounded bg-gray-100 px-1">{status.tier}</code>
+                <code className="rounded bg-muted px-1">{status.tier}</code>
               </>
             )}
             .
@@ -491,31 +509,31 @@ export function LlmProviderSetup() {
             type="button"
             onClick={onRevoke}
             disabled={busy}
-            className="mt-3 rounded bg-red-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+            className={`mt-3 ${dangerButtonClass}`}
           >
             Revoke LLM provider access
           </button>
-          <div className="mt-4 border-t border-gray-200 pt-3">
+          <div className="mt-4 border-t border-border pt-3">
             <button
               type="button"
               onClick={onTest}
               disabled={busy}
-              className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={primaryButtonClass}
             >
               {testing ? "Testing…" : "Test connection"}
             </button>
-            <p className="mt-1 text-xs text-gray-600">
+            <p className="mt-1 text-xs text-muted-foreground">
               Sends the disclosed synthetic request to {status.origin} —
               nothing else leaves this device.
             </p>
             {testOutcome !== null && testOutcome.ok && (
-              <p role="status" className="mt-2 text-sm text-green-700">
+              <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
                 Connection test succeeded — model{" "}
-                <code className="rounded bg-gray-100 px-1">
+                <code className="rounded bg-muted px-1">
                   {testOutcome.model}
                 </code>{" "}
                 answered in {Math.round(testOutcome.latencyMs)} ms, tier{" "}
-                <code className="rounded bg-gray-100 px-1">
+                <code className="rounded bg-muted px-1">
                   {testOutcome.tier}
                 </code>
                 {testOutcome.usage !== undefined &&
@@ -527,7 +545,7 @@ export function LlmProviderSetup() {
               </p>
             )}
             {testOutcome !== null && !testOutcome.ok && (
-              <p role="alert" className="mt-2 text-sm text-red-700">
+              <p role="alert" className="mt-2 text-sm text-destructive">
                 Connection test failed ({testOutcome.code}):{" "}
                 {testOutcome.message}
               </p>
@@ -539,11 +557,9 @@ export function LlmProviderSetup() {
         <div className="mt-4 space-y-4">
           <fieldset>
             <legend className="text-sm font-medium">Provider type</legend>
+            <div className={radioGroupClass}>
             {PRESET_KINDS.map((id) => (
-              <label
-                key={id}
-                className="mt-1 flex items-center gap-2 text-sm"
-              >
+              <label key={id} className={radioCardClass}>
                 <input
                   type="radio"
                   name="llm-provider-kind"
@@ -554,7 +570,7 @@ export function LlmProviderSetup() {
                 {id === "openai" ? "OpenAI" : "OpenRouter"}
               </label>
             ))}
-            <label className="mt-1 flex items-center gap-2 text-sm">
+            <label className={radioCardClass}>
               <input
                 type="radio"
                 name="llm-provider-kind"
@@ -564,6 +580,7 @@ export function LlmProviderSetup() {
               />
               Custom OpenAI-compatible endpoint
             </label>
+            </div>
           </fieldset>
 
           {kind === "custom" && (
@@ -582,9 +599,9 @@ export function LlmProviderSetup() {
                   placeholder="https://llm.example.com/v1"
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.target.value)}
-                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  className={`mt-1 ${inputClass}`}
                 />
-                <p className="mt-1 text-xs text-gray-600">
+                <p className="mt-1 text-xs text-muted-foreground">
                   HTTPS required; plain HTTP is allowed only for localhost,
                   127.0.0.1, or [::1].
                 </p>
@@ -602,7 +619,7 @@ export function LlmProviderSetup() {
                   onChange={(event) =>
                     setAuth(event.target.value as LlmAuthMode)
                   }
-                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                  className={`mt-1 ${inputClass}`}
                 >
                   <option value="bearer">Bearer token</option>
                   <option value="api-key">api-key header</option>
@@ -624,7 +641,7 @@ export function LlmProviderSetup() {
                     autoComplete="off"
                     value={inputPrice}
                     onChange={(event) => setInputPrice(event.target.value)}
-                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                    className={`mt-1 ${inputClass}`}
                   />
                 </div>
                 <div>
@@ -641,7 +658,7 @@ export function LlmProviderSetup() {
                     autoComplete="off"
                     value={outputPrice}
                     onChange={(event) => setOutputPrice(event.target.value)}
-                    className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                    className={`mt-1 ${inputClass}`}
                   />
                 </div>
               </div>
@@ -658,7 +675,7 @@ export function LlmProviderSetup() {
               autoComplete="off"
               value={model}
               onChange={(event) => setModel(event.target.value)}
-              className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+              className={`mt-1 ${inputClass}`}
             />
           </div>
 
@@ -673,7 +690,7 @@ export function LlmProviderSetup() {
                 autoComplete="off"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                className={`mt-1 ${inputClass}`}
               />
             </div>
           )}
@@ -689,7 +706,7 @@ export function LlmProviderSetup() {
               autoComplete="off"
               value={budgetCap}
               onChange={(event) => setBudgetCap(event.target.value)}
-              className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+              className={`mt-1 ${inputClass}`}
             />
           </div>
 
@@ -709,7 +726,7 @@ export function LlmProviderSetup() {
             type="button"
             onClick={onEnable}
             disabled={!canEnable}
-            className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+            className={primaryButtonClass}
           >
             Enable LLM provider
           </button>
@@ -717,17 +734,17 @@ export function LlmProviderSetup() {
       )}
 
       {status === null && (
-        <p role="status" className="mt-3 text-sm text-gray-700">
+        <p role="status" className="mt-3 text-sm text-muted-foreground">
           Checking the current provider status…
         </p>
       )}
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-green-700">
+        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
           {notice}
         </p>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-red-700">
+        <p role="alert" className="mt-3 text-sm text-destructive">
           {error}
         </p>
       )}

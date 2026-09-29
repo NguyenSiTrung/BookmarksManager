@@ -17,6 +17,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/components/dialog";
+import {
+  dangerButtonClass,
+  dangerCardClass,
+  insetClass,
+  secondaryButtonClass,
+  sectionHeadingClass,
+} from "./ui";
 
 /**
  * "Delete all extension data" section of the Options page (PROJECT_PLAN.md
@@ -42,18 +49,6 @@ import {
  * IndexedDB afterwards — the first-run panel tells the user to reload, which
  * recreates a clean database on next use.
  */
-const dangerButtonClass =
-  "inline-flex items-center justify-center rounded-md bg-red-600 px-3 py-1 " +
-  "text-sm font-medium text-white shadow-xs hover:bg-red-700 " +
-  "focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:outline-hidden " +
-  "disabled:pointer-events-none disabled:opacity-50";
-
-const secondaryButtonClass =
-  "inline-flex items-center justify-center rounded-md border border-gray-300 " +
-  "bg-white px-4 py-2 text-sm font-medium text-gray-800 shadow-xs " +
-  "hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-400 " +
-  "focus-visible:outline-hidden";
-
 export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -90,24 +85,24 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
     return (
       <section
         aria-labelledby="delete-all-heading"
-        className="mx-auto max-w-xl p-6"
+        className={dangerCardClass}
       >
-        <h2 id="delete-all-heading" className="text-lg font-medium">
+        <h2 id="delete-all-heading" className={sectionHeadingClass}>
           Delete all extension data
         </h2>
         {result.databaseDeleted ? (
-          <p role="status" className="mt-2 text-sm text-green-700">
+          <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
             {DELETE_ALL_DONE_MESSAGE}
           </p>
         ) : (
-          <p role="alert" className="mt-2 text-sm text-red-700">
+          <p role="alert" className="mt-2 text-sm text-destructive">
             {DELETE_ALL_DATABASE_BLOCKED_MESSAGE}
           </p>
         )}
         {result.permissionsFailed.length > 0 && (
           <div
             role="alert"
-            className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+            className="mt-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
           >
             <p>{DELETE_ALL_PERMISSIONS_FAILED_NOTICE}</p>
             <ul className="mt-1 list-disc space-y-1 pl-5">
@@ -117,7 +112,7 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
             </ul>
           </div>
         )}
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="mt-1 text-sm text-muted-foreground">
           Reload the Options page to start fresh. Your native Chrome bookmarks
           are untouched.
         </p>
@@ -128,12 +123,12 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
   return (
     <section
       aria-labelledby="delete-all-heading"
-      className="mx-auto max-w-xl p-6"
+      className={dangerCardClass}
     >
-      <h2 id="delete-all-heading" className="text-lg font-medium">
+      <h2 id="delete-all-heading" className={sectionHeadingClass}>
         Delete all extension data
       </h2>
-      <p className="mt-1 text-sm text-gray-700">
+      <p className="mt-1 text-sm text-muted-foreground">
         Permanently remove everything this extension stored on this device.
       </p>
       <button
@@ -149,7 +144,7 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
         the user closed it still has to be visible somewhere.
       */}
       {error !== null && !open && (
-        <p role="alert" className="mt-2 text-sm text-red-700">
+        <p role="alert" className="mt-2 text-sm text-destructive">
           {error}
         </p>
       )}
@@ -173,12 +168,12 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
             </ul>
           </div>
 
-          <p className="rounded border border-gray-300 bg-gray-50 p-3 text-sm">
+          <p className={insetClass}>
             {NATIVE_BOOKMARKS_NOTICE}
           </p>
 
           {error !== null && (
-            <p role="alert" className="text-sm text-red-700">
+            <p role="alert" className="text-sm text-destructive">
               {error}
             </p>
           )}

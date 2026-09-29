@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db, type SentLogEntry } from "../../db/database";
 import { clearSentLog, SENT_LOG_RETENTION_CAP } from "../../net/sent-log";
 import type { UsageRecord } from "../../schemas/usage";
+import { cardClass, dangerButtonClass, sectionHeadingClass } from "./ui";
 
 /**
  * Options-page "Data sent" surface (spec FR10) plus the FR8 cost totals.
@@ -82,9 +83,9 @@ export function SentLog() {
   return (
     <section
       aria-labelledby="sent-log-heading"
-      className="mx-auto max-w-xl p-6"
+      className={cardClass}
     >
-      <h2 id="sent-log-heading" className="text-lg font-medium">
+      <h2 id="sent-log-heading" className={sectionHeadingClass}>
         Data sent to providers
       </h2>
 
@@ -93,11 +94,11 @@ export function SentLog() {
           Usage and cost
         </h3>
         {usage.length === 0 ? (
-          <p className="mt-1 text-sm text-gray-600">
+          <p className="mt-1 text-sm text-muted-foreground">
             No provider requests recorded yet.
           </p>
         ) : (
-          <p role="status" className="mt-1 text-sm text-gray-700">
+          <p role="status" className="mt-1 text-sm text-muted-foreground">
             {usage.length} {usage.length === 1 ? "request" : "requests"} —{" "}
             {inputTokens} input tokens, {outputTokens} output tokens; cost
             reported on {costReported.length} of {usage.length} requests
@@ -112,13 +113,13 @@ export function SentLog() {
         <h3 id="sent-log-list-heading" className="font-medium">
           Sent log
         </h3>
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="mt-1 text-sm text-muted-foreground">
           Every request that left this device is listed by time, destination,
           feature, and the names of the fields it carried — contents are never
           recorded. The log keeps the newest {SENT_LOG_RETENTION_CAP} entries.
         </p>
         {entries.length === 0 ? (
-          <p role="status" className="mt-2 text-sm text-gray-600">
+          <p role="status" className="mt-2 text-sm text-muted-foreground">
             Nothing has been sent yet.
           </p>
         ) : (
@@ -127,7 +128,7 @@ export function SentLog() {
               {entries.map((entry) => (
                 <li
                   key={entry.id}
-                  className="rounded border border-gray-200 p-2 text-sm"
+                  className="rounded border border-border p-2 text-sm"
                 >
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span>{new Date(entry.sentAt).toLocaleString()}</span>
@@ -142,7 +143,7 @@ export function SentLog() {
               type="button"
               onClick={onClear}
               disabled={busy}
-              className="mt-3 rounded bg-red-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={`mt-3 ${dangerButtonClass}`}
             >
               Clear sent log
             </button>
@@ -151,12 +152,12 @@ export function SentLog() {
       </section>
 
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-green-700">
+        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
           {notice}
         </p>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-red-700">
+        <p role="alert" className="mt-3 text-sm text-destructive">
           {error}
         </p>
       )}

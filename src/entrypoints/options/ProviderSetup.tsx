@@ -25,6 +25,17 @@ import {
   PresetId,
 } from "../../schemas/provider";
 import { PrivacyDraft } from "./PrivacyDraft";
+import {
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  insetClass,
+  primaryButtonClass,
+  radioCardClass,
+  radioGroupClass,
+  sectionHeadingClass,
+  statusBadgeClass,
+} from "./ui";
 
 /**
  * Options-page provider consent flow (plan Phase 2 Task 4): disclosure →
@@ -336,20 +347,24 @@ export function ProviderSetup() {
   };
 
   return (
-    <main className="mx-auto max-w-xl p-6">
-      <h1 className="text-xl font-semibold">Bookmarks Manager Options</h1>
-      <section aria-labelledby="provider-heading" className="mt-6">
-        <h2 id="provider-heading" className="text-lg font-medium">
-          AI provider connection
-        </h2>
+    <>
+      <section aria-labelledby="provider-heading" className={cardClass}>
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="provider-heading" className={sectionHeadingClass}>
+            AI provider connection
+          </h2>
+          {status !== null && (
+            <span className={statusBadgeClass(status.enabled)}>
+              {status.enabled ? "Active" : "Not set up"}
+            </span>
+          )}
+        </div>
 
         <fieldset className="mt-3">
           <legend className="text-sm font-medium">Provider</legend>
+          <div className={radioGroupClass}>
           {PRESET_IDS.map((id) => (
-            <label
-              key={id}
-              className="mt-1 flex items-center gap-2 text-sm"
-            >
+            <label key={id} className={radioCardClass}>
               <input
                 type="radio"
                 name="provider"
@@ -360,11 +375,12 @@ export function ProviderSetup() {
               {PROVIDER_DISCLOSURES[id].name}
             </label>
           ))}
+          </div>
         </fieldset>
 
         <section
           aria-label={`${disclosure.name} data disclosure`}
-          className="mt-4 rounded border border-gray-300 p-3 text-sm"
+          className={`mt-4 ${insetClass}`}
         >
           <h3 className="font-medium">
             What enabling {disclosure.name} means
@@ -379,7 +395,7 @@ export function ProviderSetup() {
               {SYNTHETIC_FIELDS.map((field) => (
                 <code
                   key={field}
-                  className="rounded bg-gray-100 px-1"
+                  className="rounded bg-muted px-1"
                 >
                   {field}
                 </code>
@@ -388,7 +404,7 @@ export function ProviderSetup() {
             </li>
             <li>
               Your API key travels only in the{" "}
-              <code className="rounded bg-gray-100 px-1">
+              <code className="rounded bg-muted px-1">
                 {AUTHORIZATION_HEADER}
               </code>{" "}
               header to {disclosure.origin}. It is stored encrypted on this
@@ -403,7 +419,7 @@ export function ProviderSetup() {
                 href={disclosure.privacyPolicyUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-700 underline"
+                className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
               >
                 {disclosure.name} privacy policy
               </a>
@@ -420,9 +436,9 @@ export function ProviderSetup() {
           >
             <p className="text-sm">
               {disclosure.name} is enabled — model{" "}
-              <code className="rounded bg-gray-100 px-1">{status.model}</code>,
+              <code className="rounded bg-muted px-1">{status.model}</code>,
               key ending in{" "}
-              <code className="rounded bg-gray-100 px-1">
+              <code className="rounded bg-muted px-1">
                 {status.keySuffix}
               </code>
               .
@@ -443,27 +459,27 @@ export function ProviderSetup() {
               type="button"
               onClick={onRevoke}
               disabled={busy}
-              className="mt-3 rounded bg-red-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={`mt-3 ${dangerButtonClass}`}
             >
               Revoke {disclosure.name} access
             </button>
-            <div className="mt-4 border-t border-gray-200 pt-3">
+            <div className="mt-4 border-t border-border pt-3">
               <button
                 type="button"
                 onClick={onTest}
                 disabled={busy}
-                className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+                className={primaryButtonClass}
               >
                 {testing ? "Testing…" : "Test connection"}
               </button>
-              <p className="mt-1 text-xs text-gray-600">
+              <p className="mt-1 text-xs text-muted-foreground">
                 Sends the disclosed synthetic request to {disclosure.origin}{" "}
                 — nothing else leaves this device.
               </p>
               {testOutcome !== null && testOutcome.ok && (
-                <p role="status" className="mt-2 text-sm text-green-700">
+                <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
                   Connection test succeeded — model{" "}
-                  <code className="rounded bg-gray-100 px-1">
+                  <code className="rounded bg-muted px-1">
                     {testOutcome.model}
                   </code>{" "}
                   answered in {Math.round(testOutcome.latencyMs)} ms
@@ -473,7 +489,7 @@ export function ProviderSetup() {
                 </p>
               )}
               {testOutcome !== null && !testOutcome.ok && (
-                <p role="alert" className="mt-2 text-sm text-red-700">
+                <p role="alert" className="mt-2 text-sm text-destructive">
                   Connection test failed ({testOutcome.code}):{" "}
                   {testOutcome.message}
                 </p>
@@ -497,7 +513,7 @@ export function ProviderSetup() {
                       ? "provider-model-pinned-note"
                       : undefined
                 }
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                className={`mt-1 ${inputClass}`}
               >
                 {models.map((allowed) => (
                   <option key={allowed} value={allowed}>
@@ -509,9 +525,9 @@ export function ProviderSetup() {
                 <p
                   role="status"
                   id="provider-model-alias-warning"
-                  className="mt-1 text-xs text-amber-700"
+                  className="mt-1 text-xs text-amber-700 dark:text-amber-400"
                 >
-                  <code className="rounded bg-gray-100 px-1">{model}</code>{" "}
+                  <code className="rounded bg-muted px-1">{model}</code>{" "}
                   {MOVING_ALIAS_WARNING}
                 </p>
               )}
@@ -519,9 +535,9 @@ export function ProviderSetup() {
                 <p
                   role="status"
                   id="provider-model-pinned-note"
-                  className="mt-1 text-xs text-gray-500"
+                  className="mt-1 text-xs text-muted-foreground"
                 >
-                  <code className="rounded bg-gray-100 px-1">{model}</code>{" "}
+                  <code className="rounded bg-muted px-1">{model}</code>{" "}
                   {PINNED_RELEASE_NOTE}
                 </p>
               )}
@@ -536,7 +552,7 @@ export function ProviderSetup() {
                 autoComplete="off"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                className={`mt-1 ${inputClass}`}
               />
             </div>
             <div>
@@ -555,7 +571,7 @@ export function ProviderSetup() {
               type="button"
               onClick={onEnable}
               disabled={!canEnable}
-              className="rounded bg-blue-600 px-3 py-1 text-sm text-white disabled:opacity-50"
+              className={primaryButtonClass}
             >
               Enable {disclosure.name}
             </button>
@@ -563,22 +579,22 @@ export function ProviderSetup() {
         )}
 
         {status === null && (
-          <p role="status" className="mt-3 text-sm text-gray-700">
+          <p role="status" className="mt-3 text-sm text-muted-foreground">
             Checking the current provider status…
           </p>
         )}
         {notice !== null && (
-          <p role="status" className="mt-3 text-sm text-green-700">
+          <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
             {notice}
           </p>
         )}
         {error !== null && (
-          <p role="alert" className="mt-3 text-sm text-red-700">
+          <p role="alert" className="mt-3 text-sm text-destructive">
             {error}
           </p>
         )}
       </section>
       <PrivacyDraft />
-    </main>
+    </>
   );
 }
