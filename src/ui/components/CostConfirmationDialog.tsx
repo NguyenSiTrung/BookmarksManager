@@ -1,4 +1,13 @@
 import { useEffect, useRef } from "react";
+import type { ReactElement } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./dialog";
 
 /**
  * One-shot cost confirmation for a manual LLM request whose price cannot be
@@ -7,9 +16,11 @@ import { useEffect, useRef } from "react";
  * resolves to a single confirm/cancel for THIS action — there is no
  * "always allow" affordance and nothing persists a blanket bypass.
  *
- * Modal semantics: `role="dialog"` + `aria-modal`, labelled by its title,
- * Escape cancels, and focus lands on the cancel button on open so an
- * accidental Enter cannot spend money.
+ * Built on the shared Radix dialog (theme tokens, focus trap, dark mode).
+ * `showCloseButton={false}`: there is no corner X — Escape and a click on
+ * the overlay close the dialog, which maps to `onCancel`, the safe action.
+ * Focus lands on the cancel button on open so an accidental Enter cannot
+ * spend money.
  */
 export interface CostConfirmationDialogProps {
   open: boolean;
@@ -21,74 +32,71 @@ export interface CostConfirmationDialogProps {
   onCancel: () => void;
 }
 
-const TITLE_ID = "cost-confirmation-title";
-
-export function CostConfirmationDialog(props: CostConfirmationDialogProps) {
+export function CostConfirmationDialog({
+  open,
+  featureLabel,
+  destinationOrigin,
+  onConfirm,
+  onCancel,
+}: CostConfirmationDialogProps): ReactElement {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (props.open) {
+    if (open) {
       cancelRef.current?.focus();
     }
-  }, [props.open]);
-
-  if (!props.open) {
-    return null;
-  }
-
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      props.onCancel();
-    }
-  };
+  }, [open]);
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={TITLE_ID}
-        onKeyDown={onKeyDown}
-        className="mx-4 max-w-md rounded-lg bg-white p-5 shadow-xl"
-      >
-        <h2 id={TITLE_ID} className="text-base font-semibold">
-          Confirm unknown-cost request
-        </h2>
-        <p className="mt-2 text-sm text-gray-700">
-          The monetary cost of “{props.featureLabel}” cannot be estimated —
-          this provider has no pricing configured. The request would be sent
-          to{" "}
-          <code className="rounded bg-gray-100 px-1">
-            {props.destinationOrigin}
-          </code>
-          , and its actual cost will only be known if the provider reports it
-          afterwards.
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Send without a cost estimate?</DialogTitle>
+          <DialogDescription>
+            The provider at{" "}
+            <code className="rounded-sm bg-muted px-1 font-mono text-xs">
+              {destinationOrigin}
+            </code>{" "}
+            has no pricing configured, so the cost of “{featureLabel}” can’t
+            be estimated beforehand. The actual cost is only known if the
+            provider reports it after the request.
+          </DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          You’ll be asked again for each request — this approval isn’t saved.
         </p>
-        <p className="mt-2 text-sm text-gray-700">
-          This confirmation applies to this one request only.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
+        <DialogFooter>
           <button
             type="button"
             ref={cancelRef}
-            onClick={props.onCancel}
-            className="rounded border border-gray-300 px-3 py-1 text-sm"
+            onClick={onCancel}
+            className={
+              "rounded-md border border-input px-4 py-2 text-sm font-medium " +
+              "hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring " +
+              "focus-visible:outline-hidden"
+            }
           >
-            Don&apos;t send
+            Don’t send
           </button>
           <button
             type="button"
-            onClick={props.onConfirm}
-            className="rounded bg-blue-600 px-3 py-1 text-sm text-white"
+            onClick={onConfirm}
+            className={
+              "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
+              "text-primary-foreground hover:bg-primary/90 " +
+              "focus-visible:ring-2 focus-visible:ring-ring " +
+              "focus-visible:outline-hidden"
+            }
           >
             Send anyway
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

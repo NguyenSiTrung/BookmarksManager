@@ -3,6 +3,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { CostConfirmationDialog } from "../../src/ui/components/CostConfirmationDialog";
@@ -12,9 +13,7 @@ beforeAll(() => {
     .IS_REACT_ACT_ENVIRONMENT = true;
 });
 afterEach(() => cleanup());
-afterAll(() => {
-  vi.unstubAllGlobals();
-});
+afterAll(() => vi.unstubAllGlobals());
 
 const PROPS = {
   open: true,
@@ -28,22 +27,35 @@ describe("CostConfirmationDialog", () => {
   it("states the cost is unknown, names the feature and destination, and is modal-labelled", () => {
     render(<CostConfirmationDialog {...PROPS} />);
     const dialog = screen.getByRole("dialog");
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    // The accessible name points at the title.
+    // react-dialog 1.1.23 (the shared primitive every dialog here uses)
+    // emits no aria-modal — modal semantics are its focus trap + overlay.
+    // What it guarantees: the name and description are wired to the title
+    // and description ids.
     const labelledBy = dialog.getAttribute("aria-labelledby");
     expect(labelledBy).toBeTruthy();
     expect(
       document.getElementById(labelledBy!)?.textContent,
-    ).toMatch(/cost|confirm/i);
-    expect(dialog.textContent).toMatch(/cost.*(unknown|cannot be estimated)/i);
+    ).toMatch(/send without a cost estimate/i);
+    const describedBy = dialog.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(
+      document.getElementById(describedBy!)?.textContent,
+    ).toMatch(/has no pricing configured/i);
+    expect(dialog.textContent).toMatch(/can.t be estimated/i);
     expect(dialog.textContent).toContain("Explain this decision");
     expect(dialog.textContent).toContain("https://api.openai.com");
+    expect(dialog.textContent).toMatch(/asked again for each request/i);
     // Explicitly one-shot: no "always"/"remember" affordance exists.
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(dialog.textContent).not.toMatch(/always allow|remember this/i);
   });
 
-  it("confirm fires once and cancel fires once — a one-shot decision", () => {
+  it("focuses “Don’t send” on open so Enter cannot confirm", () => {
+    render(<CostConfirmationDialog {...PROPS} />);
+    expect(document.activeElement?.textContent).toBe("Don’t send");
+  });
+
+  it("confirm fires once and never cancels", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
     render(
@@ -70,12 +82,12 @@ describe("CostConfirmationDialog", () => {
         onCancel={onCancel}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /cancel|don.t send/i }));
+    fireEvent.click(screen.getByRole("button", { name: /don.t send/i }));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("Escape cancels", () => {
+  it("Escape cancels (the safe action)", () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
     render(
@@ -87,6 +99,29 @@ describe("CostConfirmationDialog", () => {
     );
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("a pointerdown on the overlay cancels (the safe action)", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <CostConfirmationDialog
+        {...PROPS}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    expect(overlay).not.toBeNull();
+    // Radix attaches its document pointerdown listener in a setTimeout(0)
+    // after mount, and defers outside dismissal until the click completes —
+    // let the task run, then finish the synthetic interaction.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.pointerDown(overlay!);
+    fireEvent.pointerUp(overlay!);
+    fireEvent.click(overlay!);
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
