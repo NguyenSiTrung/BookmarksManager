@@ -11,7 +11,8 @@ const focusRing =
 const buttonBase =
   "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 " +
   "text-sm font-medium transition-all duration-150 active:scale-[0.98] " +
-  "disabled:pointer-events-none disabled:opacity-50";
+  "disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none " +
+  "disabled:saturate-50";
 
 export const primaryButtonClass =
   `${buttonBase} ${focusRing} bg-primary text-primary-foreground shadow-sm ` +
@@ -33,7 +34,8 @@ export const smallButtonClass =
   "inline-flex items-center gap-1 rounded-md border border-border bg-card " +
   "px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent " +
   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden " +
-  "disabled:pointer-events-none disabled:opacity-50";
+  "disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none " +
+  "disabled:saturate-50";
 
 export const inputClass =
   "w-full rounded-lg border border-input bg-card px-3 py-2 text-sm " +

@@ -781,7 +781,7 @@ export function App() {
                 aria-busy={busy}
                 aria-keyshortcuts="Control+Enter Meta+Enter"
                 disabled={busy || url.trim() === ""}
-                className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground shadow-card outline-hidden transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:pointer-events-none disabled:opacity-50"
+                className="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground shadow-card outline-hidden transition hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none disabled:saturate-50"
               >
                 {busy ? "Saving…" : "Save"}
                 {!busy && (

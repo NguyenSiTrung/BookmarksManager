@@ -331,10 +331,15 @@ describe("PopupApp — save", () => {
   it("keeps Save disabled for a blank URL", async () => {
     await renderPopup();
     fireEvent.change(urlInput(), { target: { value: "   " } });
-    expect(
-      (screen.getByRole("button", { name: "Save" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    const save = screen.getByRole("button", {
+      name: "Save",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    // Task 1: the disabled state must read as disabled — dimmed,
+    // desaturated, not-allowed cursor — not a normal-looking button.
+    expect(save.className).toContain("disabled:cursor-not-allowed");
+    expect(save.className).toContain("disabled:saturate-50");
+    expect(save.className).not.toContain("pointer-events-none");
   });
 
   it("unwinds the created bookmark when the meta write fails", async () => {
