@@ -14,17 +14,24 @@ import {
   LlmProviderSettings,
   type LlmPresetId,
 } from "../../schemas/llm";
+import {
+  Alert,
+  Chip,
+  Disclosure,
+  Field,
+  ProviderCard,
+  StatusBadge,
+} from "./components";
+import { ZapIcon } from "../../ui/components/icons";
 import { LlmBudget } from "./LlmBudget";
 import {
   cardClass,
-  dangerButtonClass,
+  ghostDangerButtonClass,
   inputClass,
-  insetClass,
   primaryButtonClass,
-  radioCardClass,
   radioGroupClass,
+  secondaryButtonClass,
   sectionHeadingClass,
-  statusBadgeClass,
 } from "./ui";
 
 /**
@@ -419,83 +426,126 @@ export function LlmProviderSetup() {
   return (
     <section aria-labelledby="llm-provider-heading" className={cardClass}>
       <div className="flex items-center justify-between gap-3">
-        <h2 id="llm-provider-heading" className={sectionHeadingClass}>
-          Optional LLM provider
-        </h2>
-        {status !== null && (
-          <span className={statusBadgeClass(status.enabled)}>
-            {status.enabled ? "Active" : "Not set up"}
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ZapIcon className="size-4" />
           </span>
-        )}
+          <h2 id="llm-provider-heading" className={sectionHeadingClass}>
+            Optional LLM provider
+          </h2>
+        </div>
+        {status !== null && <StatusBadge on={status.enabled} />}
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="mt-1.5 text-sm text-muted-foreground">
         A second, OpenAI-compatible provider for explanations, second
         opinions, summaries, and restructure proposals. Every feature is
         off until you enable a provider and grant consent per feature.
       </p>
 
-      <section
-        aria-label="LLM provider data disclosure"
-        className={`mt-4 ${insetClass}`}
-      >
-        <h3 className="font-medium">What enabling an LLM provider means</h3>
-        <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>
-            Recipient: your configured provider at{" "}
-            <code className="rounded bg-muted px-1">{disclosureOrigin}</code>{" "}
-            — the only destination this consent covers.
-          </li>
-          <li>
-            What is sent during setup: {TEST_DISCLOSURE.purpose}, with
-            exactly the fields{" "}
-            {TEST_DISCLOSURE.fields.map((field) => (
-              <code key={field} className="rounded bg-muted px-1">
-                {field}
-              </code>
-            ))}
-            .
-          </li>
-          <li>Why: to {TEST_DISCLOSURE.purpose}.</li>
-          <li>When: {TEST_DISCLOSURE.trigger}.</li>
-          <li>{TEST_DISCLOSURE.credentialUse}.</li>
-          <li>
-            With a credential configured it travels only in the{" "}
-            <code className="rounded bg-muted px-1">Authorization</code> or{" "}
-            <code className="rounded bg-muted px-1">api-key</code> request
-            header to {disclosureOrigin}.
-          </li>
-          <li>Never sent: {LLM_NEVER_SENT.join(", ")}.</li>
-        </ul>
-      </section>
+      <div className="mt-4">
+        <Disclosure
+          title="What enabling an LLM provider means"
+          subtitle="Read before enabling — this is what your consent covers."
+          open={!status?.enabled}
+          regionLabel="LLM provider data disclosure"
+        >
+          <ul className="list-disc space-y-1.5 pl-5 text-muted-foreground">
+            <li>
+              Recipient: your configured provider at{" "}
+              <code className="rounded bg-muted px-1">{disclosureOrigin}</code>{" "}
+              — the only destination this consent covers.
+            </li>
+            <li>
+              What is sent during setup: {TEST_DISCLOSURE.purpose}, with
+              exactly the fields{" "}
+              {TEST_DISCLOSURE.fields.map((field) => (
+                <code key={field} className="rounded bg-muted px-1">
+                  {field}
+                </code>
+              ))}
+              .
+            </li>
+            <li>Why: to {TEST_DISCLOSURE.purpose}.</li>
+            <li>When: {TEST_DISCLOSURE.trigger}.</li>
+            <li>{TEST_DISCLOSURE.credentialUse}.</li>
+            <li>
+              With a credential configured it travels only in the{" "}
+              <code className="rounded bg-muted px-1">Authorization</code> or{" "}
+              <code className="rounded bg-muted px-1">api-key</code> request
+              header to {disclosureOrigin}.
+            </li>
+            <li>Never sent: {LLM_NEVER_SENT.join(", ")}.</li>
+          </ul>
+        </Disclosure>
+      </div>
 
       {status?.enabled ? (
         <div
           role="group"
           aria-label="LLM enabled provider"
-          className="mt-4"
+          className="mt-5"
         >
-          <p className="text-sm">
-            The LLM provider is enabled — model{" "}
-            <code className="rounded bg-muted px-1">{status.model}</code>{" "}
-            at{" "}
-            <code className="rounded bg-muted px-1">{status.origin}</code>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+            <span className="text-sm text-muted-foreground">
+              LLM provider enabled
+            </span>
+            <span className="hidden text-border sm:inline">·</span>
+            <Chip>{status.model}</Chip>
+            <Chip>{status.origin}</Chip>
             {status.keySuffix !== undefined && (
-              <>
-                , key ending in{" "}
-                <code className="rounded bg-muted px-1">
-                  {status.keySuffix}
-                </code>
-              </>
+              <Chip>…{status.keySuffix}</Chip>
             )}
-            {status.tier !== undefined && (
-              <>
-                , structured output tier{" "}
-                <code className="rounded bg-muted px-1">{status.tier}</code>
-              </>
-            )}
-            .
-          </p>
-          <div className="mt-3">
+            {status.tier !== undefined && <Chip>{status.tier}</Chip>}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={busy}
+              className={secondaryButtonClass}
+            >
+              {testing ? "Testing…" : "Test connection"}
+            </button>
+            <p className="text-xs text-muted-foreground">
+              Sends the disclosed synthetic request to {status.origin} —
+              nothing else leaves this device.
+            </p>
+          </div>
+
+          {testOutcome !== null && (
+            <div className="mt-3">
+              <Alert tone={testOutcome.ok ? "success" : "error"}>
+                {testOutcome.ok ? (
+                  <>
+                    Connection test succeeded — model{" "}
+                    <code className="rounded bg-muted px-1">
+                      {testOutcome.model}
+                    </code>{" "}
+                    answered in {Math.round(testOutcome.latencyMs)} ms, tier{" "}
+                    <code className="rounded bg-muted px-1">
+                      {testOutcome.tier}
+                    </code>
+                    {testOutcome.usage !== undefined &&
+                      `, ${testOutcome.usage.inputTokens} input / ${testOutcome.usage.outputTokens} output tokens` +
+                        (testOutcome.usage.costUsd !== undefined
+                          ? ` (reported cost $${testOutcome.usage.costUsd})`
+                          : "")}
+                    .
+                  </>
+                ) : (
+                  <>
+                    Connection test failed ({testOutcome.code}):{" "}
+                    {testOutcome.message}
+                  </>
+                )}
+              </Alert>
+            </div>
+          )}
+
+          <LlmBudget />
+
+          <div className="mt-5 border-t border-border pt-4">
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -504,94 +554,56 @@ export function LlmProviderSetup() {
               />
               Also delete the stored provider credential from this device
             </label>
-          </div>
-          <button
-            type="button"
-            onClick={onRevoke}
-            disabled={busy}
-            className={`mt-3 ${dangerButtonClass}`}
-          >
-            Revoke LLM provider access
-          </button>
-          <div className="mt-4 border-t border-border pt-3">
             <button
               type="button"
-              onClick={onTest}
+              onClick={onRevoke}
               disabled={busy}
-              className={primaryButtonClass}
+              className={`mt-3 ${ghostDangerButtonClass}`}
             >
-              {testing ? "Testing…" : "Test connection"}
+              Revoke LLM provider access
             </button>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Sends the disclosed synthetic request to {status.origin} —
-              nothing else leaves this device.
-            </p>
-            {testOutcome !== null && testOutcome.ok && (
-              <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
-                Connection test succeeded — model{" "}
-                <code className="rounded bg-muted px-1">
-                  {testOutcome.model}
-                </code>{" "}
-                answered in {Math.round(testOutcome.latencyMs)} ms, tier{" "}
-                <code className="rounded bg-muted px-1">
-                  {testOutcome.tier}
-                </code>
-                {testOutcome.usage !== undefined &&
-                  `, ${testOutcome.usage.inputTokens} input / ${testOutcome.usage.outputTokens} output tokens` +
-                    (testOutcome.usage.costUsd !== undefined
-                      ? ` (reported cost $${testOutcome.usage.costUsd})`
-                      : "")}
-                .
-              </p>
-            )}
-            {testOutcome !== null && !testOutcome.ok && (
-              <p role="alert" className="mt-2 text-sm text-destructive">
-                Connection test failed ({testOutcome.code}):{" "}
-                {testOutcome.message}
-              </p>
-            )}
           </div>
-          <LlmBudget />
         </div>
       ) : (
-        <div className="mt-4 space-y-4">
+        <div className="mt-5 space-y-4">
           <fieldset>
             <legend className="text-sm font-medium">Provider type</legend>
             <div className={radioGroupClass}>
-            {PRESET_KINDS.map((id) => (
-              <label key={id} className={radioCardClass}>
-                <input
-                  type="radio"
+              {PRESET_KINDS.map((id) => (
+                <ProviderCard
+                  key={id}
                   name="llm-provider-kind"
                   value={id}
                   checked={kind === id}
                   onChange={() => onKindChange(id)}
+                  title={id === "openai" ? "OpenAI" : "OpenRouter"}
+                  inputLabel={id === "openai" ? "OpenAI" : "OpenRouter"}
+                  description={
+                    id === "openai"
+                      ? "api.openai.com — Bearer key, official API."
+                      : "openrouter.ai — one key across many models."
+                  }
                 />
-                {id === "openai" ? "OpenAI" : "OpenRouter"}
-              </label>
-            ))}
-            <label className={radioCardClass}>
-              <input
-                type="radio"
+              ))}
+              <ProviderCard
                 name="llm-provider-kind"
                 value="custom"
                 checked={kind === "custom"}
                 onChange={() => onKindChange("custom")}
+                title="Custom OpenAI-compatible endpoint"
+                inputLabel="Custom OpenAI-compatible endpoint"
+                description="Any HTTPS or localhost /chat/completions API."
               />
-              Custom OpenAI-compatible endpoint
-            </label>
             </div>
           </fieldset>
 
           {kind === "custom" && (
             <>
-              <div>
-                <label
-                  htmlFor="llm-base-url"
-                  className="block text-sm font-medium"
-                >
-                  Base URL
-                </label>
+              <Field
+                label="Base URL"
+                htmlFor="llm-base-url"
+                hint="HTTPS required; plain HTTP is allowed only for localhost, 127.0.0.1, or [::1]."
+              >
                 <input
                   id="llm-base-url"
                   type="text"
@@ -599,41 +611,45 @@ export function LlmProviderSetup() {
                   placeholder="https://llm.example.com/v1"
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.target.value)}
-                  className={`mt-1 ${inputClass}`}
+                  className={inputClass}
                 />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  HTTPS required; plain HTTP is allowed only for localhost,
-                  127.0.0.1, or [::1].
-                </p>
-              </div>
-              <div>
-                <label
-                  htmlFor="llm-auth"
-                  className="block text-sm font-medium"
-                >
-                  Authentication
-                </label>
-                <select
-                  id="llm-auth"
-                  value={auth}
-                  onChange={(event) =>
-                    setAuth(event.target.value as LlmAuthMode)
-                  }
-                  className={`mt-1 ${inputClass}`}
-                >
-                  <option value="bearer">Bearer token</option>
-                  <option value="api-key">api-key header</option>
-                  <option value="none">None (local endpoints)</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="llm-input-price"
-                    className="block text-sm font-medium"
+              </Field>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Authentication" htmlFor="llm-auth">
+                  <select
+                    id="llm-auth"
+                    value={auth}
+                    onChange={(event) =>
+                      setAuth(event.target.value as LlmAuthMode)
+                    }
+                    className={inputClass}
                   >
-                    Input price (USD / 1M tokens)
-                  </label>
+                    <option value="bearer">Bearer token</option>
+                    <option value="api-key">api-key header</option>
+                    <option value="none">None (local endpoints)</option>
+                  </select>
+                </Field>
+                <Field
+                  label="Monthly budget cap (USD, optional)"
+                  htmlFor="llm-budget-cap"
+                >
+                  <input
+                    id="llm-budget-cap"
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={budgetCap}
+                    onChange={(event) => setBudgetCap(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field
+                  label="Input price (USD / 1M tokens)"
+                  htmlFor="llm-input-price"
+                  hint="Optional — for cost estimates when the provider reports none."
+                >
                   <input
                     id="llm-input-price"
                     type="text"
@@ -641,16 +657,13 @@ export function LlmProviderSetup() {
                     autoComplete="off"
                     value={inputPrice}
                     onChange={(event) => setInputPrice(event.target.value)}
-                    className={`mt-1 ${inputClass}`}
+                    className={inputClass}
                   />
-                </div>
-                <div>
-                  <label
-                    htmlFor="llm-output-price"
-                    className="block text-sm font-medium"
-                  >
-                    Output price (USD / 1M tokens)
-                  </label>
+                </Field>
+                <Field
+                  label="Output price (USD / 1M tokens)"
+                  htmlFor="llm-output-price"
+                >
                   <input
                     id="llm-output-price"
                     type="text"
@@ -658,70 +671,69 @@ export function LlmProviderSetup() {
                     autoComplete="off"
                     value={outputPrice}
                     onChange={(event) => setOutputPrice(event.target.value)}
-                    className={`mt-1 ${inputClass}`}
+                    className={inputClass}
                   />
-                </div>
+                </Field>
               </div>
             </>
           )}
 
-          <div>
-            <label htmlFor="llm-model" className="block text-sm font-medium">
-              Model
-            </label>
+          <Field label="Model" htmlFor="llm-model">
             <input
               id="llm-model"
               type="text"
               autoComplete="off"
               value={model}
               onChange={(event) => setModel(event.target.value)}
-              className={`mt-1 ${inputClass}`}
+              className={inputClass}
             />
-          </div>
+          </Field>
 
           {needsKey && (
-            <div>
-              <label htmlFor="llm-api-key" className="block text-sm font-medium">
-                API key
-              </label>
+            <Field
+              label="API key"
+              htmlFor="llm-api-key"
+              hint="Stored encrypted on this device — never shown again."
+            >
               <input
                 id="llm-api-key"
                 type="password"
                 autoComplete="off"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                className={`mt-1 ${inputClass}`}
+                className={inputClass}
               />
-            </div>
+            </Field>
           )}
 
-          <div>
-            <label htmlFor="llm-budget-cap" className="block text-sm font-medium">
-              Monthly budget cap (USD, optional)
-            </label>
-            <input
-              id="llm-budget-cap"
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              value={budgetCap}
-              onChange={(event) => setBudgetCap(event.target.value)}
-              className={`mt-1 ${inputClass}`}
-            />
-          </div>
-
-          <div>
-            <label className="flex items-start gap-2 text-sm">
+          {kind !== "custom" && (
+            <Field
+              label="Monthly budget cap (USD, optional)"
+              htmlFor="llm-budget-cap"
+              hint="Second opinions and other spend-capped features stop at this."
+            >
               <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={agreed}
-                onChange={(event) => setAgreed(event.target.checked)}
+                id="llm-budget-cap"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={budgetCap}
+                onChange={(event) => setBudgetCap(event.target.value)}
+                className={inputClass}
               />
-              I have read the disclosure above and agree to enable this LLM
-              provider.
-            </label>
-          </div>
+            </Field>
+          )}
+
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={agreed}
+              onChange={(event) => setAgreed(event.target.checked)}
+            />
+            I have read the disclosure above and agree to enable this LLM
+            provider.
+          </label>
           <button
             type="button"
             onClick={onEnable}
@@ -734,19 +746,19 @@ export function LlmProviderSetup() {
       )}
 
       {status === null && (
-        <p role="status" className="mt-3 text-sm text-muted-foreground">
+        <p role="status" className="mt-4 text-sm text-muted-foreground">
           Checking the current provider status…
         </p>
       )}
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
-          {notice}
-        </p>
+        <div className="mt-4">
+          <Alert tone="success">{notice}</Alert>
+        </div>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-destructive">
-          {error}
-        </p>
+        <div className="mt-4">
+          <Alert tone="error">{error}</Alert>
+        </div>
       )}
     </section>
   );

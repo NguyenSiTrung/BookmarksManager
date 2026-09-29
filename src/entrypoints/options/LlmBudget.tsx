@@ -3,11 +3,14 @@ import {
   LlmProviderMessage,
   LlmProviderMessageResult,
 } from "../../messages/llm-provider";
+import { cn } from "../../ui/lib/cn";
+import { Alert } from "./components";
 import { insetClass } from "./ui";
 
 /**
  * Monthly LLM spend panel (spec FR7): reported vs estimated vs unknown-cost
- * request counts, the configured monthly cap, and remaining headroom.
+ * request counts, the configured monthly cap, and remaining headroom —
+ * rendered as a stat row rather than a definition list so the numbers scan.
  * Unknown-cost requests are surfaced as a count — never rendered as $0.00.
  */
 declare const chrome: {
@@ -29,6 +32,32 @@ interface Snapshot {
   committedUsd: number;
   budgetUsd: number | null;
   remainingUsd: number | null;
+}
+
+function Stat(props: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: "warn";
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-muted-foreground">{props.label}</dt>
+      <dd
+        className={cn(
+          "mt-0.5 truncate text-sm font-medium tabular-nums",
+          props.tone === "warn"
+            ? "text-amber-700 dark:text-amber-400"
+            : "text-foreground",
+        )}
+      >
+        {props.value}
+      </dd>
+      {props.hint !== undefined && (
+        <dd className="mt-0.5 text-xs text-muted-foreground">{props.hint}</dd>
+      )}
+    </div>
+  );
 }
 
 export function LlmBudget() {
@@ -58,62 +87,60 @@ export function LlmBudget() {
 
   return (
     <section aria-label="LLM budget" className={`mt-4 ${insetClass}`}>
-      <h3 className="font-medium">Monthly budget</h3>
+      <h3 className="text-sm font-medium">Monthly budget</h3>
       {error && (
-        <p role="alert" className="mt-2 text-destructive">
-          Budget information is unavailable.
-        </p>
+        <div className="mt-2">
+          <Alert tone="error">Budget information is unavailable.</Alert>
+        </div>
       )}
       {snapshot === null && !error && (
-        <p role="status" className="mt-2 text-muted-foreground">
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
           Loading budget…
         </p>
       )}
       {snapshot !== null && (
-        <dl className="mt-2 space-y-1">
-          <div className="flex justify-between">
-            <dt>Month</dt>
-            <dd>{snapshot.month}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt>Requests</dt>
-            <dd>{snapshot.requestCount} requests</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt>Tokens</dt>
-            <dd>
-              {snapshot.inputTokens} in / {snapshot.outputTokens} out
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt>Reported cost</dt>
-            <dd>${snapshot.reportedCostUsd.toFixed(2)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt>Estimated cost</dt>
-            <dd>${snapshot.estimatedCostUsd.toFixed(2)}</dd>
-          </div>
-          {snapshot.hasUnknownCost && (
-            <div className="flex justify-between">
-              <dt>Unknown cost</dt>
-              <dd>{snapshot.unknownCostRequests} requests unpriced</dd>
-            </div>
+        <>
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+            <Stat label="Month" value={snapshot.month} />
+            <Stat
+              label="Requests"
+              value={`${snapshot.requestCount} requests`}
+              hint={`${snapshot.inputTokens} in / ${snapshot.outputTokens} out tokens`}
+            />
+            <Stat
+              label="Reported cost"
+              value={`$${snapshot.reportedCostUsd.toFixed(2)}`}
+              hint={
+                snapshot.hasUnknownCost
+                  ? `${snapshot.unknownCostRequests} unknown-cost`
+                  : undefined
+              }
+              tone={snapshot.hasUnknownCost ? "warn" : undefined}
+            />
+            <Stat
+              label="Monthly cap"
+              value={
+                snapshot.budgetUsd !== null
+                  ? `$${snapshot.budgetUsd.toFixed(2)}`
+                  : "none set"
+              }
+              hint={
+                snapshot.remainingUsd !== null
+                  ? `$${snapshot.remainingUsd.toFixed(2)} remaining`
+                  : undefined
+              }
+            />
+          </dl>
+          {snapshot.estimatedCostUsd > 0 && (
+            <p className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">
+              Estimated cost so far: ${snapshot.estimatedCostUsd.toFixed(2)}
+              {snapshot.hasUnknownCost &&
+                ` — ${snapshot.unknownCostRequests} request${
+                  snapshot.unknownCostRequests === 1 ? "" : "s"
+                } reported no price.`}
+            </p>
           )}
-          <div className="flex justify-between">
-            <dt>Monthly cap</dt>
-            <dd>
-              {snapshot.budgetUsd !== null
-                ? `$${snapshot.budgetUsd.toFixed(2)}`
-                : "none set"}
-            </dd>
-          </div>
-          {snapshot.remainingUsd !== null && (
-            <div className="flex justify-between">
-              <dt>Remaining</dt>
-              <dd>${snapshot.remainingUsd.toFixed(2)}</dd>
-            </div>
-          )}
-        </dl>
+        </>
       )}
     </section>
   );
