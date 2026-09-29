@@ -333,6 +333,57 @@ describe("ImportDialog — pick and preview", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ImportDialog — drop path (Task 3 of the dialogs plan)
+// ---------------------------------------------------------------------------
+
+describe("ImportDialog — drop path", () => {
+  it("routes a dropped .json file to the preview", async () => {
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    fireEvent.drop(
+      screen.getByRole("button", { name: "Drop your bookmarks file here" }),
+      {
+        dataTransfer: {
+          files: [
+            new File([importEnvelopeJson()], "bookmarks.json", {
+              type: "application/json",
+            }),
+          ],
+        },
+      },
+    );
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+  });
+
+  it("rejects an obviously-not-bookmarks file with a friendly message", () => {
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    fireEvent.drop(
+      screen.getByRole("button", { name: "Drop your bookmarks file here" }),
+      { dataTransfer: { files: [new File(["%PDF-1.7"], "manual.pdf")] } },
+    );
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain(
+      "That doesn't look like a bookmarks file",
+    );
+    expect(screen.queryByTestId("import-preview")).toBeNull();
+  });
+
+  it("a drop that misses the zone does nothing (no preview, no error)", () => {
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    fireEvent.drop(screen.getByRole("dialog"), {
+      dataTransfer: {
+        files: [
+          new File([importEnvelopeJson()], "bookmarks.json", {
+            type: "application/json",
+          }),
+        ],
+      },
+    });
+    expect(screen.queryByTestId("import-preview")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ImportDialog — confirm → summary → undo
 // ---------------------------------------------------------------------------
 

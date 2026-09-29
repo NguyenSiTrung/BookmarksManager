@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/components/dialog";
+import { DropZone } from "../../ui/components/drop-zone";
 import { deleteNodesWithUndo } from "./BulkBar";
 import { unflattenTree } from "./ExportDialog";
 import { useToast } from "./UndoToast";
@@ -36,9 +37,14 @@ import { useToast } from "./UndoToast";
  *
  * State machine: `pick` → `preview` → `importing` → `summary`.
  *
- *  - `pick`: `<input type="file">` limited to .json/.html/.htm/.csv; >20 MiB
- *    rejected up-front (`file.size`), then again by the parsers
- *    (`too_large` surfaces their typed code).
+ *  - `pick`: a themed drop zone (`DropZone`) routes ONE picked-or-dropped
+ *    file through `handleFile`; the real `<input type="file">` is sr-only
+ *    inside the zone. An extension outside .json/.html/.htm/.csv/.txt (or
+ *    none) fails fast with a friendly message; >20 MiB is rejected
+ *    up-front (`file.size`), then again by the parsers (`too_large`
+ *    surfaces their typed code). Stray drops that miss the zone are
+ *    cancelled on the dialog root so the browser cannot navigate to the
+ *    file.
  *  - `preview`: `planImport` counts (folders / bookmarks / duplicates to
  *    skip / invalid), an "Import duplicates anyway" checkbox that re-plans,
  *    and an invalid-item detail list (first ~20). Nothing is written.
@@ -96,6 +102,20 @@ function detectFormat(fileName: string, text: string): ImportFormat {
   if (head.startsWith("{") || head.startsWith("[")) return "json";
   if (head.startsWith("<")) return "netscape";
   return "csv";
+}
+
+/** Extensions the pick stage accepts up front; anything else fails fast. */
+const BOOKMARKS_EXTENSIONS = new Set(["json", "html", "htm", "csv", "txt"]);
+
+/**
+ * True when a file may hold bookmarks: an allowed extension, or none at
+ * all (content sniffing handles extension-less and renamed files). A
+ * dropped `.pdf`/`.png` stops here with the friendly message instead of
+ * reaching the CSV parser's error.
+ */
+function hasBookmarksExtension(fileName: string): boolean {
+  const ext = /\.([a-z0-9]+)$/i.exec(fileName)?.[1]?.toLowerCase();
+  return ext === undefined || BOOKMARKS_EXTENSIONS.has(ext);
 }
 
 /**
@@ -268,6 +288,17 @@ export function ImportDialog({
 
   const handleFile = async (file: File): Promise<void> => {
     setError(null);
+    // Friendly up-front guard: an obviously-not-bookmarks file (a dropped
+    // PDF, an image) never reaches the parsers.
+    if (!hasBookmarksExtension(file.name)) {
+      setError({
+        code: "unsupported_file",
+        message:
+          "That doesn't look like a bookmarks file — use JSON, Netscape " +
+          "HTML, or CSV.",
+      });
+      return;
+    }
     // Up-front size gate (the parsers enforce the same cap and their
     // `too_large` code surfaces too — this just avoids reading the file).
     if (file.size > MAX_FILE_BYTES) {
@@ -343,7 +374,18 @@ export function ImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onDragOver={
+          stage === "pick"
+            ? (event) => event.preventDefault()
+            : undefined
+        }
+        onDrop={
+          stage === "pick"
+            ? (event) => event.preventDefault()
+            : undefined
+        }
+      >
         <DialogHeader>
           <DialogTitle>Import bookmarks</DialogTitle>
           <DialogDescription>
@@ -353,33 +395,14 @@ export function ImportDialog({
         </DialogHeader>
 
         {stage === "pick" && (
-          <div className="space-y-2">
-            <label
-              htmlFor="import-file"
-              className="text-sm font-medium"
-            >
-              Bookmarks file
-            </label>
-            <input
-              id="import-file"
-              data-testid="import-file-input"
-              type="file"
-              accept=".json,.html,.htm,.csv"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                // Reset so picking the same file twice still fires change.
-                event.target.value = "";
-                if (file !== undefined) void handleFile(file);
-              }}
-              className="block w-full text-sm file:mr-3 file:rounded-md
-                file:border file:border-input file:bg-background
-                file:px-3 file:py-1.5 file:text-sm hover:file:bg-accent"
-            />
-            <p className="text-xs text-muted-foreground">
-              JSON (.json), Netscape HTML (.html/.htm), or CSV (.csv) — up
-              to 20 MiB.
-            </p>
-          </div>
+          <DropZone
+            label="Drop your bookmarks file here"
+            activeLabel="Drop to import"
+            hint="or click to browse — JSON, Netscape HTML, or CSV · up to 20 MiB"
+            accept=".json,.html,.htm,.csv"
+            inputTestId="import-file-input"
+            onFile={(file) => void handleFile(file)}
+          />
         )}
 
         {(stage === "preview" || busy) && plan !== null && source !== null && (
