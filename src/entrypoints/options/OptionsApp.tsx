@@ -1,4 +1,13 @@
+import { useLiveQuery } from "dexie-react-hooks";
 import { useEffect, useState } from "react";
+import { db } from "../../db/database";
+import { CONSENT_VERSION } from "../../consent/records";
+import { PRESETS } from "../../net/presets";
+import {
+  CONSENT_SCOPE,
+  DECISIONS_CONSENT_SCOPE,
+  LLM_TEST_SCOPE,
+} from "../../schemas/provider";
 import { cn } from "../../ui/lib/cn";
 import {
   DatabaseIcon,
@@ -6,6 +15,10 @@ import {
   PulseIcon,
   ShieldIcon,
 } from "../../ui/components/icons";
+import {
+  SetupChecklist,
+  type ChecklistState,
+} from "./components";
 import { DecisionSettings } from "./DecisionSettings";
 import { DeleteAllData } from "./DeleteAllData";
 import { LlmProviderSetup } from "./LlmProviderSetup";
@@ -87,6 +100,54 @@ export function OptionsApp() {
   useEffect(() => {
     history.replaceState(null, "", `#${active}`);
   }, [active]);
+
+  /**
+   * Setup checklist state — read straight from Dexie so the strip updates
+   * live as consents are granted or revoked in any panel. A missing table or
+   * an empty DB degrades to "pending", never throws the render.
+   */
+  const consents =
+    useLiveQuery(() => db.consents.toArray().catch(() => []), []) ?? [];
+  const metadataRows =
+    useLiveQuery(
+      () =>
+        db.metadata
+          .where("key")
+          .anyOf(["decisions:settings", "llmEscalation"])
+          .toArray()
+          .catch(() => []),
+      [],
+    ) ?? [];
+
+  const hasGrant = (scope: string, origin: string) =>
+    consents.some(
+      (row) =>
+        row.scope === scope &&
+        row.origin === origin &&
+        row.consentVersion === CONSENT_VERSION,
+    );
+  const connected =
+    (Object.keys(PRESETS) as (keyof typeof PRESETS)[]).some((id) =>
+      hasGrant(CONSENT_SCOPE, PRESETS[id].origin),
+    ) || consents.some((row) => row.scope === LLM_TEST_SCOPE);
+  const analysisConsented = consents.some(
+    (row) =>
+      row.scope === DECISIONS_CONSENT_SCOPE &&
+      row.consentVersion === CONSENT_VERSION,
+  );
+  const automationOn = metadataRows.some((row) => {
+    const value = row.value as
+      | { enabled?: boolean; autoApply?: Record<string, boolean> }
+      | undefined;
+    return (
+      value?.enabled === true ||
+      Object.values(value?.autoApply ?? {}).some(Boolean)
+    );
+  });
+
+  const step = (done: boolean, isCurrent: boolean): ChecklistState =>
+    done ? "done" : isCurrent ? "current" : "pending";
+
 
   return (
     <div className="options-root min-h-dvh bg-background font-options-sans text-foreground">
@@ -176,6 +237,35 @@ export function OptionsApp() {
               </header>
               {panel.id === "connections" && (
                 <>
+                  <SetupChecklist
+                    steps={[
+                      {
+                        id: "connect",
+                        title: "Connect a provider",
+                        description:
+                          "Pick a Jev endpoint or an OpenAI-compatible LLM.",
+                        state: step(connected, true),
+                      },
+                      {
+                        id: "consent",
+                        title: "Allow bookmark analysis",
+                        description: "Consent per provider, in Permissions.",
+                        state: step(analysisConsented, connected),
+                        onGo: () => setActive("permissions"),
+                      },
+                      {
+                        id: "automate",
+                        title: "Choose automations",
+                        description:
+                          "Auto-apply and second opinions stay off until you opt in.",
+                        state: step(
+                          automationOn,
+                          connected && analysisConsented,
+                        ),
+                        onGo: () => setActive("permissions"),
+                      },
+                    ]}
+                  />
                   <ProviderSetup />
                   <LlmProviderSetup />
                   <PrivacyDraft />
