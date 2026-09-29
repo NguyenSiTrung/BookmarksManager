@@ -698,13 +698,15 @@ export function DuplicatesView({
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm">
                       {groupTitle}
-                      {groupDomain !== "" && (
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {groupDomain}
-                        </span>
-                      )}
                     </span>
+                    {groupDomain !== "" && (
+                      <span
+                        className="shrink-0 text-sm text-muted-foreground"
+                        title={group.key}
+                      >
+                        · {groupDomain}
+                      </span>
+                    )}
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {group.items.length}{" "}
                       {group.items.length === 1 ? "member" : "members"}
