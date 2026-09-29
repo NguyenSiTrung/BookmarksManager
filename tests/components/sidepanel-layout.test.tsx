@@ -26,6 +26,7 @@ import type { BookmarksTreeNode } from "../../src/sync/chrome-bookmarks";
 import { flattenTree } from "../../src/sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../src/sync/tree";
 import { App } from "../../src/entrypoints/sidepanel/App";
+import { chooseMenuItem, openMenu } from "./menu-helpers";
 import {
   BookmarkList,
   GRID_COLUMNS,
@@ -745,9 +746,7 @@ describe("App", () => {
     expect(
       screen.getByRole("heading", { name: "Bookmarks Manager" }),
     ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Review suggestions" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tools" })).toBeTruthy();
 
     // Default "all" view lists every bookmark.
     await waitFor(() => expect(optionTexts().length).toBe(4));
@@ -794,7 +793,7 @@ describe("App", () => {
     });
 
     // Category view.
-    fireEvent.click(screen.getByRole("button", { name: "Docs" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Docs/ }));
     await waitFor(() => {
       const texts = optionTexts().join("|");
       expect(texts).toContain("Beta");
@@ -803,7 +802,8 @@ describe("App", () => {
 
     // Duplicates mounts the grouped view (badges + keep-one), not the
     // flat listbox — group cards replace `role="option"` rows.
-    fireEvent.click(screen.getByRole("button", { name: "Duplicates" }));
+    await openMenu(/^More/);
+    await chooseMenuItem("Duplicates");
     await waitFor(() =>
       expect(screen.getAllByText(/exact|normalized/i).length).toBeGreaterThan(
         0,
@@ -811,9 +811,7 @@ describe("App", () => {
     );
 
     // Recently saved: dateAdded desc → Delta, Gamma, Beta, Alpha.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Recently saved" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Recent" }));
     await waitFor(() => {
       const texts = optionTexts().join("|");
       expect(texts.indexOf("Delta")).toBeLessThan(texts.indexOf("Gamma"));

@@ -25,6 +25,7 @@ import type { Job } from "../../src/schemas/job";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
+import { chooseMenuItem, openMenu } from "./menu-helpers";
 
 /**
  * Phase 4 Tasks 4 + 5 — the coordinator's App wiring, at App level.
@@ -226,11 +227,14 @@ async function seedConsent(): Promise<void> {
 }
 
 describe("side-panel scan + ask wiring", () => {
-  it("opens the scan dialog from the sidebar and starts a scan over every bookmark", async () => {
+  it("opens the scan dialog from the Tools menu and starts a scan over every bookmark", async () => {
+    // Scan library is offered only once an AI provider is connected.
+    await seedConsent();
     await renderApp();
 
-    // The sidebar entry opens the dialog hosting ScanPanel.
-    fireEvent.click(screen.getByRole("button", { name: "Scan library…" }));
+    // The Tools menu entry opens the dialog hosting ScanPanel.
+    await openMenu("Tools");
+    await chooseMenuItem("Scan library…");
     const dialog = await screen.findByRole("dialog", { name: "Scan library" });
     // The pre-start estimate covers the whole (3-bookmark) library.
     expect(

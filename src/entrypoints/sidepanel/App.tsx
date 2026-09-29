@@ -4,7 +4,6 @@ import { DuplicatesView } from "./DuplicatesView";
 import { useLiveQuery } from "dexie-react-hooks";
 import { ContextMenu } from "radix-ui";
 import { listMeta, listTags } from "../../db/meta";
-import { Category } from "../../schemas/bookmark";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import type { BookmarkItem, FolderNode, TreeEntry } from "../../sync/tree";
 import {
@@ -36,7 +35,6 @@ import type {
   FolderActionKind,
   FolderActionRequest,
 } from "./FolderActions";
-import { FolderTree } from "./FolderTree";
 import { ExportDialog } from "./ExportDialog";
 import { ImportDialog } from "./ImportDialog";
 import { MoveToDialog } from "./MoveToDialog";
@@ -68,7 +66,14 @@ import {
   reviewQueue,
   sendDecisionMessage,
 } from "./ReviewView";
-import { SettingsIcon } from "../../ui/components/settings-icon";
+import { ScopeHeading } from "./ScopeHeading";
+import { ScopePane } from "./ScopePane";
+import { TopBar } from "./TopBar";
+import type { ToolsAction } from "./TopBar";
+import { ViewChips } from "./ViewChips";
+import { aiVisibility, categoryCounts } from "./scope";
+import { useAiConnected } from "./useAiConnected";
+import { useIsWide } from "./useIsWide";
 import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
 import type { ToastApi, ToastState } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
@@ -95,19 +100,20 @@ function openOptionsPage(): void {
 }
 
 /**
- * Side-panel application shell — two panes:
+ * Side-panel application shell — narrow-first, search-first:
  *
- *   ┌─────────────┬──────────────────────────────┐
- *   │ view nav    │  <view title>                │
- *   │ (all/recent/│  ┌──────────────────────────┐ │
- *   │  untagged/  │  │ virtualized BookmarkList │ │
- *   │  duplicates/│  │ (listbox, multi-select)  │ │
- *   │  tags/      │  └──────────────────────────┘ │
- *   │  categories)│                               │
- *   │             │                               │
- *   │ FolderTree  │                               │
- *   │ (ARIA tree) │                               │
- *   └─────────────┴──────────────────────────────┘
+ *   ┌──────────────────────────────────────────┐
+ *   │ TopBar: search · Tools ⋯ · Settings      │
+ *   ├─────────────┬────────────────────────────┤
+ *   │ ScopePane   │ ViewChips: All · Recent …  │
+ *   │ (wide only: │ scope heading · count · ▦  │
+ *   │  folders,   │ ┌────────────────────────┐ │
+ *   │  tags,      │ │ virtualized list       │ │
+ *   │  categories)│ └────────────────────────┘ │
+ *   └─────────────┴────────────────────────────┘
+ *
+ * Narrow panels (under 640px, see `useIsWide`) drop the left column: the
+ * scope heading opens the same `ScopePane` in a `ScopeDrawer` instead.
  *
  * Data flow: `useBookmarkTree` supplies the live flattened Chrome tree;
  * `useLiveQuery` streams the `bookmarkMeta` and `tags` Dexie tables (both
@@ -122,23 +128,6 @@ function openOptionsPage(): void {
 const EMPTY_METAS: readonly BookmarkMeta[] = [];
 const EMPTY_TAG_DEFS: readonly TagDef[] = [];
 const EMPTY_DECISIONS: readonly DecisionRow[] = [];
-
-/** First-class views in the nav (tags/categories/folders generate theirs). */
-const FIXED_VIEWS: { kind: SidePanelView["kind"]; label: string }[] = [
-  { kind: "all", label: "All bookmarks" },
-  { kind: "recent", label: "Recently saved" },
-  { kind: "untagged", label: "Untagged" },
-  { kind: "duplicates", label: "Duplicates" },
-  { kind: "review", label: "Review" },
-  { kind: "restructure", label: "Restructure" },
-];
-
-const navButtonClass =
-  "w-full rounded-sm px-2 py-1 text-left text-sm outline-hidden " +
-  "hover:bg-accent hover:text-accent-foreground " +
-  "focus-visible:ring-2 focus-visible:ring-ring " +
-  "aria-pressed:bg-accent aria-pressed:text-accent-foreground " +
-  "aria-pressed:font-medium";
 
 /** Per-row action control (kebab) on bookmark rows. */
 const ITEM_KEBAB_CLASS =
@@ -228,6 +217,13 @@ export function App(props?: { askDebounceMs?: number }) {
     () => reviewQueue(pendingDecisions).length,
     [pendingDecisions],
   );
+  const wide = useIsWide();
+  const aiConnected = useAiConnected();
+  const visibility = useMemo(
+    () => aiVisibility({ aiConnected, pendingCount }),
+    [aiConnected, pendingCount],
+  );
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [view, setView] = useState<SidePanelView>({ kind: "all" });
   const [tagManagerOpen, setTagManagerOpen] = useState(false);
@@ -312,6 +308,10 @@ export function App(props?: { askDebounceMs?: number }) {
   const tagNameByKey = useMemo(
     () => new Map(tagDefs.map((tag) => [tag.nameKey, tag.name])),
     [tagDefs],
+  );
+  const categories = useMemo(
+    () => categoryCounts(metas, tree),
+    [metas, tree],
   );
   // Autocomplete vocabularies for the search bar: tag display names plus
   // folder titles — fixed roots ("Bookmarks bar"…) are real folders; only
@@ -545,11 +545,32 @@ export function App(props?: { askDebounceMs?: number }) {
     kind: FolderActionKind,
     node: FolderNode,
   ): void => {
+    // A folder dialog opening over an open drawer would stack two modals.
+    setDrawerOpen(false);
     if (kind === "move") {
       setMoveIds([node.id]);
       return;
     }
     setFolderRequest({ kind, node });
+  };
+
+  /**
+   * Every scope/chip selection: Review clears any active search so the queue
+   * is actually shown (same rule as a palette jump), and the narrow-mode
+   * drawer closes once something is chosen.
+   */
+  const selectView = (next: SidePanelView): void => {
+    if (next.kind === "review") setSearchQuery("");
+    setView(next);
+    setDrawerOpen(false);
+  };
+
+  const handleTools = (action: ToolsAction): void => {
+    if (action === "import") setImportOpen(true);
+    else if (action === "export") setExportOpen(true);
+    else if (action === "manage-tags") setTagManagerOpen(true);
+    else if (action === "scan") setScanOpen(true);
+    else openOptionsPage();
   };
 
   /**
@@ -703,235 +724,126 @@ export function App(props?: { askDebounceMs?: number }) {
     </>
   );
 
+  const scopePane = (
+    <ScopePane
+      tree={tree}
+      view={view}
+      tagDefs={tagDefs}
+      categories={categories}
+      onSelect={selectView}
+      renderFolderActions={(node) => (
+        <FolderActions node={node} onAction={handleFolderAction} />
+      )}
+      renderFolderContextMenu={(node) => (
+        <FolderActionsContextItems node={node} onAction={handleFolderAction} />
+      )}
+    />
+  );
+  const scopeHeading = (
+    <ScopeHeading
+      title={title}
+      drawer={
+        wide
+          ? undefined
+          : {
+              open: drawerOpen,
+              onOpenChange: setDrawerOpen,
+              children: scopePane,
+            }
+      }
+    />
+  );
+
   return (
     <SelectionContext.Provider value={selection}>
       <ToastProvider controller={providerToast}>
         <div className="flex h-dvh min-h-0 flex-col bg-background text-foreground">
-          <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-            <h1 className="text-sm font-semibold">Bookmarks Manager</h1>
-            <button
-              type="button"
-              onClick={() => setImportOpen(true)}
-              className={navButtonClass + " ml-auto"}
-            >
-              Import…
-            </button>
-            <button
-              type="button"
-              onClick={() => setExportOpen(true)}
-              className={navButtonClass}
-            >
-              Export…
-            </button>
-            <button
-              type="button"
-              aria-pressed={view.kind === "review"}
-              aria-label={
-                pendingCount > 0
-                  ? `Review suggestions, ${pendingCount} pending`
-                  : undefined
-              }
-              onClick={() => {
-                // A view switch clears any active search (same rule as a
-                // palette jump) so the queue is actually shown.
-                setSearchQuery("");
-                setView({ kind: "review" });
-              }}
-              className={navButtonClass}
-            >
-              Review suggestions
-              {pendingCount > 0 && (
-                <span
-                  aria-hidden="true"
-                  className="ml-1 rounded-sm bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground"
-                >
-                  {pendingCount}
-                </span>
-              )}
-            </button>
-            <button
-              type="button"
-              aria-label="Settings"
-              title="Settings"
-              onClick={openOptionsPage}
-              className="shrink-0 rounded-sm p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <SettingsIcon />
-            </button>
-          </header>
+          <TopBar
+            search={
+              <SearchBar
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={setSearchQuery}
+                onRerankOrder={handleRerankOrder}
+                resultCount={
+                  searchQuery === ""
+                    ? null
+                    : search === null
+                      ? null
+                      : items.length
+                }
+                sources={suggestionSources}
+                askDebounceMs={props?.askDebounceMs}
+              />
+            }
+            visibility={visibility}
+            onTools={handleTools}
+            onOpenSettings={openOptionsPage}
+          />
           <DndProvider tree={tree} selection={selection}>
             <div className="flex min-h-0 flex-1">
-              <aside className="flex w-44 shrink-0 flex-col border-r border-border">
-                <nav
-                  aria-label="Views"
-                  className="shrink-0 space-y-3 overflow-y-auto p-2"
+              {wide && (
+                <aside
+                  aria-label="Browse"
+                  className="w-56 shrink-0 overflow-y-auto border-r border-border p-2"
                 >
-                  <ul className="space-y-0.5">
-                    {FIXED_VIEWS.map(({ kind, label }) => (
-                      <li key={kind}>
-                        <button
-                          type="button"
-                          aria-pressed={view.kind === kind}
-                          onClick={() => setView(makeView(kind))}
-                          className={navButtonClass}
-                        >
-                          {label}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  <section aria-label="Tag management">
-                    <button
-                      type="button"
-                      onClick={() => setTagManagerOpen(true)}
-                      className={navButtonClass}
-                    >
-                      Manage tags…
-                    </button>
-                  </section>
-                  <section aria-label="Library scan">
-                    <button
-                      type="button"
-                      onClick={() => setScanOpen(true)}
-                      className={navButtonClass}
-                    >
-                      Scan library…
-                    </button>
-                  </section>
-                  {tagDefs.length > 0 && (
-                    <section aria-label="Tags">
-                      <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                        Tags
-                      </h2>
-                      <ul className="space-y-0.5">
-                        {tagDefs.map((tag) => (
-                          <li key={tag.nameKey}>
-                            <button
-                              type="button"
-                              aria-pressed={
-                                view.kind === "tag" &&
-                                view.nameKey === tag.nameKey
-                              }
-                              onClick={() =>
-                                setView({ kind: "tag", nameKey: tag.nameKey })
-                              }
-                              className={navButtonClass}
-                            >
-                              <span aria-hidden="true">#</span>
-                              {tag.name}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  )}
-                  <section aria-label="Categories">
-                    <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                      Categories
-                    </h2>
-                    <ul className="space-y-0.5">
-                      {Category.options.map((category) => (
-                        <li key={category}>
-                          <button
-                            type="button"
-                            aria-pressed={
-                              view.kind === "category" &&
-                              view.category === category
-                            }
-                            onClick={() =>
-                              setView({ kind: "category", category })
-                            }
-                            className={navButtonClass}
-                          >
-                            {category.charAt(0).toUpperCase() +
-                              category.slice(1)}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                </nav>
-                <div className="min-h-0 flex-1 overflow-y-auto border-t border-border p-2">
-                  <h2 className="px-2 pb-1 text-xs font-medium text-muted-foreground">
-                    Folders
-                  </h2>
-                  {tree.folders.size === 0 ? (
-                    <p className="px-2 text-xs text-muted-foreground">
-                      Loading…
-                    </p>
-                  ) : (
-                    <FolderTree
-                      tree={tree}
-                      selectedFolderId={
-                        view.kind === "folder" ? view.folderId : undefined
-                      }
-                      onSelectFolder={(folderId) =>
-                        setView({ kind: "folder", folderId })
-                      }
-                      renderFolderActions={(node) => (
-                        <FolderActions node={node} onAction={handleFolderAction} />
-                      )}
-                      renderFolderContextMenu={(node) => (
-                        <FolderActionsContextItems
-                          node={node}
-                          onAction={handleFolderAction}
-                        />
-                      )}
-                    />
-                  )}
-                </div>
-              </aside>
+                  {scopePane}
+                </aside>
+              )}
               <section
                 aria-label={title}
                 className="flex min-w-0 flex-1 flex-col"
               >
-                <SearchBar
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  onChange={setSearchQuery}
-                  onRerankOrder={handleRerankOrder}
-                  resultCount={
-                    searchQuery === ""
-                      ? null
-                      : search === null
-                        ? null
-                        : items.length
-                  }
-                  sources={suggestionSources}
-                  askDebounceMs={props?.askDebounceMs}
+                <ViewChips
+                  activeKind={view.kind}
+                  pendingCount={pendingCount}
+                  visibility={visibility}
+                  onSelect={(kind) => selectView(makeView(kind))}
                 />
-                <header className="flex shrink-0 items-baseline gap-2 border-b border-border px-3 py-2">
-                  <h2 className="text-sm font-medium">{title}</h2>
-                </header>
                 {activeView.kind === "duplicates" ? (
-                  <DuplicatesView
-                    groups={duplicateGroups}
-                    metaById={metaById}
-                    tagNameByKey={tagNameByKey}
-                    loading={tree.folders.size === 0}
-                    onActivateItem={openItem}
-                    onRequestUndo={() =>
-                      reportToast({
-                        message: "Duplicates merged.",
-                        undoable: true,
-                      })
-                    }
-                    className="flex-1"
-                  />
+                  <>
+                    <div className="flex shrink-0 items-center border-b border-border px-3 py-2">
+                      {scopeHeading}
+                    </div>
+                    <DuplicatesView
+                      groups={duplicateGroups}
+                      metaById={metaById}
+                      tagNameByKey={tagNameByKey}
+                      loading={tree.folders.size === 0}
+                      onActivateItem={openItem}
+                      onRequestUndo={() =>
+                        reportToast({
+                          message: "Duplicates merged.",
+                          undoable: true,
+                        })
+                      }
+                      className="flex-1"
+                    />
+                  </>
                 ) : activeView.kind === "review" ? (
                   // The pending-decisions queue replaces BookmarkList the
                   // same way DuplicatesView does — its rows are Decision
                   // rows from Dexie, not bookmarks.
-                  <ReviewView
-                    decisions={pendingDecisions}
-                    tree={tree}
-                    onApplied={armDecisionRevert}
-                    className="flex-1"
-                  />
+                  <>
+                    <div className="flex shrink-0 items-center border-b border-border px-3 py-2">
+                      {scopeHeading}
+                    </div>
+                    <ReviewView
+                      decisions={pendingDecisions}
+                      tree={tree}
+                      onApplied={armDecisionRevert}
+                      className="flex-1"
+                    />
+                  </>
                 ) : activeView.kind === "restructure" ? (
                   // The restructure workflow replaces BookmarkList the same
                   // way ReviewView does — its rows are the job's diff.
-                  <RestructureView className="flex-1" />
+                  <>
+                    <div className="flex shrink-0 items-center border-b border-border px-3 py-2">
+                      {scopeHeading}
+                    </div>
+                    <RestructureView className="flex-1" />
+                  </>
                 ) : (
                   <BookmarkList
                     items={items}
@@ -944,6 +856,7 @@ export function App(props?: { askDebounceMs?: number }) {
                     }
                     renderItemActions={renderItemActions}
                     renderItemContextMenu={renderItemContextMenu}
+                    leading={scopeHeading}
                     className="flex-1"
                   />
                 )}

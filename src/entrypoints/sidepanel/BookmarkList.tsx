@@ -428,6 +428,12 @@ export interface BookmarkListProps {
   renderItemActions?: (item: BookmarkItem) => ReactNode;
   /** Right-click menu entries per row; P4.T3, optional. */
   renderItemContextMenu?: (item: BookmarkItem) => ReactNode;
+  /**
+   * Optional content at the start of the toolbar row (the shell puts the
+   * scope heading here so the title, item count and List/Grid toggle share
+   * one line).
+   */
+  leading?: ReactNode;
   className?: string;
 }
 
@@ -452,6 +458,7 @@ export function BookmarkList({
   reorderable = true,
   renderItemActions,
   renderItemContextMenu,
+  leading,
   className,
 }: BookmarkListProps) {
   const contextSelection = useSelection();
@@ -622,7 +629,15 @@ export function BookmarkList({
         aria-label="Display options"
         className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1"
       >
-        <span className="mr-auto text-xs text-muted-foreground">
+        {leading !== undefined && (
+          <div className="mr-auto min-w-0 flex-1 px-1">{leading}</div>
+        )}
+        <span
+          className={cn(
+            "text-xs text-muted-foreground",
+            leading === undefined && "mr-auto",
+          )}
+        >
           {items.length} {items.length === 1 ? "item" : "items"}
         </span>
         <button

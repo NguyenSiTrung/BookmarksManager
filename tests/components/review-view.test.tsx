@@ -30,6 +30,7 @@ import type { FlattenedTree } from "../../src/sync/tree";
 import { decisionBase } from "../fixtures/base-records";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
+import { chooseMenuItem, openMenu } from "./menu-helpers";
 
 /**
  * Phase 4 Task 3 — the side-panel Review view and the Analyze actions.
@@ -308,11 +309,10 @@ async function renderApp(): Promise<void> {
   );
 }
 
-/** Click the header button and wait for the review queue to mount. */
+/** Open the More menu, pick Review suggestions and wait for the queue. */
 async function openReviewView(): Promise<HTMLElement> {
-  fireEvent.click(
-    screen.getByRole("button", { name: /Review suggestions/ }),
-  );
+  await openMenu(/^More/);
+  await chooseMenuItem(/Review suggestions/);
   return screen.findByRole("listbox", { name: "Pending suggestions" });
 }
 
@@ -413,15 +413,13 @@ describe("ReviewView", () => {
 // ---------------------------------------------------------------------------
 
 describe("Review view wiring", () => {
-  it("opens via the header button and nav entry with a pending-count badge", async () => {
+  it("opens via the More menu with a pending-count badge", async () => {
     await seedDecisions();
     await renderApp();
 
-    const headerButton = screen.getByRole("button", {
-      name: /Review suggestions/,
-    });
+    const moreButton = screen.getByRole("button", { name: /^More/ });
     // The pending count streams from Dexie, so it lands a tick after mount.
-    await waitFor(() => expect(headerButton.textContent).toContain("4"));
+    await waitFor(() => expect(moreButton.textContent).toContain("4"));
 
     const listbox = await openReviewView();
     expect(within(listbox).getAllByRole("option").length).toBe(4);
@@ -682,11 +680,9 @@ describe("Non-actionable pending decisions", () => {
     await renderApp();
 
     // The badge counts actionable rows only — the fifth stays hidden.
-    const headerButton = screen.getByRole("button", {
-      name: /Review suggestions/,
-    });
-    await waitFor(() => expect(headerButton.textContent).toContain("4"));
-    expect(headerButton.textContent).not.toContain("5");
+    const moreButton = screen.getByRole("button", { name: /^More/ });
+    await waitFor(() => expect(moreButton.textContent).toContain("4"));
+    expect(moreButton.textContent).not.toContain("5");
 
     await openReviewView();
     fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
