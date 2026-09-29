@@ -191,7 +191,7 @@ export function PopupSearch({
                 );
               })}
             </ul>
-            <p className="mt-2 px-1 text-[11px] text-muted-foreground">
+            <p className="mt-2 px-1 text-[11px] text-balance text-muted-foreground">
               ↑↓ navigate · Enter opens in a new tab · Ctrl/⌘ Enter opens here
             </p>
           </>
