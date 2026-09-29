@@ -53,9 +53,10 @@ it.
   there is no new network request and the egress gate is unaffected.
 - Keep the grain overlay (`.options-root::after`) Options-only. It is
   decorative and the side panel renders a virtualized list.
-- Add a few semantic tokens the side panel needs: `--row-hover`,
-  `--row-selected` (with an accent edge) and tag-chip colors that work in
-  light and dark. They sit next to the existing tokens.
+- Add two semantic tokens, `--row-hover` and `--row-selected`, exposed as the
+  `bg-row-hover` / `bg-row-selected` utilities. The scope pane rows and the
+  view chips consume them. Tag-chip colors are not added: `tag-chip.tsx`
+  already owns them.
 - The side panel inherits the new look through the shared tokens (`bg-accent`,
   `bg-primary`, dialogs, dropdowns). For example the black "Start scan" button
   becomes teal. Popup and Options should look almost identical to before.
@@ -65,7 +66,7 @@ panel using the capture script; lint, typecheck, component tests, build.
 
 ## Part 2 — Side panel shell
 
-### Narrow mode (container width under 640 px)
+### Narrow mode (viewport width under 640 px)
 
 Top to bottom:
 
@@ -78,10 +79,12 @@ Top to bottom:
    Duplicates, Review and Restructure. When the active view lives inside
    More, the More chip shows that view's label. A badge on More shows the
    pending Review count when it is greater than zero.
-3. **Scope button.** One row showing the current scope ("All bookmarks", a
-   folder path, `#tag` or a category), with the item count and the List/Grid
-   toggle on the same line. It replaces the old pane title. Activating it
-   opens the scope drawer.
+3. **Scope button.** A heading-level control showing the current view title
+   from the existing `viewTitle` helper ("All bookmarks", the folder name,
+   `#tag`, a category). It sits on the same line as the item count and
+   List/Grid toggle (the `BookmarkList` toolbar gains a `leading` slot). It
+   replaces the old pane title. In narrow mode it opens the scope drawer; in
+   wide mode it is plain text.
 4. **Content.** The list (or Review, Duplicates, Restructure view) gets the
    full panel width.
 
@@ -91,22 +94,29 @@ context menus, Tags, and Categories. Categories appear only when they have at
 least one bookmark, and show counts. Choosing a scope closes the drawer and
 returns focus to the scope button. `Esc` closes it.
 
-### Wide mode (container width 640 px and up)
+### Wide mode (viewport width 640 px and up)
 
 The scope content renders as a permanent left column of about 224 px. It is
-the same `ScopePane` component with a different host, chosen with a Tailwind
-4 container query (`@container` on the shell root). The top bar and chips
-stay as in narrow mode.
+the same `ScopePane` component with a different host. The host is chosen in
+JavaScript by `useIsWide()` (`matchMedia("(min-width: 640px)")`) so that
+exactly one host renders. A CSS container query would render both hosts and
+duplicate the folder tree in the DOM. A side panel's viewport width is the
+panel width. When `matchMedia` is unavailable (jsdom) the hook reports wide.
+The top bar and chips stay as in narrow mode.
 
 ### Tools menu and AI visibility
 
-- Tools menu items: Import, Export, Manage tags, Scan library, and
-  Restructure when a provider is connected.
-- With no provider connected, the AI items (Scan library, Restructure)
-  collapse into a single "Set up AI…" entry that opens Options.
+- Tools menu items: Import, Export, Manage tags, and Scan library when a
+  provider is connected.
+- With no provider connected, Scan library is replaced by a single "Set up
+  AI…" entry that opens Options.
+- Restructure appears in the More menu (not Tools) only when a provider is
+  connected. Duplicates is always in More.
 - Review appears in More only when suggestions are pending or a provider is
-  consented. Visibility is one small pure function of (consent state, pending
-  count).
+  connected. Visibility is one small pure function of (provider connected,
+  pending count).
+- "Provider connected" means any consent row at the current consent version
+  whose scope is not the synthetic `jev_test` scope.
 
 ### Unchanged
 
@@ -125,10 +135,12 @@ every dialog. Split the shell into focused files under
 |---|---|
 | `TopBar.tsx` | Search bar slot, Tools menu, Settings button |
 | `ViewChips.tsx` | Chip row, More menu, active-label and badge logic |
-| `ScopeButton.tsx` | Current-scope label, count, List/Grid toggle |
+| `ScopeHeading.tsx` | Scope label heading; drawer trigger in narrow mode |
 | `ScopePane.tsx` | Folders, tags, categories content (host-agnostic) |
 | `ScopeDrawer.tsx` | Sheet host for narrow mode |
-| `scope.ts` | Pure helpers: category counts, scope label, AI visibility rule |
+| `scope.ts` | Pure helpers: category counts, More-menu views, AI visibility rule |
+| `useIsWide.ts` | `matchMedia` hook (reports wide when unavailable) |
+| `useAiConnected.ts` | Live "provider connected" read from Dexie |
 
 `App.tsx` keeps view state, selection, dialogs and toasts, and composes these
 pieces. Dialogs stay where they are; Tools menu items only open them. Data
