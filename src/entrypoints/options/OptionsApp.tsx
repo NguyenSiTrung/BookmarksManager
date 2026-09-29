@@ -155,7 +155,7 @@ export function OptionsApp() {
 
 
   return (
-    <div className="options-root min-h-dvh bg-background font-options-sans text-foreground">
+    <div className="options-root min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex min-h-dvh max-w-6xl flex-col md:flex-row">
         <nav
           aria-label="Options sections"

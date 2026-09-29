@@ -1,10 +1,7 @@
 @import "tailwindcss";
 
 /*
- * Geist — vendored woff2 used ONLY by the Options page (`main.tsx` adds
- * `font-options-sans`/`font-options-mono` under `.options-root`). Declared
- * here, not per-entrypoint, so the family names resolve in one place; the
- * files are fetched lazily — popup/sidepanel never download them.
+ * Geist — vendored woff2 files bundled with the extension (no network).
  * Font: Vercel Geist, SIL OFL 1.1 (see src/entrypoints/options/fonts/LICENSE).
  */
 @font-face {
@@ -26,79 +23,19 @@
 }
 
 @theme {
-  --font-options-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-options-mono: "Geist Mono", ui-monospace, "SFMono-Regular",
-    Menlo, monospace;
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 
-
 /*
- * shadcn/ui-style design tokens. The primitives in src/ui/components/
- * reference these color/radius theme entries (bg-background, text-foreground,
- * bg-popover, border-input, ring-ring, bg-destructive, rounded-*, …).
- * Values follow the neutral shadcn palette (oklch); dark mode follows
- * `prefers-color-scheme`, matching Tailwind's default `dark:` variant.
+ * Design tokens shared by the popup, side panel and options page. The
+ * primitives in src/ui/components/ reference these color/radius entries
+ * (bg-background, text-foreground, bg-popover, border-input, ring-ring,
+ * bg-destructive, rounded-*, …). Warm-neutral surfaces plus one deep-teal
+ * accent; destructive/success/warning keep their semantic hues. Dark mode
+ * follows `prefers-color-scheme`, matching Tailwind's default `dark:` variant.
  */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  /* Fallback for --shadow-card/--shadow-pop outside .options-root. */
-  --shadow-color: oklch(0.145 0 0 / 8%);
-  --radius: 0.625rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --shadow-color: oklch(0 0 0 / 30%);
-  }
-}
-
-/*
- * Options-page visual identity (track options_redesign_20260929), shared with
- * the quick-save popup via `.popup-root`. Scoped to those two roots so the
- * refined palette, fonts and shadows never leak into the side panel, which
- * keeps the stock neutral tokens above.
- * Warm-neutral surfaces + a single deep-teal accent; destructive/success/
- * warning keep their semantic hues.
- */
-.options-root,
-.popup-root {
   --background: oklch(0.975 0.004 90);
   --foreground: oklch(0.19 0.012 255);
   --card: oklch(0.99 0.002 90);
@@ -118,13 +55,15 @@
   --border: oklch(0.9 0.008 90);
   --input: oklch(0.9 0.008 90);
   --ring: oklch(0.52 0.11 198);
+  --row-hover: oklch(0.96 0.008 195);
+  --row-selected: oklch(0.94 0.022 195);
   /* Tinted, ambient shadow — a hint of the accent hue instead of flat gray. */
   --shadow-color: oklch(0.3 0.04 220 / 8%);
+  --radius: 0.625rem;
 }
 
 @media (prefers-color-scheme: dark) {
-  .options-root,
-  .popup-root {
+  :root {
     --background: oklch(0.16 0.008 250);
     --foreground: oklch(0.96 0.005 90);
     --card: oklch(0.2 0.008 250);
@@ -144,6 +83,8 @@
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 14%);
     --ring: oklch(0.76 0.11 190);
+    --row-hover: oklch(0.25 0.012 200);
+    --row-selected: oklch(0.29 0.04 200);
     --shadow-color: oklch(0 0 0 / 30%);
   }
 }
@@ -168,6 +109,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-row-hover: var(--row-hover);
+  --color-row-selected: var(--row-selected);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -271,18 +214,17 @@
   input[type="radio"] {
     accent-color: var(--color-primary);
   }
-  /* Options page: Geist + tabular numbers + a whisper of grain to keep the
-     large warm surface from reading flat. The overlay is inert. */
-  .options-root,
-  .popup-root {
-    font-family: var(--font-options-sans);
+  /* Geist + tabular numbers everywhere; the grain overlay below is the
+     Options page's alone (a decorative extra the side panel's virtualized
+     list does not need). The overlay is inert. */
+  body {
+    font-family: var(--font-sans);
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
-  .options-root code,
-  .options-root kbd,
-  .popup-root code {
-    font-family: var(--font-options-mono);
+  code,
+  kbd {
+    font-family: var(--font-mono);
     font-variant-numeric: normal;
   }
   .options-root::after {

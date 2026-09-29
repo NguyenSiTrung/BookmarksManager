@@ -167,7 +167,7 @@ export function SentLog() {
                     "border border-border bg-muted/30 px-3 py-2.5",
                   )}
                 >
-                  <span className="font-options-mono text-xs text-muted-foreground tabular-nums">
+                  <span className="font-mono text-xs text-muted-foreground tabular-nums">
                     {new Date(entry.sentAt).toLocaleString()}
                   </span>
                   <Chip>{entry.destination}</Chip>
