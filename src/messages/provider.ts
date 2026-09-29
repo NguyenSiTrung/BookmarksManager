@@ -185,10 +185,23 @@ function failure(
  * `options.html`; a content script's `sender.url` is the host page URL and
  * another extension's pages carry a different extension id, so all of them
  * fail this comparison.
+ *
+ * The page's own URL can carry a panel hash — `options.html#permissions` is
+ * what the redesigned shell writes, and Chrome reports a hashed URL verbatim
+ * in `sender.url`, so an exact string match would refuse every message after
+ * a reload of a hashed page. Compare protocol/host/path instead; the hash and
+ * any query string are ignored.
  */
 function isTrustedOptionsSender(sender: ProviderMessageSender): boolean {
   try {
-    return sender.url === chrome.runtime.getURL("options.html");
+    if (typeof sender.url !== "string") return false;
+    const expected = new URL(chrome.runtime.getURL("options.html"));
+    const actual = new URL(sender.url);
+    return (
+      actual.protocol === expected.protocol &&
+      actual.host === expected.host &&
+      actual.pathname === expected.pathname
+    );
   } catch {
     return false;
   }

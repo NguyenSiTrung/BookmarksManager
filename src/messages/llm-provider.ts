@@ -250,9 +250,22 @@ function failure(
   return { ok: false, code, message };
 }
 
+/**
+ * True only for this extension's Options page. The page's URL can carry a
+ * panel hash (`options.html#permissions` — the redesigned shell's deep links,
+ * and any reload of a hashed URL), which Chrome reports verbatim in
+ * `sender.url`, so compare protocol/host/path rather than the whole string.
+ */
 function isTrustedOptionsSender(sender: LlmProviderMessageSender): boolean {
   try {
-    return sender.url === chrome.runtime.getURL("options.html");
+    if (typeof sender.url !== "string") return false;
+    const expected = new URL(chrome.runtime.getURL("options.html"));
+    const actual = new URL(sender.url);
+    return (
+      actual.protocol === expected.protocol &&
+      actual.host === expected.host &&
+      actual.pathname === expected.pathname
+    );
   } catch {
     return false;
   }

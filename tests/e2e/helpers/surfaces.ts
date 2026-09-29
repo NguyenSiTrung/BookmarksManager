@@ -12,6 +12,31 @@ import type { Locator, Page } from "@playwright/test";
  */
 
 /**
+ * The Options page's four panels (track options_redesign_20260929). Panels
+ * stay mounted — `hidden` toggles visibility so in-progress form state
+ * survives a switch — which means a locator resolves inside an inactive
+ * panel without being visible, and `getByRole` does not resolve there at all.
+ * Every helper that drives panel-specific UI selects its panel first.
+ */
+export type OptionsPanel = "Connections" | "Permissions" | "Activity" | "Data";
+
+/**
+ * Switch the Options page to one panel through the real left-rail link, then
+ * wait until that link is the current one (`aria-current="page"`, which the
+ * shell sets from its `active` state) so callers can rely on the panel's
+ * contents being visible.
+ */
+export async function openOptionsPanel(
+  page: Page,
+  panel: OptionsPanel,
+): Promise<void> {
+  const link = page.getByRole("link", { name: panel, exact: true });
+  await expect(link).toBeVisible({ timeout: 15_000 });
+  await link.click();
+  await expect(link).toHaveAttribute("aria-current", "page");
+}
+
+/**
  * Wait until the quick-save popup has resolved its prefill and rendered. The
  * form only mounts once `tabs.query` + `getTree` + the last-folder read have
  * settled, and on a cold profile that first IndexedDB open can outlast the 5 s

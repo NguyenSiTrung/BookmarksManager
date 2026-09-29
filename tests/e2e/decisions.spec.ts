@@ -18,7 +18,11 @@ import {
   sentLogRows,
 } from "./helpers/provider";
 import { createBookmark, createFolder, getChildren } from "./helpers/seed";
-import { waitForPopupReady, waitForSidePanelReady } from "./helpers/surfaces";
+import {
+  openOptionsPanel,
+  waitForPopupReady,
+  waitForSidePanelReady,
+} from "./helpers/surfaces";
 
 /**
  * Jev decisions end-to-end (Phase 5 Task 1): the real extension, real UI
@@ -112,7 +116,9 @@ test("zero egress until the jev_decisions grant exists", async () => {
     /No provider is enabled/i,
   );
 
-  // The consent UI itself starts unchecked with Allow disabled.
+  // The consent UI itself starts unchecked with Allow disabled. It lives in
+  // the Permissions panel, which the shell mounts hidden until selected.
+  await openOptionsPanel(options, "Permissions");
   await expect(
     options.getByLabel(/agree to send bookmark metadata to/),
   ).not.toBeChecked();

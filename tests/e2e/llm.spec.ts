@@ -21,6 +21,7 @@ import {
 import { enableTypesafe, readStoreRows } from "./helpers/provider";
 import { createBookmark, createFolder } from "./helpers/seed";
 import { jobRows } from "./helpers/decisions";
+import { openOptionsPanel } from "./helpers/surfaces";
 
 /**
  * Phase 6 Task 1 (track spec FR7–FR10) — real-browser coverage of the LLM
@@ -401,8 +402,10 @@ test("unsure analyze escalates automatically under the cap", async () => {
   });
 
   // DecisionSettings reads provider+escalation status once on mount —
-  // reload so the just-enabled provider is what the effect sees.
+  // reload so the just-enabled provider is what the effect sees, then
+  // re-select the Permissions panel the consent controls live in.
   await page.reload();
+  await openOptionsPanel(page, "Permissions");
   await page
     .getByLabel(/I allow second opinions to be sent to https:\/\/llm-custom\.test/)
     .check();

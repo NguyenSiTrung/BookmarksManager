@@ -119,6 +119,16 @@ describe("sender validation", () => {
     const result = await handleProviderMessage(enableMessage(), {});
     expect(result).toMatchObject({ ok: false, code: "untrusted_sender" });
   });
+
+  it("accepts the Options page when its URL carries a panel hash", async () => {
+    // The redesigned shell writes `#<panel>` and Chrome reports that URL
+    // verbatim in `sender.url` — including after a reload of a hashed page.
+    const result = await handleProviderMessage(
+      { type: "PROVIDER_STATUS", preset: "typesafe" },
+      { url: `${OPTIONS_URL}#permissions` },
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
 });
 
 describe("message validation", () => {

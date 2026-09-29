@@ -154,6 +154,16 @@ describe("dispatch and trust boundary", () => {
     );
   });
 
+  it("accepts the Options page when its URL carries a panel hash", async () => {
+    // The redesigned shell writes `#<panel>` and Chrome reports that URL
+    // verbatim in `sender.url` — including after a reload of a hashed page.
+    const result = await call(
+      { type: "LLM_PROVIDER_STATUS" },
+      { url: `${OPTIONS_URL}#permissions` },
+    );
+    expect(result).toMatchObject({ ok: true });
+  });
+
   it("refuses malformed LLM protocol messages", async () => {
     await expectFailure({ type: "LLM_CONFIGURE" }, "malformed_message");
     await expectFailure(

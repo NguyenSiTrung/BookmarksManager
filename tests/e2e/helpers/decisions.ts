@@ -6,6 +6,7 @@ import type { BrowserContext, Page } from "@playwright/test";
 import type { SystemOneResponse } from "../../../src/jev/wire";
 import { PRESETS } from "../../../src/net/presets";
 import { DB_NAME } from "./db";
+import { openOptionsPanel } from "./surfaces";
 import {
   captureRequest,
   launchProviderExtension,
@@ -191,12 +192,14 @@ export async function routeFakeDecisions(
 }
 
 /**
- * Grant the `jev_decisions` consent through the real Options UI: check the
- * affirmative-disclosure checkbox, click Allow, and wait for the granted
- * panel. The grant is a direct Dexie write from the Options page — the egress
- * gate re-verifies it on every send, so this is the real production path.
+ * Grant the `jev_decisions` consent through the real Options UI: switch to
+ * the Permissions panel, check the affirmative-disclosure checkbox, click
+ * Allow, and wait for the granted panel. The grant is a direct Dexie write
+ * from the Options page — the egress gate re-verifies it on every send, so
+ * this is the real production path.
  */
 export async function grantDecisionsConsent(page: Page): Promise<void> {
+  await openOptionsPanel(page, "Permissions");
   // "agree to send bookmark metadata" uniquely names the Jev consent — the
   // LLM provider section has its own near-identical disclosure checkbox.
   const checkbox = page.getByLabel(

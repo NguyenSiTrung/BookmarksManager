@@ -64,13 +64,12 @@ test("Options consent flow enables TypeSafe and Test connection sends exactly on
     const panel = options.getByRole("group", {
       name: "TypeSafe enabled provider",
     });
-    await expect(panel).toContainText("model jev-latest");
-    await expect(panel).toContainText("key ending in 90ab");
-    await expect(
-      options
-        .getByRole("status")
-        .filter({ hasText: "TypeSafe is enabled." }),
-    ).toBeVisible();
+    // The redesigned card renders the stored model, the key suffix, and the
+    // destination origin as chips (track options_redesign_20260929).
+    await expect(panel).toContainText("TypeSafe is enabled");
+    await expect(panel).toContainText("jev-latest");
+    await expect(panel).toContainText("…90ab");
+    await expect(panel).toContainText(PRESETS.typesafe.origin);
 
     // Consent was persisted at the current version for this origin only.
     expect(await consentRows(options)).toEqual([

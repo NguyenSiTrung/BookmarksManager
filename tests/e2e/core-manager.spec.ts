@@ -28,6 +28,7 @@ import {
   moveBookmarkViaDialog,
   openExportDialog,
   openImportDialog,
+  openOptionsPanel,
   quickSaveFromPopup,
   waitForPopupReady,
   waitForSidePanelReady,
@@ -290,6 +291,8 @@ test("delete-all wipes extension data but leaves native bookmarks intact", async
     await popup.close();
 
     const options = await openSurface(ext.context, ext.id, "options");
+    // The reset lives in the Data panel (hidden until selected).
+    await openOptionsPanel(options, "Data");
     await options
       .getByRole("button", { name: "Delete all extension data", exact: true })
       .click();
@@ -429,6 +432,7 @@ test("sends no external requests while every core feature is exercised", async (
     //    the panel is closed first.
     await sidepanel.close();
     const options = await openSurface(context, id, "options");
+    await openOptionsPanel(options, "Data");
     await options
       .getByRole("button", { name: "Delete all extension data", exact: true })
       .click();

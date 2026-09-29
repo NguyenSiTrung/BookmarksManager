@@ -21,6 +21,7 @@ import {
   headlessFromEnv,
 } from "./extension";
 import type { LaunchOptions } from "./extension";
+import { openOptionsPanel } from "./surfaces";
 
 /**
  * Provider-setup e2e plumbing (Phase 4 Task 2): a scriptable Playwright route
@@ -307,11 +308,15 @@ export async function waitForProviderStatus(page: Page): Promise<void> {
  * enabled panel — the synchronous `chrome.permissions.request` resolves
  * immediately on the install-time grant (see module doc), so this exercises
  * the unchanged production click handler and the worker's own re-verification.
+ *
+ * The form lives in the Connections panel, so the helper selects that panel
+ * first — the shell mounts all four panels with only the active one visible.
  */
 export async function enableTypesafe(
   page: Page,
   details: { key: string; model?: string },
 ): Promise<void> {
+  await openOptionsPanel(page, "Connections");
   await waitForProviderStatus(page);
   // Scope to the Jev section — Options also hosts the LLM provider form,
   // whose "Model"/"API key"/consent labels collide with these.

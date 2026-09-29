@@ -12,6 +12,7 @@ import {
 import type { LaunchOptions } from "./extension";
 import { captureRequest } from "./provider";
 import type { CapturedProviderRequest } from "./provider";
+import { openOptionsPanel } from "./surfaces";
 
 /**
  * LLM e2e plumbing (Phase 6 Task 1): a launch helper whose manifest variant
@@ -197,7 +198,8 @@ export async function sendLlmMessage(
  * Drive the real Options custom-endpoint enable flow — the only branch that
  * exposes the optional per-million-token pricing fields. `baseUrl` must be
  * canonical HTTPS (or loopback HTTP) and its origin pattern must already be
- * install-time granted via `extraHostPatterns`.
+ * install-time granted via `extraHostPatterns`. The form lives in the
+ * Connections panel, so the helper selects that panel first.
  */
 export async function enableCustom(
   page: Page,
@@ -210,12 +212,22 @@ export async function enableCustom(
     outputPrice?: string;
   },
 ): Promise<void> {
+  await openOptionsPanel(page, "Connections");
   await expect(
     page.getByText("Checking the current provider status"),
   ).toHaveCount(0, { timeout: 15_000 });
-  await page.getByRole("radio", {
+  // The redesigned provider cards hide the native radio (`sr-only`) inside a
+  // wrapping label, so a direct `check()` can never receive the pointer
+  // events — click the card's visible title and let the label forward
+  // activation to the input.
+  const llm = page.getByRole("region", { name: "Optional LLM provider" });
+  const customRadio = llm.getByRole("radio", {
     name: "Custom OpenAI-compatible endpoint",
-  }).check();
+  });
+  await llm
+    .getByText("Custom OpenAI-compatible endpoint", { exact: true })
+    .click();
+  await expect(customRadio).toBeChecked();
   await page.locator("#llm-base-url").fill(details.baseUrl);
   if (details.model !== undefined) {
     await page.locator("#llm-model").fill(details.model);
@@ -245,12 +257,14 @@ export async function enableCustom(
  * Drive the real Options LLM enable flow: OpenAI preset is the default
  * radio, fill model + key, check the affirmative-consent box, click Enable —
  * `chrome.permissions.request` resolves immediately on the install-time
- * grant, so the unchanged production handler runs end to end.
+ * grant, so the unchanged production handler runs end to end. The form lives
+ * in the Connections panel, so the helper selects that panel first.
  */
 export async function enableOpenAi(
   page: Page,
   details: { key: string; model?: string; budgetCap?: string },
 ): Promise<void> {
+  await openOptionsPanel(page, "Connections");
   await expect(
     page.getByText("Checking the current provider status"),
   ).toHaveCount(0, { timeout: 15_000 });
