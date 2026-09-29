@@ -1,5 +1,4 @@
 import { defineBackground } from "wxt/utils/define-background";
-import { hasConsent } from "../consent/records";
 import { db } from "../db/database";
 import { listMeta, listTags } from "../db/meta";
 import {
@@ -48,12 +47,10 @@ import { handleSummarizeMessage } from "../messages/summaries";
 import { handleRestructureMessage } from "../messages/restructure";
 import { createRestructureAssigner } from "../restructure/assign";
 import { handleProviderMessage } from "../messages/provider";
-import { PRESETS } from "../net/presets";
 import {
-  DECISIONS_CONSENT_SCOPE,
-  ProviderSettings,
-} from "../schemas/provider";
-import type { PresetId } from "../schemas/provider";
+  readActiveJevProvider,
+  type ActiveJevProvider,
+} from "../jev/settings";
 import type { Job } from "../schemas/job";
 import { loadSessionIndex, registerOmnibox } from "../search/omnibox";
 import { runQuery } from "../search/run";
@@ -102,30 +99,18 @@ declare const chrome: {
 export const DECISION_SETTINGS_KEY = "decisions:settings";
 export { DECISION_BLOCKLIST_KEY, readBlocklist };
 
-/** The consented preset + model the decision services run against. */
-interface ActiveProvider {
-  readonly preset: PresetId;
-  readonly model: string;
-}
+/** The consented provider + model the decision services run against. */
+type ActiveProvider = ActiveJevProvider;
 
 /**
- * The first preset with a current `jev_decisions` consent grant AND a stored,
- * valid `ProviderSettings` row — the provider the decisions flow runs
- * against. `null` when none is fully enabled; every decisions handler that
- * would egress refuses (`not_enabled`) rather than guessing.
+ * The first provider — a preset or the custom endpoint — with a current
+ * `jev_decisions` consent grant AND a stored, valid `ProviderSettings` row,
+ * i.e. the provider the decisions flow runs against. `null` when none is
+ * fully enabled; every decisions handler that would egress refuses
+ * (`not_enabled`) rather than guessing.
  */
 async function activeProvider(): Promise<ActiveProvider | null> {
-  for (const preset of Object.keys(PRESETS) as PresetId[]) {
-    try {
-      if (!(await hasConsent(DECISIONS_CONSENT_SCOPE, preset))) continue;
-      const row = await db.metadata.get(preset);
-      const parsed = ProviderSettings.safeParse(row?.value);
-      if (parsed.success) return { preset, model: parsed.data.model };
-    } catch {
-      // A broken row / lookup just skips this preset.
-    }
-  }
-  return null;
+  return readActiveJevProvider();
 }
 
 /**
@@ -267,7 +252,7 @@ async function buildRunner(
   if (kind === "restructure") {
     return new JobRunner({
       analyze: createRestructureAssigner({
-        preset: provider.preset,
+        providerId: provider.providerId,
         model: provider.model,
         userBlocklist,
       }),
@@ -276,12 +261,12 @@ async function buildRunner(
   return new JobRunner({
     analyze: createPipelineAnalyzer({
       context,
-      preset: provider.preset,
+      providerId: provider.providerId,
       model: provider.model,
       userBlocklist,
     }),
     scanDuplicates: createDuplicateScanner({
-      preset: provider.preset,
+      providerId: provider.providerId,
       model: provider.model,
       userBlocklist,
     }),
@@ -388,7 +373,7 @@ export function productionHandlers(
       return analyzeBookmark({
         bookmark,
         context,
-        preset: provider.preset,
+        providerId: provider.providerId,
         model: provider.model,
         userBlocklist,
       });
@@ -405,7 +390,7 @@ export function productionHandlers(
       return analyzeBookmark({
         bookmark,
         context: { ...context, settings: SAVE_SUGGEST_SETTINGS },
-        preset: provider.preset,
+        providerId: provider.providerId,
         model: provider.model,
         checks: ["categorize", "tags", "placement"],
         userBlocklist,
@@ -420,7 +405,7 @@ export function productionHandlers(
       return rerankSearch({
         query,
         hits,
-        preset: provider.preset,
+        providerId: provider.providerId,
         model: provider.model,
         userBlocklist,
       });

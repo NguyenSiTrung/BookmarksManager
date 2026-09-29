@@ -360,7 +360,7 @@ describe("run(client, state)", () => {
           signal: options?.signal ?? null,
         });
       const jev = createJevClient({
-        preset: "typesafe",
+        providerId: "typesafe",
         model: "jev-latest",
         scope: "jev_test",
         transport,

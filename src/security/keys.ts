@@ -1,4 +1,3 @@
-import type { PresetId } from "../schemas/provider";
 import {
   CredentialError,
   deleteEnvelope,
@@ -9,8 +8,10 @@ import {
 /**
  * Backward-compatible Jev provider-key API. The generic encrypted credential
  * storage lives in `./credentials`; these wrappers preserve the legacy
- * storage identifiers (`provider:<preset>` key material, `providerKey:<preset>`
- * ciphertext envelopes) so existing installs keep their saved keys.
+ * storage identifiers (`provider:<providerId>` key material,
+ * `providerKey:<providerId>` ciphertext envelopes) so existing installs keep
+ * their saved keys — presets keep their names, the custom provider slots in
+ * as `provider:custom`.
  *
  * Worker-only: only the MV3 service worker may import this module — UI
  * surfaces must never see raw keys.
@@ -33,24 +34,27 @@ export class ProviderKeyError extends Error {
   }
 }
 
-function materialId(preset: PresetId): string {
-  return `provider:${preset}`;
+function materialId(providerId: string): string {
+  return `provider:${providerId}`;
 }
 
-function storageKey(preset: PresetId): string {
-  return `providerKey:${preset}`;
+function storageKey(providerId: string): string {
+  return `providerKey:${providerId}`;
 }
 
-/** Translate storage failures into preset-scoped reconnect errors. */
-function toProviderKeyError(preset: PresetId, cause: unknown): ProviderKeyError {
+/** Translate storage failures into provider-scoped reconnect errors. */
+function toProviderKeyError(
+  providerId: string,
+  cause: unknown,
+): ProviderKeyError {
   if (cause instanceof CredentialError) {
     return new ProviderKeyError(
-      `Stored provider key for preset "${preset}" is missing, malformed, or could not be decrypted; reconnect to re-enter it.`,
+      `Stored provider key for provider "${providerId}" is missing, malformed, or could not be decrypted; reconnect to re-enter it.`,
       { cause },
     );
   }
   return new ProviderKeyError(
-    `Stored provider key for preset "${preset}" could not be read; reconnect to re-enter it.`,
+    `Stored provider key for provider "${providerId}" could not be read; reconnect to re-enter it.`,
     { cause },
   );
 }
@@ -62,32 +66,32 @@ function toProviderKeyError(preset: PresetId, cause: unknown): ProviderKeyError 
  * this function persists nothing besides ciphertext and key material.
  */
 export async function saveProviderKey(
-  preset: PresetId,
+  providerId: string,
   plaintext: string,
 ): Promise<void> {
-  await saveEnvelope(storageKey(preset), materialId(preset), plaintext);
+  await saveEnvelope(storageKey(providerId), materialId(providerId), plaintext);
 }
 
 /**
- * Decrypt the stored key for `preset`. Returns `null` when no ciphertext
+ * Decrypt the stored key for `providerId`. Returns `null` when no ciphertext
  * exists. Malformed envelopes, decryption failures, and missing/unusable
  * CryptoKeys all throw `ProviderKeyError` with `code: "reconnect"` — the
  * error never echoes key material or ciphertext contents.
  */
 export async function readProviderKey(
-  preset: PresetId,
+  providerId: string,
 ): Promise<string | null> {
   try {
-    return await readEnvelope(storageKey(preset), materialId(preset));
+    return await readEnvelope(storageKey(providerId), materialId(providerId));
   } catch (cause) {
-    throw toProviderKeyError(preset, cause);
+    throw toProviderKeyError(providerId, cause);
   }
 }
 
 /**
- * Remove a preset's ciphertext envelope and CryptoKey. Safe to call when
+ * Remove a provider's ciphertext envelope and CryptoKey. Safe to call when
  * nothing is stored.
  */
-export async function deleteProviderKey(preset: PresetId): Promise<void> {
-  await deleteEnvelope(storageKey(preset), materialId(preset));
+export async function deleteProviderKey(providerId: string): Promise<void> {
+  await deleteEnvelope(storageKey(providerId), materialId(providerId));
 }

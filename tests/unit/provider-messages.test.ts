@@ -3,17 +3,22 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   grantConsent,
   hasConsent,
+  hasConsentAtOrigin,
   hasTestConsent,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { handleProviderMessage } from "../../src/messages/provider";
 import { PRESETS } from "../../src/net/presets";
 import {
+  CONSENT_SCOPE,
   DECISIONS_CONSENT_SCOPE,
   ProviderSettings,
-  type PresetId,
 } from "../../src/schemas/provider";
-import { deleteProviderKey, saveProviderKey } from "../../src/security/keys";
+import {
+  deleteProviderKey,
+  readProviderKey,
+  saveProviderKey,
+} from "../../src/security/keys";
 
 /**
  * The key store is mocked so enable/revoke can be driven without real
@@ -26,11 +31,13 @@ vi.mock("../../src/security/keys", async (importOriginal) => {
   return {
     ...actual,
     saveProviderKey: vi.fn(async () => undefined),
+    readProviderKey: vi.fn(async () => "test-provider-key-material"),
     deleteProviderKey: vi.fn(async () => undefined),
   };
 });
 
 const saveKey = vi.mocked(saveProviderKey);
+const readKey = vi.mocked(readProviderKey);
 const deleteKey = vi.mocked(deleteProviderKey);
 
 const EXTENSION_ID = "test-extension-id";
@@ -57,6 +64,7 @@ beforeEach(async () => {
     },
   });
   saveKey.mockClear();
+  readKey.mockClear();
   deleteKey.mockClear();
   await db.delete();
   await db.open();
@@ -83,8 +91,8 @@ async function enableProvider(): Promise<unknown> {
   return handleProviderMessage(enableMessage(), optionsSender);
 }
 
-async function storedSettings(preset: PresetId) {
-  const row = await db.metadata.get(preset);
+async function storedSettings(providerId: string) {
+  const row = await db.metadata.get(providerId);
   return row === undefined ? undefined : ProviderSettings.parse(row.value);
 }
 
@@ -457,5 +465,197 @@ describe("REVOKE_PROVIDER", () => {
     expect(await hasTestConsent("typesafe")).toBe(true);
     expect(removeSpy).not.toHaveBeenCalled();
     expect(deleteKey).not.toHaveBeenCalled();
+  });
+});
+
+describe("custom provider", () => {
+  const BASE_URL = "https://ai-gateway.example.com/api";
+  const ORIGIN = "https://ai-gateway.example.com";
+
+  function customEnable(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      type: "ENABLE_PROVIDER",
+      preset: "custom",
+      baseUrl: BASE_URL,
+      model: "jev-edge",
+      key: RAW_KEY,
+      ...overrides,
+    };
+  }
+
+  it("enables: stores the row under 'custom', re-checks the computed permission, and grants consent at the resolved origin", async () => {
+    const result = await handleProviderMessage(
+      customEnable(),
+      optionsSender,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: {
+        enabled: true,
+        consentGranted: true,
+        model: "jev-edge",
+        keySuffix: "cdef",
+        origin: ORIGIN,
+        baseUrl: BASE_URL,
+      },
+    });
+    expect(await storedSettings("custom")).toEqual({
+      preset: "custom",
+      baseUrl: BASE_URL,
+      model: "jev-edge",
+      keySuffix: "cdef",
+    });
+    expect(saveKey).toHaveBeenCalledWith("custom", RAW_KEY);
+    // The worker derives the permission pattern from the stored row's
+    // destination, never from the message.
+    expect(containsSpy).toHaveBeenCalledWith({
+      origins: ["https://ai-gateway.example.com/*"],
+    });
+    expect(
+      await hasConsentAtOrigin(CONSENT_SCOPE, ORIGIN),
+    ).toBe(true);
+    expect(JSON.stringify(result)).not.toContain(RAW_KEY);
+  });
+
+  it("requires a base URL — malformed without it", async () => {
+    const result = await handleProviderMessage(
+      {
+        type: "ENABLE_PROVIDER",
+        preset: "custom",
+        model: "jev-edge",
+        key: RAW_KEY,
+      },
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
+    expect(saveKey).not.toHaveBeenCalled();
+    expect(await db.metadata.count()).toBe(0);
+    expect(await db.consents.count()).toBe(0);
+  });
+
+  it.each([
+    "http://ai-gateway.example.com/api", // non-loopback http
+    "https://ai-gateway.example.com/api/", // non-canonical
+    "https://user:pw@ai-gateway.example.com/api",
+    "not a url",
+  ])("rejects base URL %s without writes", async (baseUrl) => {
+    const result = await handleProviderMessage(
+      customEnable({ baseUrl }),
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
+    expect(saveKey).not.toHaveBeenCalled();
+    expect(await db.metadata.count()).toBe(0);
+  });
+
+  it("ignores a stray baseUrl sent for a preset", async () => {
+    // A preset's destination comes from the registry — an extra field on
+    // the message cannot redirect it.
+    const result = await handleProviderMessage(
+      enableMessage({ baseUrl: "https://attacker.example.com" }),
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(await storedSettings("typesafe")).toEqual({
+      preset: "typesafe",
+      model: "jev-latest",
+      keySuffix: "cdef",
+    });
+    expect(
+      await hasConsentAtOrigin(CONSENT_SCOPE, PRESETS.typesafe.origin),
+    ).toBe(true);
+    expect(
+      await hasConsentAtOrigin(
+        CONSENT_SCOPE,
+        "https://attacker.example.com",
+      ),
+    ).toBe(false);
+  });
+
+  it("reports not-enabled status for an unconfigured custom provider", async () => {
+    const result = await handleProviderMessage(
+      { type: "PROVIDER_STATUS", preset: "custom" },
+      optionsSender,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: { enabled: false, consentGranted: false },
+    });
+    const status = (result as {
+      status: { baseUrl?: string; origin?: string };
+    }).status;
+    expect(status.baseUrl).toBeUndefined();
+    expect(status.origin).toBeUndefined();
+  });
+
+  it("re-enabling at a new origin grants consent there — per-origin consent keeps the old grant too", async () => {
+    await handleProviderMessage(customEnable(), optionsSender);
+    const result = await handleProviderMessage(
+      customEnable({ baseUrl: "https://gateway-two.example.com/v1" }),
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: true, status: { enabled: true } });
+    expect(
+      await hasConsentAtOrigin(
+        CONSENT_SCOPE,
+        "https://gateway-two.example.com",
+      ),
+    ).toBe(true);
+    // Consent is durable per origin — switching back resumes what the
+    // user consented to at the first endpoint (same model as the LLM
+    // provider layer).
+    expect(await hasConsentAtOrigin(CONSENT_SCOPE, ORIGIN)).toBe(true);
+  });
+
+  it("revokes: drops consent at the resolved origin, releases its permission, deletes row and key", async () => {
+    await handleProviderMessage(customEnable(), optionsSender);
+    const result = await handleProviderMessage(
+      { type: "REVOKE_PROVIDER", preset: "custom", deleteKey: true },
+      optionsSender,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      status: { enabled: false },
+    });
+    expect(await hasConsentAtOrigin(CONSENT_SCOPE, ORIGIN)).toBe(false);
+    expect(await db.metadata.get("custom")).toBeUndefined();
+    expect(deleteKey).toHaveBeenCalledWith("custom");
+    expect(removeSpy).toHaveBeenCalledWith({
+      origins: ["https://ai-gateway.example.com/*"],
+    });
+  });
+
+  it("refuses TEST_PROVIDER for an unconfigured custom provider", async () => {
+    const result = await handleProviderMessage(
+      { type: "TEST_PROVIDER", preset: "custom" },
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: false, code: "not_enabled" });
+  });
+
+  it("tests a configured custom provider through the gate to <baseUrl>/systemone", async () => {
+    await handleProviderMessage(customEnable(), optionsSender);
+    const fetchSpy = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "jev-edge",
+            answers: { test: { type: "noul", noul: 1 } },
+            usage: { input_tokens: 10, output_tokens: 2 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await handleProviderMessage(
+      { type: "TEST_PROVIDER", preset: "custom" },
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: true, code: "test_ok" });
+    const url = (fetchSpy.mock.calls[0] as unknown[])[0];
+    expect(url).toBe(`${BASE_URL}/systemone`);
+    expect(readKey).toHaveBeenCalledWith("custom");
   });
 });

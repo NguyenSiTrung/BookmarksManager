@@ -103,7 +103,7 @@ function options(
 ): ScanNearDuplicatesOptions {
   return {
     bookmarks: baseBookmarks(),
-    preset: "typesafe",
+    providerId: "typesafe",
     model: "jev-latest",
     transport: serverTransport(),
     ...over,

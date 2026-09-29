@@ -136,7 +136,7 @@ function options(
       notes: SECRET_NOTE,
     },
     context: { tagDefs, corpus, tree },
-    preset: "typesafe",
+    providerId: "typesafe",
     model: "jev-latest",
     transport: serverTransport(),
     ...over,

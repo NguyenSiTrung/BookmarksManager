@@ -2,7 +2,6 @@ import { db } from "../db/database";
 import { Decision } from "../schemas/decision";
 import type { Decision as DecisionDocument } from "../schemas/decision";
 import type { SentBookmark } from "../schemas/decision-state";
-import type { PresetId } from "../schemas/provider";
 import { UsageRecord } from "../schemas/usage";
 import { JevClientError, createJevClient } from "../jev/client";
 import type { JevClient, JevRunResult, JevTransport } from "../jev/client";
@@ -104,8 +103,8 @@ export function levelToConfidence(level: number): number {
 // ---------------------------------------------------------------------------
 
 interface ScanCommonOptions {
-  /** Jev preset the client is bound to. */
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   /** Model id sent in the request; the response may report another. */
   readonly model: string;
   /**
@@ -287,7 +286,7 @@ function toMergeDocument(
     status,
     source: {
       engine: "jev" as const,
-      providerId: options.preset,
+      providerId: options.providerId,
       model,
       questionSetVersion: nearDuplicateQuestionSetVersion,
     },
@@ -374,7 +373,7 @@ async function runPairs(
   const client =
     options.client ??
     createJevClient({
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       scope: "jev_decisions",
       ...(options.transport === undefined

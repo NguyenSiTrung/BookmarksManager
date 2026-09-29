@@ -1,11 +1,34 @@
-import { LOOPBACK_HOSTS } from "./llm";
+import { LOOPBACK_HOSTS, LlmBaseUrl } from "./llm";
 import { z } from "./z";
 import { RELEASE_JEV_MODELS } from "../decisions/release-policy";
 
-/** Jev provider presets — the only destinations this extension may reach
- * (PROJECT_PLAN.md §8.1). */
+/**
+ * Jev provider presets — the curated destinations (PROJECT_PLAN.md §8.1).
+ * A Jev provider id is either one of these or {@link CUSTOM_PROVIDER_ID},
+ * the single user-configured System One-compatible endpoint slot.
+ */
 export const PresetId = z.enum(["typesafe", "openrouter"]);
 export type PresetId = z.infer<typeof PresetId>;
+
+/**
+ * The provider id of the user-configured Jev endpoint. Custom providers are
+ * third-party gateways that serve the Jev model over the same System One
+ * protocol (e.g. an AI gateway fronting TypeSafe): the user supplies the
+ * canonical API base URL and the model id, and the extension POSTs to
+ * `<baseUrl>/systemone` — the same `<api-root>/systemone` convention the
+ * presets use. One slot, like each preset has one.
+ */
+export const CUSTOM_PROVIDER_ID = "custom" as const;
+
+/** Every id a Jev provider may be addressed by — a preset or `custom`. */
+export const JevProviderId = z.union([PresetId, z.literal(CUSTOM_PROVIDER_ID)]);
+export type JevProviderId = z.infer<typeof JevProviderId>;
+
+/** Every Jev provider id in stable order: presets first, `custom` last. */
+export const JEV_PROVIDER_IDS = [
+  ...PresetId.options,
+  CUSTOM_PROVIDER_ID,
+] as const;
 
 /** Models each preset is allowed to use (PROJECT_PLAN.md §8.1). */
 export const PRESET_MODELS = {
@@ -28,12 +51,15 @@ export const DEFAULT_PROVIDER_MODEL = {
 
 /**
  * Persisted provider configuration, stored in the Dexie `metadata` table
- * keyed by preset. `model` is validated against the owning preset's allowlist
- * via superRefine; `keySuffix` is a short masked display hint (e.g. the last
- * four characters) and must never hold a raw API key.
+ * keyed by provider id (`typesafe`, `openrouter`, or `custom`). The preset
+ * variant's `model` is validated against the owning preset's allowlist via
+ * superRefine; the custom variant carries the canonical base URL and a
+ * free-form model id. `keySuffix` is a short masked display hint (e.g. the
+ * last four characters) and must never hold a raw API key. Strict objects
+ * reject unknown keys so misconfigured or hostile stored rows fail closed.
  */
-export const ProviderSettings = z
-  .object({
+const PresetProviderSettings = z
+  .strictObject({
     preset: PresetId,
     model: z.string().min(1),
     keySuffix: z.string().min(1).max(8),
@@ -48,6 +74,18 @@ export const ProviderSettings = z
       });
     }
   });
+
+const CustomProviderSettings = z.strictObject({
+  preset: z.literal(CUSTOM_PROVIDER_ID),
+  baseUrl: LlmBaseUrl,
+  model: z.string().trim().min(1),
+  keySuffix: z.string().min(1).max(8),
+});
+
+export const ProviderSettings = z.discriminatedUnion("preset", [
+  PresetProviderSettings,
+  CustomProviderSettings,
+]);
 export type ProviderSettings = z.infer<typeof ProviderSettings>;
 
 /**

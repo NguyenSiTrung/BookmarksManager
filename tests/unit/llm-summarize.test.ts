@@ -139,6 +139,13 @@ async function seedProvider() {
   };
   await saveLlmProvider(record);
   await saveCredential(PROVIDER_ID, "sk-test-1234");
+  // The verify hop resolves the ENABLED Jev provider: a stored settings
+  // row plus the `jev_test` consent the enable flow records.
+  await db.metadata.put({
+    key: "typesafe",
+    value: { preset: "typesafe", model: "jev-latest", keySuffix: "1234" },
+  });
+  await grantConsentAtOrigin("jev_test", JEV_ORIGIN);
 }
 
 /** Grant both consents (the plan's "separate recipient grants" baseline). */

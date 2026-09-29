@@ -11,7 +11,6 @@ import type {
 } from "../decisions/pipeline";
 import { db } from "../db/database";
 import type { Job } from "../schemas/job";
-import type { PresetId } from "../schemas/provider";
 import type { UsageRecord } from "../schemas/usage";
 import {
   bookmarkChecks,
@@ -387,7 +386,8 @@ export function runJob(
 
 export interface PipelineAnalyzerOptions {
   readonly context: AnalysisContext;
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   readonly model: string;
   /**
    * The user's own blocklist (normalized hosts). A job's analysis skips a
@@ -411,7 +411,7 @@ export function createPipelineAnalyzer(
     analyzeBookmark({
       bookmark,
       context: options.context,
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       checks,
       ...(options.userBlocklist === undefined
@@ -421,7 +421,8 @@ export function createPipelineAnalyzer(
 }
 
 export interface DuplicateScannerOptions {
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   readonly model: string;
   /**
    * The user's own blocklist (normalized hosts). A pair with a side on a
@@ -443,7 +444,7 @@ export function createDuplicateScanner(
   return ({ pairs }) =>
     scanNearDuplicatePairs({
       pairs,
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       ...(options.userBlocklist === undefined
         ? {}

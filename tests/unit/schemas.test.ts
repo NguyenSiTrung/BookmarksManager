@@ -152,6 +152,52 @@ describe("ProviderSettings", () => {
       ProviderSettings.safeParse({ ...validProviderSettings, keySuffix: "" }).success,
     ).toBe(false);
   });
+
+  it("accepts the custom variant — canonical base URL and a free-form model id", () => {
+    const custom = {
+      preset: "custom",
+      baseUrl: "https://ai-gateway.example.com/api",
+      model: "some-vendor/jev-edge",
+      keySuffix: "cdef",
+    };
+    const result = ProviderSettings.safeParse(custom);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual(custom);
+    }
+    // A model id that is not on any preset allowlist is still fine here —
+    // the allowlist is per provider, and custom's list is its own row.
+    expect(
+      ProviderSettings.safeParse({ ...custom, model: "unlisted-elsewhere" })
+        .success,
+    ).toBe(true);
+    // Loopback http is allowed; remote http never is.
+    expect(
+      ProviderSettings.safeParse({ ...custom, baseUrl: "http://localhost:8080/api" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects the custom variant on a bad base URL, missing fields, or extra keys", () => {
+    const base = {
+      preset: "custom",
+      baseUrl: "https://ai-gateway.example.com/api",
+      model: "jev-edge",
+      keySuffix: "cdef",
+    };
+    const invalid = [
+      { ...base, baseUrl: "http://ai-gateway.example.com/api" }, // non-loopback http
+      { ...base, baseUrl: "https://ai-gateway.example.com/api/" }, // non-canonical
+      { ...base, baseUrl: "https://user:pw@ai-gateway.example.com/api" }, // credentials
+      { ...base, baseUrl: "not a url" },
+      { preset: "custom", model: "jev-edge", keySuffix: "cdef" }, // no baseUrl
+      { ...base, model: "   " }, // blank model after trim
+      { ...base, extra: true }, // strict object
+    ];
+    for (const row of invalid) {
+      expect(ProviderSettings.safeParse(row).success).toBe(false);
+    }
+  });
 });
 
 describe("ConsentRecord", () => {

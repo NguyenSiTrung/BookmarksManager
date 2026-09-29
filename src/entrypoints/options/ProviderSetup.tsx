@@ -3,6 +3,8 @@ import {
   AUTHORIZATION_HEADER,
   CONSENT_PURPOSE,
   CONSENT_TRIGGER,
+  CUSTOM_JEV_PROVIDER_NAME,
+  customJevDisclosure,
   PROVIDER_DISCLOSURES,
   SYNTHETIC_DESCRIPTION,
   SYNTHETIC_FIELDS,
@@ -19,10 +21,13 @@ import {
   MOVING_ALIAS_WARNING,
   PINNED_RELEASE_NOTE,
 } from "../../net/provider-info";
+import { LlmBaseUrl } from "../../schemas/llm";
 import {
+  CUSTOM_PROVIDER_ID,
   DEFAULT_PROVIDER_MODEL,
+  JEV_PROVIDER_IDS,
+  type JevProviderId,
   PRESET_MODELS,
-  PresetId,
 } from "../../schemas/provider";
 import {
   Alert,
@@ -44,9 +49,11 @@ import {
 } from "./ui";
 
 /** One-line context shown on each provider picker card. */
-const PROVIDER_CARD_DESCRIPTIONS: Record<PresetId, string> = {
+const PROVIDER_CARD_DESCRIPTIONS: Record<JevProviderId, string> = {
   typesafe: "The curated Jev endpoint — the reference provider.",
   openrouter: "Jev via OpenRouter — use your own OpenRouter key.",
+  [CUSTOM_PROVIDER_ID]:
+    "Any System One-compatible Jev endpoint — your base URL and model id.",
 };
 
 /**
@@ -73,7 +80,7 @@ declare const chrome: {
   };
 };
 
-const PRESET_IDS = PresetId.options;
+const PROVIDER_IDS = JEV_PROVIDER_IDS;
 
 /**
  * What the Test connection button last reported: the worker's typed success
@@ -86,8 +93,9 @@ type TestOutcome =
   | { ok: false; code: string; message: string };
 
 export function ProviderSetup() {
-  const [presetId, setPresetId] = useState<PresetId>("typesafe");
+  const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
   const [model, setModel] = useState<string>(DEFAULT_PROVIDER_MODEL.typesafe);
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
@@ -98,17 +106,36 @@ export function ProviderSetup() {
   const [testing, setTesting] = useState(false);
   const [testOutcome, setTestOutcome] = useState<TestOutcome | null>(null);
 
-  const disclosure = PROVIDER_DISCLOSURES[presetId];
-  const preset = PRESETS[presetId];
-  const models = PRESET_MODELS[presetId];
+  // The custom provider's destination is derived from the typed base URL
+  // — parsed with the same canonical-URL schema the worker re-verifies —
+  // or, once enabled, from the stored row's reported origin.
+  const customParsed = LlmBaseUrl.safeParse(baseUrl.trim());
+  const customUrl = customParsed.success
+    ? new URL(customParsed.data)
+    : null;
+  const isCustom = presetId === CUSTOM_PROVIDER_ID;
+  const customOrigin = isCustom
+    ? (status?.origin ?? customUrl?.origin)
+    : undefined;
+  const disclosure = isCustom
+    ? customJevDisclosure(customOrigin)
+    : PROVIDER_DISCLOSURES[presetId];
+  // The host-permission pattern the enable click requests: the preset's
+  // fixed pattern, or the custom endpoint's computed origin pattern (null
+  // while the typed URL is not yet a valid canonical base URL).
+  const destinationPattern = isCustom
+    ? customUrl === null
+      ? null
+      : `${customUrl.protocol}//${customUrl.hostname}/*`
+    : PRESETS[presetId].permissionPattern;
 
   // Guards against a status reply for a stale preset landing after the user
   // switched providers.
-  const currentPreset = useRef<PresetId>(presetId);
+  const currentPreset = useRef<JevProviderId>(presetId);
   // Synchronous reentrancy guard — `busy` state lags a fast double click.
   const inFlight = useRef(false);
 
-  const loadStatus = useCallback(async (preset: PresetId) => {
+  const loadStatus = useCallback(async (preset: JevProviderId) => {
     try {
       const raw = await chrome.runtime.sendMessage(
         ProviderMessage.parse({ type: "PROVIDER_STATUS", preset }),
@@ -142,11 +169,14 @@ export function ProviderSetup() {
     });
   }, [presetId, loadStatus]);
 
-  const onPresetChange = (next: PresetId) => {
+  const onPresetChange = (next: JevProviderId) => {
     currentPreset.current = next;
     setPresetId(next);
     setStatus(null);
-    setModel(DEFAULT_PROVIDER_MODEL[next]);
+    setModel(
+      next === CUSTOM_PROVIDER_ID ? "" : DEFAULT_PROVIDER_MODEL[next],
+    );
+    setBaseUrl("");
     setApiKey("");
     setAgreed(false);
     setError(null);
@@ -161,6 +191,10 @@ export function ProviderSetup() {
     !status.enabled &&
     agreed &&
     apiKey.length > 0 &&
+    // A custom provider additionally needs a valid canonical base URL and
+    // a non-empty model id — the worker re-parses both anyway.
+    (presetId !== CUSTOM_PROVIDER_ID ||
+      (customUrl !== null && model.trim().length > 0)) &&
     !busy;
 
   const onEnable = () => {
@@ -177,10 +211,18 @@ export function ProviderSetup() {
     // throw (not a rejection) would skip the .catch/.finally below and leave
     // inFlight/busy stuck, wedging every button until reload — reset the
     // guards and surface the same notice a rejection would.
+    // For a preset the pattern is fixed; for custom it comes from the
+    // validated base URL — canEnable already excluded a null pattern, and
+    // the early return keeps the permission request exact anyway.
+    if (destinationPattern === null) {
+      inFlight.current = false;
+      setBusy(false);
+      return;
+    }
     let permissionRequest: Promise<boolean>;
     try {
       permissionRequest = chrome.permissions.request({
-        origins: [preset.permissionPattern],
+        origins: [destinationPattern],
       });
     } catch {
       inFlight.current = false;
@@ -207,8 +249,11 @@ export function ProviderSetup() {
           ProviderMessage.parse({
             type: "ENABLE_PROVIDER",
             preset: presetId,
-            model,
+            model: isCustom ? model.trim() : model,
             key: apiKey,
+            ...(isCustom && customParsed.success
+              ? { baseUrl: customParsed.data }
+              : {}),
           }),
         );
         // The same drop after the worker's reply — a switch during the
@@ -375,15 +420,23 @@ export function ProviderSetup() {
       <fieldset className="mt-4">
         <legend className="text-sm font-medium">Provider</legend>
         <div className={radioGroupClass}>
-          {PRESET_IDS.map((id) => (
+          {PROVIDER_IDS.map((id) => (
             <ProviderCard
               key={id}
               name="provider"
               value={id}
               checked={presetId === id}
               onChange={() => onPresetChange(id)}
-              title={PROVIDER_DISCLOSURES[id].name}
-              inputLabel={PROVIDER_DISCLOSURES[id].name}
+              title={
+                id === CUSTOM_PROVIDER_ID
+                  ? CUSTOM_JEV_PROVIDER_NAME
+                  : PROVIDER_DISCLOSURES[id].name
+              }
+              inputLabel={
+                id === CUSTOM_PROVIDER_ID
+                  ? CUSTOM_JEV_PROVIDER_NAME
+                  : PROVIDER_DISCLOSURES[id].name
+              }
               description={PROVIDER_CARD_DESCRIPTIONS[id]}
             />
           ))}
@@ -422,18 +475,26 @@ export function ProviderSetup() {
             <li>Why: {CONSENT_PURPOSE}.</li>
             <li>When: {CONSENT_TRIGGER}.</li>
             <li>{disclosure.dataNote}</li>
-            <li>
-              Read the{" "}
-              <a
-                href={disclosure.privacyPolicyUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
-              >
-                {disclosure.name} privacy policy
-              </a>
-              ; this extension&apos;s own draft policy is bundled below.
-            </li>
+            {disclosure.privacyPolicyUrl !== undefined ? (
+              <li>
+                Read the{" "}
+                <a
+                  href={disclosure.privacyPolicyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                >
+                  {disclosure.name} privacy policy
+                </a>
+                ; this extension&apos;s own draft policy is bundled below.
+              </li>
+            ) : (
+              <li>
+                A custom endpoint has no bundled policy link — review that
+                provider&apos;s own privacy policy; this extension&apos;s
+                draft policy is bundled below.
+              </li>
+            )}
           </ul>
         </Disclosure>
       </div>
@@ -451,7 +512,7 @@ export function ProviderSetup() {
             <span className="hidden text-border sm:inline">·</span>
             <Chip>{status.model}</Chip>
             <Chip>…{status.keySuffix}</Chip>
-            <Chip>{disclosure.origin}</Chip>
+            <Chip>{status.origin ?? disclosure.origin}</Chip>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -516,28 +577,64 @@ export function ProviderSetup() {
         </div>
       ) : (
         <div className="mt-5 space-y-4">
-          <Field label="Model" htmlFor="provider-model">
-            <select
-              id="provider-model"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              aria-describedby={
-                isMovingAlias(presetId, model)
-                  ? "provider-model-alias-warning"
-                  : isPinnedReleaseModel(presetId, model)
-                    ? "provider-model-pinned-note"
-                    : undefined
-              }
-              className={inputClass}
-            >
-              {models.map((allowed) => (
-                <option key={allowed} value={allowed}>
-                  {allowed}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {isMovingAlias(presetId, model) && (
+          {presetId === CUSTOM_PROVIDER_ID ? (
+            <>
+              <Field
+                label="Base URL"
+                htmlFor="provider-base-url"
+                hint="HTTPS required; plain HTTP is allowed only for localhost, 127.0.0.1, or [::1]. Requests go to <base URL>/systemone."
+              >
+                <input
+                  id="provider-base-url"
+                  type="text"
+                  autoComplete="off"
+                  placeholder="https://ai.example.com/api"
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+              <Field
+                label="Model ID"
+                htmlFor="provider-model"
+                hint="The Jev model id this endpoint serves."
+              >
+                <input
+                  id="provider-model"
+                  type="text"
+                  autoComplete="off"
+                  placeholder="jev-latest"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+            </>
+          ) : (
+            <Field label="Model" htmlFor="provider-model">
+              <select
+                id="provider-model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                aria-describedby={
+                  isMovingAlias(presetId, model)
+                    ? "provider-model-alias-warning"
+                    : isPinnedReleaseModel(presetId, model)
+                      ? "provider-model-pinned-note"
+                      : undefined
+                }
+                className={inputClass}
+              >
+                {PRESET_MODELS[presetId].map((allowed) => (
+                  <option key={allowed} value={allowed}>
+                    {allowed}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {presetId !== CUSTOM_PROVIDER_ID &&
+            isMovingAlias(presetId, model) && (
             <p className="-mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
               <WarningIcon className="mt-0.5 size-3.5 shrink-0" />
               <span role="status" id="provider-model-alias-warning">
@@ -546,7 +643,8 @@ export function ProviderSetup() {
               </span>
             </p>
           )}
-          {isPinnedReleaseModel(presetId, model) && (
+          {presetId !== CUSTOM_PROVIDER_ID &&
+            isPinnedReleaseModel(presetId, model) && (
             <p
               role="status"
               id="provider-model-pinned-note"

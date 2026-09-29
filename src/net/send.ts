@@ -1,21 +1,23 @@
-import { hasConsent, type ConsentScope } from "../consent/records";
+import { hasConsentAtOrigin, type ConsentScope } from "../consent/records";
 import { readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
+import { resolveStoredJevDestination } from "../jev/settings";
+import type { JevDestination } from "../jev/providers";
 import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
 import { DecisionState } from "../schemas/decision-state";
+import { LOOPBACK_HOSTS } from "../schemas/llm";
 import { SummaryVerificationState } from "../schemas/summary-verification";
-import type { PresetId } from "../schemas/provider";
 import { readProviderKey } from "../security/keys";
-import { resolvePreset, type PresetDestination } from "./presets";
 import { appendSentLog } from "./sent-log";
 
 /**
  * The extension's single consented egress point (PROJECT_PLAN.md §Global
  * Constraints): this module is the only `src/` code allowed to call `fetch`
- * (enforced by eslint). It reaches only the fixed `PRESETS` destinations, and
- * only after the scope's request guard, the versioned consent grant, the
- * Chrome host permission, and stored key material all check out — re-verified
- * on every call. The `jev_test` scope's guard admits nothing but the fixed
+ * (enforced by eslint). It reaches only registered Jev destinations — the
+ * `PRESETS` registry or the user-configured custom provider resolved from
+ * its stored settings row — and only after the scope's request guard, the
+ * versioned consent grant, the Chrome host permission, and stored key
+ * material all check out — re-verified on every call. The `jev_test` scope's guard admits nothing but the fixed
  * synthetic request, so test consent can never carry bookmark content; the
  * `jev_decisions` scope's guard strict-parses the request state against the
  * closed `DecisionState` schema and refuses unknown fields, uncleaned URLs
@@ -237,31 +239,37 @@ function resolveScope(scope: string): ScopeRegistration {
 }
 
 /**
- * Defense-in-depth on the registry entry itself: even though `PRESETS` is
- * frozen, refuse any destination that is not a valid `https:` URL whose
- * origin is exactly the registry's recorded origin.
+ * Defense-in-depth on the resolved destination: even though presets come
+ * from a frozen registry and the custom provider from a parsed settings
+ * row, refuse any endpoint that is not `https:` (or `http:` on a loopback
+ * host, the only plaintext allowed anywhere) or whose origin does not
+ * exactly match the resolved origin — a stale or tampered settings row can
+ * never redirect egress.
  */
-function assertPresetUrl(destination: PresetDestination): void {
+function assertDestinationUrl(destination: JevDestination): void {
   let url: URL;
   try {
     url = new URL(destination.url);
   } catch (cause) {
     throw new NetworkGateError(
       "https_only",
-      "Preset destination is not a valid absolute URL.",
+      "Provider destination is not a valid absolute URL.",
       { cause },
     );
   }
-  if (url.protocol !== "https:") {
+  if (
+    url.protocol !== "https:" &&
+    !(url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+  ) {
     throw new NetworkGateError(
       "https_only",
-      "Preset destination must be an https: URL.",
+      "Provider destination must be an https: URL (http: is allowed only for loopback hosts).",
     );
   }
   if (url.origin !== destination.origin) {
     throw new NetworkGateError(
       "unlisted_origin",
-      "Preset destination URL does not match its registered origin.",
+      "Provider destination URL does not match its resolved origin.",
     );
   }
 }
@@ -286,14 +294,15 @@ function isAbortError(cause: unknown): boolean {
 }
 
 /**
- * Send a scoped, consented request to a preset destination.
+ * Send a scoped, consented request to a provider destination.
  *
- * Gate order (all before any network activity): registered scope → valid
- * preset → model is in the preset allowlist → URL is `https:` with an origin
- * equal to the registry origin → the scope's request guard admits the exact
- * payload → the body parses as a `SystemOneRequest` → current versioned
- * consent for (scope, origin) → Chrome host permission → stored provider
- * key. Only then is `fetch` invoked with `credentials: "omit"` (no cookies)
+ * Gate order (all before any network activity): registered scope → known
+ * provider id, resolved through the preset registry or the custom settings
+ * row → model is in the destination's allowlist → URL is `https:` (or a
+ * loopback `http:`) with an origin equal to the resolved origin → the
+ * scope's request guard admits the exact payload → the body parses as a
+ * `SystemOneRequest` → current versioned consent for (scope, origin) →
+ * Chrome host permission → stored provider key. Only then is `fetch` invoked with `credentials: "omit"` (no cookies)
  * and `redirect: "error"` (redirects refused); auth is exactly
  * `Authorization: Bearer <key>` plus `Content-Type: application/json`.
  *
@@ -307,22 +316,28 @@ function isAbortError(cause: unknown): boolean {
  */
 export async function sendConsented(
   scope: string,
-  preset: PresetId,
+  providerId: string,
   model: string,
   request: unknown,
   options?: { signal?: AbortSignal },
 ): Promise<Response> {
   const scopeEntry = resolveScope(scope);
-  const destination = resolvePreset(preset);
+  const destination = await resolveStoredJevDestination(providerId);
+  if (destination === null) {
+    throw new NetworkGateError(
+      "unlisted_origin",
+      `"${providerId}" is not a configured Jev provider.`,
+    );
+  }
 
   if (!destination.models.includes(model)) {
     throw new NetworkGateError(
       "unlisted_model",
-      `Model "${model}" is not in the allowlist for preset "${preset}".`,
+      `Model "${model}" is not in the allowlist for provider "${providerId}".`,
     );
   }
 
-  assertPresetUrl(destination);
+  assertDestinationUrl(destination);
 
   // Defense-in-depth: re-read the user's persisted blocklist on every call so
   // ANY `jev_decisions` caller is covered, even if a service-level check were
@@ -346,25 +361,25 @@ export async function sendConsented(
     );
   }
 
-  if (!(await hasConsent(scopeEntry.scope, preset))) {
+  if (!(await hasConsentAtOrigin(scopeEntry.scope, destination.origin))) {
     throw new NetworkGateError(
       "no_consent",
-      `No current ${scopeEntry.scope} consent grant for preset "${preset}".`,
+      `No current ${scopeEntry.scope} consent grant for provider "${providerId}".`,
     );
   }
 
   if (!(await hasOriginPermission(destination.permissionPattern))) {
     throw new NetworkGateError(
       "no_permission",
-      `Missing host permission for preset "${preset}".`,
+      `Missing host permission for provider "${providerId}".`,
     );
   }
 
-  const key = await readProviderKey(preset);
+  const key = await readProviderKey(providerId);
   if (key === null) {
     throw new NetworkGateError(
       "no_key",
-      `No stored provider key for preset "${preset}".`,
+      `No stored provider key for provider "${providerId}".`,
     );
   }
 
@@ -372,7 +387,7 @@ export async function sendConsented(
   if (signal?.aborted === true) {
     throw new NetworkGateError(
       "timeout",
-      `Outbound ${scopeEntry.scope} request for preset "${preset}" was aborted before it left.`,
+      `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted before it left.`,
     );
   }
 
@@ -393,12 +408,12 @@ export async function sendConsented(
     if (isAbortError(cause)) {
       throw new NetworkGateError(
         "timeout",
-        `Outbound ${scopeEntry.scope} request for preset "${preset}" was aborted.`,
+        `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted.`,
       );
     }
     throw new NetworkGateError(
       "transport",
-      `Outbound ${scopeEntry.scope} request for preset "${preset}" failed in transport.`,
+      `Outbound ${scopeEntry.scope} request for provider "${providerId}" failed in transport.`,
       { cause },
     );
   }
@@ -416,7 +431,7 @@ export async function sendConsented(
   if (response.type === "opaqueredirect") {
     throw new NetworkGateError(
       "transport",
-      `Outbound ${scopeEntry.scope} request for preset "${preset}" answered with an opaque redirect.`,
+      `Outbound ${scopeEntry.scope} request for provider "${providerId}" answered with an opaque redirect.`,
     );
   }
 
@@ -424,13 +439,18 @@ export async function sendConsented(
 }
 
 /**
- * Send the fixed synthetic `jev_test` request to a preset destination — a
- * thin wrapper over `sendConsented` under the only registered scope, kept
+ * Send the fixed synthetic `jev_test` request to a provider destination —
+ * a thin wrapper over `sendConsented` under the only registered scope, kept
  * for the existing Options Test-connection callers.
  */
 export async function sendConsentedTest(
-  preset: PresetId,
+  providerId: string,
   model: string,
 ): Promise<Response> {
-  return sendConsented("jev_test", preset, model, makeSyntheticRequest(model));
+  return sendConsented(
+    "jev_test",
+    providerId,
+    model,
+    makeSyntheticRequest(model),
+  );
 }

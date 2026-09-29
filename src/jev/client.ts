@@ -1,6 +1,5 @@
 import { sendConsented, NetworkGateError } from "../net/send";
 import type { NetworkGateErrorCode } from "../net/send";
-import type { PresetId } from "../schemas/provider";
 import { BudgetError, planBatches } from "./budget";
 import {
   isRetryableHttpStatus,
@@ -13,7 +12,7 @@ import type { Answer, SystemOneRequest as SystemOneRequestBody } from "./wire";
 
 /**
  * Hardened Jev client (spec FR3, PROJECT_PLAN.md §8.3). `createJevClient`
- * binds a preset, model, and consent scope; `run()` validates the request,
+ * binds a provider id, model, and consent scope; `run()` validates the request,
  * plans budget-conforming batches, sends them through the consented gate
  * (or an injected transport in tests) with bounded concurrency, retries
  * transient failures, validates and cross-checks every response, and returns
@@ -69,14 +68,15 @@ export class JevClientError extends Error {
  */
 export type JevTransport = (
   scope: string,
-  preset: PresetId,
+  providerId: string,
   model: string,
   request: SystemOneRequestBody,
   options?: { signal?: AbortSignal },
 ) => Promise<Response>;
 
 export interface JevClientOptions {
-  readonly preset: PresetId;
+  /** The provider the client binds to — a preset id or `"custom"`. */
+  readonly providerId: string;
   /** The model id sent in every batch and checked against the allowlist. */
   readonly model: string;
   /** Registered consent scope; `"jev_test"` and `"jev_decisions"` exist. */
@@ -87,9 +87,10 @@ export interface JevClientOptions {
   /** Retries after the first attempt (total attempts = 1 + maxRetries). */
   readonly maxRetries?: number;
   /**
-   * In-flight send cap, shared per preset across all clients. The first
-   * client created for a preset fixes the shared limit — a later client's
-   * different value does not change it (reset with `resetJevClientPools`).
+   * In-flight send cap, shared per provider id across all clients. The
+   * first client created for a provider fixes the shared limit — a later
+   * client's different value does not change it (reset with
+   * `resetJevClientPools`).
    */
   readonly maxConcurrency?: number;
   /** Injectable backoff wait; tests substitute an instant spy. */
@@ -126,33 +127,34 @@ const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_MAX_CONCURRENCY = 4;
 
 /**
- * Counting semaphore per preset, shared by every client of that preset so a
- * burst of `run()` calls cannot exceed the provider's concurrency budget.
- * Module state by design — reset between tests via `resetJevClientPools`.
+ * Counting semaphore per provider id, shared by every client of that
+ * provider so a burst of `run()` calls cannot exceed the provider's
+ * concurrency budget. Module state by design — reset between tests via
+ * `resetJevClientPools`.
  */
-interface PresetPool {
+interface ProviderPool {
   running: number;
   readonly limit: number;
   readonly queue: Array<() => void>;
 }
 
-const pools = new Map<PresetId, PresetPool>();
+const pools = new Map<string, ProviderPool>();
 
-/** Test/isolation hook: clears all per-preset pools and their waiters. */
+/** Test/isolation hook: clears all per-provider pools and their waiters. */
 export function resetJevClientPools(): void {
   pools.clear();
 }
 
-function poolFor(preset: PresetId, limit: number): PresetPool {
-  let pool = pools.get(preset);
+function poolFor(providerId: string, limit: number): ProviderPool {
+  let pool = pools.get(providerId);
   if (pool === undefined) {
     pool = { running: 0, limit, queue: [] };
-    pools.set(preset, pool);
+    pools.set(providerId, pool);
   }
   return pool;
 }
 
-function acquireSlot(pool: PresetPool): Promise<() => void> {
+function acquireSlot(pool: ProviderPool): Promise<() => void> {
   return new Promise((resolve) => {
     const grant = () => {
       pool.running += 1;
@@ -166,7 +168,7 @@ function acquireSlot(pool: PresetPool): Promise<() => void> {
   });
 }
 
-function releaseSlot(pool: PresetPool): void {
+function releaseSlot(pool: ProviderPool): void {
   pool.running -= 1;
   pool.queue.shift()?.();
 }
@@ -185,7 +187,7 @@ function defaultSleep(ms: number): Promise<void> {
 
 export function createJevClient(options: JevClientOptions): JevClient {
   const {
-    preset,
+    providerId,
     model,
     scope,
     transport = sendConsented,
@@ -195,7 +197,10 @@ export function createJevClient(options: JevClientOptions): JevClient {
     random = Math.random,
     now = Date.now,
   } = options;
-  const pool = poolFor(preset, options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY);
+  const pool = poolFor(
+    providerId,
+    options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY,
+  );
 
   /**
    * Map a thrown transport error onto a retry decision. Returns `undefined`
@@ -359,7 +364,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let failure: ClassifiedFailure;
       try {
-        const response = await transport(scope, preset, model, batch, {
+        const response = await transport(scope, providerId, model, batch, {
           signal: controller.signal,
         });
         const outcome = await inspectResponse(response, batch);

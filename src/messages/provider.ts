@@ -1,13 +1,23 @@
 import {
-  grantTestConsent,
-  hasTestConsent,
-  revokeProviderConsents,
+  grantConsentAtOrigin,
+  hasConsentAtOrigin,
+  revokeConsentsAtOrigin,
 } from "../consent/records";
 import { db } from "../db/database";
 import { JevConnectionError, testJevConnection } from "../jev/connection";
-import { resolvePreset } from "../net/presets";
+import {
+  presetJevDestination,
+  resolveJevDestination,
+  type JevDestination,
+} from "../jev/providers";
+import { readJevProvider } from "../jev/settings";
 import { NetworkGateError } from "../net/send";
-import { PresetId, ProviderSettings } from "../schemas/provider";
+import { LlmBaseUrl } from "../schemas/llm";
+import {
+  CONSENT_SCOPE,
+  JevProviderId,
+  ProviderSettings,
+} from "../schemas/provider";
 import { z } from "../schemas/z";
 import {
   deleteProviderKey,
@@ -21,6 +31,12 @@ import {
  * permission from a direct Enable click, then sends one of these messages.
  * This module re-verifies the sender and the granted permission itself and
  * never trusts the page's claim.
+ *
+ * Providers are addressed by `JevProviderId`: a preset name resolves through
+ * the frozen registry, `"custom"` resolves from the stored settings row the
+ * Enable flow writes (the base URL lives nowhere else). Consent and the
+ * host-permission grant always key off the resolved origin, so a stored row
+ * pointing somewhere new cannot ride an old origin's consent.
  *
  * `handleProviderMessage` is total: every path resolves to a
  * `ProviderMessageResult`, so the `chrome.runtime.onMessage` adapter in
@@ -44,20 +60,24 @@ declare const chrome: {
 export const ProviderMessage = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ENABLE_PROVIDER"),
-    preset: PresetId,
+    preset: JevProviderId,
     model: z.string().min(1),
     key: z.string().min(1),
+    // The custom provider's canonical API base URL — ignored for presets,
+    // required (and re-validated as ProviderSettings) when preset is
+    // "custom".
+    baseUrl: LlmBaseUrl.optional(),
   }),
   z.object({
     type: z.literal("REVOKE_PROVIDER"),
-    preset: PresetId,
+    preset: JevProviderId,
     deleteKey: z.boolean(),
   }),
-  z.object({ type: z.literal("PROVIDER_STATUS"), preset: PresetId }),
-  // The Test-connection action (Phase 3): it carries only the preset — the
-  // model always comes from the stored ProviderSettings, never the message,
-  // so the page cannot pick a per-test model or attach key material.
-  z.object({ type: z.literal("TEST_PROVIDER"), preset: PresetId }),
+  z.object({ type: z.literal("PROVIDER_STATUS"), preset: JevProviderId }),
+  // The Test-connection action (Phase 3): it carries only the provider id —
+  // the model always comes from the stored ProviderSettings, never the
+  // message, so the page cannot pick a per-test model or attach key material.
+  z.object({ type: z.literal("TEST_PROVIDER"), preset: JevProviderId }),
 ]);
 export type ProviderMessage = z.infer<typeof ProviderMessage>;
 
@@ -100,10 +120,12 @@ export const ProviderErrorCode = z.enum([
 export type ProviderErrorCode = z.infer<typeof ProviderErrorCode>;
 
 /**
- * What Options needs to restore its UI for one preset. `enabled` requires
+ * What Options needs to restore its UI for one provider. `enabled` requires
  * all three: stored settings, a current `jev_test` consent grant, and the
  * host permission still held — so a permission removed outside the app flips
- * it to false. `model`/`keySuffix` are the masked display hints; raw key
+ * it to false. `model`/`keySuffix` are the masked display hints; `origin`
+ * and `baseUrl` describe the resolved endpoint (presets report their
+ * registry origin; `baseUrl` only appears for the custom provider). Raw key
  * material is never part of any response.
  */
 export const ProviderStatus = z.object({
@@ -111,6 +133,8 @@ export const ProviderStatus = z.object({
   consentGranted: z.boolean(),
   model: z.string().optional(),
   keySuffix: z.string().optional(),
+  origin: z.string().optional(),
+  baseUrl: z.string().optional(),
 });
 export type ProviderStatus = z.infer<typeof ProviderStatus>;
 
@@ -216,57 +240,106 @@ async function hasOriginPermission(pattern: string): Promise<boolean> {
   }
 }
 
+/**
+ * The destination a provider id would egress to today: presets always
+ * resolve through the registry (so their permission/consent state is still
+ * reported with no settings row), `custom` resolves only while a valid
+ * settings row exists — without one there is no origin to check and the
+ * status is simply "nothing configured".
+ */
+async function destinationFor(
+  providerId: JevProviderId,
+  settings: ProviderSettings | null,
+): Promise<JevDestination | null> {
+  if (settings !== null) {
+    return resolveJevDestination(settings);
+  }
+  return providerId === "custom" ? null : presetJevDestination(providerId);
+}
+
 /** Compose the status Options renders: enabled needs settings AND consent
  * AND a still-held host permission. Settings rows are re-validated because
  * `metadata.value` is untyped at storage. */
-async function readStatus(preset: PresetId): Promise<ProviderStatus> {
-  const { permissionPattern } = resolvePreset(preset);
-  const [consentGranted, permissionGranted, row] = await Promise.all([
-    hasTestConsent(preset),
-    hasOriginPermission(permissionPattern),
-    db.metadata.get(preset),
-  ]);
-  const parsed = ProviderSettings.safeParse(row?.value);
-  const settings = parsed.success ? parsed.data : undefined;
+async function readStatus(providerId: JevProviderId): Promise<ProviderStatus> {
+  const settings = await readJevProvider(providerId);
+  const destination = await destinationFor(providerId, settings);
+  const [consentGranted, permissionGranted] =
+    destination === null
+      ? [false, false]
+      : await Promise.all([
+          hasConsentAtOrigin(CONSENT_SCOPE, destination.origin),
+          hasOriginPermission(destination.permissionPattern),
+        ]);
   const status: ProviderStatus = {
-    enabled: consentGranted && permissionGranted && settings !== undefined,
+    enabled: consentGranted && permissionGranted && settings !== null,
     consentGranted,
   };
-  if (settings !== undefined) {
+  if (settings !== null) {
     status.model = settings.model;
     status.keySuffix = settings.keySuffix;
+    if (settings.preset === "custom") {
+      status.baseUrl = settings.baseUrl;
+    }
+  }
+  if (destination !== null) {
+    status.origin = destination.origin;
   }
   return status;
 }
 
 /**
  * Undo a partial enable so a provider can never appear enabled with missing
- * consent: drop the consent row, the encrypted key material, and the settings
- * row. Every step is a safe no-op when its record was never written.
+ * consent: drop every consent scope at the resolved origin, the encrypted
+ * key material, and the settings row. Every step is a safe no-op when its
+ * record was never written.
  */
-async function unwindEnable(preset: PresetId): Promise<void> {
+async function unwindEnable(
+  providerId: string,
+  origin: string,
+): Promise<void> {
   await Promise.allSettled([
-    revokeProviderConsents(preset),
-    deleteProviderKey(preset),
-    db.metadata.delete(preset),
+    revokeConsentsAtOrigin(origin),
+    deleteProviderKey(providerId),
+    db.metadata.delete(providerId),
   ]);
 }
 
 async function enableProvider(message: {
-  preset: PresetId;
+  preset: JevProviderId;
   model: string;
   key: string;
+  baseUrl?: string;
 }): Promise<ProviderMessageResult> {
-  const destination = resolvePreset(message.preset);
-
-  // Re-check the preset/model pairing in the worker — the page's choice is
-  // not trusted.
-  if (!destination.models.includes(message.model)) {
-    return failure(
-      "unlisted_model",
-      `Model "${message.model}" is not offered by preset "${message.preset}".`,
-    );
+  // Re-validate the full settings shape in the worker — the page's fields
+  // are not trusted. For presets this pins model to the preset allowlist;
+  // for `custom` it re-checks the canonical base URL and a non-empty model.
+  const settingsInput =
+    message.preset === "custom"
+      ? {
+          preset: "custom" as const,
+          baseUrl: message.baseUrl,
+          model: message.model,
+          keySuffix: keyDisplaySuffix(message.key),
+        }
+      : {
+          preset: message.preset,
+          model: message.model,
+          keySuffix: keyDisplaySuffix(message.key),
+        };
+  const parsed = ProviderSettings.safeParse(settingsInput);
+  if (!parsed.success) {
+    return message.preset === "custom"
+      ? failure(
+          "malformed_message",
+          "The custom provider settings are invalid — the base URL must be a canonical https (or loopback http) API root and the model id must be non-empty.",
+        )
+      : failure(
+          "unlisted_model",
+          `Model "${message.model}" is not offered by preset "${message.preset}".`,
+        );
   }
+  const settings = parsed.data;
+  const destination = resolveJevDestination(settings);
 
   // The Options page already prompted via chrome.permissions.request; the
   // worker re-verifies the grant rather than trusting the message.
@@ -277,58 +350,64 @@ async function enableProvider(message: {
     );
   }
 
-  const settings = ProviderSettings.parse({
-    preset: message.preset,
-    model: message.model,
-    keySuffix: keyDisplaySuffix(message.key),
-  });
   try {
-    await db.metadata.put({ key: message.preset, value: settings });
-    await saveProviderKey(message.preset, message.key);
+    await db.metadata.put({ key: destination.providerId, value: settings });
+    await saveProviderKey(destination.providerId, message.key);
     // The consent row is written last so nothing is "enabled" until every
-    // piece landed.
-    await grantTestConsent(message.preset);
+    // piece landed. Consent keys off the resolved origin: reconfiguring the
+    // custom provider to a different origin grants at the new origin, and
+    // per-origin consent records mean a later switch back resumes exactly
+    // what the user had consented to there.
+    await grantConsentAtOrigin(CONSENT_SCOPE, destination.origin);
   } catch {
-    await unwindEnable(message.preset);
+    await unwindEnable(destination.providerId, destination.origin);
     return failure(
       "enable_failed",
       "Setup could not finish; nothing was saved and the provider was not enabled.",
     );
   }
-  return { ok: true, status: await readStatus(message.preset) };
+  return { ok: true, status: await readStatus(destination.providerId) };
 }
 
 async function revokeProvider(message: {
-  preset: PresetId;
+  preset: JevProviderId;
   deleteKey: boolean;
 }): Promise<ProviderMessageResult> {
-  const destination = resolvePreset(message.preset);
+  const settings = await readJevProvider(message.preset);
+  const destination = await destinationFor(message.preset, settings);
 
   // Consent comes off first: if permission removal then fails, the gate still
   // blocks every request because no current consent row remains. Revoking
-  // deletes every scope the provider holds (`jev_test` and `jev_decisions`),
-  // not just the synthetic test grant.
-  try {
-    await revokeProviderConsents(message.preset);
-  } catch {
-    return failure(
-      "revoke_failed",
-      "The recorded consent could not be removed; nothing else was changed.",
-    );
+  // deletes every scope the origin holds (`jev_test`, `jev_decisions`, and
+  // `jev_summary_verify`), not just the synthetic test grant. A `custom`
+  // provider whose row is already gone/invalid has no resolvable origin —
+  // its consent rows, if any, die with the settings row below.
+  if (destination !== null) {
+    try {
+      await revokeConsentsAtOrigin(destination.origin);
+    } catch {
+      return failure(
+        "revoke_failed",
+        "The recorded consent could not be removed; nothing else was changed.",
+      );
+    }
   }
 
   const failures: string[] = [];
-  try {
-    const removed = await chrome.permissions.remove({
-      origins: [destination.permissionPattern],
-    });
-    // `remove` can report false (e.g. the grant was already gone); count the
-    // step as done only when the permission is not held afterwards.
-    const released =
-      removed === true || !(await hasOriginPermission(destination.permissionPattern));
-    if (!released) failures.push("browser permission");
-  } catch {
-    failures.push("browser permission");
+  if (destination !== null) {
+    try {
+      const removed = await chrome.permissions.remove({
+        origins: [destination.permissionPattern],
+      });
+      // `remove` can report false (e.g. the grant was already gone); count
+      // the step as done only when the permission is not held afterwards.
+      const released =
+        removed === true ||
+        !(await hasOriginPermission(destination.permissionPattern));
+      if (!released) failures.push("browser permission");
+    } catch {
+      failures.push("browser permission");
+    }
   }
 
   try {
@@ -357,7 +436,7 @@ async function revokeProvider(message: {
 }
 
 /**
- * Run the synthetic Jev connection test for a fully enabled preset — the
+ * Run the synthetic Jev connection test for a fully enabled provider — the
  * only message variant that can produce network traffic. The not-enabled
  * refusal happens BEFORE `testJevConnection` is invoked, so a missing
  * settings row, revoked consent, or a permission removed outside the app
@@ -374,7 +453,7 @@ async function revokeProvider(message: {
  * is read-only: a failure changes no consent, settings, or key state.
  */
 async function testProvider(message: {
-  preset: PresetId;
+  preset: JevProviderId;
 }): Promise<ProviderMessageResult> {
   const status = await readStatus(message.preset);
   if (!status.enabled || status.model === undefined) {

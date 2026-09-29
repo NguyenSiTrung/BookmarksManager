@@ -565,6 +565,9 @@ describe("protocol discipline", () => {
     for (const type of sentTypes()) {
       expect([
         ...DECISION_TYPES,
+        // Read-only status probes the panel issues on mount — still no
+        // consent messages, which stay direct Dexie writes.
+        "PROVIDER_STATUS",
         "LLM_PROVIDER_STATUS",
         "LLM_ESCALATION_STATUS",
       ]).toContain(type);

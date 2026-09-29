@@ -137,7 +137,7 @@ function client(
   opts: Partial<Parameters<typeof createJevClient>[0]> = {},
 ) {
   return createJevClient({
-    preset: "typesafe",
+    providerId: "typesafe",
     model: MODEL,
     scope: SCOPE,
     transport,

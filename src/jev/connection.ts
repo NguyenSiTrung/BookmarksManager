@@ -1,4 +1,3 @@
-import type { PresetId } from "../schemas/provider";
 import { JevClientError, createJevClient } from "./client";
 import type { JevClientErrorCode } from "./client";
 import { makeSyntheticRequest } from "./wire";
@@ -78,12 +77,12 @@ function toConnectionCode(code: JevClientErrorCode): JevConnectionErrorCode {
  * unwrapped.
  */
 export async function testJevConnection(
-  preset: PresetId,
+  providerId: string,
   model: string,
 ): Promise<JevConnectionSuccess> {
   const startedAt = Date.now();
   const client = createJevClient({
-    preset,
+    providerId,
     model,
     scope: "jev_test",
     maxRetries: 0,

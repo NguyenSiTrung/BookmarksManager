@@ -133,7 +133,7 @@ export function makeEvalClient(
   options: EvalClientOptions = {},
 ): JevClient {
   return createJevClient({
-    preset: spec.preset,
+    providerId: spec.preset,
     model: spec.requestModel,
     scope: EVAL_SCOPE,
     transport: options.transport ?? evalTransport(spec, key),

@@ -1,7 +1,6 @@
 import { db } from "../db/database";
 import { UsageRecord } from "../schemas/usage";
 import type { SentBookmark } from "../schemas/decision-state";
-import type { PresetId } from "../schemas/provider";
 import { JevClientError, createJevClient } from "../jev/client";
 import type { JevClient, JevRunResult, JevTransport } from "../jev/client";
 import { rerank } from "../jev/tasks/rerank";
@@ -51,8 +50,8 @@ export interface RerankSearchOptions {
   readonly query: string;
   /** The MiniSearch hits for the query; the caller runs the query. */
   readonly hits: readonly SearchHit[];
-  /** Jev preset the client is bound to. */
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   /** Model id sent in the request; the response may report another. */
   readonly model: string;
   /**
@@ -264,7 +263,7 @@ async function runRerank(
   const client =
     options.client ??
     createJevClient({
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       scope: "jev_decisions",
       ...(options.transport === undefined

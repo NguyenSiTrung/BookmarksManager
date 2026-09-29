@@ -11,11 +11,12 @@ import {
   hasConsentAtOrigin,
 } from "../consent/records";
 import {
+  CONSENT_SCOPE,
   JEV_SUMMARY_VERIFY_SCOPE,
   LLM_SUMMARY_SCOPE,
 } from "../schemas/provider";
 import { resolveLlmDestination } from "../llm/providers";
-import { resolvePreset } from "../net/presets";
+import { readActiveJevProvider } from "../jev/settings";
 import { setBookmarkSummary } from "../db/meta";
 
 /**
@@ -202,11 +203,24 @@ export async function summarizeExtracted(
     };
   }
   const llmOrigin = resolveLlmDestination(provider.provider).origin;
+  // The Jev side of the verify hop is the enabled Jev provider — whichever
+  // preset or custom endpoint holds `jev_test` consent. Before custom
+  // providers existed this was hardcoded to TypeSafe, which silently broke
+  // verification for OpenRouter-only users.
+  const jev = await readActiveJevProvider(CONSENT_SCOPE);
+  if (jev === null) {
+    return {
+      ok: false,
+      stage: "verify",
+      code: "no_provider",
+      message: "No Jev provider is enabled for summary verification.",
+    };
+  }
+  const jevOrigin = jev.destination.origin;
   // The Summarize click is the consent trigger for both page-text scopes —
   // write the grants so the per-scope checks below pass.
-  const jevOriginForConsent = resolvePreset("typesafe").origin;
   await grantConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin);
-  await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOriginForConsent);
+  await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOrigin);
   if (
     !(await hasConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin).catch(
       () => false,
@@ -220,7 +234,6 @@ export async function summarizeExtracted(
       message: `Page text has not been consented for ${llmOrigin}.`,
     };
   }
-  const jevOrigin = jevOriginForConsent;
   if (
     !(await hasConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOrigin).catch(
       () => false,
@@ -253,8 +266,8 @@ export async function summarizeExtracted(
   let verdict;
   try {
     const jevClient = createJevClient({
-      preset: "typesafe",
-      model: "jev-latest",
+      providerId: jev.providerId,
+      model: jev.model,
       scope: JEV_SUMMARY_VERIFY_SCOPE,
       ...(input.jevTransport !== undefined
         ? { transport: input.jevTransport }

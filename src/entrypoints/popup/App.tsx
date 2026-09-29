@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { hasConsent } from "../../consent/records";
+import { CONSENT_VERSION } from "../../consent/records";
+import { db } from "../../db/database";
 import {
   createTag,
   getTag,
@@ -17,10 +18,7 @@ import {
 } from "../../messages/decisions";
 import type { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
-import {
-  DECISIONS_CONSENT_SCOPE,
-  PresetId,
-} from "../../schemas/provider";
+import { DECISIONS_CONSENT_SCOPE } from "../../schemas/provider";
 import { getTree, ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../../sync/chrome-bookmarks";
 import {
@@ -283,14 +281,16 @@ export function App() {
       // Cheap local gate: skip the worker round-trip entirely when no
       // provider holds a current `jev_decisions` grant — the worker would
       // refuse `ok:false` anyway, so the outcome in the UI is identical.
+      // Origin-agnostic like the side panel's Ask gate: the popup does not
+      // know which provider the worker will use, so ANY current
+      // `jev_decisions` grant lets the suggestion attempt proceed.
       let consented = false;
       try {
-        for (const preset of PresetId.options) {
-          if (await hasConsent(DECISIONS_CONSENT_SCOPE, preset)) {
-            consented = true;
-            break;
-          }
-        }
+        consented = (await db.consents.toArray()).some(
+          (row) =>
+            row.scope === DECISIONS_CONSENT_SCOPE &&
+            row.consentVersion === CONSENT_VERSION,
+        );
       } catch {
         consented = false;
       }

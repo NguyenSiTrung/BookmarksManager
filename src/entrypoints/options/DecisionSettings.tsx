@@ -7,6 +7,8 @@ import {
 } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
+  CUSTOM_JEV_PROVIDER_NAME,
+  customJevDisclosure,
   DECISIONS_DESCRIPTION,
   DECISIONS_NEVER_SENT_FIELDS,
   DECISIONS_PURPOSES,
@@ -17,9 +19,6 @@ import {
   PROVIDER_DISCLOSURES,
 } from "../../consent/disclosure";
 import {
-  grantConsent,
-  hasConsent,
-  revokeConsent,
   grantConsentAtOrigin,
   hasConsentAtOrigin,
   revokeConsentAtOrigin,
@@ -39,10 +38,17 @@ import {
   DecisionMessageResult,
 } from "../../messages/decisions";
 import {
+  CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
   LLM_ESCALATE_SCOPE,
+  type JevProviderId,
   PresetId,
 } from "../../schemas/provider";
+import {
+  ProviderMessage,
+  ProviderMessageResult,
+} from "../../messages/provider";
+import { PRESETS } from "../../net/presets";
 import {
   LlmFeatureMessage,
   LlmFeatureMessageResult,
@@ -120,7 +126,7 @@ const AUTO_APPLY_KINDS = [
  * lets a stale emission be recognized after a preset switch.
  */
 interface ConsentRead {
-  preset: PresetId;
+  preset: JevProviderId;
   granted: boolean;
 }
 
@@ -161,7 +167,14 @@ function LoadState({
 }
 
 export function DecisionSettings() {
-  const [presetId, setPresetId] = useState<PresetId>("typesafe");
+  const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
+  /**
+   * The configured custom Jev provider's egress origin, from the worker's
+   * PROVIDER_STATUS reply. `null` while unread or when no custom provider
+   * is configured — the custom consent card only renders once an origin
+   * exists to grant against (consent is per-origin).
+   */
+  const [customOrigin, setCustomOrigin] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
   const [settings, setSettings] = useState<DecisionSettingsValue | null>(null);
   const [blocklist, setBlocklist] = useState<readonly string[] | null>(null);
@@ -188,7 +201,20 @@ export function DecisionSettings() {
   const [escalationBusy, setEscalationBusy] = useState(false);
   const escalationDisclosure = LLM_SCOPE_DISCLOSURES[LLM_ESCALATE_SCOPE];
 
-  const disclosure = PROVIDER_DISCLOSURES[presetId];
+  /**
+   * The origin the selected provider's `jev_decisions` grant lives at:
+   * the preset's fixed registry origin, or the custom provider's resolved
+   * origin. Consent is stored per-origin, so presets and custom use the
+   * same read/write path here.
+   */
+  const consentOrigin =
+    presetId === CUSTOM_PROVIDER_ID
+      ? customOrigin
+      : PRESETS[presetId].origin;
+  const disclosure =
+    presetId === CUSTOM_PROVIDER_ID
+      ? customJevDisclosure(customOrigin ?? undefined)
+      : PROVIDER_DISCLOSURES[presetId];
 
   /**
    * The current provider's `jev_decisions` grant, live from `db.consents`.
@@ -200,10 +226,12 @@ export function DecisionSettings() {
    */
   const consentRead = useLiveQuery(
     (): Promise<ConsentRead> =>
-      hasConsent(DECISIONS_CONSENT_SCOPE, presetId)
-        .then((granted) => ({ preset: presetId, granted }))
-        .catch(() => ({ preset: presetId, granted: false })),
-    [presetId],
+      consentOrigin === null
+        ? Promise.resolve({ preset: presetId, granted: false })
+        : hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
+            .then((granted) => ({ preset: presetId, granted }))
+            .catch(() => ({ preset: presetId, granted: false })),
+    [presetId, consentOrigin],
   );
 
   /**
@@ -256,6 +284,30 @@ export function DecisionSettings() {
       void loadSettings();
     });
   }, [loadSettings]);
+
+  // The custom provider's egress origin comes from the worker's status
+  // reply — the same resolved destination the egress gate would see. When
+  // no custom provider is configured the card below stays hidden.
+  useEffect(() => {
+    queueMicrotask(() => {
+      void chrome.runtime
+        .sendMessage(
+          ProviderMessage.parse({
+            type: "PROVIDER_STATUS",
+            preset: CUSTOM_PROVIDER_ID,
+          }),
+        )
+        .then((raw) => {
+          const result = ProviderMessageResult.safeParse(raw);
+          if (result.success && result.data.ok && "status" in result.data) {
+            setCustomOrigin(result.data.status.origin ?? null);
+          }
+        })
+        .catch(() => {
+          // A missing worker surface leaves the card hidden.
+        });
+    });
+  }, []);
 
   /** Re-run the settings read after a failure — the Retry button's action. */
   const onRetryLoad = () => {
@@ -383,7 +435,7 @@ export function DecisionSettings() {
       .finally(() => setEscalationBusy(false));
   };
 
-  const onPresetChange = (next: PresetId) => {
+  const onPresetChange = (next: JevProviderId) => {
     setPresetId(next);
     setAgreed(false);
     setNewEntry("");
@@ -417,7 +469,7 @@ export function DecisionSettings() {
   };
 
   const onGrant = () => {
-    if (!agreed || inFlight.current) {
+    if (!agreed || inFlight.current || consentOrigin === null) {
       return;
     }
     inFlight.current = true;
@@ -426,7 +478,7 @@ export function DecisionSettings() {
     setNotice(null);
     // Direct Dexie write: the gate re-verifies on every send, so the grant
     // is durable local state, not a message to the worker.
-    void grantConsent(DECISIONS_CONSENT_SCOPE, presetId)
+    void grantConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
       .then(() => {
         setAgreed(false);
         setNotice(
@@ -443,7 +495,7 @@ export function DecisionSettings() {
   };
 
   const onRevoke = () => {
-    if (inFlight.current) {
+    if (inFlight.current || consentOrigin === null) {
       return;
     }
     inFlight.current = true;
@@ -452,7 +504,7 @@ export function DecisionSettings() {
     setNotice(null);
     // Removes only the jev_decisions row — the provider's jev_test grant and
     // stored key are untouched.
-    void revokeConsent(DECISIONS_CONSENT_SCOPE, presetId)
+    void revokeConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
       .then(() => {
         setNotice(
           `Bookmark analysis consent revoked for ${disclosure.name}. The provider connection is unchanged.`,
@@ -595,6 +647,24 @@ export function DecisionSettings() {
                 }
               />
             ))}
+            {customOrigin !== null && (
+              <ProviderCard
+                name="decisions-provider"
+                value={CUSTOM_PROVIDER_ID}
+                checked={presetId === CUSTOM_PROVIDER_ID}
+                onChange={() => onPresetChange(CUSTOM_PROVIDER_ID)}
+                title={CUSTOM_JEV_PROVIDER_NAME}
+                inputLabel={CUSTOM_JEV_PROVIDER_NAME}
+                description={
+                  consentRead !== undefined &&
+                  consentRead.preset === CUSTOM_PROVIDER_ID
+                    ? consentRead.granted
+                      ? `Consent granted · ${customOrigin}`
+                      : `Not consented · ${customOrigin}`
+                    : customOrigin
+                }
+              />
+            )}
           </div>
         </fieldset>
 
@@ -632,18 +702,26 @@ export function DecisionSettings() {
                 When: {DECISIONS_TRIGGERS.join(", ")} — {DECISIONS_TRIGGER_NOTE}.
               </li>
               <li>{disclosure.dataNote}</li>
-              <li>
-                Read the{" "}
-                <a
-                  href={disclosure.privacyPolicyUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
-                >
-                  {disclosure.name} privacy policy
-                </a>{" "}
-                and {EXTENSION_PRIVACY_POLICY_REFERENCE}.
-              </li>
+              {disclosure.privacyPolicyUrl !== undefined ? (
+                <li>
+                  Read the{" "}
+                  <a
+                    href={disclosure.privacyPolicyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
+                  >
+                    {disclosure.name} privacy policy
+                  </a>{" "}
+                  and {EXTENSION_PRIVACY_POLICY_REFERENCE}.
+                </li>
+              ) : (
+                <li>
+                  A custom endpoint has no bundled policy link — review that
+                  provider&apos;s own privacy policy, and{" "}
+                  {EXTENSION_PRIVACY_POLICY_REFERENCE}.
+                </li>
+              )}
             </ul>
           </Disclosure>
         </div>

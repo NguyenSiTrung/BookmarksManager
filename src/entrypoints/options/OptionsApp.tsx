@@ -2,7 +2,6 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useEffect, useState } from "react";
 import { db } from "../../db/database";
 import { CONSENT_VERSION } from "../../consent/records";
-import { PRESETS } from "../../net/presets";
 import {
   CONSENT_SCOPE,
   DECISIONS_CONSENT_SCOPE,
@@ -127,16 +126,14 @@ export function OptionsApp() {
       [],
     ) ?? [];
 
-  const hasGrant = (scope: string, origin: string) =>
+  // Connected = a current `jev_test` grant at ANY origin — presets and the
+  // custom provider alike — or a configured LLM provider. Origin-agnostic
+  // because the checklist only asks "is some provider usable".
+  const connected =
     consents.some(
       (row) =>
-        row.scope === scope &&
-        row.origin === origin &&
+        row.scope === CONSENT_SCOPE &&
         row.consentVersion === CONSENT_VERSION,
-    );
-  const connected =
-    (Object.keys(PRESETS) as (keyof typeof PRESETS)[]).some((id) =>
-      hasGrant(CONSENT_SCOPE, PRESETS[id].origin),
     ) || consents.some((row) => row.scope === LLM_TEST_SCOPE);
   const analysisConsented = consents.some(
     (row) =>

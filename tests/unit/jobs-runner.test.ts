@@ -668,7 +668,7 @@ describe("job adapter user-blocklist threading", () => {
     });
     const analyze = createPipelineAnalyzer({
       context: emptyContext(),
-      preset: "typesafe",
+      providerId: "typesafe",
       model: "jev-latest",
       userBlocklist: ["example.com"],
     });
@@ -689,7 +689,7 @@ describe("job adapter user-blocklist threading", () => {
       now,
     });
     const scan = createDuplicateScanner({
-      preset: "typesafe",
+      providerId: "typesafe",
       model: "jev-latest",
       userBlocklist: ["example.com"],
     });

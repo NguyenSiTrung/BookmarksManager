@@ -82,7 +82,7 @@ async function seedJob(): Promise<Job> {
   return job;
 }
 
-const OPTS = { preset: "typesafe" as const, model: "jev-latest" };
+const OPTS = { providerId: "typesafe", model: "jev-latest" };
 
 beforeEach(async () => {
   await db.delete();

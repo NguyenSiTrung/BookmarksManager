@@ -5,7 +5,6 @@ import type { Decision as DecisionDocument } from "../schemas/decision";
 import { DecisionState } from "../schemas/decision-state";
 import type { SentBookmark } from "../schemas/decision-state";
 import type { TagDef } from "../schemas/meta";
-import type { PresetId } from "../schemas/provider";
 import { UsageRecord } from "../schemas/usage";
 import { answerConfidence } from "../jev/confidence";
 import { JevClientError, createJevClient } from "../jev/client";
@@ -118,8 +117,8 @@ const DEFAULT_CHECKS: readonly AnalysisCheck[] = ["categorize", "tags"];
 export interface AnalyzeBookmarkOptions {
   readonly bookmark: AnalysisBookmark;
   readonly context: AnalysisContext;
-  /** Jev preset the client is bound to. */
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   /** Model id sent in the request; the response may report another. */
   readonly model: string;
   /** Checks to run; defaults to `["categorize", "tags"]`. */
@@ -653,7 +652,7 @@ function toDocument(
     status,
     source: {
       engine: "jev" as const,
-      providerId: options.preset,
+      providerId: options.providerId,
       model,
       questionSetVersion: draft.questionSetVersion,
     },
@@ -807,7 +806,7 @@ async function runAnalysis(
   const client =
     options.client ??
     createJevClient({
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       scope: "jev_decisions",
       ...(options.transport === undefined

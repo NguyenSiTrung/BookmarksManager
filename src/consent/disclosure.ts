@@ -49,8 +49,13 @@ export interface ProviderDisclosure {
   readonly name: string;
   /** The literal canonical origin that receives the request. */
   readonly origin: string;
-  /** The provider's own privacy policy (governs data it receives). */
-  readonly privacyPolicyUrl: string;
+  /**
+   * The provider's own privacy policy (governs data it receives). Absent
+   * for the custom provider — a user-typed endpoint has no curated policy
+   * link, so the UI points the user at the provider's own policy instead
+   * (see {@link CUSTOM_JEV_DATA_NOTE}).
+   */
+  readonly privacyPolicyUrl?: string;
   /** Provider data-handling note surfaced to the user (§8.5 step 7). */
   readonly dataNote: string;
 }
@@ -73,6 +78,28 @@ export const PROVIDER_DISCLOSURES = {
       "OpenRouter forwards Jev requests to TypeSafe; the data policy on the OpenRouter model page applies.",
   },
 } as const satisfies Record<PresetId, ProviderDisclosure>;
+
+/**
+ * Disclosure facts for the user-configured custom Jev provider. The
+ * recipient is whatever System One-compatible endpoint the user types, so
+ * the resolved origin is injected at render time and there is no curated
+ * privacy-policy link — the data note says exactly that, so the card never
+ * implies the endpoint was reviewed by this extension.
+ */
+export const CUSTOM_JEV_PROVIDER_NAME = "Custom Jev provider";
+
+export const CUSTOM_JEV_DATA_NOTE =
+  "A custom endpoint is not reviewed by this extension — the provider you point it at governs how your data is handled; review its own privacy policy and terms before enabling.";
+
+export function customJevDisclosure(
+  origin: string | undefined,
+): ProviderDisclosure {
+  return {
+    name: CUSTOM_JEV_PROVIDER_NAME,
+    origin: origin ?? "the configured origin",
+    dataNote: CUSTOM_JEV_DATA_NOTE,
+  };
+}
 
 // --- `jev_decisions` bookmark-metadata disclosure ------------------------
 // The per-provider consent that covers every Phase 4 decision feature

@@ -103,7 +103,7 @@ function options(over: Partial<RerankSearchOptions> = {}): RerankSearchOptions {
   return {
     query: QUERY,
     hits: baseHits(),
-    preset: "typesafe",
+    providerId: "typesafe",
     model: "jev-latest",
     transport: serverTransport(),
     ...over,

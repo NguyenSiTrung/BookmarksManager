@@ -27,7 +27,6 @@ import type {
 import {
   DEFAULT_PROVIDER_MODEL,
   PRESET_MODELS,
-  type PresetId,
 } from "../../src/schemas/provider";
 
 /**
@@ -45,7 +44,7 @@ const DISABLED: ProviderStatus = { enabled: false, consentGranted: false };
 let requestSpy: ReturnType<typeof vi.fn>;
 let sendMessageSpy: ReturnType<typeof vi.fn>;
 let fetchSpy: ReturnType<typeof vi.fn>;
-let statusByPreset: Record<PresetId, ProviderStatus>;
+let statusByPreset: Record<string, ProviderStatus>;
 
 /**
  * In-memory worker double: answers the typed provider protocol the way
@@ -55,7 +54,7 @@ let statusByPreset: Record<PresetId, ProviderStatus>;
 function workerReply(message: unknown): Promise<ProviderMessageResult> {
   const msg = message as {
     type: string;
-    preset: PresetId;
+    preset: string;
     model?: string;
     key?: string;
   };
@@ -63,7 +62,7 @@ function workerReply(message: unknown): Promise<ProviderMessageResult> {
     case "PROVIDER_STATUS":
       return Promise.resolve({
         ok: true,
-        status: { ...statusByPreset[msg.preset] },
+        status: { ...(statusByPreset[msg.preset] ?? DISABLED) },
       });
     case "ENABLE_PROVIDER":
       statusByPreset[msg.preset] = {
@@ -74,13 +73,13 @@ function workerReply(message: unknown): Promise<ProviderMessageResult> {
       };
       return Promise.resolve({
         ok: true,
-        status: { ...statusByPreset[msg.preset] },
+        status: { ...(statusByPreset[msg.preset] ?? DISABLED) },
       });
     case "REVOKE_PROVIDER":
       statusByPreset[msg.preset] = { ...DISABLED };
       return Promise.resolve({
         ok: true,
-        status: { ...statusByPreset[msg.preset] },
+        status: { ...(statusByPreset[msg.preset] ?? DISABLED) },
       });
     default:
       return Promise.resolve({
@@ -92,7 +91,11 @@ function workerReply(message: unknown): Promise<ProviderMessageResult> {
 }
 
 beforeEach(() => {
-  statusByPreset = { typesafe: { ...DISABLED }, openrouter: { ...DISABLED } };
+  statusByPreset = {
+    typesafe: { ...DISABLED },
+    openrouter: { ...DISABLED },
+    custom: { ...DISABLED },
+  };
   requestSpy = vi.fn(async () => true);
   sendMessageSpy = vi.fn(workerReply);
   fetchSpy = vi.fn();
@@ -121,7 +124,9 @@ function enableButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: /enable/i }) as HTMLButtonElement;
 }
 function modelSelect(): HTMLSelectElement {
-  return screen.getByLabelText(/model/i) as HTMLSelectElement;
+  // Exact match: the custom-provider card copy mentions "model id" and
+  // would otherwise match a loose /model/i query.
+  return screen.getByLabelText(/^model$/i) as HTMLSelectElement;
 }
 function nonStatusCalls(): unknown[] {
   return sendMessageSpy.mock.calls
@@ -563,5 +568,89 @@ describe("provider data notes and privacy link", () => {
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
     expect(link.rel).toContain("noreferrer");
+  });
+
+  it("shows the custom disclosure — resolved origin, no privacy-policy link", async () => {
+    render(<ProviderSetup />);
+    fireEvent.click(
+      await screen.findByRole("radio", { name: "Custom Jev provider" }),
+    );
+    fireEvent.change(await screen.findByLabelText(/^base url$/i), {
+      target: { value: "https://ai.example.com/api" },
+    });
+    const disclosure = await screen.findByRole("region", {
+      name: /custom jev provider data disclosure/i,
+    });
+    const view = within(disclosure);
+    expect(
+      view.getAllByText(/ai\.example\.com/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      view.getByText(/not reviewed by this extension/i),
+    ).toBeTruthy();
+    // A custom endpoint has no curated policy link to render.
+    expect(view.queryByRole("link")).toBeNull();
+  });
+});
+
+describe("custom provider enable", () => {
+  it("collects base URL + model id, requests the computed origin pattern, and sends both in ENABLE", async () => {
+    render(<ProviderSetup />);
+    fireEvent.click(
+      await screen.findByRole("radio", { name: "Custom Jev provider" }),
+    );
+    fireEvent.change(await screen.findByLabelText(/^base url$/i), {
+      target: { value: "https://ai.example.com/api" },
+    });
+    fireEvent.change(screen.getByLabelText(/^model id$/i), {
+      target: { value: "jev-edge" },
+    });
+    await fillAndAgree();
+    fireEvent.click(enableButton());
+    // The requested permission is the origin pattern computed from the
+    // typed base URL — not a preset's fixed pattern.
+    await waitFor(() =>
+      expect(requestSpy).toHaveBeenCalledWith({
+        origins: ["https://ai.example.com/*"],
+      }),
+    );
+    const enableCall = sendMessageSpy.mock.calls
+      .map(([message]) => message as { type: string })
+      .find((message) => message.type === "ENABLE_PROVIDER");
+    expect(enableCall).toMatchObject({
+      preset: "custom",
+      baseUrl: "https://ai.example.com/api",
+      model: "jev-edge",
+      key: "sk-live-abcdef",
+    });
+  });
+
+  it("keeps Enable disabled until the base URL parses and the model id is non-empty", async () => {
+    render(<ProviderSetup />);
+    fireEvent.click(
+      await screen.findByRole("radio", { name: "Custom Jev provider" }),
+    );
+    fireEvent.change(await screen.findByLabelText(/api key/i), {
+      target: { value: "sk-live-abcdef" },
+    });
+    fireEvent.click(agreeCheckbox());
+    // Wait for the status probe to settle — key + agreement alone are not
+    // enough while the endpoint fields are empty.
+    await waitFor(() =>
+      expect(
+        sendMessageSpy.mock.calls.some(
+          ([message]) =>
+            (message as { type: string }).type === "PROVIDER_STATUS",
+        ),
+      ).toBe(true),
+    );
+    expect(enableButton().disabled).toBe(true);
+    fireEvent.change(await screen.findByLabelText(/^base url$/i), {
+      target: { value: "https://ai.example.com/api" },
+    });
+    fireEvent.change(screen.getByLabelText(/^model id$/i), {
+      target: { value: "jev-edge" },
+    });
+    await waitFor(() => expect(enableButton().disabled).toBe(false));
   });
 });

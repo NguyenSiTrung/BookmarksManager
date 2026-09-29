@@ -5,7 +5,6 @@ import { minimizeBookmark } from "../decisions/minimize";
 import { UsageRecord } from "../schemas/usage";
 import type { AnalyzeBookmarkResult } from "../decisions/pipeline";
 import type { Job } from "../schemas/job";
-import type { PresetId } from "../schemas/provider";
 import { DECISIONS_CONSENT_SCOPE } from "../schemas/provider";
 import {
   RestructureAssignment,
@@ -110,8 +109,8 @@ async function recordUsage(
 }
 
 export interface AssignOptions {
-  /** Jev preset the client is bound to. */
-  readonly preset: PresetId;
+  /** Jev provider the client is bound to — a preset id or `"custom"`. */
+  readonly providerId: string;
   /** Model id sent in every request. */
   readonly model: string;
   /** The user's own blocklist (normalized hosts), mirrored into `minimizeBookmark`. */
@@ -149,7 +148,7 @@ export async function assignProposedFolder(
   const client: JevClient =
     options.client ??
     createJevClient({
-      preset: options.preset,
+      providerId: options.providerId,
       model: options.model,
       scope: DECISIONS_CONSENT_SCOPE,
       ...(options.transport === undefined

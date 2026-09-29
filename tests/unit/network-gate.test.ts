@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONSENT_VERSION,
   grantConsent,
+  grantConsentAtOrigin,
   grantTestConsent,
   revokeTestConsent,
 } from "../../src/consent/records";
@@ -924,5 +925,123 @@ describe("jev_summary_verify gate", () => {
     ).catch((caught: unknown) => caught);
     expect((error as NetworkGateError).code).toBe("no_consent");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("custom Jev provider gate", () => {
+  const BASE_URL = "https://ai-gateway.example.com/api";
+  const ORIGIN = "https://ai-gateway.example.com";
+
+  /** The stored ProviderSettings row the ENABLE flow would have written. */
+  async function seedCustomProvider(
+    baseUrl: string = BASE_URL,
+    model = "jev-edge",
+  ): Promise<void> {
+    await db.metadata.put({
+      key: "custom",
+      value: { preset: "custom", baseUrl, model, keySuffix: "cdef" },
+    });
+  }
+
+  it("fails closed as unlisted_origin while no settings row exists", async () => {
+    await expectGateBlock(
+      sendConsentedTest("custom", "jev-edge"),
+      "unlisted_origin",
+    );
+    // Destination resolution happens before consent, permission, or key.
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the stored row is malformed", async () => {
+    await db.metadata.put({
+      key: "custom",
+      value: {
+        preset: "custom",
+        baseUrl: "not a url",
+        model: "jev-edge",
+        keySuffix: "cdef",
+      },
+    });
+    await expectGateBlock(
+      sendConsentedTest("custom", "jev-edge"),
+      "unlisted_origin",
+    );
+  });
+
+  it("sends to <baseUrl>/systemone with the stored model at its own origin", async () => {
+    await seedCustomProvider();
+    await grantConsentAtOrigin(CONSENT_SCOPE, ORIGIN);
+    fetchSpy.mockResolvedValue(okResponse());
+
+    await sendConsentedTest("custom", "jev-edge");
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/systemone`);
+    // The permission and key are scoped to the custom provider id.
+    expect(containsSpy).toHaveBeenCalledWith({
+      origins: ["https://ai-gateway.example.com/*"],
+    });
+    expect(readKey).toHaveBeenCalledWith("custom");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.model).toBe("jev-edge");
+    const logs = await db.sentLog.toArray();
+    expect(logs[0]?.destination).toBe(ORIGIN);
+  });
+
+  it("requires consent at the custom origin — a preset grant does not cover it", async () => {
+    await seedCustomProvider();
+    await grantTestConsent("typesafe");
+    await expectGateBlock(
+      sendConsentedTest("custom", "jev-edge"),
+      "no_consent",
+    );
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+  });
+
+  it("pins the model allowlist to the configured model id", async () => {
+    await seedCustomProvider();
+    await grantConsentAtOrigin(CONSENT_SCOPE, ORIGIN);
+    await expectGateBlock(
+      sendConsentedTest("custom", "jev-latest"),
+      "unlisted_model",
+    );
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readKey).not.toHaveBeenCalled();
+  });
+
+  it("admits a loopback http base URL with its computed pattern", async () => {
+    await seedCustomProvider("http://localhost:11434/api", "jev-local");
+    await grantConsentAtOrigin(CONSENT_SCOPE, "http://localhost:11434");
+    fetchSpy.mockResolvedValue(okResponse());
+
+    await sendConsentedTest("custom", "jev-local");
+
+    const [url] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/api/systemone");
+    expect(containsSpy).toHaveBeenCalledWith({
+      origins: ["http://localhost/*"],
+    });
+  });
+
+  it("a re-pointed stored row cannot ride the previous origin's consent", async () => {
+    await seedCustomProvider();
+    await grantConsentAtOrigin(CONSENT_SCOPE, ORIGIN);
+    // Rewriting the row to a different origin must require fresh consent —
+    // consent keys off the resolved origin on every send.
+    await db.metadata.put({
+      key: "custom",
+      value: {
+        preset: "custom",
+        baseUrl: "https://other-gateway.example.com/api",
+        model: "jev-edge",
+        keySuffix: "cdef",
+      },
+    });
+    await expectGateBlock(
+      sendConsentedTest("custom", "jev-edge"),
+      "no_consent",
+    );
   });
 });
