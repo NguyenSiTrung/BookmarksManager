@@ -465,6 +465,50 @@ describe("persisted state and revocation", () => {
     ).toBeNull();
     expect(screen.getByRole("button", { name: /enable/i })).toBeTruthy();
   });
+
+  it("reopens the enabled custom provider instead of defaulting to TypeSafe", async () => {
+    statusByPreset.custom = {
+      enabled: true,
+      consentGranted: true,
+      model: "jev-edge",
+      keySuffix: "cdef",
+      baseUrl: "https://ai.example.com/api",
+      origin: "https://ai.example.com",
+    };
+    render(<ProviderSetup />);
+    const custom = (await screen.findByRole("radio", {
+      name: "Custom Jev provider",
+    })) as HTMLInputElement;
+    await waitFor(() => expect(custom.checked).toBe(true));
+    const panel = await screen.findByRole("group", {
+      name: /enabled provider/i,
+    });
+    expect(panel.textContent).toContain("jev-edge");
+    expect(panel.textContent).toContain("cdef");
+    expect(panel.textContent).toContain("https://ai.example.com");
+    expect(
+      (screen.getByRole("radio", { name: "TypeSafe" }) as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+  });
+
+  it("selects a configured-but-revoked provider when none is enabled", async () => {
+    statusByPreset.custom = {
+      enabled: false,
+      consentGranted: false,
+      model: "jev-edge",
+      keySuffix: "cdef",
+      baseUrl: "https://ai.example.com/api",
+      origin: "https://ai.example.com",
+    };
+    render(<ProviderSetup />);
+    const custom = (await screen.findByRole("radio", {
+      name: "Custom Jev provider",
+    })) as HTMLInputElement;
+    await waitFor(() => expect(custom.checked).toBe(true));
+    // Not enabled — the custom setup form renders, not the enabled view.
+    expect(await screen.findByLabelText(/^base url$/i)).toBeTruthy();
+  });
 });
 
 describe("model alias warning", () => {

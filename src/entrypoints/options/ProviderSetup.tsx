@@ -135,39 +135,90 @@ export function ProviderSetup() {
   // Synchronous reentrancy guard — `busy` state lags a fast double click.
   const inFlight = useRef(false);
 
-  const loadStatus = useCallback(async (preset: JevProviderId) => {
-    try {
-      const raw = await chrome.runtime.sendMessage(
-        ProviderMessage.parse({ type: "PROVIDER_STATUS", preset }),
-      );
+  // One status read; null covers a transport failure or an unparseable
+  // reply — the caller decides how to surface it.
+  const probeStatus = useCallback(
+    async (preset: JevProviderId): Promise<ProviderStatus | null> => {
+      try {
+        const raw = await chrome.runtime.sendMessage(
+          ProviderMessage.parse({ type: "PROVIDER_STATUS", preset }),
+        );
+        const result = ProviderMessageResult.safeParse(raw);
+        return result.success && result.data.ok && "status" in result.data
+          ? result.data.status
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const loadStatus = useCallback(
+    async (preset: JevProviderId) => {
+      const status = await probeStatus(preset);
+      // A reply for a preset the user has since switched away from is
+      // dropped — the status belongs to the panel that requested it.
       if (preset !== currentPreset.current) {
         return;
       }
-      const result = ProviderMessageResult.safeParse(raw);
-      if (result.success && result.data.ok && "status" in result.data) {
-        setStatus(result.data.status);
+      if (status !== null) {
+        setStatus(status);
       } else {
         setStatus({ enabled: false, consentGranted: false });
         setError("The extension worker did not return a provider status.");
       }
-    } catch {
-      if (preset !== currentPreset.current) {
-        return;
-      }
-      setStatus({ enabled: false, consentGranted: false });
-      setError("The extension worker did not return a provider status.");
-    }
-  }, []);
+    },
+    [probeStatus],
+  );
 
-  // Restore the selected provider's persisted state whenever it changes. The
-  // microtask boundary makes the fetch a subscription callback, not a
+  /**
+   * Reopen the provider the user actually configured instead of always
+   * landing on the first preset. Mirrors the worker's active-provider
+   * order (JEV_PROVIDER_IDS): the first fully enabled provider wins, then
+   * the first that still has saved settings, then the default — so a
+   * consent-revoked-but-configured custom endpoint still comes up
+   * selected. Runs once on mount; a click that lands while the probe is
+   * in flight wins, because currentPreset would no longer be the initial
+   * default when the probe resolves.
+   */
+  const restoreSelection = useCallback(async () => {
+    const results = await Promise.all(
+      PROVIDER_IDS.map(async (id) => ({ id, status: await probeStatus(id) })),
+    );
+    if (currentPreset.current !== "typesafe") {
+      return;
+    }
+    const pick =
+      results.find((entry) => entry.status?.enabled === true) ??
+      results.find((entry) => entry.status?.model !== undefined);
+    if (pick !== undefined && pick.id !== currentPreset.current) {
+      currentPreset.current = pick.id;
+      setPresetId(pick.id);
+      // The presetId effect reloads the picked provider's status.
+    } else {
+      void loadStatus("typesafe");
+    }
+  }, [probeStatus, loadStatus]);
+
+  // Restore the selected provider's persisted state whenever it changes;
+  // on first mount that includes re-selecting the configured provider.
+  // The microtask boundary makes the fetch a subscription callback, not a
   // synchronous state write in the effect body.
+  const restored = useRef(false);
   useEffect(() => {
     currentPreset.current = presetId;
+    const firstRun = !restored.current;
+    restored.current = true;
     queueMicrotask(() => {
-      void loadStatus(presetId);
+      if (firstRun) {
+        void restoreSelection();
+      } else {
+        void loadStatus(presetId);
+      }
     });
-  }, [presetId, loadStatus]);
+  }, [presetId, loadStatus, restoreSelection]);
+
 
   const onPresetChange = (next: JevProviderId) => {
     currentPreset.current = next;
