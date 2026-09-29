@@ -24,6 +24,8 @@ import {
   secondaryButtonClass,
   sectionHeadingClass,
 } from "./ui";
+import { Alert } from "./components";
+import { TrashIcon, WarningIcon } from "../../ui/components/icons";
 
 /**
  * "Delete all extension data" section of the Options page (PROJECT_PLAN.md
@@ -87,17 +89,22 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
         aria-labelledby="delete-all-heading"
         className={dangerCardClass}
       >
-        <h2 id="delete-all-heading" className={sectionHeadingClass}>
-          Delete all extension data
-        </h2>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+            <WarningIcon className="size-4" />
+          </span>
+          <h2 id="delete-all-heading" className={sectionHeadingClass}>
+            Delete all extension data
+          </h2>
+        </div>
         {result.databaseDeleted ? (
-          <p role="status" className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">
-            {DELETE_ALL_DONE_MESSAGE}
-          </p>
+          <div className="mt-3">
+            <Alert tone="success">{DELETE_ALL_DONE_MESSAGE}</Alert>
+          </div>
         ) : (
-          <p role="alert" className="mt-2 text-sm text-destructive">
-            {DELETE_ALL_DATABASE_BLOCKED_MESSAGE}
-          </p>
+          <div className="mt-3">
+            <Alert tone="error">{DELETE_ALL_DATABASE_BLOCKED_MESSAGE}</Alert>
+          </div>
         )}
         {result.permissionsFailed.length > 0 && (
           <div
@@ -125,17 +132,23 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
       aria-labelledby="delete-all-heading"
       className={dangerCardClass}
     >
-      <h2 id="delete-all-heading" className={sectionHeadingClass}>
-        Delete all extension data
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+          <WarningIcon className="size-4" />
+        </span>
+        <h2 id="delete-all-heading" className={sectionHeadingClass}>
+          Delete all extension data
+        </h2>
+      </div>
+      <p className="mt-1.5 text-sm text-muted-foreground">
         Permanently remove everything this extension stored on this device.
       </p>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`mt-3 ${dangerButtonClass}`}
+        className={`mt-4 ${dangerButtonClass}`}
       >
+        <TrashIcon className="size-4" />
         Delete all extension data
       </button>
 
@@ -144,9 +157,9 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
         the user closed it still has to be visible somewhere.
       */}
       {error !== null && !open && (
-        <p role="alert" className="mt-2 text-sm text-destructive">
-          {error}
-        </p>
+        <div className="mt-3">
+          <Alert tone="error">{error}</Alert>
+        </div>
       )}
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -172,11 +185,7 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
             {NATIVE_BOOKMARKS_NOTICE}
           </p>
 
-          {error !== null && (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
-          )}
+          {error !== null && <Alert tone="error">{error}</Alert>}
 
           <DialogFooter>
             <DialogClose asChild>

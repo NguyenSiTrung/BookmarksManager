@@ -3,23 +3,26 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db, type SentLogEntry } from "../../db/database";
 import { clearSentLog, SENT_LOG_RETENTION_CAP } from "../../net/sent-log";
 import type { UsageRecord } from "../../schemas/usage";
-import { cardClass, dangerButtonClass, sectionHeadingClass } from "./ui";
+import { cn } from "../../ui/lib/cn";
+import { Alert, Chip } from "./components";
+import { PulseIcon, TrashIcon } from "../../ui/components/icons";
+import { cardClass, ghostDangerButtonClass, sectionHeadingClass } from "./ui";
 
 /**
  * Options-page "Data sent" surface (spec FR10) plus the FR8 cost totals.
  *
+ * - **Usage stats.** `db.usage` rows aggregate live into stat tiles: request
+ *   count, input/output tokens, and reported cost — summed only over rows
+ *   that reported one. An absent `costUsd` means "not reported", never $0.00;
+ *   unpriced requests surface as a count.
  * - **Sent log.** `db.sentLog` is metadata-only by construction
  *   (`src/net/sent-log.ts` rebuilds each row from exactly
- *   `sentAt`/`destination`/`feature`/`fieldNames`), so the list renders those
+ *   `sentAt`/`destination`/`feature`/`fieldNames`), so each row renders those
  *   four fields and nothing else — no request bodies, headers, keys, or
  *   bookmark content exist on the rows to leak. Ordered newest-first by
  *   `sentAt`; the retention cap is disclosed with the same
  *   `SENT_LOG_RETENTION_CAP` the writer enforces. Clear calls
  *   `clearSentLog()`.
- * - **Cost totals.** `db.usage` rows are aggregated live: total input and
- *   output tokens over all rows, and `costUsd` summed only over the rows
- *   that reported one — an absent `costUsd` means "not reported", never
- *   $0.00.
  *
  * Both lists degrade to empty when IndexedDB is unavailable; a missing or
  * failing read must not throw the render (`useLiveQuery` rethrows observable
@@ -56,6 +59,7 @@ export function SentLog() {
     (sum, row) => sum + (row.costUsd ?? 0),
     0,
   );
+  const unpriced = usage.length - costReported.length;
 
   const onClear = () => {
     if (inFlight.current) {
@@ -81,36 +85,65 @@ export function SentLog() {
   };
 
   return (
-    <section
-      aria-labelledby="sent-log-heading"
-      className={cardClass}
-    >
-      <h2 id="sent-log-heading" className={sectionHeadingClass}>
-        Data sent to providers
-      </h2>
+    <section aria-labelledby="sent-log-heading" className={cardClass}>
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <PulseIcon className="size-4" />
+        </span>
+        <h2 id="sent-log-heading" className={sectionHeadingClass}>
+          Data sent to providers
+        </h2>
+      </div>
 
-      <section aria-labelledby="usage-totals-heading" className="mt-4">
-        <h3 id="usage-totals-heading" className="font-medium">
+      {/* Usage totals — stat tiles instead of a run-on sentence. */}
+      <section aria-labelledby="usage-totals-heading" className="mt-5">
+        <h3 id="usage-totals-heading" className="text-sm font-medium">
           Usage and cost
         </h3>
         {usage.length === 0 ? (
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-2 text-sm text-muted-foreground">
             No provider requests recorded yet.
           </p>
         ) : (
-          <p role="status" className="mt-1 text-sm text-muted-foreground">
-            {usage.length} {usage.length === 1 ? "request" : "requests"} —{" "}
-            {inputTokens} input tokens, {outputTokens} output tokens; cost
-            reported on {costReported.length} of {usage.length} requests
-            {costReported.length > 0 &&
-              `, totalling $${costTotal.toFixed(4)}`}
-            .
-          </p>
+          <dl
+            aria-label="Usage totals"
+            className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4"
+          >
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <dt className="text-xs text-muted-foreground">Requests</dt>
+              <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
+                {usage.length}
+              </dd>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <dt className="text-xs text-muted-foreground">Tokens in</dt>
+              <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
+                {inputTokens.toLocaleString()}
+              </dd>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <dt className="text-xs text-muted-foreground">Tokens out</dt>
+              <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
+                {outputTokens.toLocaleString()}
+              </dd>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/40 p-3">
+              <dt className="text-xs text-muted-foreground">Reported cost</dt>
+              <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
+                {costReported.length > 0 ? `$${costTotal.toFixed(4)}` : "—"}
+              </dd>
+              <dd className="mt-0.5 text-xs text-muted-foreground">
+                {costReported.length} of {usage.length} priced
+                {unpriced > 0 && ` · ${unpriced} unpriced`}
+              </dd>
+            </div>
+          </dl>
         )}
       </section>
 
+      {/* Sent log — structured rows. */}
       <section aria-labelledby="sent-log-list-heading" className="mt-6">
-        <h3 id="sent-log-list-heading" className="font-medium">
+        <h3 id="sent-log-list-heading" className="text-sm font-medium">
           Sent log
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -119,23 +152,31 @@ export function SentLog() {
           recorded. The log keeps the newest {SENT_LOG_RETENTION_CAP} entries.
         </p>
         {entries.length === 0 ? (
-          <p role="status" className="mt-2 text-sm text-muted-foreground">
+          <div className="mt-3 flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+            <PulseIcon className="size-5 shrink-0 text-muted-foreground/60" />
             Nothing has been sent yet.
-          </p>
+          </div>
         ) : (
           <>
-            <ul className="mt-2 space-y-2">
+            <ul className="mt-3 space-y-2">
               {entries.map((entry) => (
                 <li
                   key={entry.id}
-                  className="rounded border border-border p-2 text-sm"
+                  className={cn(
+                    "flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg",
+                    "border border-border bg-muted/30 px-3 py-2.5",
+                  )}
                 >
-                  <div className="flex flex-wrap items-baseline gap-x-2">
-                    <span>{new Date(entry.sentAt).toLocaleString()}</span>
-                    <span>{entry.destination}</span>
-                    <span>{entry.feature}</span>
-                  </div>
-                  <div>Fields: {entry.fieldNames.join(", ")}</div>
+                  <span className="font-options-mono text-xs text-muted-foreground tabular-nums">
+                    {new Date(entry.sentAt).toLocaleString()}
+                  </span>
+                  <Chip>{entry.destination}</Chip>
+                  <span className="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
+                    {entry.feature}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {entry.fieldNames.join(", ")}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -143,8 +184,9 @@ export function SentLog() {
               type="button"
               onClick={onClear}
               disabled={busy}
-              className={`mt-3 ${dangerButtonClass}`}
+              className={`mt-4 ${ghostDangerButtonClass}`}
             >
+              <TrashIcon className="size-3.5" />
               Clear sent log
             </button>
           </>
@@ -152,14 +194,14 @@ export function SentLog() {
       </section>
 
       {notice !== null && (
-        <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">
-          {notice}
-        </p>
+        <div className="mt-4">
+          <Alert tone="success">{notice}</Alert>
+        </div>
       )}
       {error !== null && (
-        <p role="alert" className="mt-3 text-sm text-destructive">
-          {error}
-        </p>
+        <div className="mt-4">
+          <Alert tone="error">{error}</Alert>
+        </div>
       )}
     </section>
   );

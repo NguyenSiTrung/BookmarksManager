@@ -530,12 +530,12 @@ describe("cost totals", () => {
       },
     ]);
     render(<SentLog />);
-    const totals = await screen.findByText(/600 input tokens/);
-    expect(totals.textContent).toContain("180 output tokens");
-    expect(totals.textContent).toContain("cost reported on 2 of 3 requests");
+    const totals = await screen.findByLabelText(/usage totals/i);
+    expect(totals.textContent).toContain("600");
+    expect(totals.textContent).toContain("180");
+    expect(totals.textContent).toContain("2 of 3 priced");
     expect(totals.textContent).toContain("$0.5");
   });
-
   it("never reports $0 for a request that carried no cost", async () => {
     await db.usage.add({
       model: "jev-latest",
@@ -544,8 +544,9 @@ describe("cost totals", () => {
       recordedAt: "2026-09-25T10:00:00.000Z",
     });
     render(<SentLog />);
-    const totals = await screen.findByText(/42 input tokens/);
-    expect(totals.textContent).toContain("cost reported on 0 of 1 requests");
+    const totals = await screen.findByLabelText(/usage totals/i);
+    expect(totals.textContent).toContain("0 of 1 priced");
+    // No cost figure renders for a request that reported none.
     expect(totals.textContent).not.toContain("$");
   });
 });
