@@ -22,7 +22,7 @@ export function ScopeHeading({
   drawer,
 }: ScopeHeadingProps): ReactElement {
   return (
-    <h2 className="min-w-0 text-sm font-medium">
+    <h2 className="min-w-0 flex-1 text-sm font-medium">
       {drawer === undefined ? (
         <span className="block truncate">{title}</span>
       ) : (
@@ -32,7 +32,7 @@ export function ScopeHeading({
           trigger={
             <button
               type="button"
-              className="-mx-1 flex max-w-full items-center gap-1 rounded-sm px-1 py-0.5 outline-hidden hover:bg-row-hover focus-visible:ring-2 focus-visible:ring-ring"
+              className="-mx-1 flex w-fit max-w-full items-center gap-1 rounded-sm px-1 py-0.5 outline-hidden hover:bg-row-hover focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="truncate">{title}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
