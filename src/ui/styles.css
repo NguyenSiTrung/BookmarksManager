@@ -1,6 +1,38 @@
 @import "tailwindcss";
 
 /*
+ * Geist — vendored woff2 used ONLY by the Options page (`main.tsx` adds
+ * `font-options-sans`/`font-options-mono` under `.options-root`). Declared
+ * here, not per-entrypoint, so the family names resolve in one place; the
+ * files are fetched lazily — popup/sidepanel never download them.
+ * Font: Vercel Geist, SIL OFL 1.1 (see src/entrypoints/options/fonts/LICENSE).
+ */
+@font-face {
+  font-family: "Geist";
+  src: url("../entrypoints/options/fonts/Geist-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../entrypoints/options/fonts/GeistMono-Variable.woff2")
+    format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-options-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-options-mono: "Geist Mono", ui-monospace, "SFMono-Regular",
+    Menlo, monospace;
+}
+
+
+/*
  * shadcn/ui-style design tokens. The primitives in src/ui/components/
  * reference these color/radius theme entries (bg-background, text-foreground,
  * bg-popover, border-input, ring-ring, bg-destructive, rounded-*, …).
@@ -27,6 +59,8 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /* Fallback for --shadow-card/--shadow-pop outside .options-root. */
+  --shadow-color: oklch(0.145 0 0 / 8%);
   --radius: 0.625rem;
 }
 
@@ -51,6 +85,63 @@
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
+    --shadow-color: oklch(0 0 0 / 30%);
+  }
+}
+
+/*
+ * Options-page visual identity (track options_redesign_20260929). Scoped to
+ * `.options-root` so the refined palette, fonts and shadows never leak into
+ * the popup or side panel, which keep the stock neutral tokens above.
+ * Warm-neutral surfaces + a single deep-teal accent; destructive/success/
+ * warning keep their semantic hues.
+ */
+.options-root {
+  --background: oklch(0.975 0.004 90);
+  --foreground: oklch(0.19 0.012 255);
+  --card: oklch(0.99 0.002 90);
+  --card-foreground: oklch(0.19 0.012 255);
+  --popover: oklch(0.99 0.002 90);
+  --popover-foreground: oklch(0.19 0.012 255);
+  --primary: oklch(0.55 0.1 195);
+  --primary-foreground: oklch(0.985 0.005 200);
+  --secondary: oklch(0.95 0.006 90);
+  --secondary-foreground: oklch(0.24 0.015 255);
+  --muted: oklch(0.95 0.006 90);
+  --muted-foreground: oklch(0.5 0.015 255);
+  --accent: oklch(0.94 0.022 195);
+  --accent-foreground: oklch(0.32 0.06 210);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.9 0.008 90);
+  --input: oklch(0.9 0.008 90);
+  --ring: oklch(0.55 0.1 195);
+  /* Tinted, ambient shadow — a hint of the accent hue instead of flat gray. */
+  --shadow-color: oklch(0.3 0.04 220 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .options-root {
+    --background: oklch(0.16 0.008 250);
+    --foreground: oklch(0.96 0.005 90);
+    --card: oklch(0.2 0.008 250);
+    --card-foreground: oklch(0.96 0.005 90);
+    --popover: oklch(0.2 0.008 250);
+    --popover-foreground: oklch(0.96 0.005 90);
+    --primary: oklch(0.76 0.11 190);
+    --primary-foreground: oklch(0.16 0.03 220);
+    --secondary: oklch(0.25 0.01 250);
+    --secondary-foreground: oklch(0.96 0.005 90);
+    --muted: oklch(0.24 0.01 250);
+    --muted-foreground: oklch(0.7 0.015 250);
+    --accent: oklch(0.27 0.03 200);
+    --accent-foreground: oklch(0.9 0.02 200);
+    --destructive: oklch(0.704 0.191 22.216);
+    --destructive-foreground: oklch(0.985 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 14%);
+    --ring: oklch(0.76 0.11 190);
+    --shadow-color: oklch(0 0 0 / 30%);
   }
 }
 
@@ -78,6 +169,10 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --shadow-card: 0 1px 2px var(--shadow-color),
+    0 8px 24px -12px var(--shadow-color);
+  --shadow-pop: 0 2px 6px var(--shadow-color),
+    0 16px 40px -16px var(--shadow-color);
   --animate-in: enter 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-out: exit 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -173,6 +268,28 @@
   input[type="radio"] {
     accent-color: var(--color-primary);
   }
+  /* Options page: Geist + tabular numbers + a whisper of grain to keep the
+     large warm surface from reading flat. The overlay is inert. */
+  .options-root {
+    font-family: var(--font-options-sans);
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  .options-root code,
+  .options-root kbd {
+    font-family: var(--font-options-mono);
+    font-variant-numeric: normal;
+  }
+  .options-root::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     html {
       scroll-behavior: smooth;

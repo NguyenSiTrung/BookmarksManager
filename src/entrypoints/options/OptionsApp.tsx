@@ -91,7 +91,7 @@ export function OptionsApp() {
   const active = useActiveSection();
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
+    <div className="options-root min-h-dvh bg-background text-foreground">
       <div className="mx-auto max-w-5xl px-4 pt-10 pb-16 sm:px-6">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">
