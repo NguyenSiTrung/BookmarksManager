@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import {
   afterAll,
@@ -667,6 +668,54 @@ describe("BookmarkList", () => {
     const first = option(/Item 0/);
     expect(first.textContent).toContain("Dev");
     expect(first.textContent).toContain("docs");
+  });
+
+  it("renders rich card metadata and supports 2D arrow keys in grid view", () => {
+    const items = makeItems(6);
+    const metaById = new Map<string, BookmarkMeta>([
+      ["bm-0", { id: "bm-0", tags: ["dev"], category: "repo", updatedAt: ISO }],
+    ]);
+    render(
+      <BookmarkList
+        items={items}
+        metaById={metaById}
+        tagNameByKey={new Map([["dev", "Dev"]])}
+        renderItemActions={() => <button type="button">Actions</button>}
+      />,
+    );
+
+    // Switch to grid view
+    fireEvent.click(screen.getByRole("button", { name: "Grid view" }));
+    const first = option(/Item 0/);
+    expect(first.textContent).toContain("Dev");
+    expect(first.textContent).toContain("repo");
+    expect(first.textContent).toContain("e0.example");
+
+    // Action button rendered in card
+    expect(within(first).getByRole("button", { name: "Actions" })).toBeTruthy();
+
+    // 2D arrow keys navigation
+    const listbox = screen.getByRole("listbox");
+    listbox.focus();
+    // ArrowDown into grid: reaches first card (Item 0)
+    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(option(/Item 0/));
+
+    // ArrowRight moves to Item 1
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(option(/Item 1/));
+
+    // ArrowLeft moves back to Item 0
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(option(/Item 0/));
+
+    // ArrowDown in 2-column grid moves down 1 row (from Item 0 to Item 2)
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(option(/Item 2/));
+
+    // ArrowUp moves back up 1 row (from Item 2 to Item 0)
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(option(/Item 0/));
   });
 });
 

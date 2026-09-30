@@ -49,7 +49,7 @@ import { displayDomain, visibleTags } from "./row-text";
  */
 
 export const LIST_ROW_HEIGHT = 40;
-export const GRID_ROW_HEIGHT = 120;
+export const GRID_ROW_HEIGHT = 128;
 export const GRID_COLUMNS = 2;
 const OVERSCAN = 6;
 
@@ -318,6 +318,125 @@ function Option({
     },
     slotDisabled,
   );
+  if (layout === "grid") {
+    const card = (
+      <div
+        role="option"
+        aria-selected={selected}
+        aria-posinset={index + 1}
+        aria-setsize={setSize}
+        tabIndex={active ? 0 : -1}
+        title={item.url}
+        data-bookmark-id={item.id}
+        data-dnd-drop={slotDisabled ? undefined : `slot:${item.id}`}
+        data-drop-invalid={invalid ? "true" : undefined}
+        ref={(el) => {
+          registerRef(item.id, el);
+          dropRef(el);
+        }}
+        onClick={(event) => onSelect(event, item, index)}
+        onDoubleClick={() => onActivate(item)}
+        className={cn(
+          "group/row relative flex flex-col justify-between h-full w-full min-w-0 cursor-default",
+          "rounded-lg border border-border/70 bg-card p-3 text-left outline-hidden select-none",
+          "transition-all duration-150 ease-out",
+          "hover:border-primary/40 hover:bg-card hover:shadow-xs",
+          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+          "aria-selected:border-primary aria-selected:bg-accent/40 aria-selected:ring-1 aria-selected:ring-primary/40",
+          invalid && "ring-2 ring-destructive ring-inset",
+        )}
+      >
+        {/* Card Header: Favicon squircle badge + Category chip + Action menu */}
+        <div className="flex items-center justify-between gap-1.5 w-full">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted/40 p-1 shadow-xs group-hover/row:border-border transition-colors">
+            <Favicon
+              pageUrl={item.url}
+              size={16}
+              className="size-4 shrink-0 rounded-xs object-contain"
+            />
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {meta?.category !== undefined && (
+              <span
+                data-category={meta.category}
+                className="rounded-xs bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary capitalize"
+              >
+                {meta.category}
+              </span>
+            )}
+            {actions !== undefined && (
+              <span
+                data-row-controls
+                className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
+                onClick={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                {actions}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Card Body: Title with 2-line clamp, left-aligned, no clip */}
+        <div className="my-auto w-full min-w-0 py-1">
+          <div
+            className="line-clamp-2 text-xs font-semibold leading-snug text-foreground group-hover/row:text-primary transition-colors break-words"
+            title={title}
+          >
+            {title}
+          </div>
+        </div>
+
+        {/* Card Footer: Domain + Tags */}
+        <div className="flex items-center justify-between gap-1.5 w-full min-w-0 pt-0.5 text-[11px] text-muted-foreground">
+          <span className="truncate flex-1 font-normal" title={domain}>
+            {domain}
+          </span>
+          {meta?.tags && meta.tags.length > 0 && (() => {
+            const { shown, hidden } = visibleTags(meta.tags, 1);
+            return (
+              <span className="flex items-center gap-1 shrink-0">
+                {shown.map((nameKey) => (
+                  <span
+                    key={nameKey}
+                    data-tag={nameKey}
+                    className="rounded-xs bg-muted/80 px-1 py-0.5 text-[10px] text-muted-foreground truncate max-w-[70px]"
+                  >
+                    #{tagNameByKey?.get(nameKey) ?? nameKey}
+                  </span>
+                ))}
+                {hidden.length > 0 && (
+                  <span
+                    data-tag-more
+                    title={hidden
+                      .map((nameKey) => tagNameByKey?.get(nameKey) ?? nameKey)
+                      .join(", ")}
+                    className="rounded-xs bg-muted/80 px-1 py-0.5 text-[10px] text-muted-foreground"
+                  >
+                    +{hidden.length}
+                  </span>
+                )}
+              </span>
+            );
+          })()}
+        </div>
+      </div>
+    );
+
+    if (menuContent === undefined) return card;
+    return (
+      <ContextMenu.Root>
+        <ContextMenu.Trigger asChild>{card}</ContextMenu.Trigger>
+        <ContextMenu.Portal>
+          <ContextMenu.Content className={CONTEXT_MENU_CONTENT_CLASS}>
+            {menuContent}
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </ContextMenu.Root>
+    );
+  }
+
   const row = (
     <div
       role="option"
@@ -341,25 +460,19 @@ function Option({
         "aria-selected:bg-accent aria-selected:text-accent-foreground",
         "hover:bg-row-hover",
         invalid && "ring-2 ring-destructive ring-inset",
-        layout === "list"
-          ? "flex items-center gap-2 px-2"
-          : "flex flex-col items-center justify-center gap-1 p-2 text-center",
+        "flex items-center gap-2 px-2",
       )}
     >
       <Favicon
         pageUrl={item.url}
-        size={layout === "list" ? 16 : 32}
-        className="shrink-0"
+        size={16}
+        className="size-4 shrink-0 rounded-xs object-contain"
       />
-      <div className={cn("min-w-0", layout === "list" && "flex-1")}>
+      <div className="min-w-0 flex-1">
         <div className="truncate text-sm">{title}</div>
-        {layout === "list" && (
-          <div className="truncate text-xs text-muted-foreground">
-            {domain}
-          </div>
-        )}
+        <div className="truncate text-xs text-muted-foreground">{domain}</div>
       </div>
-      {layout === "list" && meta !== undefined && (
+      {meta !== undefined && (
         <span className="flex shrink-0 items-center gap-1">
           {(() => {
             const { shown, hidden } = visibleTags(meta.tags, MAX_ROW_TAGS);
@@ -411,20 +524,15 @@ function Option({
           {actions}
         </span>
       )}
-      {layout === "list" && (
-        // P4.T4 drag handle — a SIBLING of the kebab wrapper (whose span
-        // stops propagation), so the row's click-select / roving focus stays
-        // intact. Managed bookmarks can't be moved, so their handle is inert.
-        <DragHandle
-          id={item.id}
-          kind="bookmark"
-          label={title}
-          parentId={item.parentId}
-          index={item.index}
-          disabled={item.isManaged}
-          className={cn(REVEAL_CLASS, item.isManaged && REVEAL_DIMMED_CLASS)}
-        />
-      )}
+      <DragHandle
+        id={item.id}
+        kind="bookmark"
+        label={title}
+        parentId={item.parentId}
+        index={item.index}
+        disabled={item.isManaged}
+        className={cn(REVEAL_CLASS, item.isManaged && REVEAL_DIMMED_CLASS)}
+      />
     </div>
   );
   if (menuContent === undefined) return row;
@@ -611,17 +719,47 @@ export function BookmarkList({
       rowId === undefined ? -1 : (indexById.get(rowId) ?? -1);
 
     switch (event.key) {
+      case "ArrowRight":
+        if (layout === "grid") {
+          event.preventDefault();
+          focusIndex(
+            currentIndex === -1
+              ? 0
+              : Math.min(currentIndex + 1, items.length - 1),
+          );
+        }
+        break;
+      case "ArrowLeft":
+        if (layout === "grid") {
+          event.preventDefault();
+          focusIndex(currentIndex <= 0 ? 0 : currentIndex - 1);
+        }
+        break;
       case "ArrowDown":
         event.preventDefault();
-        focusIndex(Math.min(currentIndex + 1, items.length - 1));
+        if (currentIndex === -1) {
+          focusIndex(0);
+        } else if (layout === "grid") {
+          focusIndex(Math.min(currentIndex + GRID_COLUMNS, items.length - 1));
+        } else {
+          focusIndex(Math.min(currentIndex + 1, items.length - 1));
+        }
         break;
       case "ArrowUp":
         event.preventDefault();
-        if (currentIndex <= 0) {
-          // Above the first row: back to the listbox itself.
-          (event.currentTarget as HTMLElement).focus();
+        if (layout === "grid") {
+          if (currentIndex < GRID_COLUMNS) {
+            (event.currentTarget as HTMLElement).focus();
+          } else {
+            focusIndex(currentIndex - GRID_COLUMNS);
+          }
         } else {
-          focusIndex(currentIndex - 1);
+          if (currentIndex <= 0) {
+            // Above the first row: back to the listbox itself.
+            (event.currentTarget as HTMLElement).focus();
+          } else {
+            focusIndex(currentIndex - 1);
+          }
         }
         break;
       case "Home":
@@ -662,11 +800,11 @@ export function BookmarkList({
 
   const toggleClass = (pressed: boolean) =>
     cn(
-      "rounded-sm px-2 py-0.5 text-xs outline-hidden",
+      "inline-flex items-center gap-1.5 rounded-sm px-2.5 py-1 text-xs font-medium transition-all duration-150 outline-hidden",
       "focus-visible:ring-2 focus-visible:ring-ring",
       pressed
-        ? "bg-primary text-primary-foreground"
-        : "bg-muted text-muted-foreground",
+        ? "bg-background text-foreground shadow-xs"
+        : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
     );
 
   return (
@@ -674,35 +812,69 @@ export function BookmarkList({
       <div
         role="toolbar"
         aria-label="Display options"
-        className="flex shrink-0 items-center justify-end gap-1 border-b border-border px-2 py-1"
+        className="flex shrink-0 items-center justify-end gap-2 border-b border-border/70 px-3 py-1.5"
       >
         {leading !== undefined && (
-          <div className="mr-auto min-w-0 flex-1 px-1">{leading}</div>
+          <div className="mr-auto min-w-0 flex-1 pr-2">{leading}</div>
         )}
         <span
           className={cn(
-            "text-xs text-muted-foreground",
+            "text-xs font-medium text-muted-foreground tabular-nums",
             leading === undefined && "mr-auto",
           )}
         >
           {items.length} {items.length === 1 ? "item" : "items"}
         </span>
-        <button
-          type="button"
-          aria-pressed={layout === "list"}
-          onClick={() => setLayout("list")}
-          className={toggleClass(layout === "list")}
-        >
-          List view
-        </button>
-        <button
-          type="button"
-          aria-pressed={layout === "grid"}
-          onClick={() => setLayout("grid")}
-          className={toggleClass(layout === "grid")}
-        >
-          Grid view
-        </button>
+        <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/30 p-0.5">
+          <button
+            type="button"
+            aria-pressed={layout === "list"}
+            onClick={() => setLayout("list")}
+            className={toggleClass(layout === "list")}
+          >
+            <svg
+              aria-hidden="true"
+              className="size-3.5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" />
+              <line x1="3" y1="12" x2="3.01" y2="12" />
+              <line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+            List view
+          </button>
+          <button
+            type="button"
+            aria-pressed={layout === "grid"}
+            onClick={() => setLayout("grid")}
+            className={toggleClass(layout === "grid")}
+          >
+            <svg
+              aria-hidden="true"
+              className="size-3.5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="14" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+            </svg>
+            Grid view
+          </button>
+        </div>
       </div>
       <div
         ref={scrollRef}
@@ -733,7 +905,7 @@ export function BookmarkList({
                 }}
               >
                 {layout === "grid" ? (
-                  <div className="grid h-full grid-cols-2 gap-2 p-1">
+                  <div className="grid h-full grid-cols-2 gap-2.5 px-3 py-1.5">
                     {row.map((item, column) => {
                       const index = virtualRow.index * GRID_COLUMNS + column;
                       return (
