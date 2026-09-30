@@ -3,7 +3,7 @@ import { Category } from "../../schemas/bookmark";
 import { cn } from "../lib/cn";
 
 /**
- * CategorySelect — a controlled `<select>` over the nine `Category` enum
+ * CategorySelect — a controlled `<select>` over the `Category` enum
  * values plus a "None" option that clears the category.
  *
  * Clear semantics follow `MetaPatch.category` (`src/db/meta.ts`): choosing

@@ -4,6 +4,8 @@ import { z } from "./z";
 
 export const Category = z.enum([
   "article",
+  "paper",
+  "course",
   "docs",
   "tool",
   "video",

@@ -318,7 +318,7 @@ BookmarksManager/
 ```ts
 // src/schemas/bookmark.ts
 export const Category = z.enum([
-  "article", "docs", "tool", "video", "repo", "reference", "shopping", "social", "other",
+  "article", "paper", "course", "docs", "tool", "video", "repo", "reference", "shopping", "social", "other",
 ]);
 
 export const Bookmark = z.object({
@@ -480,7 +480,9 @@ const categorize = defineDecision({
   fields: {
     category: choice("Which kind of resource is `bookmark`?", {
       article:   "A blog post, news story, essay, or tutorial meant to be read.",
-      docs:      "Official documentation or an API reference for a product or library.",
+      paper:     "An academic paper, preprint, or research PDF.",
+      course:    "An online course, MOOC, or structured learning path.",
+      docs:      "Official documentation or an API reference for a product or library, including release notes and changelogs.",
       tool:      "A web app or online utility the user interacts with.",
       video:     "A page whose main content is a video or a video channel.",
       repo:      "A source code repository or package registry page.",

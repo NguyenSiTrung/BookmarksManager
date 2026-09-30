@@ -211,7 +211,7 @@ describe("analyzeBookmark", () => {
         providerId: "typesafe",
         model: "jev-1.13.0",
         questionSetVersion:
-          row.kind === "set_category" ? "categorize-v1" : "tags-v1",
+          row.kind === "set_category" ? "categorize-v2" : "tags-v1",
       });
       expect(row.bookmarkIds).toEqual(["bm-1"]);
     }

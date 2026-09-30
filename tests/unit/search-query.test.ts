@@ -22,7 +22,7 @@ const warn = (token: string, message: string): QueryWarning => ({ token, message
 const MISSING = (key: string) => `Missing value for ${key}:`;
 const INVALID_DATE = "Invalid date — use YYYY, YYYY-MM, or YYYY-MM-DD";
 const UNKNOWN_CATEGORY =
-  "Unknown category — expected one of: article, docs, tool, video, repo, reference, shopping, social, other";
+  "Unknown category — expected one of: article, paper, course, docs, tool, video, repo, reference, shopping, social, other";
 const UNKNOWN_IS = "Unknown is: value — expected one of: duplicate, untagged, dead";
 const DEAD_UNAVAILABLE = "Link checking isn't available yet";
 

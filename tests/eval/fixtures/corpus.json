@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
   "questionSetVersions": {
-    "categorize": "categorize-v1",
+    "categorize": "categorize-v2",
     "tags": "tags-v1",
     "placement": "placement-v1",
     "misfiled": "misfiled-v1",

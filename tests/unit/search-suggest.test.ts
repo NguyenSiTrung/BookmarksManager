@@ -136,7 +136,7 @@ describe("suggestFilters value completion", () => {
       ["folder:work", ["Work", "Work stuff"]],
       ["folder:dev", ["Dev", "Dev/Rust"]],
       ["category:vid", ["video"]],
-      ["category:r", ["repo", "reference", "article", "other"]],
+      ["category:r", ["repo", "reference", "article", "course", "paper", "other"]],
       ["is:u", ["untagged", "duplicate"]],
       ["is:d", ["dead", "duplicate", "untagged"]],
       ["is:du", ["duplicate"]],

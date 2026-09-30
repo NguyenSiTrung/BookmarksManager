@@ -137,7 +137,7 @@ describe("TagChip", () => {
 // ---------------------------------------------------------------------------
 
 describe("CategorySelect", () => {
-  it("lists the 9 categories humanized plus None", () => {
+  it("lists the categories humanized plus None", () => {
     render(<CategorySelect value="docs" onChange={() => {}} />);
     const select = screen.getByRole("combobox", {
       name: "Category",
@@ -148,6 +148,8 @@ describe("CategorySelect", () => {
     expect(labels).toEqual([
       "None",
       "Article",
+      "Paper",
+      "Course",
       "Docs",
       "Tool",
       "Video",

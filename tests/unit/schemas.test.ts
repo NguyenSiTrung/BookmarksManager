@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "../../src/schemas/z";
-import { Bookmark, Tag } from "../../src/schemas/bookmark";
+import { Bookmark, Category, Tag } from "../../src/schemas/bookmark";
 import { Decision } from "../../src/schemas/decision";
 import {
   CONSENT_SCOPE,
@@ -24,6 +24,17 @@ describe("shared zod config", () => {
 });
 
 describe("Bookmark", () => {
+  it("accepts the course and paper categories", () => {
+    expect(Category.safeParse("course").success).toBe(true);
+    expect(Category.safeParse("paper").success).toBe(true);
+    expect(Bookmark.safeParse({ ...validBookmark, category: "course" }).success).toBe(
+      true,
+    );
+    expect(Bookmark.safeParse({ ...validBookmark, category: "paper" }).success).toBe(
+      true,
+    );
+  });
+
   it("accepts valid bookmarks with defaults and explicit health", () => {
     expect(Bookmark.safeParse(validBookmark).success).toBe(true);
     expect(Bookmark.parse(validBookmark).health).toEqual({ status: "unknown" });
