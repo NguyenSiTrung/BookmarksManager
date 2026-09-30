@@ -37,3 +37,16 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-09-29 — Custom Jev provider completed: a third provider slot (`providerId: "custom"`) for any System One-compatible endpoint — user-configured base URL (LlmBaseUrl canonical rules: HTTPS, loopback HTTP only) and free model id pinned as its own allowlist; ProviderSettings discriminated union, per-call destination resolution in the single egress gate (presets from the frozen registry, custom from the stored row, fail-closed `unlisted_origin`), per-origin consent/permission, Options custom card + decisions consent card, origin-aware status — full gate green (2348 unit/component, 28 e2e) (see conductor/archive/custom_jev_provider_20260929/) -->
+
+---
+
+## [ ] Track: Audit Hardening
+
+*Link: [./conductor/tracks/audit_hardening_20261001/](./conductor/tracks/audit_hardening_20261001/)*
+
+High (P1). All 15 verified audit bugs and named improvements; six sequential
+phases with limited task parallelism. Automated verification only, with no
+manual checks at phase boundaries or completion.
+
+Beads epic: `BookmarksManager-lgd`. Plan: 24 implementation tasks and
+6 automated checkpoints; 3 existing backlog issues reused.
