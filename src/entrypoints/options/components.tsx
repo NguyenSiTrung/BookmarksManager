@@ -497,13 +497,13 @@ export function SetupChecklist(props: {
           </>
         );
         return (
-          <li key={step.id}>
+          <li key={step.id} className="flex">
             {step.onGo !== undefined ? (
               <button
                 type="button"
                 onClick={step.onGo}
                 className={cn(
-                  "w-full rounded-xl border border-border bg-card p-3",
+                  "flex h-full w-full flex-col rounded-xl border border-border bg-card p-3",
                   "text-left transition-colors hover:border-primary/40",
                   "hover:bg-accent/50",
                   step.state === "current" && "border-primary/50 bg-accent/40",
@@ -515,7 +515,7 @@ export function SetupChecklist(props: {
             ) : (
               <div
                 className={cn(
-                  "rounded-xl border border-border bg-card p-3",
+                  "flex h-full w-full flex-col rounded-xl border border-border bg-card p-3",
                   step.state === "current" && "border-primary/50 bg-accent/40",
                 )}
               >

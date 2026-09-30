@@ -7,6 +7,7 @@ import {
   Disclosure,
   Field,
   ProviderCard,
+  SetupChecklist,
   StatusBadge,
   Switch,
 } from "../../src/entrypoints/options/components";
@@ -246,6 +247,74 @@ describe("options primitives", () => {
       details.open = true;
       fireEvent(details, new Event("toggle"));
       expect(onOpenChange).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe("SetupChecklist", () => {
+    it("renders steps with status and triggers onGo", () => {
+      const onGo = vi.fn();
+      render(
+        <SetupChecklist
+          steps={[
+            {
+              id: "step-1",
+              title: "Step One",
+              description: "First description",
+              state: "done",
+            },
+            {
+              id: "step-2",
+              title: "Step Two",
+              description: "Second description",
+              state: "current",
+              onGo,
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getByText("Step One")).toBeTruthy();
+      expect(screen.getByText("First description")).toBeTruthy();
+      expect(screen.getByText("Step Two")).toBeTruthy();
+
+      const btn = screen.getByRole("button", { name: /Step Two/ });
+      fireEvent.click(btn);
+      expect(onGo).toHaveBeenCalledOnce();
+    });
+
+    it("stretches list items and cards to full height and width for equal card height", () => {
+      const onGo = vi.fn();
+      const { container } = render(
+        <SetupChecklist
+          steps={[
+            {
+              id: "step-1",
+              title: "Step One",
+              description: "Short",
+              state: "done",
+            },
+            {
+              id: "step-2",
+              title: "Step Two",
+              description: "A much longer description spanning multiple lines",
+              state: "current",
+              onGo,
+            },
+          ]}
+        />,
+      );
+
+      const items = container.querySelectorAll("li");
+      expect(items.length).toBe(2);
+      items.forEach((item) => {
+        expect(item.className).toContain("flex");
+        const card = item.firstElementChild as HTMLElement;
+        expect(card).not.toBeNull();
+        expect(card.className).toContain("w-full");
+        expect(card.className).toContain("h-full");
+        expect(card.className).toContain("flex");
+        expect(card.className).toContain("flex-col");
+      });
     });
   });
 });
