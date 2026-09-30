@@ -59,6 +59,7 @@ import { flattenTree } from "../sync/tree";
 import { registerContextMenus } from "../sync/context-menu";
 import { registerBookmarkListeners } from "../sync/listeners";
 import { reconcileMetadata } from "../sync/reconcile";
+import { seedStarterTags } from "../db/starter-tags";
 
 /**
  * At startup the worker subscribes the five bookmark events (which
@@ -518,6 +519,12 @@ export default defineBackground(() => {
   registerOmnibox();
   void reconcileMetadata().catch(() => {
     // Best-effort cleanup; the next worker start retries.
+  });
+  // One-shot starter-tag pack for empty libraries (local only). Fire-and-forget
+  // like the reconcile above; a failure leaves the library empty and retries
+  // on the next worker start only if the seed flag was never written.
+  void seedStarterTags().catch(() => {
+    // Best-effort; see seedStarterTags' own total catch.
   });
   // FR7: resume decision jobs left mid-flight by an MV3 worker restart.
   // Fire-and-forget, like the reconcile above, so a resume failure never
