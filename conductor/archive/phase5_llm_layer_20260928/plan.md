@@ -371,7 +371,7 @@ reservations protect every egress path.
   - Verify:
     `npx vitest run tests/unit/restructure-messages.test.ts tests/components/restructure-view.test.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Restructure proposals' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Restructure proposals' (Protocol in workflow.md) — synced from closed Beads BookmarksManager-4qn.5.5 (2026-09-30 refresh)
   - Run applicable gate and manually verify proposal, pause/resume, preview,
     apply, and undo before approval.
   - Refresh reconciliation (2026-09-30): this intermediate checkpoint remains

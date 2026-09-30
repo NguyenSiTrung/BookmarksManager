@@ -1,47 +1,43 @@
 {
-  "lastRefresh": "2026-09-30T13:33:05Z",
+  "lastRefresh": "2026-09-30T16:45:00Z",
   "scope": "all",
   "changes": [
-    "product.md: added delivered custom System One-compatible Jev slot and clarified separation from custom OpenAI-compatible LLM providers; historical gate evidence kept historical",
-    "tech-stack.md: anchored to custom Jev delivery and checked package/lock versions; documented dynamic destination/model pin and active-provider order, separate Jev/LLM gates, generic credentials ownership, existing custom-provider host capabilities, actual CI/Pages triggers",
-    "workflow.md: documented release/manual-only CI and required local gate before task commits",
-    "patterns.md: consolidated nine missing cross-track rules and corrected stale networking/storage/concurrency/egress/undo guidance; merged overlapping historical entries",
-    "Archived lifecycle: reconciled seven metadata statuses to archived and four stale execution states to complete using closed mapped issues and recorded track completion",
-    "Archived plans: annotated six Options and one LLM intermediate manual-verification gaps without marking them approved; repaired seven archived spec references"
+    "product.md: recorded paper/course resource types and the one-shot starter tech tag pack; added the 2026-09-29/30 UI polish wave (sidepanel shell/content, dialogs, options/popup, grid redesign, restructure collapsible diffs) to Delivery Status",
+    "tech-stack.md: documented src/db/starter-tags.ts seeding rules and the Category enum multi-surface expansion contract",
+    "patterns.md: elevated three follow-up patterns (category enum expansion, one-shot prefs-flag seeding, Jev-facing tag descriptions)",
+    "Archived plans: marked 7 previously unchecked User Manual Verification tasks complete by trusting closed Beads issues (6 options_redesign phases + phase5 Restructure), per user direction",
+    "workflow.md: no drift; left unchanged"
   ],
   "learnings": {
     "tracksScanned": 9,
-    "newPatterns": 9,
+    "newPatterns": 3,
     "archivedLearningsUnchanged": true
   },
   "beads": {
-    "mappedIssuesChecked": 214,
-    "mappedIssuesClosed": 214,
-    "existingOpenFollowups": 14,
-    "existingInProgressIssues": 0,
-    "unverifiedManualCheckpoints": [
+    "openFollowups": 14,
+    "inProgressIssues": 0,
+    "closedTotal": 245,
+    "syncDirection": "beads_to_conductor",
+    "manualCheckpointsSynced": [
       {
         "track": "options_redesign_20260929",
         "count": 6,
-        "reason": "Visual verification is recorded; per-phase user acceptance is not."
+        "action": "plan checkboxes marked [x] from closed Beads"
       },
       {
         "track": "phase5_llm_layer_20260928",
         "count": 1,
-        "reason": "Track-end acceptance is checked; intermediate Restructure checkpoint is not."
+        "action": "Restructure proposals manual verification marked [x] from BookmarksManager-4qn.5.5"
       }
     ],
-    "customJevMapping": "No metadata.json or matching prior Beads issue found; no issue IDs invented.",
-    "unchangedBacklogNote": "BookmarksManager-gtv still describes the older catch-all provider dispatch; current background.ts already multiplexes protocols. Backlog disposition not changed by refresh."
+    "remainingOpenFollowupsNote": "14 P2/P3 followups remain open (phase0 hygiene, near-duplicate cost, popup save-suggest leak, Playwright permissions). Unchanged by this refresh.",
+    "cosmetic": [
+      "beads.role not configured (GH#2950)",
+      ".beads directory perms 0755 (recommended 0700)"
+    ]
   },
   "verification": {
-    "artifactSmoke": "Validated all Conductor JSON, exact Markdown backups/refresh markers, seven preserved manual gaps, eight archive metadata records, six complete execution states, 214 mapped closed issues, and archived spec navigation.",
-    "passed": [
-      "check:manifest",
-      "check:bundle",
-      "check:store",
-      "check:site"
-    ],
-    "scope": "Documentation-only refresh; policy gates exercised against existing built artifacts. No build, unit/component/e2e or live/eval suite rerun."
+    "artifactSmoke": "Backups created; product/tech-stack/patterns refresh markers updated; 7 plan checkboxes flipped; no package/CI drift; remaining unchecked plan tasks = 0.",
+    "scope": "Documentation-only refresh. No build, unit/component/e2e or live/eval suite rerun."
   }
 }

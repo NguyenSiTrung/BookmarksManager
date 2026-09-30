@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-30 -->
+<!-- Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course) -->
 
 # Technology Stack
 
@@ -72,6 +72,19 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   snapshots and replay), `src/duplicates/` (URL normalize + grouping),
   `src/io/` (JSON/Netscape/CSV import/export planner + writers), and
   `src/ui/{components,hooks,lib}` (side-panel tree, list/grid, dialogs, toasts).
+- `src/db/starter-tags.ts` (2026-09-30): one-shot starter tech tag pack
+  (`STARTER_TAGS`, 18 name/description pairs). Seeds only when
+  `prefs:starterTagsSeeded` has never been written **and** `listTags()` is
+  empty; any decision writes the flag so later emptiness never re-injects.
+  Fail-soft (total catch → no-op) and fire-and-forget from `background.ts`.
+  Tag `description` is the Jev-facing meaning (≤300 chars, same contract as
+  `TagDef`).
+- Category enum (`src/schemas/bookmark.ts`) is
+  `article | paper | course | docs | tool | video | repo | reference |
+  shopping | social | other`. Adding a value must also update the Jev
+  `categorize` option docs in `src/jev/tasks/categorize.ts`, search
+  unknown-category error text, `category-select.tsx`, and `PROJECT_PLAN.md`
+  §7 / §8.4.
 - **MiniSearch 7.2.0** powers fully local search (added in Phase 2). The pure
   layer in `src/search/` — `query.ts` (parser + warnings), `index.ts`
   (documents, boosts title>tags>domain>url>notes, `toSourceBookmark`/

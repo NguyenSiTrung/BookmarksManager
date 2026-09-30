@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-30 -->
+<!-- Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course) -->
 
 # Codebase Patterns
 
@@ -31,7 +31,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-09-30
+Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course)
 
 ---
 
@@ -217,3 +217,9 @@ _Last refreshed: 2026-09-27_
 - **Summary egress is a separately consented exception.** Notes remain unsent; page text leaves only after explicit Summarize under `llm_summary` and `jev_summary_verify`, not as ordinary analyze input. Match extraction to the bookmark and persist only after Jev returns `supported`. (from: phase5_llm_layer_20260928, 2026-09-30)
 - **Metadata extensions must survive repository rewrites.** A new optional field must join `MetaFields`, `isEmptyMeta`, `commitMeta`, `putMeta`, `patchMeta` merging, and `rewriteTagRows` emptiness checks; a schema-only addition can compile while silently losing data. (from: phase5_llm_layer_20260928, 2026-09-30)
 - **Schema validity does not establish semantic validity.** Cross-check answers against sent keys/candidates and declared ranges. The Jev client enforces response-model consistency across batches; evaluations separately enforce accepted release model IDs and score production policy outcomes with production confidence helpers. (from: phase0_foundation_20260925, phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase6_store_release_20260928, 2026-09-30)
+
+## Consolidated at refresh (2026-09-30, starter tags + categories)
+
+- **Category enum expansion is a multi-surface contract.** A new `Category` value must land in `src/schemas/bookmark.ts`, the Jev `categorize` option docstring (`src/jev/tasks/categorize.ts`), search unknown-category error text, `category-select.tsx`, and `PROJECT_PLAN.md` §7/§8.4 in the same change — schema-only additions desync Jev prompts, suggestions, and docs. (from: categories follow-up, 2026-09-30)
+- **One-shot library seeding uses a durable `prefs:*` flag plus emptiness.** Like `prefs:lastFolderId`, store the decision in Dexie `metadata`; write the flag on *any* outcome (seeded or skipped) so deleting the pack later never re-injects. Keep the seeder total (catch → no-op) and fire-and-forget from `background.ts` so startup cannot crash on optional content. (from: starter-tags follow-up, 2026-09-30)
+- **Tag `description` is Jev-facing meaning, not UI chrome.** ≤300 chars and concrete enough for the `tags` question set; the same field is what Options/TagManager show as help text. (from: starter-tags follow-up, phase1_core_manager_20260926, 2026-09-30)

@@ -77,7 +77,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
   - Tests: role/label/state coverage for each primitive; switch keyboard
     toggle; alert roles.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
 
 ## Phase 2: Panel navigation shell
 <!-- execution: sequential -->
@@ -92,7 +92,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
   - Update `options-app.test.tsx` to nav-switching semantics (panel switch
     reveals the right region; headings contract).
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
 
 ## Phase 3: Connections panel
 <!-- execution: parallel -->
@@ -122,7 +122,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
     discipline); step links switch panels. `PrivacyDraft` into Connections
     footer.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
 
 ## Phase 4: Permissions panel
 <!-- execution: sequential -->
@@ -136,7 +136,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
   - All worker messages, Dexie consent calls, blocklist logic identical.
     Update `options-decisions.test.tsx` (633 lines) to new semantics.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 4' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 4' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
 
 ## Phase 5: Activity + Data panels
 <!-- execution: parallel -->
@@ -152,7 +152,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
   - Danger card restyle (destructive accent, warning icon), dialog pass.
     Behavior identical.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 5' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 5' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
 
 ## Phase 6: Gate + visual verification
 <!-- execution: sequential -->
@@ -163,4 +163,4 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
     dark, all four panels, enabled and unconfigured states; fix visual
     defects found.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 6' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 6' (Protocol in workflow.md) — synced from closed Beads (2026-09-30 refresh)
