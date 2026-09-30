@@ -1,7 +1,7 @@
 {
   "track_id": "phase5_llm_layer_20260928",
   "type": "feature",
-  "status": "new",
+  "status": "archived",
   "priority": "critical",
   "depends_on": [],
   "estimated_hours": null,

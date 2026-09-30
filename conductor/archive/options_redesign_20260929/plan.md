@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Options Redesign Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
@@ -9,6 +11,12 @@
 identity, without changing any behavior, message, consent record, or worker
 call.
 
+> Refresh reconciliation (2026-09-30): the mapped implementation/phase issues
+> are closed and this track is archived. Its six manual-verification markers
+> remain unchecked: recorded Chromium visual verification does not establish
+> user acceptance for those individual checkpoints. Refresh does not approve
+> them retroactively.
+
 **Architecture:** Left icon rail with `hidden`-panel switching (all panels
 mounted — form state preserved); a unified `Disclosure`/`Field`/`Switch`/
 `Alert`/`StatusBadge`/`Chip`/`ProviderCard` component layer in options scope;
@@ -18,7 +26,7 @@ Geist Variable font vendored and scoped to `.options-root`; refined warm-neutral
 **Tech Stack:** WXT MV3, TypeScript strict, React 19, Tailwind 4, radix-ui
 1.6.7 umbrella (Switch available), Vitest 5 + Testing Library.
 
-**Spec:** `conductor/tracks/options_redesign_20260929/spec.md`
+**Spec:** `conductor/archive/options_redesign_20260929/spec.md`
 
 ## Global Constraints
 

@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-29 -->
+<!-- Last refreshed: 2026-09-30 -->
 
 # Codebase Patterns
 
@@ -8,20 +8,20 @@ Reusable patterns discovered during development. Read this before starting new w
 
 - Strict TypeScript under `verbatimModuleSyntax` + `noUncheckedIndexedAccess`; ESLint flat config via `npm run lint`.
 - All Zod imports go through the jitless-configured `src/schemas/z.ts` — never import `zod` directly (MV3 CSP).
-- `fetch` is ESLint-banned outside `src/net/**`; all provider traffic goes through the `src/net/send.ts` consent gate.
+- `fetch` is ESLint-banned outside `src/net/**`; Jev uses the `src/net/send.ts` consent gate and LLM uses `src/net/llm-send.ts`. (from: phase5_llm_layer_20260928, custom_jev_provider_20260929, 2026-09-30)
 - `runtime.onMessage` handlers are total: return `{ok:true,…} | {ok:false,code,message}` Zod unions, never throw (see elevated patterns).
 
 ## Architecture
 
 Phase 0 (`phase0_foundation_20260925`) delivered the MV3 WXT scaffold (background worker + popup/sidepanel/options React surfaces), Zod schemas mirroring `PROJECT_PLAN.md` §7, the Dexie database, the WebCrypto provider-key store, versioned consent records + disclosure strings, the consent-gated network module, the Jev `/v1/systemone` wire client with a synthetic connection test in Options, and store-compliance docs guarded by `check:manifest`/`check:bundle` in CI.
 
-Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline core manager: native-tree sync (typed `chrome.bookmarks` slice + listeners/reconcile), extension metadata in IndexedDB (tags/categories/notes), a guarded mutation service + LIFO undo (snapshots in Dexie), duplicate detection with keep-one merge, JSON/Netscape/CSV import/export with an import planner/writer, the full side-panel UI (ARIA folder tree, virtualized list/grid, views, bulk actions, dnd-kit drag and drop, tag manager, grouped duplicates view, import/export dialogs), popup/shortcut/context-menu quick save, `_favicon` icons, and "delete all extension data". Installed UI stack: Radix primitives (`radix-ui` umbrella, Dialog/DropdownMenu/Popover/Checkbox), Tailwind 4, `@dnd-kit/core`+`sortable`, `@tanstack/react-virtual`, `dexie-react-hooks`. Still planned: Zustand, TanStack Query, MiniSearch, `@mozilla/readability`, the Jev decision pipeline.
+Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline core manager: native-tree sync (typed `chrome.bookmarks` slice + listeners/reconcile), extension metadata in IndexedDB (tags/categories/notes), a guarded mutation service + LIFO undo (snapshots in Dexie), duplicate detection with keep-one merge, JSON/Netscape/CSV import/export with an import planner/writer, the full side-panel UI (ARIA folder tree, virtualized list/grid, views, bulk actions, dnd-kit drag and drop, tag manager, grouped duplicates view, import/export dialogs), popup/shortcut/context-menu quick save, `_favicon` icons, and "delete all extension data". Installed UI stack: Radix primitives (`radix-ui` umbrella, Dialog/DropdownMenu/Popover/Checkbox/Switch), Tailwind 4, `@dnd-kit/core`+`sortable`, `@tanstack/react-virtual`, `dexie-react-hooks`. Later tracks delivered MiniSearch, Readability summaries, the Jev decisions pipeline, the optional LLM layer, store readiness, the Options redesign, and one custom Jev provider. Zustand and TanStack Query remain planned, not installed.
 
 ## Gotchas
 
 - The repository has an existing Beads workspace. Do not reinitialize it or automatically sync it to the remote.
 - `bd` warns `beads.role not configured (GH#2950)` until `git config beads.role maintainer|contributor` is set — cosmetic, not blocking.
-- `chrome.storage.local` is written by exactly one module (`src/security/keys.ts`, ciphertext envelopes); settings/consent/sentLog/CryptoKeys live in IndexedDB and need no `storage` permission — keep `store/permissions.md` justifications aligned with actual call sites.
+- `src/security/credentials.ts` owns encrypted envelope IO in `chrome.storage.local`; `src/security/keys.ts` delegates Jev key access while preserving storage IDs. UI prefs, settings, consent, sentLog, and non-extractable CryptoKeys live in IndexedDB. Delete-all clears storage through `src/security/delete-all.ts`; keep permission justifications aligned with those call sites. (from: phase1_core_manager_20260926, phase5_llm_layer_20260928, 2026-09-30)
 
 ## Testing
 
@@ -31,17 +31,16 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-09-29
+Last refreshed: 2026-09-30
 
 ---
 
 ## Elevated from track `phase0_foundation_20260925` (2026-09-25)
 
 - **Message handlers are total, not throwing.** A `runtime.onMessage` handler returns `{ok:true,…} | {ok:false,code,message}` as a Zod union validated on both ends; every failure is typed, redacted, and testable. Never let handler exceptions leak `cause` objects that can embed response bodies (SyntaxError/ZodError do).
-- **Fail-closed gates re-verify per call.** The network gate re-checks preset→model→https→origin→consent→host-permission→key on every send, and tests assert dependency-spy call counts to prove earlier failures short-circuit before later checks (and before the key store is even touched).
+- **Fail-closed gates re-verify per call.** Resolve the destination, then verify model/scheme/exact origin, the scope-specific request guard and wire schema, current origin-scoped consent, host permission, and credential before sending; the LLM gate also reserves budget. Presets stay registry-backed; custom Jev resolves only from validated stored settings. Earlier failures must short-circuit before sensitive reads or network activity. (from: phase0_foundation_20260925, phase5_llm_layer_20260928, custom_jev_provider_20260929, 2026-09-30)
 - **Mutation ordering for irreversible pairs.** Enable writes settings→key→consent (consent last, with an unwind on failure); revoke removes consent first so a later failure still blocks the gate.
 - **WebCrypto key storage:** non-extractable AES-GCM-256 `CryptoKey` persists in IndexedDB via structured clone; ciphertext+12-byte IV envelope in `chrome.storage.local`. Assert plaintext-absence in storage-write tests, not just encryption correctness.
-- **MV3 CSP + Zod:** single jitless import site `src/schemas/z.ts`; every schema file imports from there.
 - **Bundle scanners must scan normalized whole-file content, not lines** — `eval\n(` and multi-line `<script src>` evade line-based regexes.
 - **Testing `chrome.*` globals in Vitest:** a `declare const chrome` slice keeps `vi.stubGlobal` workable without fighting the DOM lib.
 - **Playwright extension smoke:** persistent context + `waitForEvent("serviceworker")`; cold-profile SW registration can exceed 30s — set a spec-level timeout rather than weakening waits; `networkidle` settles ~2s on extension pages but is not the reliable signal.
@@ -67,7 +66,6 @@ _Last refreshed: 2026-09-25_
 
 - Playwright extension tests must use `channel: "chromium"` — branded Google Chrome silently ignores `--load-extension`, so the persistent context never loads the built extension. (from: phase0_foundation_20260925)
 - WXT scaffold specifics: a `sidepanel/` entrypoint emits `sidepanel.html` + the `side_panel` manifest key automatically; root `tsconfig.json` extends `.wxt/tsconfig.json` but must set `"jsx": "react-jsx"` itself. (from: phase0_foundation_20260925)
-- Zero-egress e2e assertion: record `context.on("request")` on the persistent context and assert zero `^https?://` URLs AFTER `context.close()` so unload/teardown traffic is observed too. (from: phase0_foundation_20260925)
 - Type shared fixtures with `satisfies z.input<typeof Schema>` under `verbatimModuleSyntax` + `noUncheckedIndexedAccess` — keeps fixtures honest while `.default()` fields stay absent. (from: phase0_foundation_20260925)
 - Node's `webcrypto.CryptoKey` type is not assignable to the DOM `CryptoKey` (Node's `KeyUsage` union is wider) — cast once in tests; runtime objects structured-clone identically. (from: phase0_foundation_20260925)
 
@@ -81,8 +79,7 @@ _Last refreshed: 2026-09-25_
 ### Undo / snapshot invariants
 - **Snapshot-then-mutate means every snapshot may outlive a failed mutation.** Replay must be idempotent (skip nodes whose original id still resolves — Chrome never reuses ids) AND resumable (persist an `idMap` per recreate), not merely retryable. (from: phase1_core_manager_20260926)
 - **Never replay a destructive inverse without checking the target is actually gone.** (from: phase1_core_manager_20260926)
-- **A LIFO undo stack needs an explicit discard path** (`discardLatest`/`discardById`) or one poisoned row wedges every older snapshot forever. (from: phase1_core_manager_20260926)
-- **Discard by row id, never "latest".** With concurrent flows pushing snapshots, `discardLatest()` from flow A can drop flow B's unrelated snapshot; and a stale delete snapshot writes back stale metadata onto surviving nodes. (from: phase1_core_manager_20260926)
+- **A LIFO undo stack needs a row-targeted discard path.** Use `discardById` for a flow-owned snapshot; `discardLatest()` can delete another concurrent flow's snapshot. A poisoned snapshot must not wedge older undo entries, and a stale delete snapshot must not write stale metadata onto surviving nodes. (from: phase1_core_manager_20260926, 2026-09-26)
 - **Serialize stack operations** (`tail = tail.then(run)`) and guard re-entry on the UI button — `undoLatest` serializes but does not dedupe, so a double-click pops two snapshots. (from: phase1_core_manager_20260926)
 
 ### Data & concurrency
@@ -103,8 +100,7 @@ _Last refreshed: 2026-09-25_
 
 ### Testing
 - **An "assert nothing changed" test passes for the wrong reason when the mutation is async** — always `waitFor` the outcome (a stale test asserted an unchanged parent id immediately after a fire-and-forget drop). (from: phase1_core_manager_20260926)
-- **A helper that opens a database to check it was deleted RECREATES it** — assert absence (`indexedDB.databases()`), not emptiness. (from: phase1_core_manager_20260926)
-- **Egress assertions should filter OUT known-internal schemes** (`chrome-extension:`, `chrome:`, `data:`, `blob:`, `about:`) rather than matching only `http(s)` — otherwise `ws://`/`ftp://` exfil passes. (from: phase1_core_manager_20260926)
+- **Zero-egress assertions exclude only known internal schemes** (`chrome-extension:`, `chrome:`, `data:`, `blob:`, `about:`), rather than matching only HTTP(S), so WebSocket/FTP-style URLs cannot evade the assertion. Record requests on the persistent context and assert after `context.close()` to include teardown traffic. (from: phase0_foundation_20260925, phase1_core_manager_20260926, 2026-09-30)
 - **A review diff must include `tests/`** — a path-scoped diff that omits them makes a reviewer report "no tests in this phase" as a finding. (from: phase1_core_manager_20260926)
 - **Local-index reorder after removal:** same-parent capacity is `length - 1`, cross-parent is `length` — encode both in the fake so index validation is actually exercised. (from: phase1_core_manager_20260926)
 
@@ -129,11 +125,10 @@ _Last refreshed: 2026-09-25_
 
 ## Elevated from track `phase3_jev_client_20260927` (2026-09-27)
 
-- **Scoped consent gates validate cheap-before-sensitive.** `sendConsented` checks scope registration and the scope's deep-equal request guard *before* reading consent rows, permissions, or key material — unknown scopes can't even probe state. Each scope owns a request-shape predicate; extend the frozen registry, never the caller.
+- **Scoped consent gates validate cheap-before-sensitive.** Check scope registration and its request-shape predicate before consent, permissions, or keys. Only `jev_test` uses a deep-equal synthetic payload; decisions and summary verification have strict scope-specific state guards. Extend the frozen registry, never caller-provided policy. (from: phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase5_llm_layer_20260928, 2026-09-30)
 - **Playwright CAN route extension service-worker fetches** — `context.route("https://host/**")` intercepts MV3 worker `fetch` end to end, so provider e2e can exercise the real gate + real `fetch` with a scripted response.
 - **`chrome.permissions.request` never resolves under Playwright Chromium** (headed/headless, click/evaluate/CDP userGesture — promise pends forever, no prompt window exists). Workaround: copy the built `.output/chrome-mv3` to a temp dir, promote the optional host pattern to `host_permissions` in the manifest copy, and launch from that — the production `permissions.request` path still runs and resolves `true` for the already-held permission.
 - **Retry/backoff purity:** inject `sleep`/`random`/`now` so tests drive full-jitter exponential backoff and `retry-after` (delta-seconds AND HTTP-date) deterministically; classify retries by outcome code, never by inspecting response bodies.
-- **Per-key concurrency without a library:** a lazy `Map<key, Promise<unknown>>` tail chain serializes sends per preset across all client instances; await the tail then chain — simpler and testable than a semaphore for ≤4-deep queues.
 - **Error chains need assertion discipline.** When an outer error wraps an inner typed error as `cause`, redaction tests must assert on every link (message, `JSON.stringify` round-trip, `inspect()` output) — asserting only `cause === undefined` on the outer error misses a leaky inner one.
 - **Assert typed errors via a public `inspect()`/serialization shape,** not `instanceof` alone — `vi.mock` boundaries and message-port serialization both erase class identity.
 - **`noul` (yes/no) confidence is a margin, not a probability:** `noulMargin(p, t)` validates `0<t<1` and `0≤p≤1`; choice/score reuse the provider's own confidence field.
@@ -142,9 +137,9 @@ _Last refreshed: 2026-09-25_
 
 ## Elevated at refresh — track `phase3_jev_client_20260927` (refreshed 2026-09-27)
 
-- **Keep domain layers pure: `src/<domain>/` modules import no chrome/DOM/fetch and expose a typed contract.** `src/search/` ships `SearchIndexHandle` + `toSourceBookmark`/`ancestorsOf`; `src/jev/` takes `import type { Answer }` only and `client.ts` maps its own errors onto `RetryableFailure` so `retry.ts`/`usage.ts` stay import-free. Surfaces (views, popup, omnibox, tests) share the dependency-free layer. (from: phase2_search_20260926, phase3_jev_client_20260927)
-- **IndexedDB read-assertions must not create the db.** Applies to delete-checks AND e2e consent/sentLog probes from extension pages: `indexedDB.databases()` first, then a guarded `open()`. (from: phase1_core_manager_20260926, phase3_jev_client_20260927)
-- **Module-level shared state needs an exported reset hook.** A `Map<PresetId, {running, limit, queue}>` semaphore makes the first client's limit sticky across tests — export `reset*Pools()` for teardown or limits leak between cases. (from: phase3_jev_client_20260927)
+- **Keep pure domain contracts independent of surfaces.** Search/query, Jev question builders, retry, and usage logic expose typed contracts without Chrome/DOM/fetch dependencies; provider settings/persistence adapters are not part of that pure layer. Views, popup, omnibox, and tests share `SearchIndexHandle` and the same search document mapping. (from: phase2_search_20260926, phase3_jev_client_20260927, 2026-09-30)
+- **IndexedDB read-assertions must not create the db.** Applies to delete-checks AND e2e consent/sentLog probes from extension pages: `indexedDB.databases()` first, then a guarded `open()`. (from: phase1_core_manager_20260926, phase3_jev_client_20260927, 2026-09-30)
+- **Jev concurrency is a shared per-provider counting semaphore.** The first client's limit is shared by later clients for that provider, including `custom`; use `resetJevClientPools()` between isolated tests so module-level limits/waiters do not leak. (from: phase3_jev_client_20260927, custom_jev_provider_20260929, 2026-09-30)
 - **Abort has three observably different checkpoints:** pre-aborted signal, abort during the gate's async consent/permission/key reads, abort mid-flight. Test mid-flight with `vi.waitFor` until fetch is invoked, then abort — an immediate `controller.abort()` fires during DB reads and conflates pre-flight with in-flight. (from: phase3_jev_client_20260927)
 - **`Date.parse` leniently accepts `"1.5"`, `"-5"`, `"+3"` as year-2001 dates** — require a letter before attempting HTTP-date parsing or garbage silently becomes a 0 ms retry delay. (from: phase3_jev_client_20260927)
 - **`exactOptionalPropertyTypes`: conditionally spread optional fields** (`...(cond ? {k: v} : {})`) — never assign `undefined`. (from: phase3_jev_client_20260927)
@@ -161,7 +156,7 @@ _Last refreshed: 2026-09-27_
 
 ### E2E: wire-level fakes and restarts
 
-- **Fake the provider at the wire, not the client.** A Playwright `context.route` that parses each request's `questions` record and answers every key by type (choices confined to the sent option keys, echoed model, schema-valid usage) passes the real client's cross-check — so the real pipeline, gate, and persistence run end to end; only the endpoint is fake. A route is also a **request valve**: fulfill the first N and hold the rest until `release()` — with a strictly sequential runner this freezes the worker mid-batch deterministically (exactly ONE held request), which is how to test pause/restart/resume without timers. (from: phase4_jev_decisions_20260927)
+- **Fake the provider at the wire, not the client.** `context.route` answers actual sent question keys/candidates with schema-valid responses so the real client, gate, pipeline, and persistence execute. A request valve fulfills the first N and holds the rest: a sequential runner then freezes deterministically mid-batch. Assert committed progress and release parked requests before `context.close()` so teardown cannot race pause into failure. Optional hosts are promoted to install-time `host_permissions` in a temporary manifest copy; this does not verify Chrome's native permission prompt. (from: phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase5_llm_layer_20260928, 2026-09-30)
 - **Feature consent is granted at the affirmative click.** Each `llm_*` /
   `jev_summary_verify` scope's origin-scoped consent record is written by the
   click that triggers the feature (Explain button, Summarize action,
@@ -170,14 +165,6 @@ _Last refreshed: 2026-09-27_
   grant on every request, so revoking the provider (or testing a fresh
   profile) fails closed with `no_consent`/`no_permission`. (from:
   phase5_llm_layer_20260928)
-- **Parked-request valve for e2e pause/resume:** a `context.route` handler
-  that fulfills the first N requests and holds the rest lets a strictly
-  sequential job runner freeze mid-batch deterministically; assert the
-  committed-batch count, then `release()` before `context.close()` (a parked
-  routed fetch aborts on close and can race `paused`→`failed`).
-  `chrome.permissions.request` never resolves under Playwright — grant
-  install-time host patterns via `launchPersistentContext` args instead.
-  (from: phase5_llm_layer_20260928)
 - **Emulating a browser restart under Playwright:** persistent profile dir + a copy-once extension root (manifest check before re-copy) gives the SAME derived extension id across `launchPersistentContext` calls, so IndexedDB state (consents, jobs) survives; add `--host-resolver-rules="MAP <provider-origins> 127.0.0.1"` so a resume attempt that races route registration can never become real egress. A browser restart subsumes the MV3 worker restart no API can trigger on demand. The temp dirs need an explicit `dispose()` — the launcher's own cleanup deliberately skips caller-owned roots. (from: phase4_jev_decisions_20260927)
 - **Popup prefill under Playwright needs `tabs` injected and `bringToFront` ordering:** production prefills via `activeTab`, which Playwright cannot grant — patch the copied manifest to add `tabs` and use `chrome.tabs.query`. Create the HTTPS page, then `context.newPage()` STEALS the active-tab slot: `bringToFront()` the HTTPS page AFTER creating the popup page but BEFORE `popup.goto(chrome-extension://…)` or the prefill reads the wrong tab. (from: phase4_jev_decisions_20260927)
 
@@ -218,3 +205,15 @@ _Last refreshed: 2026-09-27_
 - **`@font-face` URLs in `src/ui/styles.css` resolve through Vite into
   `.output` assets automatically** for woff2 vendored under `src/` — no
   manifest or `web_accessible_resources` entry needed on extension pages.
+
+## Consolidated at refresh (2026-09-30)
+
+- **Custom provider URLs share one canonical policy.** Reuse `LlmBaseUrl` for Jev and LLM: HTTPS, HTTP only for literal `LOOPBACK_HOSTS`, no userinfo/query/fragment, and no noncanonical or doubled-slash paths. The broad optional host capability is not authorization to send to an arbitrary destination. (from: phase5_llm_layer_20260928, custom_jev_provider_20260929, 2026-09-30)
+- **Consent follows the resolved exact origin.** Chrome host patterns cannot encode ports, so the gate must enforce scheme/host/port itself. Changing a custom origin needs that origin's current consent; previous origin grants remain durable. Resolve the destination before deleting settings during revoke, then remove consent before other cleanup. Neither message fields nor consent rows may redirect a preset. (from: phase5_llm_layer_20260928, custom_jev_provider_20260929, 2026-09-30)
+- **Unknown cost is not zero.** Keep reported, estimated, and unknown amounts distinct. Reserve before LLM spending using a numeric pricing snapshot; automatic unpriced requests fail closed, while unpriced manual requests require explicit confirmation and are not covered by a numeric cap. Settle reservation and usage atomically/idempotently; derive UTC-month membership from parsed dates, not timestamp prefixes. (from: phase3_jev_client_20260927, phase5_llm_layer_20260928, 2026-09-30)
+- **Structured-output fallback is capability-only.** Descend `json_schema → json_object → prompt_only` only for `LlmCapabilityError`, never for malformed output or exhausted repairs. Repairs stay on the chosen tier; merge tier instructions into an existing leading system message. (from: phase5_llm_layer_20260928, 2026-09-30)
+- **Live reads preserve identity and pending state.** `useLiveQuery` can retain an old dependency's result: emit `{arg, value}` and treat an argument mismatch as pending. Initial `undefined` is not settled absence (`null`); disable actions until the first read settles and render settled failures instead of perpetual loading. (from: phase4_jev_decisions_20260927, options_redesign_20260929, 2026-09-30)
+- **Resumption respects durable inputs and user intent.** Persist parameters affecting batch boundaries and resume from committed progress. Startup drives interrupted `running`/`pending` jobs, never user-paused jobs; re-read status before relaunch or failure writes so pause/cancel wins. Persist vetted restructure proposals/assignments so resume does not repeat the LLM proposal. (from: phase4_jev_decisions_20260927, phase5_llm_layer_20260928, 2026-09-30)
+- **Summary egress is a separately consented exception.** Notes remain unsent; page text leaves only after explicit Summarize under `llm_summary` and `jev_summary_verify`, not as ordinary analyze input. Match extraction to the bookmark and persist only after Jev returns `supported`. (from: phase5_llm_layer_20260928, 2026-09-30)
+- **Metadata extensions must survive repository rewrites.** A new optional field must join `MetaFields`, `isEmptyMeta`, `commitMeta`, `putMeta`, `patchMeta` merging, and `rewriteTagRows` emptiness checks; a schema-only addition can compile while silently losing data. (from: phase5_llm_layer_20260928, 2026-09-30)
+- **Schema validity does not establish semantic validity.** Cross-check answers against sent keys/candidates and declared ranges. The Jev client enforces response-model consistency across batches; evaluations separately enforce accepted release model IDs and score production policy outcomes with production confidence helpers. (from: phase0_foundation_20260925, phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase6_store_release_20260928, 2026-09-30)

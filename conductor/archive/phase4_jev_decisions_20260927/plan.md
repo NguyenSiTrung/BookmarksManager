@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 4 Jev Decisions — Implementation Plan
 
 **Goal:** Deliver PROJECT_PLAN.md §15 Phase 4: Jev decisions on real bookmark metadata (categorize, tags,
@@ -5,7 +7,7 @@ folder pre-select, near-duplicates, misfiled scan, search re-rank), the §10.2 c
 queue with apply and undo, the audit log, the resumable job queue, cost tracking, and the "Data sent" log,
 all behind a new per-provider bookmark-data consent.
 
-**Spec:** `conductor/tracks/phase4_jev_decisions_20260927/spec.md`.
+**Spec:** `conductor/archive/phase4_jev_decisions_20260927/spec.md`.
 
 ## Global Constraints
 

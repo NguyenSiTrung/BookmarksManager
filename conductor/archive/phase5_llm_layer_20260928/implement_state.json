@@ -1,13 +1,16 @@
 {
-  "current_phase": "Phase 5: Restructure proposals",
-  "current_phase_index": 4,
+  "current_phase": "complete",
+  "current_phase_index": 5,
   "current_task_index": 4,
   "completed_phases": [
     "Phase 1: Pure LLM foundations",
     "Phase 2: Persistence, consent, egress gate, and provider settings",
     "Phase 3: Explanations and automatic second opinions",
-    "Phase 4: Opt-in extraction and verified summaries"
+    "Phase 4: Opt-in extraction and verified summaries",
+    "Phase 5: Restructure proposals",
+    "Phase 6: Integration hardening and release documentation"
   ],
-  "last_updated": "2026-09-28T08:12:00Z",
-  "status": "in_progress"
+  "last_updated": "2026-09-30T13:27:16Z",
+  "status": "complete",
+  "verification_note": "Track-end acceptance is checked in plan.md; the earlier Restructure proposals manual checkpoint remains unchecked and was not retroactively approved by refresh."
 }

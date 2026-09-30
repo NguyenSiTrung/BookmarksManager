@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-29 -->
+<!-- Last refreshed: 2026-09-30 -->
 
 # Bookmarks Manager
 
@@ -18,11 +18,11 @@ The Manifest V3 extension provides a quick-save popup and a side-panel manager f
 
 ## Optional AI
 
-Jev proposes classifications, tags, and folder placement with confidence scores. An optional OpenAI-compatible provider supplies explanations and generative work that Jev cannot do. Suggestions pass a confidence policy, and risky changes require explicit user approval. Nothing is sent to a provider without recipient-specific in-product consent.
+Jev proposes classifications, tags, and folder placement with confidence scores through TypeSafe, OpenRouter, or one custom System One-compatible endpoint. The custom Jev slot accepts an HTTPS API base URL (HTTP only on loopback) and a model ID; it is separate from the optional OpenAI-compatible LLM provider used for explanations and generative work. Suggestions pass a confidence policy, and risky changes require explicit user approval. Nothing is sent to a provider without recipient-specific in-product consent.
 
 ## Release Scope
 
-- **1.0:** Complete offline core and optional AI — the Jev presets plus custom OpenAI-compatible provider base URLs behind the broad `https://*/*` optional capability and loopback host patterns — with Chrome Web Store disclosures and review readiness.
+- **1.0:** Complete offline core and optional AI — Jev presets plus one custom System One-compatible endpoint, and a separate OpenAI-compatible LLM provider — with Chrome Web Store disclosures and review readiness. Custom endpoints use the existing broad `https://*/*` optional capability and loopback host patterns; consent and egress checks remain exact-origin scoped.
 - **1.1:** The opt-in link checker, with its additional permissions and disclosures.
 - **v2:** Scheduled maintenance, smart collections, threshold tuning, and other advanced workflows.
 
@@ -34,6 +34,8 @@ No developer backend, analytics, remote code, or data leaving the device by defa
 
 ## Delivery Status
 
+Historical gate counts below describe their original deliveries, not new verification during this documentation refresh.
+
 - **Phase 0 foundation delivered** (archived `phase0_foundation_20260925`, 2026-09-25): MV3 scaffold, consent-gated Jev provider connection with TypeSafe/OpenRouter presets, WebCrypto-protected provider keys, and CI-guarded store disclosures.
 - **Phase 1 core manager delivered** (archived `phase1_core_manager_20260926`, 2026-09-26): the complete offline core — native-bookmark sync with live listeners and startup reconcile, extension metadata (tags/categories/notes) in IndexedDB, a guarded mutation service with LIFO undo, URL-normalized duplicate detection with keep-one merge, JSON/Netscape/CSV import/export, the full side-panel UI (ARIA folder tree, virtualized list/grid, drag and drop, bulk actions, tag manager, duplicates view), quick save via popup/keyboard shortcut/context menu, `_favicon` icons, and "delete all extension data". Verified by a 1128-test unit/component gate plus 7 e2e specs (including zero-egress) and user manual acceptance.
 - **Phase 2 search delivered** (archived `phase2_search_20260926`, 2026-09-26): fully local search — a MiniSearch fuzzy index over title, URL, domain, tags, and notes; a query language with filters (`tag:`/`folder:`/`domain:`/`in:`/`is:`/`before:`/`after:`/`has:`), negation, quoted phrases, and inline warnings; the side-panel search bar with autocomplete; a Ctrl/Cmd+K command palette (jump targets, commands, per-result actions); the popup search box; and the `bm` omnibox keyword. Everything computes on-device — queries are never stored or sent, proven by a zero-egress e2e sweep over every surface. Verified by a 1591-test unit/component gate plus 11 e2e specs and user manual acceptance.
@@ -43,4 +45,5 @@ No developer backend, analytics, remote code, or data leaving the device by defa
 - **Phase 5 LLM layer delivered** (track `phase5_llm_layer_20260928`, archived 2026-09-28): an optional, consent-gated OpenAI-compatible LLM provider (presets or a custom HTTPS/loopback origin) now backs decision explanations, budget-capped automatic second opinions on unsure suggestions, restructure proposals with a reviewable diff and guarded apply/undo, and opt-in page summaries verified by Jev before persisting. Page text leaves the device only under the `llm_summary`/`jev_summary_verify` scopes after an explicit Summarize click; the egress gate re-checks the exact configured origin plus a per-scope consent record before every request. Verified by a 2865-test unit/component gate plus a 9-spec wire-level e2e suite and key-gated live smokes.
 - **Phase 6 store readiness delivered** (track `phase6_store_release_20260928`, archived 2026-09-28): the 1.0.0 trusted-tester release is recorded — pinned Jev 1.13 evaluation evidence and confidence policy, finalized store/site disclosures for the intentionally broad provider capabilities, a release-strict `check:store` CI gate plus `check:site` static-site gate, a self-contained GitHub Pages site, reproducible store assets, and an audited release ZIP (`bookmarks-manager-1.0.0-chrome.zip`, sha256 `b8663877…3e1a` in `store/releases/1.0.0.json`). Public store submission remains out of scope.
 - **Options redesign delivered** (track `options_redesign_20260929`, archived 2026-09-29): the Options page is now a guided four-panel shell (Connections / Permissions / Activity / Data) with a left icon rail and hash deep links, a live setup checklist, unified provider cards with collapsible verbatim disclosures, Radix Switch automations, a chip blocklist editor, usage and LLM-budget stat tiles, structured sent-log rows, and a Geist-font teal-accent palette — verified by the full gate and visual verification in Chromium light/dark/mobile.
+- **Custom Jev provider delivered** (track `custom_jev_provider_20260929`, archived 2026-09-29): a third Jev provider slot with a canonical API base URL and user-supplied model ID, posting to `<baseUrl>/systemone`; settings are re-validated and the destination/model pin, origin-specific consent, host permission, and encrypted key are checked per send. Options supports enable/test/revoke and separate decisions consent for the custom origin; analysis, rerank, duplicate scans, jobs, restructure assignments, and summary verification use the resolved active provider. No dependency, manifest, or consent-version change was needed.
 - **Not yet built:** opt-in page-text extraction as richer *analyze* input (the summarize feature's extraction is summary-scoped only), the opt-in link checker, and scheduled/smart-collection workflows (see Release Scope).

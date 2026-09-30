@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 0 Foundation and Provider Connection Implementation Plan
 
 > **Last Revised: 2026-09-25** — Revision 1: manual phase-verification gates waived for the rest of this track; see `revisions.md`.
@@ -10,7 +12,7 @@
 
 **Tech Stack:** WXT, React, Tailwind, strict TypeScript, Zod v4 (jitless), Dexie, WebCrypto, Vitest, Testing Library, Playwright, ESLint, GitHub Actions.
 
-**Spec:** `conductor/tracks/phase0_foundation_20260925/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§7, 8, 12, 13, 15, and 18.
+**Spec:** `conductor/archive/phase0_foundation_20260925/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§7, 8, 12, 13, 15, and 18.
 
 ## Global Constraints
 

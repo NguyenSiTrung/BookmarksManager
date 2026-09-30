@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 6 Store Readiness and 1.0 Release Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
@@ -17,7 +19,7 @@ package the verified extension through WXT.
 **Tech Stack:** WXT 0.21, Manifest V3, TypeScript 6 strict, Zod 4, Vitest 5,
 Playwright 1.63, GitHub Pages, GitHub Actions, Chrome Web Store.
 
-**Spec:** `conductor/tracks/phase6_store_release_20260928/spec.md`
+**Spec:** `conductor/archive/phase6_store_release_20260928/spec.md`
 
 ## Global Constraints
 

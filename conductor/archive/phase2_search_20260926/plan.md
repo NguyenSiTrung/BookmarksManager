@@ -1,8 +1,10 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 2 Search — Implementation Plan
 
 **Goal:** Ship local search from `PROJECT_PLAN.md` §15 Phase 2: MiniSearch index, query syntax with autocomplete, side-panel search bar, Ctrl/Cmd+K command palette, popup search, and the `bm` omnibox keyword.
 
-**Spec:** `conductor/tracks/phase2_search_20260926/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§5.1, 6, 12, 13, 14, and 15.
+**Spec:** `conductor/archive/phase2_search_20260926/spec.md`; product constraints also live in `PROJECT_PLAN.md` §§5.1, 6, 12, 13, 14, and 15.
 
 **Tech Stack:** WXT, React 19, Tailwind 4, strict TypeScript, Zod 4 (jitless), Dexie 4 + `dexie-react-hooks`, `radix-ui` primitives, `@tanstack/react-virtual`, **MiniSearch 7.2** (new), Vitest, Testing Library, Playwright.
 

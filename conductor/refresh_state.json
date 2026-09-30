@@ -1,11 +1,47 @@
 {
-  "lastRefresh": "2026-09-29T00:00:00Z",
+  "lastRefresh": "2026-09-30T13:33:05Z",
   "scope": "all",
   "changes": [
-    "tech-stack.md: Dexie v3 -> v4 (llmUsage, llmReservations); manifest permissions + scripting and broad/loopback optional hosts; radix-ui + Switch; Geist fonts + .options-root palette + inline SVG icons; test:eval, check:store, check:site, npm run zip; pages.yml workflow; header now anchored to options_redesign_20260929",
-    "product.md: added Phase 6 store-readiness 1.0.0 trusted-tester release bullet and Options redesign bullet; refresh marker",
-    "workflow.md: local gate slice gains check:store; check:site/test:eval/test:live gating notes",
-    "patterns.md: gate line gains check:store/check:site; refresh markers bumped. No new elevations needed — options_redesign learnings already consolidated at archive",
-    "Beads drift: none — 14 open issues are filed follow-ups; no active track plans"
-  ]
+    "product.md: added delivered custom System One-compatible Jev slot and clarified separation from custom OpenAI-compatible LLM providers; historical gate evidence kept historical",
+    "tech-stack.md: anchored to custom Jev delivery and checked package/lock versions; documented dynamic destination/model pin and active-provider order, separate Jev/LLM gates, generic credentials ownership, existing custom-provider host capabilities, actual CI/Pages triggers",
+    "workflow.md: documented release/manual-only CI and required local gate before task commits",
+    "patterns.md: consolidated nine missing cross-track rules and corrected stale networking/storage/concurrency/egress/undo guidance; merged overlapping historical entries",
+    "Archived lifecycle: reconciled seven metadata statuses to archived and four stale execution states to complete using closed mapped issues and recorded track completion",
+    "Archived plans: annotated six Options and one LLM intermediate manual-verification gaps without marking them approved; repaired seven archived spec references"
+  ],
+  "learnings": {
+    "tracksScanned": 9,
+    "newPatterns": 9,
+    "archivedLearningsUnchanged": true
+  },
+  "beads": {
+    "mappedIssuesChecked": 214,
+    "mappedIssuesClosed": 214,
+    "existingOpenFollowups": 14,
+    "existingInProgressIssues": 0,
+    "unverifiedManualCheckpoints": [
+      {
+        "track": "options_redesign_20260929",
+        "count": 6,
+        "reason": "Visual verification is recorded; per-phase user acceptance is not."
+      },
+      {
+        "track": "phase5_llm_layer_20260928",
+        "count": 1,
+        "reason": "Track-end acceptance is checked; intermediate Restructure checkpoint is not."
+      }
+    ],
+    "customJevMapping": "No metadata.json or matching prior Beads issue found; no issue IDs invented.",
+    "unchangedBacklogNote": "BookmarksManager-gtv still describes the older catch-all provider dispatch; current background.ts already multiplexes protocols. Backlog disposition not changed by refresh."
+  },
+  "verification": {
+    "artifactSmoke": "Validated all Conductor JSON, exact Markdown backups/refresh markers, seven preserved manual gaps, eight archive metadata records, six complete execution states, 214 mapped closed issues, and archived spec navigation.",
+    "passed": [
+      "check:manifest",
+      "check:bundle",
+      "check:store",
+      "check:site"
+    ],
+    "scope": "Documentation-only refresh; policy gates exercised against existing built artifacts. No build, unit/component/e2e or live/eval suite rerun."
+  }
 }

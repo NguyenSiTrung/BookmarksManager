@@ -1,10 +1,12 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 3 Jev Client — Implementation Plan
 
 **Goal:** Finish PROJECT_PLAN.md §15 Phase 3: a scoped consent gate, a hardened Jev client (guards, split/merge,
 retries, concurrency, usage), the §8.4 typed question builder with §10.1 confidence, an HTTP mock Jev server,
 the §8.5 Options completion, e2e Test connection, and a live smoke script.
 
-**Spec:** `conductor/tracks/phase3_jev_client_20260927/spec.md`.
+**Spec:** `conductor/archive/phase3_jev_client_20260927/spec.md`.
 
 ## Global Constraints
 

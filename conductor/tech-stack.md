@@ -1,14 +1,13 @@
-<!-- Last refreshed: 2026-09-29 -->
+<!-- Last refreshed: 2026-09-30 -->
 
 # Technology Stack
 
-The stack below reflects the **installed dependencies in `package.json`** as of
-the Options redesign track (`options_redesign_20260929`, archived 2026-09-29),
-after the Phase 6 store-readiness/1.0 release track
-(`phase6_store_release_20260928`), Phase 5 LLM layer (`phase5_llm_layer_20260928`),
-Phase 4 Jev decisions (`phase4_jev_decisions_20260927`), and the earlier
-archived Phase 3/2/1/0 tracks. Items still planned in `PROJECT_PLAN.md` but not
-yet installed are marked **[planned]**.
+The stack below reflects the declared dependencies in `package.json` and
+resolved versions in `package-lock.json`, checked on 2026-09-30 after the
+custom Jev provider track (`custom_jev_provider_20260929`, archived
+2026-09-29). That track added no dependencies; the Options redesign and
+Phase 0–6 deliveries remain the baseline. Items still planned in
+`PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
 
 ## Platform
 
@@ -22,7 +21,7 @@ yet installed are marked **[planned]**.
 - Manifest permissions as of Phase 6 (1.0.0): `activeTab`, `bookmarks`,
   `contextMenus`, `favicon`, `scripting` (Readability extraction), `storage`,
   `sidePanel`; `optional_host_permissions` cover the TypeSafe/OpenRouter
-  presets, the broad `https://*/*` custom-LLM-origin capability, and loopback
+  presets, the broad `https://*/*` custom Jev/LLM capability, and loopback
   patterns (`localhost`/`127.0.0.1`/`[::1]`); the `_execute_action` quick-save
   command (`Ctrl+Shift+Y`); and `omnibox.keyword = "bm"` for address-bar
   search (no permission needed). `npm run check:manifest` keeps
@@ -62,11 +61,12 @@ yet installed are marked **[planned]**.
   `llmUsage` (`++id,providerId,recordedAt`) and `llmReservations`
   (`id,providerId,status`) for LLM budget metering. The metadata/tag
   repository is `src/db/meta.ts`.
-- `chrome.storage.local` holds provider-key ciphertext envelopes only
-  (`src/security/keys.ts`); non-extractable AES-GCM-256 `CryptoKey` material
-  persists in IndexedDB via structured clone. `chrome.storage.session` carries
-  the one-shot popup→side-panel pending-edit key; UI prefs live in the
-  `metadata` table under `prefs:*` keys.
+- `chrome.storage.local` holds encrypted provider-credential envelopes only;
+  `src/security/credentials.ts` owns envelope IO, and `src/security/keys.ts`
+  wraps it for Jev while preserving storage IDs. Non-extractable AES-GCM-256
+  `CryptoKey` material persists in IndexedDB via structured clone.
+  `chrome.storage.session` carries the one-shot popup→side-panel pending-edit
+  key; UI prefs live in the `metadata` table under `prefs:*` keys.
 - Offline-core modules added in Phase 1: `src/sync/` (typed `chrome.bookmarks`
   slice, listeners, reconcile, `flattenTree` read model), `src/undo/` (LIFO
   snapshots and replay), `src/duplicates/` (URL normalize + grouping),
@@ -95,7 +95,7 @@ yet installed are marked **[planned]**.
   estimation, 32k/64k guards, greedy batch planning), `retry.ts`
   (full-jitter backoff honoring `retry-after`), `usage.ts` (per-request
   token/cost totals), `confidence.ts` (§10.1 per-field confidence),
-  `client.ts` (`createJevClient` — batching, retry, per-preset concurrency,
+  `client.ts` (`createJevClient` — batching, retry, per-provider concurrency,
   response cross-checks, typed redacted `JevClientError`s), `connection.ts`
   (`testJevConnection` runs through the client on the `jev_test` scope), and
   `define.ts` (`defineDecision`/`noul`/`choice`/`score` — a Pydantic-style
@@ -103,12 +103,28 @@ yet installed are marked **[planned]**.
 - Presets in `src/net/presets.ts`: TypeSafe and OpenRouter model allowlists;
   `src/net/provider-info.ts` holds per-preset UI metadata including the
   frozen moving-alias registry (`jev-latest`, `jev-preview`).
-- Network gate `src/net/send.ts` is the only `fetch` site: scoped
-  `sendConsented(scope, …)` re-verifies
-  preset→model→https→origin→consent→host-permission→key on every send
-  against a frozen scope registry (`jev_test` admits only the deep-equal
-  synthetic request); consent records and disclosure strings live in
+- **Custom Jev provider** (`custom_jev_provider_20260929`):
+  `ProviderSettings` is a strict discriminated union in
+  `src/schemas/provider.ts`; `JevProviderId` includes `typesafe`,
+  `openrouter`, and one `custom` slot. The custom row carries a canonical
+  `LlmBaseUrl` and model ID. `src/jev/providers.ts` resolves presets from
+  the frozen registry or the custom endpoint as `<baseUrl>/systemone`,
+  pinning its model allowlist to the configured ID.
+  `src/jev/settings.ts` re-validates stored rows and resolves the active
+  provider in stable TypeSafe → OpenRouter → custom order, requiring current
+  consent at the resolved origin. Missing/invalid custom settings fail
+  closed; HTTPS is required except for literal loopback HTTP.
+- Jev gate `src/net/send.ts`: `sendConsented(scope, providerId, …)` resolves
+  the destination per call and verifies the model, scheme/exact origin,
+  scope request guard, wire schema, origin-scoped consent, host permission,
+  and provider key before sending. The frozen scope registry keeps
+  `jev_test` synthetic-only. Consent records and disclosures live in
   `src/consent/`.
+- LLM gate `src/net/llm-send.ts`: `sendLlmConsented` independently
+  re-resolves the configured destination and checks the registered scope,
+  wire schema/model pin, exact-origin consent, host permission, credential,
+  and budget reservation. These two modules are the provider fetch sites;
+  ESLint restricts fetch to `src/net/**`, not to one file.
 - Message layer `src/messages/provider.ts`: total `runtime.onMessage` handlers
   returning `{ok:true,…} | {ok:false,code,message}` Zod-validated unions.
 - **Phase 4 decisions layer** (all behind the `jev_decisions` consent scope in
@@ -173,11 +189,13 @@ yet installed are marked **[planned]**.
   (release-strict store-readiness gate over `store/` docs, assets, and the
   release record), `npm run check:site` (static-site gate for `site/`), and
   `npm run zip` (reproducible `wxt zip` release archive).
-- GitHub Actions CI (`.github/workflows/ci.yml`, Node 22): lint → typecheck →
-  unit → build → manifest check → bundle check → store-readiness gate →
-  headed Playwright under `xvfb-run`. A second workflow
+- GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on published
+  releases or manual dispatch, not on pushes or pull requests: lint →
+  typecheck → unit → build → manifest check → bundle check → store-readiness
+  gate → headed Playwright under `xvfb-run`. A second workflow
   (`.github/workflows/pages.yml`) gates `site/` via `check:site` and deploys
-  it to GitHub Pages on push to `main` or manual dispatch.
+  it to GitHub Pages on manual dispatch or pushes to `main` that change
+  `site/**` or the Pages workflow.
 - No project-owned backend, analytics, or remote code.
 
 See `PROJECT_PLAN.md` for the detailed architecture and staged permission

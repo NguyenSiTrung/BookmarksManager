@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Development Workflow
 
 ## Before a Task
@@ -12,6 +14,12 @@
 2. Validate schemas at trust boundaries. Include invalid fixtures, privacy and consent cases, and error paths where relevant.
 3. Run the narrowest relevant tests while developing. Before task completion, run the applicable slice of the CI gate — `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` → `check:bundle` → `check:store` (→ `xvfb-run -a test:e2e` when touching entrypoints or egress behavior; `check:site` when touching `site/`; `test:eval`/`test:live` are key-gated and never part of the local gate). Target **more than 80% test coverage** once the test suite and coverage reporting exist; investigate meaningful gaps rather than writing tests only for a number.
 4. Keep code, permissions, disclosures, consent versions, and store documentation synchronized whenever data flow changes.
+
+The CI workflow runs only for published releases or manual dispatch; pushes
+and pull requests do not trigger it. Run the applicable local gate before
+each task commit rather than relying on automatic CI feedback. The separate
+Pages workflow validates and deploys site changes on `main` (or manual
+dispatch); it does not run the extension gate.
 
 ## Task Completion and Commits
 

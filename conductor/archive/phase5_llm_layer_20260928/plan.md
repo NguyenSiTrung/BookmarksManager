@@ -1,3 +1,5 @@
+<!-- Last refreshed: 2026-09-30 -->
+
 # Phase 5 LLM Layer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
@@ -17,7 +19,7 @@ reservations protect every egress path.
 **Tech Stack:** WXT MV3, TypeScript strict, React 19, Zod 4, Dexie 4,
 `@mozilla/readability@0.6.0`, Vitest 5, Testing Library, and Playwright 1.63.
 
-**Spec:** `conductor/tracks/phase5_llm_layer_20260928/spec.md`
+**Spec:** `conductor/archive/phase5_llm_layer_20260928/spec.md`
 
 ## Global Constraints
 
@@ -372,6 +374,9 @@ reservations protect every egress path.
 - [ ] Task: Conductor - User Manual Verification 'Restructure proposals' (Protocol in workflow.md)
   - Run applicable gate and manually verify proposal, pause/resume, preview,
     apply, and undo before approval.
+  - Refresh reconciliation (2026-09-30): this intermediate checkpoint remains
+    unchecked. Track-end acceptance below is recorded, and all mapped Beads
+    tasks are closed; neither retroactively records this checkpoint's approval.
 
 ## Phase 6: Integration hardening and release documentation
 <!-- execution: parallel -->
