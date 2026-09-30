@@ -41,11 +41,12 @@ const PROPOSAL: RestructureProposal = {
 async function completedJob(
   bookmarkIds: string[],
   assignments: Array<{ bookmarkId: string; proposedPath: string | null; confidence: number | null }>,
+  proposal: RestructureProposal = PROPOSAL,
 ) {
   const job = await enqueueJob({
     kind: "restructure",
     bookmarkIds,
-    restructureProposal: PROPOSAL,
+    restructureProposal: proposal,
     batchSize: 10,
     now,
   });
@@ -145,6 +146,67 @@ describe("applyRestructurePlan", () => {
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]!.kind).toBe("restructure");
     expect(snapshots[0]!.createdFolderIds).toContain(tools.id);
+  });
+
+  it("skips moving bookmarks already in their proposed folder", async () => {
+    const job = await completedJob(
+      ["11", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        // "21" is already inside "News" ("20")
+        { bookmarkId: "21", proposedPath: "News", confidence: 0.95 },
+      ],
+      {
+        folders: [
+          { path: "dev/tools", description: "Developer utilities." },
+          { path: "News", description: "Press." },
+        ],
+      },
+    );
+    const moveSpy = vi.spyOn(api, "move");
+    const result = await applyRestructurePlan(job.id);
+    // Only "11" was actually moved; "21" was already in "News".
+    expect(result.moved).toBe(1);
+    expect(moveSpy).toHaveBeenCalledTimes(1);
+    expect(moveSpy).toHaveBeenCalledWith("11", expect.anything());
+    moveSpy.mockRestore();
+  });
+
+  it("reuses the bookmarks bar root when proposal paths include the root folder prefix", async () => {
+    const job = await completedJob(
+      ["11"],
+      [{ bookmarkId: "11", proposedPath: "Bookmarks bar/Tools", confidence: 0.9 }],
+      {
+        folders: [{ path: "Bookmarks bar/Tools", description: "Tools" }],
+      },
+    );
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(1);
+    const bar = await api.getSubTree("1");
+    // "Tools" was created directly under Bookmarks bar ("1"), not under a nested "Bookmarks bar" folder
+    expect(bar[0]!.children!.some((c) => c.title === "Tools")).toBe(true);
+    expect(bar[0]!.children!.some((c) => c.title === "Bookmarks bar")).toBe(false);
+  });
+
+  it("applies only the specified subset of bookmarkIds when acceptedBookmarkIds is provided", async () => {
+    const job = await completedJob(
+      ["11", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.8 },
+      ],
+    );
+    // Apply only "11", leave "21" unapplied
+    const result = await applyRestructurePlan(job.id, ["11"]);
+    expect(result.moved).toBe(1);
+
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    const tools = dev.children!.find((c) => c.title === "tools")!;
+    expect(tools.children!.map((c) => c.id)).toEqual(["11"]);
+    // "21" was NOT moved into "dev" — still under "News"
+    const news = bar[0]!.children!.find((c) => c.title === "News")!;
+    expect(news.children!.map((c) => c.id)).toContain("21");
   });
 
   it("rejects a job that is not completed", async () => {

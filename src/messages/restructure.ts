@@ -78,6 +78,7 @@ export const RestructureMessage = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("RESTRUCTURE_CONFIRM"),
     jobId: z.string().min(1),
+    bookmarkIds: z.array(z.string().min(1)).optional(),
   }),
   // Undo the most recent apply (the top `restructure` snapshot).
   z.strictObject({ type: z.literal("RESTRUCTURE_UNDO") }),
@@ -377,7 +378,10 @@ export async function handleRestructureMessage(
         return { ok: true, code: "job_ok", job };
       }
       case "RESTRUCTURE_CONFIRM": {
-        const result = await applyRestructurePlan(parsed.data.jobId);
+        const result = await applyRestructurePlan(
+          parsed.data.jobId,
+          parsed.data.bookmarkIds,
+        );
         return {
           ok: true,
           code: "applied",

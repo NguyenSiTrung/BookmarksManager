@@ -75,6 +75,7 @@ async function ensureFolders(
   rootId: string,
   created: string[],
 ): Promise<Map<string, string>> {
+  const rootNode = (await get(rootId))[0];
   // All paths, longest-prefix sorted so parents precede children.
   const paths = proposal.folders
     .map((f) => f.path)
@@ -91,6 +92,11 @@ async function ensureFolders(
         parentId = known;
         continue;
       }
+      if (depth === 0 && rootNode?.title === segment) {
+        pathToId.set(walked, rootId);
+        parentId = rootId;
+        continue;
+      }
       // Reuse a same-named folder under the resolved parent, else create.
       const siblings = await getChildren(parentId);
       const existing = siblings.find(
@@ -105,7 +111,6 @@ async function ensureFolders(
       pathToId.set(walked, createdNode.id);
       created.push(createdNode.id);
       parentId = createdNode.id;
-      void depth;
     }
   }
   return pathToId;
@@ -117,7 +122,10 @@ async function ensureFolders(
  * their captured positions and removes the folders it created, then throws
  * `mutation_failed`.
  */
-export async function applyRestructurePlan(jobId: string): Promise<ApplyResult> {
+export async function applyRestructurePlan(
+  jobId: string,
+  acceptedBookmarkIds?: readonly string[],
+): Promise<ApplyResult> {
   const job = await getJob(jobId);
   if (job === undefined || job.kind !== "restructure" || job.restructure === undefined) {
     throw new ApplyError("invalid_job", "Not a restructure job.");
@@ -133,7 +141,13 @@ export async function applyRestructurePlan(jobId: string): Promise<ApplyResult> 
   // current positions — not the state the proposal was built against.
   const bar = await getSubTree(BOOKMARKS_BAR_ID).catch(() => []);
   const diff = buildRestructureDiff(bar, plan);
-  const resolved = diff.rows.filter((r) => r.status === "resolved");
+  const acceptedSet =
+    acceptedBookmarkIds !== undefined ? new Set(acceptedBookmarkIds) : null;
+  const resolved = diff.rows.filter(
+    (r) =>
+      r.status === "resolved" &&
+      (acceptedSet === null || acceptedSet.has(r.bookmarkId)),
+  );
   if (resolved.length === 0) {
     throw new ApplyError("stale", "No resolved assignments remain to apply.");
   }
@@ -168,6 +182,9 @@ export async function applyRestructurePlan(jobId: string): Promise<ApplyResult> 
       const before = (await get(row.bookmarkId))[0];
       if (before === undefined) {
         throw new ApplyError("stale", `Bookmark ${JSON.stringify(row.bookmarkId)} is gone.`);
+      }
+      if (before.parentId === targetParentId) {
+        continue;
       }
       const destIndex = (await getChildren(targetParentId)).length;
       await moveNode(row.bookmarkId, { parentId: targetParentId, index: destIndex });

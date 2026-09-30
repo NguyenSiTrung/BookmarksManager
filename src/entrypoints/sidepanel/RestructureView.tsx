@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
 import { RestructureMessageResult } from "../../messages/restructure";
 import type { Job } from "../../schemas/job";
 import type { RestructureDiff, DiffRow } from "../../restructure/diff";
+import { Checkbox } from "../../ui/components/checkbox";
+import { ChevronDownIcon } from "../../ui/components/icons";
 import { cn } from "../../ui/lib/cn";
 import { useToast } from "./UndoToast";
 
@@ -76,73 +78,206 @@ function confidenceLabel(row: DiffRow): string {
   return c !== null && c >= 0.75 ? "High" : "Low";
 }
 
-function DiffList(props: { diff: RestructureDiff }) {
-  const resolved = props.diff.rows.filter((r) => r.status === "resolved");
+interface DiffListProps {
+  diff: RestructureDiff;
+  selectedIds: ReadonlySet<string>;
+  onToggle: (bookmarkId: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
+}
+
+function DiffList(props: DiffListProps) {
+  const [movesOpen, setMovesOpen] = useState(true);
+  const [alreadyOpen, setAlreadyOpen] = useState(false);
+  const [leftOpen, setLeftOpen] = useState(false);
+
+  const moves = props.diff.rows.filter(
+    (r) => r.status === "resolved" && r.fromPath !== r.toPath,
+  );
+  const unchanged = props.diff.rows.filter(
+    (r) => r.status === "resolved" && r.fromPath === r.toPath,
+  );
   const unresolved = props.diff.rows.filter((r) => r.status !== "resolved");
+
+  const selectedMovesCount = moves.filter((m) =>
+    props.selectedIds.has(m.bookmarkId),
+  ).length;
+
   return (
     <div className="space-y-3">
       <section aria-label="Proposed moves">
-        <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-          Moves ({resolved.length})
-        </h3>
-        {resolved.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No moves proposed.</p>
-        ) : (
-          <ul className="space-y-1">
-            {resolved.map((row) => (
-              <li
-                key={row.bookmarkId}
-                tabIndex={0}
-                className={cn(
-                  "rounded-sm border border-border px-2 py-1 text-xs",
-                  "outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                <span className="block truncate font-medium">{row.title}</span>
-                <span className="block text-muted-foreground">
-                  {row.fromPath} → {row.toPath}
-                </span>
-                <span
-                  aria-label={`Confidence: ${confidenceLabel(row)}`}
-                  className={cn(
-                    "mt-0.5 inline-block rounded-sm px-1 py-0.5 text-[10px]",
-                    confidenceLabel(row) === "High"
-                      ? "bg-primary/15 text-primary"
-                      : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {confidenceLabel(row)} confidence
-                </span>
-              </li>
-            ))}
-          </ul>
+        <div className="mb-1 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setMovesOpen((o) => !o)}
+            aria-expanded={movesOpen}
+            className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span>
+              Moves ({selectedMovesCount}/{moves.length} selected)
+            </span>
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 transition-transform",
+                movesOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {moves.length > 0 && movesOpen && (
+            <button
+              type="button"
+              onClick={
+                selectedMovesCount === moves.length
+                  ? props.onDeselectAll
+                  : props.onSelectAll
+              }
+              className="text-[11px] text-muted-foreground underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {selectedMovesCount === moves.length
+                ? "Deselect all"
+                : "Select all"}
+            </button>
+          )}
+        </div>
+        {movesOpen && (
+          moves.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No moves proposed.</p>
+          ) : (
+            <ul className="space-y-1">
+              {moves.map((row) => {
+                const isSelected = props.selectedIds.has(row.bookmarkId);
+                return (
+                  <li
+                    key={row.bookmarkId}
+                    className={cn(
+                      "flex items-start gap-2 rounded-sm border border-border px-2 py-1 text-xs outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+                      !isSelected && "bg-muted/30 opacity-60",
+                    )}
+                  >
+                    <div className="pt-0.5">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => props.onToggle(row.bookmarkId)}
+                        aria-label={`Apply move for ${row.title}`}
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{row.title}</span>
+                      <span className="block text-muted-foreground">
+                        {row.fromPath} → {row.toPath}
+                      </span>
+                      <div className="mt-0.5 flex items-center gap-1.5">
+                        <span
+                          aria-label={`Confidence: ${confidenceLabel(row)}`}
+                          className={cn(
+                            "inline-block rounded-sm px-1 py-0.5 text-[10px]",
+                            confidenceLabel(row) === "High"
+                              ? "bg-primary/15 text-primary"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {confidenceLabel(row)} confidence
+                        </span>
+                        {!isSelected && (
+                          <span className="rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                            Skipped
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )
         )}
       </section>
+      {unchanged.length > 0 && (
+        <section aria-label="Already in place">
+          <button
+            type="button"
+            onClick={() => setAlreadyOpen((o) => !o)}
+            aria-expanded={alreadyOpen}
+            className="mb-1 flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span>Already in place ({unchanged.length})</span>
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 transition-transform",
+                alreadyOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {alreadyOpen && (
+            <ul className="space-y-1">
+              {unchanged.map((row) => (
+                <li
+                  key={row.bookmarkId}
+                  tabIndex={0}
+                  className={cn(
+                    "rounded-sm border border-border px-2 py-1 text-xs",
+                    "outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+                  )}
+                >
+                  <span className="block truncate font-medium">{row.title}</span>
+                  <span className="block text-muted-foreground">
+                    {row.fromPath}
+                  </span>
+                  <span
+                    aria-label={`Confidence: ${confidenceLabel(row)}`}
+                    className={cn(
+                      "mt-0.5 inline-block rounded-sm px-1 py-0.5 text-[10px]",
+                      confidenceLabel(row) === "High"
+                        ? "bg-primary/15 text-primary"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {confidenceLabel(row)} confidence
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
       {unresolved.length > 0 && (
         <section aria-label="Unresolved and stale">
-          <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-            Left in place ({unresolved.length})
-          </h3>
-          <ul className="space-y-1">
-            {unresolved.map((row) => (
-              <li
-                key={row.bookmarkId}
-                tabIndex={0}
-                className={cn(
-                  "rounded-sm border border-dashed border-border px-2 py-1",
-                  "text-xs outline-hidden focus-visible:ring-2",
-                  "focus-visible:ring-ring",
-                )}
-              >
-                <span className="block truncate">{row.title}</span>
-                <span className="text-muted-foreground">
-                  {row.status === "stale"
-                    ? `Stale — ${row.fromPath}`
-                    : `${row.fromPath} (kept)`}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <button
+            type="button"
+            onClick={() => setLeftOpen((o) => !o)}
+            aria-expanded={leftOpen}
+            className="mb-1 flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span>Left in place ({unresolved.length})</span>
+            <ChevronDownIcon
+              className={cn(
+                "size-3.5 transition-transform",
+                leftOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {leftOpen && (
+            <ul className="space-y-1">
+              {unresolved.map((row) => (
+                <li
+                  key={row.bookmarkId}
+                  tabIndex={0}
+                  className={cn(
+                    "rounded-sm border border-dashed border-border px-2 py-1",
+                    "text-xs outline-hidden focus-visible:ring-2",
+                    "focus-visible:ring-ring",
+                  )}
+                >
+                  <span className="block truncate">{row.title}</span>
+                  <span className="text-muted-foreground">
+                    {row.status === "stale"
+                      ? `Stale — ${row.fromPath}`
+                      : `${row.fromPath} (kept)`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </div>
@@ -231,8 +366,16 @@ export function RestructureView(props: { className?: string }) {
     await refresh();
   };
 
-  const confirmApply = async (job: Job, diff: RestructureDiff) => {
-    const reply = await send({ type: "RESTRUCTURE_CONFIRM", jobId: job.id });
+  const confirmApply = async (
+    job: Job,
+    diff: RestructureDiff,
+    bookmarkIds?: string[],
+  ) => {
+    const reply = await send({
+      type: "RESTRUCTURE_CONFIRM",
+      jobId: job.id,
+      ...(bookmarkIds !== undefined ? { bookmarkIds } : {}),
+    });
     if (!reply.ok) {
       setPhase({ kind: "active", job, diff });
       setError(reply.message);
@@ -260,6 +403,52 @@ export function RestructureView(props: { className?: string }) {
       ? Math.round((progress.committedBatches / progress.totalBatches) * 100)
       : 0;
 
+  const [selectedIds, setSelectedIds] = useState<Set<string> | null>(null);
+
+  const activeDiff =
+    phase.kind === "active" || phase.kind === "arm_apply"
+      ? phase.diff
+      : undefined;
+
+  const activeMoves = useMemo(() => {
+    if (activeDiff === undefined) return [];
+    return activeDiff.rows.filter(
+      (r) => r.status === "resolved" && r.fromPath !== r.toPath,
+    );
+  }, [activeDiff]);
+
+  const effectiveSelectedIds = useMemo(() => {
+    if (selectedIds !== null) return selectedIds;
+    return new Set(activeMoves.map((m) => m.bookmarkId));
+  }, [selectedIds, activeMoves]);
+
+  const handleToggle = useCallback(
+    (bookmarkId: string) => {
+      setSelectedIds((current) => {
+        const set = new Set(current ?? activeMoves.map((m) => m.bookmarkId));
+        if (set.has(bookmarkId)) {
+          set.delete(bookmarkId);
+        } else {
+          set.add(bookmarkId);
+        }
+        return set;
+      });
+    },
+    [activeMoves],
+  );
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedIds(new Set(activeMoves.map((m) => m.bookmarkId)));
+  }, [activeMoves]);
+
+  const handleDeselectAll = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const selectedMovesCount = activeMoves.filter((m) =>
+    effectiveSelectedIds.has(m.bookmarkId),
+  ).length;
+
   return (
     <div
       className={cn("flex flex-col gap-3 overflow-y-auto p-3", props.className)}
@@ -277,7 +466,7 @@ export function RestructureView(props: { className?: string }) {
         bookmark is assigned by Jev; nothing moves until you confirm.
       </p>
       {error !== null && (
-        <p role="alert" className="rounded-sm border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive-foreground">
+        <p role="alert" className="rounded-sm border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive">
           {error}
         </p>
       )}
@@ -298,7 +487,7 @@ export function RestructureView(props: { className?: string }) {
       )}
       {phase.kind === "error" && (
         <div className="space-y-2">
-          <p className="text-xs text-destructive-foreground">{phase.message}</p>
+          <p className="text-xs text-destructive">{phase.message}</p>
           <button
             type="button"
             onClick={() => void start()}
@@ -337,7 +526,7 @@ export function RestructureView(props: { className?: string }) {
                 onClick={() =>
                   void intent({ type: "RESTRUCTURE_PAUSE", jobId: job.id })
                 }
-                className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm border border-border px-2 py-1 text-xs outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Pause
               </button>
@@ -346,7 +535,7 @@ export function RestructureView(props: { className?: string }) {
                 onClick={() =>
                   void intent({ type: "RESTRUCTURE_CANCEL", jobId: job.id })
                 }
-                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive outline-hidden hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
@@ -359,7 +548,7 @@ export function RestructureView(props: { className?: string }) {
                 onClick={() =>
                   void intent({ type: "RESTRUCTURE_RESUME", jobId: job.id })
                 }
-                className="rounded-sm bg-primary px-2 py-1 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm bg-primary px-2 py-1 text-xs font-medium text-primary-foreground outline-hidden hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Resume
               </button>
@@ -368,7 +557,7 @@ export function RestructureView(props: { className?: string }) {
                 onClick={() =>
                   void intent({ type: "RESTRUCTURE_CANCEL", jobId: job.id })
                 }
-                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-sm border border-destructive/40 px-2 py-1 text-xs text-destructive outline-hidden hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
@@ -379,15 +568,22 @@ export function RestructureView(props: { className?: string }) {
 
       {phase.kind === "active" && phase.diff !== undefined && (
         <>
-          <DiffList diff={phase.diff} />
+          <DiffList
+            diff={phase.diff}
+            selectedIds={effectiveSelectedIds}
+            onToggle={handleToggle}
+            onSelectAll={handleSelectAll}
+            onDeselectAll={handleDeselectAll}
+          />
           <button
             type="button"
+            disabled={selectedMovesCount === 0}
             onClick={() =>
               setPhase({ kind: "arm_apply", job: phase.job, diff: phase.diff! })
             }
-            className="w-fit rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-fit rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Apply this layout…
+            Apply selected moves ({selectedMovesCount})…
           </button>
         </>
       )}
@@ -397,18 +593,26 @@ export function RestructureView(props: { className?: string }) {
           className="space-y-2 rounded-sm border border-destructive/50 p-2"
         >
           <p className="text-xs">
-            Apply moves{" "}
-            {phase.diff.rows.filter((r) => r.status === "resolved").length}{" "}
-            bookmarks into the proposed folders? This creates new folders in
-            your library.
+            {selectedMovesCount === 0
+              ? "No moves selected."
+              : `Move ${selectedMovesCount} selected bookmark${selectedMovesCount === 1 ? "" : "s"} into the proposed folders? This creates new folders in your library.`}
           </p>
           <div className="flex gap-2">
             <button
               type="button"
               // Autofocus keeps keyboard flow: confirm lands on focus.
               autoFocus
-              onClick={() => void confirmApply(phase.job, phase.diff)}
-              className="rounded-sm bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              disabled={selectedMovesCount === 0}
+              onClick={() =>
+                void confirmApply(
+                  phase.job,
+                  phase.diff,
+                  activeMoves
+                    .filter((m) => effectiveSelectedIds.has(m.bookmarkId))
+                    .map((m) => m.bookmarkId),
+                )
+              }
+              className="rounded-sm bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             >
               Yes, apply
             </button>

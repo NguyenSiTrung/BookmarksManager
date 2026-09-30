@@ -198,6 +198,20 @@ describe("RestructureView job lifecycle", () => {
     );
   });
 
+  it("cancels a running job and styles Cancel with text-destructive for legible contrast", async () => {
+    sendMessage = vi.fn(workerFor(jobRow({ status: "running" })));
+    mount();
+    const cancelBtn = await screen.findByRole("button", { name: "Cancel" });
+    expect(cancelBtn.className).toContain("text-destructive");
+    expect(cancelBtn.className).not.toContain("text-destructive-foreground");
+    fireEvent.click(cancelBtn);
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "RESTRUCTURE_CANCEL", jobId: "job-1" }),
+      ),
+    );
+  });
+
   it("renders the diff with text confidence chips, unresolved separated", async () => {
     sendMessage = vi.fn(
       workerFor(jobRow({ status: "completed" })),
@@ -214,13 +228,227 @@ describe("RestructureView job lifecycle", () => {
       return workerFor(jobRow({ status: "completed" }))(raw);
     });
     mount();
-    expect(await screen.findByText("Moves (1)")).toBeTruthy();
+    expect(await screen.findByText(/Moves \(1\/1 selected\)/)).toBeTruthy();
     expect(screen.getByText("Article A")).toBeTruthy();
     // Non-color-only: the chip text carries the signal.
     expect(screen.getByLabelText("Confidence: High")).toBeTruthy();
-    expect(screen.getByText("Left in place (1)")).toBeTruthy();
+    // Expand Left in place to see unresolved items
+    fireEvent.click(screen.getByRole("button", { name: /Left in place \(1\)/i }));
     expect(screen.getByText("Article B")).toBeTruthy();
   });
+
+  it("separates actual moves from bookmarks already in place", async () => {
+    const diffWithUnchanged = {
+      resolved: 2,
+      unresolved: 1,
+      stale: 0,
+      rows: [
+        {
+          bookmarkId: "11",
+          title: "Article A",
+          fromPath: "Bookmarks bar/Old",
+          toPath: "Bookmarks bar/Dev",
+          confidence: 0.92,
+          status: "resolved" as const,
+        },
+        {
+          bookmarkId: "13",
+          title: "Jupyter Wiki",
+          fromPath: "Bookmarks bar/GitHub",
+          toPath: "Bookmarks bar/GitHub",
+          confidence: 0.95,
+          status: "resolved" as const,
+        },
+        {
+          bookmarkId: "12",
+          title: "Article B",
+          fromPath: "Bookmarks bar/Old",
+          toPath: null,
+          confidence: null,
+          status: "unresolved" as const,
+        },
+      ],
+    };
+    sendMessage = vi.fn(async (raw: unknown) => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "completed" }), diff: diffWithUnchanged },
+        };
+      }
+      return workerFor(jobRow({ status: "completed" }))(raw);
+    });
+    mount();
+
+    // Actual moves section shows only Article A (1 move, not 2)
+    expect(await screen.findByText(/Moves \(1\/1 selected\)/)).toBeTruthy();
+    expect(screen.getByText("Bookmarks bar/Old → Bookmarks bar/Dev")).toBeTruthy();
+
+    // Jupyter Wiki must NOT be shown as an arrow move
+    expect(screen.queryByText("Bookmarks bar/GitHub → Bookmarks bar/GitHub")).toBeNull();
+
+    // Already in place section shows Jupyter Wiki
+    expect(screen.getByText("Already in place (1)")).toBeTruthy();
+    // Expand Already in place to inspect rows
+    fireEvent.click(screen.getByRole("button", { name: /Already in place \(1\)/i }));
+    expect(screen.getByText("Jupyter Wiki")).toBeTruthy();
+    expect(screen.getByText("Bookmarks bar/GitHub")).toBeTruthy();
+    expect(screen.getAllByLabelText("Confidence: High")).toHaveLength(2);
+
+    // Left in place still contains unresolved
+    expect(screen.getByText("Left in place (1)")).toBeTruthy();
+
+    // Arming apply asks to move 1 bookmark (only the actual move)
+    fireEvent.click(screen.getByRole("button", { name: "Apply selected moves (1)…" }));
+    expect(
+      screen.getByText(/Move 1 selected bookmark into the proposed folders\?/),
+    ).toBeTruthy();
+    });
+
+    it("supports expanding and collapsing diff sections", async () => {
+    const diff = {
+      resolved: 2,
+      unresolved: 1,
+      stale: 0,
+      rows: [
+        {
+          bookmarkId: "11",
+          title: "Article A",
+          fromPath: "Bookmarks bar/Old",
+          toPath: "Bookmarks bar/Dev",
+          confidence: 0.92,
+          status: "resolved" as const,
+        },
+        {
+          bookmarkId: "13",
+          title: "Jupyter Wiki",
+          fromPath: "Bookmarks bar/GitHub",
+          toPath: "Bookmarks bar/GitHub",
+          confidence: 0.95,
+          status: "resolved" as const,
+        },
+        {
+          bookmarkId: "12",
+          title: "Article B",
+          fromPath: "Bookmarks bar/Old",
+          toPath: null,
+          confidence: null,
+          status: "unresolved" as const,
+        },
+      ],
+    };
+    sendMessage = vi.fn(async (raw: unknown) => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "completed" }), diff },
+        };
+      }
+      return workerFor(jobRow({ status: "completed" }))(raw);
+    });
+    mount();
+
+    // Moves section button is expanded by default
+    const movesHeader = await screen.findByRole("button", { name: /Moves \(1\/1 selected\)/i });
+    expect(movesHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Article A")).toBeTruthy();
+
+    // Collapse Moves section
+    fireEvent.click(movesHeader);
+    expect(movesHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Article A")).toBeNull();
+
+    // Already in place is collapsed by default
+    const alreadyHeader = screen.getByRole("button", { name: /Already in place \(1\)/i });
+    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Jupyter Wiki")).toBeNull();
+
+    // Expand Already in place
+    fireEvent.click(alreadyHeader);
+    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Jupyter Wiki")).toBeTruthy();
+
+    // Left in place is collapsed by default
+    const leftHeader = screen.getByRole("button", { name: /Left in place \(1\)/i });
+    expect(leftHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Article B")).toBeNull();
+
+    // Expand Left in place
+    fireEvent.click(leftHeader);
+    expect(leftHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Article B")).toBeTruthy();
+    });
+
+    it("supports selective move acceptance via checkboxes", async () => {
+    const twoMovesDiff = {
+      resolved: 2,
+      unresolved: 0,
+      stale: 0,
+      rows: [
+        {
+          bookmarkId: "11",
+          title: "Article A",
+          fromPath: "Bookmarks bar/Old",
+          toPath: "Bookmarks bar/Dev",
+          confidence: 0.9,
+          status: "resolved" as const,
+        },
+        {
+          bookmarkId: "12",
+          title: "Article B",
+          fromPath: "Bookmarks bar/Old",
+          toPath: "Bookmarks bar/News",
+          confidence: 0.85,
+          status: "resolved" as const,
+        },
+      ],
+    };
+    sendMessage = vi.fn(async (raw: unknown) => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "completed" }), diff: twoMovesDiff },
+        };
+      }
+      return workerFor(jobRow({ status: "completed" }))(raw);
+    });
+    mount();
+
+    // Initially both moves selected
+    expect(await screen.findByRole("button", { name: "Apply selected moves (2)…" })).toBeTruthy();
+
+    // Uncheck Article A
+    const checkboxA = screen.getByRole("checkbox", { name: /Apply move for Article A/i });
+    expect(checkboxA.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(checkboxA);
+    expect(checkboxA.getAttribute("aria-checked")).toBe("false");
+
+    // Apply button updates to 1
+    const applyBtn = screen.getByRole("button", { name: "Apply selected moves (1)…" });
+    expect(applyBtn).toBeTruthy();
+
+    // Click Apply -> confirmation specifies 1 bookmark
+    fireEvent.click(applyBtn);
+    expect(screen.getByText(/Move 1 selected bookmark into the proposed folders\?/)).toBeTruthy();
+
+    // Confirm sends only bookmark "12"
+    fireEvent.click(screen.getByRole("button", { name: "Yes, apply" }));
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "RESTRUCTURE_CONFIRM",
+          jobId: "job-1",
+          bookmarkIds: ["12"],
+        }),
+      ),
+    );
+    });
 });
 
 describe("RestructureView apply", () => {
@@ -238,7 +466,7 @@ describe("RestructureView apply", () => {
     });
     mount();
     const arm = await screen.findByRole("button", {
-      name: "Apply this layout…",
+      name: /Apply selected moves/i,
     });
     fireEvent.click(arm);
     // Armed: CONFIRM has NOT fired yet.
@@ -282,7 +510,7 @@ describe("RestructureView apply", () => {
     });
     mount();
     fireEvent.click(
-      await screen.findByRole("button", { name: "Apply this layout…" }),
+      await screen.findByRole("button", { name: /Apply selected moves/i }),
     );
     fireEvent.click(
       await screen.findByRole("button", { name: "Yes, apply" }),

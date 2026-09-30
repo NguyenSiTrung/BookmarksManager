@@ -129,5 +129,9 @@ describe("RestructureView accessibility", () => {
     expect(
       screen.getAllByRole("button").length,
     ).toBeGreaterThan(0);
+    // The Cancel button uses text-destructive for legible contrast (not text-destructive-foreground on light bg).
+    const cancelBtn = screen.getByRole("button", { name: "Cancel" });
+    expect(cancelBtn.className).toContain("text-destructive");
+    expect(cancelBtn.className).not.toContain("text-destructive-foreground");
   });
 });
