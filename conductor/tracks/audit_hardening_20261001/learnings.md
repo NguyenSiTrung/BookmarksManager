@@ -672,3 +672,24 @@ Selected applicable patterns from `conductor/patterns.md`:
   re-check PASS with no source drift. Perf: 10k/5×2000-domain library =
   50 000 comparisons, 500 pairs, ~176–228 ms (budget 500 ms); analyze-on-save
   gate median ~81 ms (budget 1500 ms).
+- Phase 6 Task 4 (docs): the stale README claim that Playwright e2e had
+  unresolved assertion drift from the Options redesign (`BookmarksManager-gyx`,
+  P1) is replaced with the resolved record (repaired at `28fcc00`, closed
+  2026-09-29). Browser prerequisites now say Chromium via `npx playwright
+  install chromium`, headed by default, `E2E_HEADLESS=1` for headless, Linux
+  `xvfb-run -a`, `channel: "chromium"` for extension specs, and the verified
+  limitation that `chrome.permissions.request` never resolves under Playwright
+  (provider specs install a temporary manifest copy holding the optional host
+  pattern as a regular permission; the native prompt itself stays a real-Chrome
+  manual check). `conductor/workflow.md` and `conductor/tech-stack.md` now match
+  `ci.yml`: pull requests + `push:[main]`, workflow-level
+  `permissions: contents: read`, a `quality` job running lint → typecheck →
+  unit → build → manifest/bundle/site checks + Playwright under `xvfb-run -a`,
+  and a `release-checks` job (needs: quality) owning the release-strict
+  `check:store`. `conductor/patterns.md` gains eight elevated patterns
+  (guarded native-authority compensation, origin-scoped undo lock,
+  reservation lifetime + per-attempt settlement, single-owner job coordination,
+  bounded pair planning, burst coalescing, selective search cache, popup-only
+  retention). Verified: `npm run check:site` OK, `tests/unit/ci-workflow.test.ts`
+  9 passed, every command cross-checked against `package.json` and every
+  Playwright claim against `playwright.config.ts` + `tests/e2e/helpers`.

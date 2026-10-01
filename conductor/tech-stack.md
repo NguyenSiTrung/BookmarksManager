@@ -187,12 +187,19 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   default run and CI; every test skips when its env key is absent);
   `npm run test:eval` (`vitest.eval.config.ts`) runs the separate key-gated
   evaluation suite.
-- **Playwright 1.63** headed persistent-context e2e (`tests/e2e`) — must use
+- **Playwright 1.63** persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
-  `tests/e2e/helpers/decisions.ts` fakes the provider at the WIRE level (a
-  scriptable route with a request valve: first N fulfill, the rest held until
-  `release()`) and can relaunch the same extension id over a persistent
-  profile to emulate browser restarts mid-job.
+  The suite runs headed by default; `E2E_HEADLESS=1` opts into headless, and
+  Linux CI wraps the headed launch in `xvfb-run -a`. `chrome.permissions.request`
+  prompts cannot be driven under Playwright, so provider specs install a
+  temporary manifest copy that holds the optional host pattern as a regular
+  permission; the native prompt itself is not automated. `tests/e2e/helpers/decisions.ts`
+  fakes the provider at the WIRE level (a scriptable route with a request
+  valve: first N fulfill, the rest held until `release()`) and can relaunch the
+  same extension id over a persistent profile to emulate browser restarts
+  mid-job. The cross-feature audit regressions live in
+  `tests/e2e/audit-data-safety.spec.ts` (+ `helpers/audit-data.ts`) and
+  `tests/e2e/audit-provider-workflows.spec.ts` (+ `helpers/audit-provider.ts`).
 - **ESLint 9 flat config** (`eslint.config.mjs`) with typescript-eslint and
   react/react-hooks plugins; egress restriction rules ban `fetch` outside
   `src/net/**`.
@@ -202,10 +209,13 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   (release-strict store-readiness gate over `store/` docs, assets, and the
   release record), `npm run check:site` (static-site gate for `site/`), and
   `npm run zip` (reproducible `wxt zip` release archive).
-- GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on published
-  releases or manual dispatch, not on pushes or pull requests: lint →
-  typecheck → unit → build → manifest check → bundle check → store-readiness
-  gate → headed Playwright under `xvfb-run`. A second workflow
+- GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on every pull
+  request and push to `main` with workflow-level `permissions: contents: read`
+  and no secrets. The `quality` job runs lint → typecheck → unit → build →
+  manifest check → bundle check → site check → headed Playwright under
+  `xvfb-run`. A separate `release-checks` job (`needs: quality`) owns the
+  release-strict store-readiness gate and runs only for a published release or
+  manual dispatch, so routine PRs never run store packaging. A second workflow
   (`.github/workflows/pages.yml`) gates `site/` via `check:site` and deploys
   it to GitHub Pages on manual dispatch or pushes to `main` that change
   `site/**` or the Pages workflow.

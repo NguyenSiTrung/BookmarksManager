@@ -70,9 +70,9 @@ Web Store submission is pending user-controlled account steps (GitHub Pages
 enablement, dashboard answers, publisher declaration, upload + install
 smoke).
 
-Known issue: the Playwright e2e suite has assertion drift from the Options
-redesign (tracked as `BookmarksManager-gyx`, P1); unit/component, lint,
-typecheck, build, and all compliance gates are green.
+The Playwright e2e suite is green again: the assertion drift left by the
+Options redesign (`BookmarksManager-gyx`, P1) was repaired and the issue
+closed on 2026-09-29.
 
 ## Development
 
@@ -86,7 +86,7 @@ npm run zip             # package the extension ZIP
 npm run lint            # eslint (includes the fetch-outside-src/net ban)
 npm run typecheck       # wxt prepare && tsc --noEmit
 npm run test -- --run   # Vitest unit/component suite (jsdom + fake-indexeddb)
-npm run test:e2e        # Playwright MV3 suite (needs a headed browser; CI uses xvfb)
+npm run test:e2e        # Playwright MV3 suite (Chromium; headed by default)
 npm run test:live       # key-gated live provider smokes (needs TYPESAFE_API_KEY/OPENROUTER_API_KEY)
 npm run test:eval       # key-gated eval against the labeled corpus
 
@@ -98,6 +98,18 @@ npm run check:store     # release-strict store-readiness gate
 
 Load the built extension from `.output/chrome-mv3` via
 `chrome://extensions` → Developer mode → Load unpacked.
+
+Browser tests need Playwright's Chromium (`npx playwright install chromium`).
+The suite runs headed by default; set `E2E_HEADLESS=1` to run headless, and on
+Linux wrap the headed launch in `xvfb-run -a npm run test:e2e`. Extension
+specs must use `channel: "chromium"` — branded Chrome ignores
+`--load-extension`. Chrome's native `chrome.permissions.request` prompt cannot
+be driven under Playwright (the promise never resolves and no prompt window
+exists), so provider specs install a temporary manifest copy that holds the
+optional host pattern as a regular permission; exact-origin consent is
+otherwise covered by unit/component tests and the routed e2e specs
+(`tests/e2e/audit-provider-workflows.spec.ts`). The native prompt itself is a
+manual check in a real Chrome install, not automated coverage.
 
 ## Tech stack
 

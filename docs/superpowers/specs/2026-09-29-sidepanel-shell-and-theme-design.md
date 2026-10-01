@@ -160,7 +160,9 @@ flow is unchanged: `tree`, `tagDefs` and `metas` feed the pure helpers.
 - Update the e2e helpers for the moved controls: Import and Export through the
   Tools menu, folder tree items through the drawer. Keep role-based selectors.
   The existing e2e drift tracked as `BookmarksManager-gyx` overlaps this and
-  should be considered when planning.
+  should be considered when planning. *(Resolved: `BookmarksManager-gyx` was
+  repaired and closed 2026-09-29 — see the closed issue for the panel-selection,
+  provider-chip, and hashed-URL sender-trust fixes.)*
 - Manual pass at 360, 480 and 1280 px, light and dark, using
   `/tmp/capture/capture.mjs` for before and after screenshots.
 - Gates: `npm run lint`, `npm run typecheck`, `npm run test -- --run`,
