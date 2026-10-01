@@ -693,3 +693,36 @@ Selected applicable patterns from `conductor/patterns.md`:
   retention). Verified: `npm run check:site` OK, `tests/unit/ci-workflow.test.ts`
   9 passed, every command cross-checked against `package.json` and every
   Playwright claim against `playwright.config.ts` + `tests/e2e/helpers`.
+- I04/I08 provider and privacy e2e: `tests/e2e/audit-provider-workflows.spec.ts`
+  (6 legs) + `tests/e2e/helpers/audit-provider.ts` drive the built MV3 extension
+  through the real Options UI, side-panel disclosure dialog, scan controls and
+  worker egress gate with only the wire after Chromium's network stack faked
+  (synthetic `*.dev` origins, fixed `audit_*_secret` markers, no real data).
+  Legs: summary blocked/mismatch zero-egress + allowed hops without the secret
+  (B05–B08), reserved cap on the wire and conservative missing-usage settlement
+  (B08/B09), revoke-while-held settles exactly once (B10), held scan pause with
+  no further sends then resume (B11 positive control at the RED base), rapid
+  decision Undo exactly once with busy/`aria-busy` while held (B12), Options
+  Permissions panel live refresh (B14). GREEN 6 passed (46.8 s) on the final
+  revision; RED 5 failed / 1 passed at `c779b2e` (`= d8a69d4^`, the first
+  revision with the disclosed "Agree and summarize" flow and none of the seven
+  targeted fixes) with behavioral failures only; adjacent provider/llm/decisions
+  specs 20 passed. The native `chrome.permissions.request` prompt is the one
+  unexercised behavior and is documented in the spec header (the launcher
+  installs a temporary manifest copy holding the optional host pattern as a
+  regular permission), matching the Task 2 precedent.
+- Review round for Task 3: PASS/PASS with one P2 finding (the second-activation
+  probe called `.click()` on a disabled button, a tautology) and one P3
+  (three `waitForTimeout` sleeps contradicting the determinism claim). Fix
+  round replaced the probe with a synthetic bubbling `MouseEvent` dispatch plus
+  the real Ctrl+K palette "Undo last action" command (routing verified:
+  `palette.ts` → `CommandPalette` option → `App.tsx` `command === "undo"` →
+  `handleToastUndo`, the same handler as the toast button), and converted the
+  sleeps into bounded per-interval `expect.poll` absence windows. Mutation
+  proof: bypassing `decisionUndoBusyRef` makes the leg read 2 dispatches (fails);
+  `App.tsx` restored byte-identically (`0ad6db4e…` before and after,
+  `3e735de9…` mutated). Delta re-check PASS with the reviewer independently
+  reproducing the mutation, the hashes, and the RED legs; helper byte-identical
+  across the fix (`diff` clean). Residual: absence windows cannot be fully
+  event-driven, so two bounded, commented soak windows remain (2 000 ms
+  mismatch, 1 500 ms paused scan) — they still discriminate at `c779b2e`.
