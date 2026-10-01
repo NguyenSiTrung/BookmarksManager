@@ -567,3 +567,20 @@ Selected applicable patterns from `conductor/patterns.md`:
   loudly rather than false-passing if the read chain deepens; accepted).
   Isolated core-manager/search E2E batched into the Phase 5 gate at the
   user's request to stop running heavy gates per task.
+- I03 `src/search/live-cache.ts` (pure — no Chrome/React) owns the MiniSearch
+  index and its documents: unchanged documents are reused by comparing a
+  signature over every `toSearchDocument` input (title, url, dateAdded, raw
+  tag keys, resolved tag display names, category, notes, parent id, memoized
+  ancestor path key); a folder rename/move invalidates exactly its
+  descendants; duplicate grouping reruns only when an order-insensitive
+  `id→url` corpus map changes; tree order is recomputed every update; the
+  unmount cleanup calls `clear()`. `useSearchIndex(tree, metas, tagDefs)`
+  keeps its signature and stable MiniSearch identity and only routes
+  invalidated documents through `applyDocDiff`. Review `95523801` PASS; the
+  P2 (unmount-clear wiring) and P3 (tagDefs-only dependency) gaps plus a
+  vacuous egress assertion were fixed and mutation-killed, and the delta
+  re-check confirmed zero source drift against the reviewed blobs. One
+  scoped `react-hooks/set-state-in-effect` suppression is accepted: the
+  effect syncs the external index and realizes the documented `null` →
+  "Indexing…" contract. Isolated search E2E is batched into the Phase 5
+  gate.

@@ -6,6 +6,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
 import { runQuery } from "../../src/search/run";
@@ -14,6 +15,52 @@ import { flattenTree } from "../../src/sync/tree";
 import type { FlattenedTree } from "../../src/sync/tree";
 import { useSearchIndex } from "../../src/ui/hooks/useSearchIndex";
 import type { SearchIndexHandle } from "../../src/ui/hooks/useSearchIndex";
+
+/**
+ * Selective-invalidation coverage for the live hook. The cache reuses each
+ * unchanged {@link SearchDocument}, so a one-bookmark metadata edit must call
+ * the document builder exactly once and leave duplicate grouping alone; a
+ * folder rename must rebuild only its descendants. The spies below wrap the
+ * two module boundaries the cache owns (importOriginal pattern, matching the
+ * repo's other module mocks).
+ */
+vi.mock("../../src/search/index", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/search/index")>();
+  return { ...actual, toSearchDocument: vi.fn(actual.toSearchDocument) };
+});
+vi.mock("../../src/search/run", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/search/run")>();
+  return { ...actual, collectDuplicateIds: vi.fn(actual.collectDuplicateIds) };
+});
+// Wrap the cache factory so the hook's unmount cleanup is observable: the
+// cache holds every document, and `clear` is the only release path. The mock
+// decorates the real factory, recording every `clear` call. `vi.hoisted`
+// keeps the spy available to the hoisted `vi.mock` factory.
+const { clearSpy } = vi.hoisted(() => ({ clearSpy: vi.fn() }));
+vi.mock("../../src/search/live-cache", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/search/live-cache")>();
+  return {
+    ...actual,
+    createLiveSearchCache: () => {
+      const cache = actual.createLiveSearchCache();
+      return {
+        ...cache,
+        clear: () => {
+          clearSpy();
+          cache.clear();
+        },
+      };
+    },
+  };
+});
+
+import { toSearchDocument } from "../../src/search/index";
+import { collectDuplicateIds } from "../../src/search/run";
+
+const documentBuilderSpy = vi.mocked(toSearchDocument);
+const duplicateCollectorSpy = vi.mocked(collectDuplicateIds);
 
 /**
  * `useSearchIndex` coverage: the hook builds a MiniSearch index from the
@@ -29,6 +76,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   cleanup();
+  clearSpy.mockClear();
 });
 afterAll(() => {
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -106,6 +154,34 @@ function makeTree(children: BookmarksTreeNode[]): FlattenedTree {
       ],
     },
   ]);
+}
+
+/** 10k bookmark tree: ids b0..b{n-1}, each under the Bookmarks bar. */
+function seedTree(count: number): FlattenedTree {
+  const nodes: BookmarksTreeNode[] = [];
+  for (let i = 0; i < count; i++) {
+    nodes.push({
+      id: `b${i}`,
+      title: `Bookmark ${i}`,
+      url: `https://www.example.com/${i}`,
+      dateAdded: 1_700_000_000_000 + i,
+      index: i,
+    });
+  }
+  return makeTree(nodes);
+}
+
+/** Meta rows mirroring {@link seedTree}: every third bookmark carries a tag. */
+function seedMetas(count: number): BookmarkMeta[] {
+  const metas: BookmarkMeta[] = [];
+  for (let i = 0; i < count; i++) {
+    metas.push(
+      i % 3 === 0
+        ? makeMeta(`b${i}`, { tags: ["typescript"] })
+        : makeMeta(`b${i}`),
+    );
+  }
+  return metas;
 }
 
 async function renderProbe(props: ProbeProps) {
@@ -285,5 +361,102 @@ describe("useSearchIndex", () => {
     const rendersAtUnmount = renders;
     await act(async () => {});
     expect(renders).toBe(rendersAtUnmount);
+  });
+
+  it("rebuilds only the edited document and skips duplicate grouping at 10k scale", async () => {
+    const COUNT = 10_000;
+    const tree = seedTree(COUNT);
+    const metas = seedMetas(COUNT);
+    const editedId = "b5000";
+    renders = 0;
+
+    const view = await renderProbe({ tree, metas, tagDefs: [] });
+    const sameIndex = latest!.index;
+
+    // Only the edited row changes; every other meta identity/value is kept
+    // so the cache can reuse their documents.
+    const editedMetas = metas.map((meta) =>
+      meta.id === editedId
+        ? makeMeta(meta.id, { tags: meta.tags, notes: "needle" })
+        : meta,
+    );
+    documentBuilderSpy.mockClear();
+    duplicateCollectorSpy.mockClear();
+
+    await act(async () => {
+      view.rerender(<Probe tree={tree} metas={editedMetas} tagDefs={[]} />);
+    });
+
+    await waitFor(() => expect(hitsFor("needle")).toEqual([editedId]));
+
+    // One document rebuilt; duplicate grouping untouched; index identity kept.
+    expect(documentBuilderSpy).toHaveBeenCalledTimes(1);
+    expect(documentBuilderSpy.mock.calls[0]?.[0]?.id).toBe(editedId);
+    expect(duplicateCollectorSpy).not.toHaveBeenCalled();
+    expect(latest!.index).toBe(sameIndex);
+    // Query correctness is retained: the rest of the corpus still answers.
+    expect(latest!.index.documentCount).toBe(COUNT);
+    expect(hitsFor('"9999"')).toEqual(["b9999"]);
+  });
+
+  it("invalidates descendant documents when an ancestor folder is renamed", async () => {
+    const tree = makeTree([
+      {
+        id: "fld",
+        title: "Deep",
+        children: [
+          { id: "b1", title: "leaf", url: "https://leaf.example/" },
+        ],
+      },
+      { id: "b2", title: "other", url: "https://o.example/" },
+    ]);
+    renders = 0;
+    const view = await renderProbe({ tree, metas: [], tagDefs: [] });
+    expect(hitsFor("folder:deep")).toEqual(["b1"]);
+    const sameIndex = latest!.index;
+
+    const renamed = makeTree([
+      {
+        id: "fld",
+        title: "Wide",
+        children: [
+          { id: "b1", title: "leaf", url: "https://leaf.example/" },
+        ],
+      },
+      { id: "b2", title: "other", url: "https://o.example/" },
+    ]);
+    documentBuilderSpy.mockClear();
+    duplicateCollectorSpy.mockClear();
+
+    await act(async () => {
+      view.rerender(<Probe tree={renamed} metas={[]} tagDefs={[]} />);
+    });
+
+    await waitFor(() => expect(hitsFor("folder:wide")).toEqual(["b1"]));
+
+    expect(hitsFor("folder:deep")).toEqual([]);
+    expect(hitsFor("other")).toEqual(["b2"]);
+    expect(documentBuilderSpy).toHaveBeenCalledTimes(1);
+    expect(documentBuilderSpy.mock.calls[0]?.[0]?.id).toBe("b1");
+    expect(duplicateCollectorSpy).not.toHaveBeenCalled();
+    expect(latest!.index).toBe(sameIndex);
+  });
+
+  it("answers queries locally and releases the cache on unmount", async () => {
+    const tree = makeTree([
+      { id: "b1", title: "alpha", url: "https://a.example/" },
+    ]);
+    renders = 0;
+    const view = await renderProbe({ tree, metas: [], tagDefs: [] });
+
+    // Query correctness for the surfaces that read the handle.
+    expect(hitsFor("alpha")).toEqual(["b1"]);
+    expect(hitsFor("tag:typescript")).toEqual([]);
+
+    // The cache holds every document, so unmount must release it.
+    clearSpy.mockClear();
+    expect(clearSpy).not.toHaveBeenCalled();
+    view.unmount();
+    expect(clearSpy).toHaveBeenCalledTimes(1);
   });
 });

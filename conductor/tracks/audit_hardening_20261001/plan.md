@@ -671,7 +671,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `perf(tree): coalesce bookmark event refreshes`,
     isolated core-manager/search E2E, notes/learnings, close this task.
 
-- [ ] Task 2: Selective live search document invalidation
+- [x] Task 2: Selective live search document invalidation
   <!-- files: src/ui/hooks/useSearchIndex.ts, src/search/live-cache.ts, tests/components/useSearchIndex.test.tsx, tests/unit/search-live-cache.test.ts -->
   - Covers **I03**. Preserve `useSearchIndex(tree, metas, tagDefs)` and
     stable MiniSearch index identity. The pure cache has no Chrome/React I/O.
