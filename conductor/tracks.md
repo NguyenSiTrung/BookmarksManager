@@ -40,13 +40,12 @@ This file tracks major development tracks.
 
 ---
 
-## [~] Track: Audit Hardening
+<!-- Archived: 2026-10-01 — Audit Hardening completed: all 15 verified audit bugs (B01–B15) and named improvements (I01–I08) fixed across six sequential phases — non-destructive restructure compensation + resumable cross-context undo (one origin-scoped Web Lock), current-blocklist enforcement on explanation/summary egress, resource-identity matching before URL minimization, reserved-output enforcement + conservative per-attempt usage settlement surviving revoke, single-owner job runners with guarded progress, extension-wide undo serialization, re-entry-safe decision undo, full-scope restructure apply, live Options provider state, coalesced native-refresh reads, selective search-index invalidation, bounded popup retention, deterministic bounded near-duplicate planning, pair-inclusive durable scan estimates, and PR-vs-release CI split — final checkpoint ca754fd green (lint, typecheck, 158 files/3085 unit, build, check:manifest/bundle/store/site, 43 e2e passed/1 skipped, perf rerun 12 passed); automated verification only, no manual gates. Beads epic `BookmarksManager-lgd` closed (285 issues closed). Post-close fixes: Options early-consent disclosure reveal (`BookmarksManager-8qf`), popup unbounded decision-row leak (`BookmarksManager-f7c`), popup tag-chip noul-band fix (`BookmarksManager-dm1`), popup title-input focus styling, and CI trigger change (`BookmarksManager-0sr`) (see conductor/archive/audit_hardening_20261001/) -->
 
-*Link: [./conductor/tracks/audit_hardening_20261001/](./conductor/tracks/audit_hardening_20261001/)*
+---
 
-High (P1). All 15 verified audit bugs and named improvements; six sequential
-phases with limited task parallelism. Automated verification only, with no
-manual checks at phase boundaries or completion.
+## [ ] No active track
 
-Beads epic: `BookmarksManager-lgd`. Plan: 24 implementation tasks and
-6 automated checkpoints; 3 existing backlog issues reused.
+All tracks are archived. The 12 open P2/P3 backlog issues
+(`bd ready`) are tracked in Beads, not as a Conductor track; start a new track
+with `/conductor-newtrack`.

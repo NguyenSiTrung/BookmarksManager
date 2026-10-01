@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course) -->
+<!-- Last refreshed: 2026-10-01 (full refresh after audit hardening) -->
 
 # Codebase Patterns
 
@@ -31,7 +31,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course)
+Last refreshed: 2026-10-01 (full refresh after audit hardening)
 
 ---
 
@@ -234,3 +234,9 @@ _Last refreshed: 2026-09-27_
 - **Coalesce native event bursts into one in-flight read plus one dirty trailing read.** Keep the initial read immediate, route later events through a fixed window (50 ms), allow one tree read in flight, queue exactly one dirty trailing read, and keep generation/cancellation guards; a failed read keeps the previous model and waits for a new event (no spin). Unmount clears the timer and every listener. (from: audit_hardening_20261001, 2026-10-01)
 - **A selective search-index cache keys each document by a corpus signature.** Reuse unchanged documents by comparing a signature over every indexed input, invalidate a folder's descendants on rename/move and tag-label dependents when definitions change, and rerun duplicate grouping only when an order-insensitive `id→url` map changes; recompute tree order every update and keep the index identity stable. (from: audit_hardening_20261001, 2026-10-01)
 - **Bounded synthetic retention is popup-only and transactional.** Prune only rows whose bookmark IDs are all synthetic and whose status is safe (pending/unsure), oldest-first with a stable id tie-break, in one read-write transaction; never delete applied/audit/undo or mixed/real rows. Run the sweep fail-soft (startup fire-and-forget with an attached catch, plus a post-save sweep). (from: audit_hardening_20261001, 2026-10-01)
+
+## Elevated from follow-up fixes (2026-10-01, post-audit)
+
+- **Consent gating should not punish agreeing early.** When a user checks a consent box before reading the linked disclosure, reveal/open and scroll to that disclosure rather than blocking the affirmative action — the click IS the consent trigger, so keep it effective while surfacing what was agreed to. (from: BookmarksManager-8qf, 2026-10-01)
+- **Popup save-suggest is a read model over decision rows, not a chip filter.** Render every tag chip independently of the confidence policy (a `noul` in `[0.5, 0.75)` must not hide siblings), and bound the rows lifecycle-side so repeated saves cannot accumulate unbounded decisions. (from: BookmarksManager-dm1, -f7c, 2026-10-01)
+- **Focus styling on a text input must not read as a boxed field.** A focus ring/border on the popup title input was mistaken for an editable box regression — when styling focus, prefer the surrounding affordance over a boxed border on the input itself. (from: popup title-input fix, 2026-10-01)

@@ -1,43 +1,57 @@
 {
-  "lastRefresh": "2026-09-30T16:45:00Z",
+  "lastRefresh": "2026-10-01T19:05:00Z",
   "scope": "all",
   "changes": [
-    "product.md: recorded paper/course resource types and the one-shot starter tech tag pack; added the 2026-09-29/30 UI polish wave (sidepanel shell/content, dialogs, options/popup, grid redesign, restructure collapsible diffs) to Delivery Status",
-    "tech-stack.md: documented src/db/starter-tags.ts seeding rules and the Category enum multi-surface expansion contract",
-    "patterns.md: elevated three follow-up patterns (category enum expansion, one-shot prefs-flag seeding, Jev-facing tag descriptions)",
-    "Archived plans: marked 7 previously unchecked User Manual Verification tasks complete by trusting closed Beads issues (6 options_redesign phases + phase5 Restructure), per user direction",
-    "workflow.md: no drift; left unchanged"
+    "tracks.md: archived the completed Audit Hardening track (now a <!-- Archived --> comment with a full delivery + post-close-fix summary) and replaced the active block with a 'No active track' section pointing at the 12 open Beads issues",
+    "Archive: git mv conductor/tracks/audit_hardening_20261001 -> conductor/archive/audit_hardening_20261001 (all 7 files: spec, plan, learnings, metadata, implement_state, revisions)",
+    "product.md: added 'Audit hardening delivered' (15 bugs B01-B15 + improvements I01-I08, 6 phases, final checkpoint ca754fd green, epic lgd closed) and 'Post-audit fixes' (8qf disclosure reveal, dm1 tag chips, f7c retention leak, popup title-input focus, 0sr CI trigger); extended 'Not yet built' with the 12-item P2/P3 Beads backlog",
+    "patterns.md: elevated 3 post-close-fix patterns under a new 'Elevated from follow-up fixes (2026-10-01, post-audit)' section; refresh markers updated",
+    "tech-stack.md: no drift - the CI trigger change (3337114) already updated it in the same commit; left unchanged",
+    "workflow.md: no drift - same commit updated it identically; left unchanged"
   ],
   "learnings": {
-    "tracksScanned": 9,
+    "tracksScanned": 10,
+    "auditTrackPatternsAlreadyElevated": 10,
     "newPatterns": 3,
-    "archivedLearningsUnchanged": true
+    "archivedLearningsUnchanged": true,
+    "note": "No cross-track duplicates found; all 2+ occurrence patterns were already consolidated."
   },
   "beads": {
-    "openFollowups": 14,
+    "openFollowups": 12,
     "inProgressIssues": 0,
-    "closedTotal": 245,
-    "syncDirection": "beads_to_conductor",
-    "manualCheckpointsSynced": [
-      {
-        "track": "options_redesign_20260929",
-        "count": 6,
-        "action": "plan checkboxes marked [x] from closed Beads"
-      },
-      {
-        "track": "phase5_llm_layer_20260928",
-        "count": 1,
-        "action": "Restructure proposals manual verification marked [x] from BookmarksManager-4qn.5.5"
-      }
+    "blocked": 0,
+    "closedTotal": 285,
+    "totalIssues": 297,
+    "syncDirection": "none (report only)",
+    "completedThisCycle": [
+      "BookmarksManager-0sr (CI trigger)",
+      "BookmarksManager-dm1 (popup tag chips)",
+      "BookmarksManager-f7c (popup row leak)",
+      "BookmarksManager-8qf (disclosure reveal)",
+      "BookmarksManager-lgd epic + 24 task children (audit hardening)"
     ],
-    "remainingOpenFollowupsNote": "14 P2/P3 followups remain open (phase0 hygiene, near-duplicate cost, popup save-suggest leak, Playwright permissions). Unchanged by this refresh.",
+    "remainingOpenFollowups": [
+      "BookmarksManager-4fb P2 E2E chrome.permissions.request never resolves under Playwright",
+      "BookmarksManager-2v9 P3 restructure preview should flag managed rows before apply",
+      "BookmarksManager-42k P3 split src/messages/provider.ts into protocol.ts + worker handler",
+      "BookmarksManager-4hw.7 P3 title-quality check before analyze/save-suggest",
+      "BookmarksManager-7k4 P3 per-preset serialization for saveProviderKey",
+      "BookmarksManager-bih P3 extend egress lint rule beyond fetch",
+      "BookmarksManager-dfr P3 E2E positive control + websocket watch",
+      "BookmarksManager-eov P3 FR8: record usage for responses that egressed but fail cross-check",
+      "BookmarksManager-gtv P3 future-protocol multiplexing note for background.ts",
+      "BookmarksManager-mc9 P3 IV-length branch test for keys.ts:178",
+      "BookmarksManager-ope P3 harden scripts/check-bundle.mjs",
+      "BookmarksManager-sb9 P3 move popup<->sidepanel handoff helpers to src/sync/"
+    ],
     "cosmetic": [
       "beads.role not configured (GH#2950)",
       ".beads directory perms 0755 (recommended 0700)"
     ]
   },
   "verification": {
-    "artifactSmoke": "Backups created; product/tech-stack/patterns refresh markers updated; 7 plan checkboxes flipped; no package/CI drift; remaining unchecked plan tasks = 0.",
-    "scope": "Documentation-only refresh. No build, unit/component/e2e or live/eval suite rerun."
+    "artifactSmoke": "Backups created (tracks/product/patterns .md.bak); track moved via git mv (history preserved); refresh markers updated in product/patterns; tracks.md now shows zero active tracks; conductor/tracks/ empty.",
+    "scope": "Documentation-only refresh. No build, unit/component/e2e or live/eval suite rerun.",
+    "sourceCommits": "Track closed at ca754fd/92764c4; post-close fixes 3337114, 58665b7, f3f7be8, 5901cf8; all local, unpushed."
   }
 }
