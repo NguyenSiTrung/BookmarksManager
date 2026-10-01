@@ -211,6 +211,31 @@ Selected applicable patterns from `conductor/patterns.md`:
   not run. No manual acceptance was requested. No remote synchronization.
 - Coordinator continues to Phase 2 automatically under the approved override.
 
+### Phase 2 Task 1: Current blocklists at every affected send
+
+- Explanations refuse the entire derived decision when any live/captured
+  reference is blocked or unreadable, instead of sending a reduced array.
+  Summaries admit both the live bookmark and captured extraction URL.
+- Admission wraps structured initial/fallback/repair calls and Jev
+  queued/retry calls. Review found internal LLM retries bypassed the first
+  wrappers; Revision 3 carries optional admission to each gate fetch attempt.
+- Refusal stays outside transport retry classification. Unsent reservations
+  release; already-sent attempts settle conservative input/output exposure
+  from the durable pricing snapshot. One counted retry exposure example is
+  $0.000045; two are $0.00009. Confirmed unpriced exposure stays unknown.
+- Red: final original baseline had 19 expected failures / 51 tests.
+  Internal retry follow-up red had 15 expected failures / 100 tests.
+  Final covering gate: 10 files / 227 passing; no skips.
+- Scoped re-review: original P1 addressed, Spec PASS and Quality PASS.
+- Fresh full gate: lint/typecheck, 151 files / 2,620 tests
+  (`--maxWorkers=1`), build, manifest/bundle/store and isolated
+  `xvfb-run -a npm run test:e2e -- tests/e2e/llm.spec.ts` (10 passing).
+- Pattern: client-level retries do not revisit feature wrappers. Put
+  feature admission at each actual transport attempt, not only structured
+  output fallback, and never erase previous paid exposure on refusal.
+- B06 minimized summary URL/disclosures, B07 local identity, and B09/B10
+  general usage/revoke lifecycle remain pending.
+
 ## Planning Validation
 
 - Created Beads epic `BookmarksManager-lgd`, six phase containers, and

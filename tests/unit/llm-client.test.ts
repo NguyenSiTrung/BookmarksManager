@@ -2,8 +2,10 @@ import "fake-indexeddb/auto";
 import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { grantConsentAtOrigin } from "../../src/consent/records";
+import { readBlocklist } from "../../src/decisions/blocklist";
 import { db } from "../../src/db/database";
 import { createLlmClient, LlmHttpError } from "../../src/llm/client";
+import { LlmGateError } from "../../src/net/llm-send";
 import { LlmCapabilityError } from "../../src/llm/structured";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
@@ -58,7 +60,7 @@ const REQUEST = {
   messages: [{ role: "user", content: "hi" }],
 };
 
-function client(fetchImpl: typeof fetch) {
+function client(fetchImpl: typeof fetch, beforeSend?: () => Promise<void>) {
   return createLlmClient(PROVIDER_ID, {
     scope: "llm_test",
     kind: "manual",
@@ -66,6 +68,7 @@ function client(fetchImpl: typeof fetch) {
     maxOutputTokens: 50,
     unknownCostConfirmed: true,
     fetchImpl,
+    ...(beforeSend !== undefined ? { beforeSend } : {}),
   });
 }
 
@@ -84,6 +87,36 @@ afterAll(() => {
 });
 
 describe("createLlmClient", () => {
+  it.each(["429", "transport"] as const)(
+    "carries feature admission through an internal %s retry and accounts prior exposure",
+    async (failure) => {
+      const server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+      });
+      const fetchImpl: typeof fetch = async (...args) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+        }
+      };
+      const beforeSend = async () => {
+        if ((await readBlocklist()).includes("a-site.com")) {
+          throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+        }
+      };
+      await expect(client(fetchImpl, beforeSend).send(REQUEST)).rejects.toMatchObject({
+        code: "request_not_allowed",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+      expect(await db.llmUsage.toArray()).toMatchObject([{
+        feature: "llm_test", inputTokens: 100, outputTokens: 50,
+        estimatedCostUsd: expect.closeTo(0.000045, 10),
+      }]);
+    },
+  );
+
   it("returns the parsed completion JSON and settles usage", async () => {
     const { fetch } = makeOpenAiServer({
       completion: (body) => ({

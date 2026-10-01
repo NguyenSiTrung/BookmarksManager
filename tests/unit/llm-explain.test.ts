@@ -9,7 +9,7 @@ import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
 import { Decision } from "../../src/schemas/decision";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
-import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import { installBookmarksFake, type FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { decisionBase } from "../fixtures/base-records";
 import { makeOpenAiServer } from "../mock-servers/openai";
 
@@ -21,6 +21,7 @@ const UUID = "9b7b5f8e-2c3a-4d1e-9f0a-1b2c3d4e5f6a";
 const UUID2 = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 
 let server: ReturnType<typeof makeOpenAiServer>;
+let bookmarksApi: FakeBookmarksApi;
 
 function completionWith(payload: Record<string, unknown>) {
   return (body: { model: string }) => ({
@@ -94,13 +95,13 @@ async function seedEnabledProvider(consent = true, model = "gpt-4o-mini") {
 }
 
 beforeEach(async () => {
-  const bookmarks = installBookmarksFake({
+  bookmarksApi = installBookmarksFake({
     bookmarksBar: [
       { id: "bm-001", title: "A", url: "https://a-site.com/?q=secret" },
       { id: "bm-002", title: "B", url: "https://b-site.org/" },
     ],
   });
-  installChromeStub(bookmarks);
+  installChromeStub(bookmarksApi);
   server = makeOpenAiServer({
     completion: completionWith({ rationale: "Jev ranked 'article' highest." }),
   });
@@ -115,6 +116,218 @@ afterAll(() => {
 });
 
 describe("explainDecision", () => {
+  it.each([
+    ["429", "blocklist"], ["transport", "blocklist"],
+    ["429", "live URL"], ["transport", "live URL"],
+  ] as const)(
+    "refuses an internal %s retry after a changed %s without losing prior exposure",
+    async (failure, change) => {
+      await seedEnabledProvider();
+      await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
+      await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
+      server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+        completion: completionWith({ rationale: "Retry rationale." }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          if (change === "blocklist") {
+            await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
+          } else {
+            await bookmarksApi.update("bm-002", { url: "https://blocked-site.dev/" });
+          }
+        }
+      });
+      await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({ code: "stale" });
+      expect(server.requests).toHaveLength(1);
+      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+      const reservations = await db.llmReservations.toArray();
+      expect(reservations).toHaveLength(1);
+      expect(reservations[0]?.status).toBe("settled");
+      const usage = await db.llmUsage.toArray();
+      expect(usage).toHaveLength(1);
+      expect(usage[0]).toMatchObject({
+        inputTokens: 8_192, outputTokens: 1_024,
+        estimatedCostUsd: expect.closeTo(0.0018432, 10),
+      });
+    },
+  );
+
+  it.each(["429", "transport"] as const)(
+    "keeps the internal %s retry when feature admission remains allowed",
+    async (failure) => {
+      await seedEnabledProvider();
+      await persistDecision(decision());
+      server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+        completion: completionWith({ rationale: "Allowed retry." }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
+        }
+      });
+      expect((await explainDecision(UUID, PROVIDER_ID)).rationale).toBe("Allowed retry.");
+      expect(server.requests).toHaveLength(2);
+      expect((await getDecision(UUID))?.rationale).toBe("Allowed retry.");
+    },
+  );
+
+  it.each(["https://a-site.com/", "https://docs.a-site.com/"])(
+    "refuses a persisted blocked explanation for %s without egress",
+    async (url) => {
+      await seedEnabledProvider();
+      await bookmarksApi.update("bm-001", { url });
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      await persistDecision(decision({ bookmarkIds: ["bm-001"] }));
+      const error = await explainDecision(UUID, PROVIDER_ID).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ExplainError);
+      expect(error).toMatchObject({ code: "stale" });
+      expect(String(error)).not.toContain("a-site.com");
+      expect(server.requests).toHaveLength(0);
+      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+      expect(await db.llmUsage.count()).toBe(0);
+    },
+  );
+
+  it("refuses the whole multi-bookmark explanation when only one reference is blocked", async () => {
+    await seedEnabledProvider();
+    await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
+    await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "stale",
+    });
+    expect(server.requests).toHaveLength(0);
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
+
+  it("does not turn an unreadable blocked reference into a partial explanation", async () => {
+    await seedEnabledProvider();
+    await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
+    await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
+    const get = bookmarksApi.get.bind(bookmarksApi);
+    bookmarksApi.get = async (id) => {
+      if (id === "bm-002") throw new Error("native_read_private_marker");
+      return get(id);
+    };
+    const error = await explainDecision(UUID, PROVIDER_ID).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: "stale" });
+    expect(String(error)).not.toContain("native_read_private_marker");
+    expect(server.requests).toHaveLength(0);
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
+
+  it("allows look-alike suffixes without treating them as blocked subdomains", async () => {
+    await seedEnabledProvider();
+    await bookmarksApi.update("bm-001", { url: "https://not-a-site.com/" });
+    await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+    await persistDecision(decision({ bookmarkIds: ["bm-001"] }));
+    expect((await explainDecision(UUID, PROVIDER_ID)).rationale).toBe(
+      "Jev ranked 'article' highest.",
+    );
+    expect(server.requests).toHaveLength(1);
+    expect(JSON.stringify(server.requests[0]!.body)).toContain("not-a-site.com");
+  });
+
+  it.each(["fallback", "repair"] as const)(
+    "rereads the blocklist before an explanation %s send",
+    async (hop) => {
+      await seedEnabledProvider();
+      await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
+      server = makeOpenAiServer({
+        ...(hop === "fallback"
+          ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+          : {}),
+        completion: completionWith({ rationale: "" }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        const response = await server.fetch(...args);
+        await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
+        return response;
+      });
+      await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+        code: "stale",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect(await db.llmUsage.count()).toBe(1);
+      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+    },
+  );
+
+  it("rereads a referenced bookmark's live URL before explanation fallback", async () => {
+    await seedEnabledProvider();
+    await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
+    await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
+    server = makeOpenAiServer({
+      failures: [{ status: 400, body: { error: "response_format unsupported" } }],
+      completion: completionWith({ rationale: "Fallback rationale." }),
+    });
+    vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+      const response = await server.fetch(...args);
+      await bookmarksApi.update("bm-002", { url: "https://blocked-site.dev/" });
+      return response;
+    });
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "stale",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
+
+  it("refuses a newly blocked captured URL even when its live bookmark moved to an allowed host", async () => {
+    await seedEnabledProvider();
+    await persistDecision(decision({ bookmarkIds: ["bm-001"] }));
+    server = makeOpenAiServer({
+      failures: [{ status: 400, body: { error: "response_format unsupported" } }],
+      completion: completionWith({ rationale: "Fallback rationale." }),
+    });
+    vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+      const response = await server.fetch(...args);
+      await bookmarksApi.update("bm-001", { url: "https://allowed-site.dev/" });
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      return response;
+    });
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "stale",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
+
+  it.each(["fallback", "repair"] as const)(
+    "allows an explanation %s when a changed blocklist does not affect its references",
+    async (hop) => {
+      await seedEnabledProvider();
+      await persistDecision(decision());
+      server = makeOpenAiServer({
+        ...(hop === "fallback"
+          ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+          : {}),
+        completion: (body) => completionWith({
+          rationale: hop === "repair" && server.requests.length === 1
+            ? ""
+            : "Still allowed.",
+        })(body),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        const response = await server.fetch(...args);
+        await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
+        return response;
+      });
+      expect((await explainDecision(UUID, PROVIDER_ID)).rationale).toBe("Still allowed.");
+      expect(server.requests).toHaveLength(2);
+      expect((await getDecision(UUID))?.rationale).toBe("Still allowed.");
+    },
+  );
+
   it("sends only the minimized explain payload — no ids, notes, or raw URLs", async () => {
     await seedEnabledProvider();
     await persistDecision(decision());

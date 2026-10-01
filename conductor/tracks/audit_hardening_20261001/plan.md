@@ -247,12 +247,12 @@ implementation work.
 ## Phase 2: Privacy and summary identity
 <!-- execution: sequential -->
 
-- [~] Task 1: Enforce current blocklist for explanation and summary egress
+- [x] Task 1: Enforce current blocklist for explanation and summary egress
   <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/llm/client.ts, src/net/llm-send.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts -->
   - Covers **B05**. Reuse `readBlocklist()` and `minimizeBookmark`; refuse
     blocked multi-bookmark explanations instead of sending partial derived
     state. Re-read before subsequent repair/fallback sends and the Jev hop.
-  - [ ] Red: persist a blocked synthetic public host, seed valid providers/
+  - [x] Red: persist a blocked synthetic public host, seed valid providers/
     consents, and exercise the real feature pipeline. Use existing
     `seedProvider`, `server`, and `jevTransportFor` fixtures.
     ```ts
@@ -269,9 +269,9 @@ implementation work.
     Also change the list between LLM completion and Jev verification, and
     between a rejected structured tier and its fallback. Assert no later
     affected send and no unverified summary persistence.
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/llm-explain.test.ts tests/unit/llm-summarize.test.ts`.
-  - [ ] Green: introduce feature-local admission callbacks using the current
+  - [x] Green: introduce feature-local admission callbacks using the current
     persisted list and live referenced URLs; wrap structured `send` calls so
     each actual send rechecks admission. Keep typed, content-free refusal
     results and the existing per-origin transport gates.
@@ -281,12 +281,12 @@ implementation work.
     run it before every actual transport attempt, including internal HTTP
     and transport retries. Refused retries must not create a second request
     or persist a rationale/summary; existing origin gates remain mandatory.
-  - [ ] Verify green: rerun named tests with blocked/allowed positive
+  - [x] Verify green: rerun named tests with blocked/allowed positive
     controls, subdomain matching, and list changes between hops.
-  - [ ] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
+  - [x] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 2: Minimized summary payload and accurate disclosures
+- [~] Task 2: Minimized summary payload and accurate disclosures
   <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/e2e/provider.spec.ts -->
   - Covers **B06**. Preserve the public summary functions; build a minimized
     outbound payload separately from the original extraction used locally.

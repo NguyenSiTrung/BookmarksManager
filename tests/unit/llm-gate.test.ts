@@ -6,6 +6,7 @@ import {
   CONSENT_VERSION,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
+import { readBlocklist } from "../../src/decisions/blocklist";
 import type { BudgetReservation } from "../../src/llm/budget";
 import {
   LlmGateError,
@@ -232,6 +233,127 @@ describe("sendLlmConsented happy path", () => {
     await grantConsentAtOrigin("llm_test", ORIGIN);
     await saveCredential(PROVIDER_ID, "sk-test-1234");
   });
+
+  it("releases an admission-refused reservation only when no fetch attempt left", async () => {
+    const { result, fetch } = send({}, {
+      beforeSend: async () => {
+        throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+      },
+    });
+    await expectGateBlock(result, "request_not_allowed");
+    expect(fetch.requests).toHaveLength(0);
+    expect((await db.llmReservations.toArray())[0]?.status).toBe("released");
+    expect(await db.llmUsage.count()).toBe(0);
+  });
+
+  it.each(["429", "transport"] as const)(
+    "settles prior %s exposure when admission stops an internal retry",
+    async (failure) => {
+      const server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+      });
+      const fetchImpl: typeof fetch = async (...args) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+        }
+      };
+      const beforeSend = async () => {
+        if ((await readBlocklist()).includes("a-site.com")) {
+          throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+        }
+      };
+      const { result } = send({}, { fetchImpl, beforeSend });
+      await expectGateBlock(result, "request_not_allowed");
+      expect(server.requests).toHaveLength(1);
+      const reservations = await db.llmReservations.toArray();
+      expect(reservations).toHaveLength(1);
+      expect(reservations[0]?.status).toBe("settled");
+      expect(await db.llmUsage.toArray()).toMatchObject([{
+        inputTokens: 100, outputTokens: 50,
+        estimatedCostUsd: expect.closeTo(0.000045, 10),
+      }]);
+      await settleLlmUsage(reservations[0]!.id, "llm_test", {
+        inputTokens: 100, outputTokens: 50,
+      }, NOW);
+      expect(await db.llmUsage.count()).toBe(1);
+      await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
+      const next = send();
+      await expectGateBlock(next.result, "budget_exceeded");
+      expect(next.fetch.requests).toHaveLength(0);
+    },
+  );
+
+  it("accounts for every prior attempt when admission refuses the third attempt", async () => {
+    const server = makeOpenAiServer({
+      failures: [{ status: 429 }, { throw: new TypeError("reset") }],
+    });
+    const fetchImpl: typeof fetch = async (...args) => {
+      try {
+        return await server.fetch(...args);
+      } finally {
+        if (server.requests.length === 2) {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+        }
+      }
+    };
+    const beforeSend = async () => {
+      if ((await readBlocklist()).includes("a-site.com")) {
+        throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+      }
+    };
+    const { result } = send({}, { fetchImpl, beforeSend, retries: 2 });
+    await expectGateBlock(result, "request_not_allowed");
+    expect(server.requests).toHaveLength(2);
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      inputTokens: 200, outputTokens: 100,
+      estimatedCostUsd: expect.closeTo(0.00009, 10),
+    }]);
+  });
+
+  it("records unknown monetary exposure after a refused retry of a confirmed unpriced request", async () => {
+    await saveLlmProvider(providerRecord({
+      provider: { kind: "preset", preset: "openai", model: UNPRICED_MODEL },
+    }));
+    const server = makeOpenAiServer({ failures: [{ status: 429 }] });
+    const fetchImpl: typeof fetch = async (...args) => {
+      const response = await server.fetch(...args);
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      return response;
+    };
+    const beforeSend = async () => {
+      if ((await readBlocklist()).includes("a-site.com")) {
+        throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+      }
+    };
+    const { result } = send({ request: validRequest(UNPRICED_MODEL) }, { fetchImpl, beforeSend });
+    await expectGateBlock(result, "request_not_allowed");
+    expect(server.requests).toHaveLength(1);
+    expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(usage[0]?.costUsd).toBeUndefined();
+    expect(usage[0]?.estimatedCostUsd).toBeUndefined();
+  });
+
+  it.each(["429", "transport"] as const)(
+    "preserves the internal %s retry with an allowed feature callback",
+    async (failure) => {
+      const server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+      });
+      const beforeSend = async () => {
+        if ((await readBlocklist()).includes("a-site.com")) {
+          throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+        }
+      };
+      const { response } = await send({}, { fetchImpl: server.fetch, beforeSend }).result;
+      expect(response.status).toBe(200);
+      expect(server.requests).toHaveLength(2);
+    },
+  );
 
   it("sends exactly one gated POST with bearer auth, no cookies, no redirects", async () => {
     const { result, fetch } = send();

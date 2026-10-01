@@ -2,6 +2,7 @@ import { z } from "../schemas/z";
 import type { DecisionRow } from "../decisions/store";
 import { getDecision, persistDecisionRationale } from "../decisions/store";
 import { minimizeBookmark } from "../decisions/minimize";
+import { readBlocklist } from "../decisions/blocklist";
 import { get } from "../sync/chrome-bookmarks";
 import type { SentBookmark } from "../schemas/decision-state";
 import type { TokenUsage } from "./wire";
@@ -30,7 +31,7 @@ export type ExplainErrorCode =
   | "not_found"
   /** The decision is not in the `pending` review queue. */
   | "not_pending"
-  /** Every bookmark the decision references is gone or unsendable. */
+  /** No live bookmarks remain, or a referenced/captured bookmark is unsendable. */
   | "stale"
   /** Anything else — kept generic so no upstream detail leaks. */
   | "provider";
@@ -119,26 +120,47 @@ function questionFor(row: DecisionRow): { question: string; answer: string } {
 
 /**
  * Fetch the decision's live bookmarks and reduce each to its sendable
- * `{title, url, domain}` triple. Bookmarks that vanished, are folders, or are
- * blocklisted are dropped — they were never sendable either.
+ * `{title, url, domain}` triple. A blocked reference refuses the WHOLE
+ * explanation: its answer/probabilities may derive from that bookmark even
+ * if the bookmark itself were dropped. Also admit captured outbound URLs
+ * when rechecking a later send, since the transcript retains them.
  */
-async function minimizedBookmarks(row: DecisionRow): Promise<SentBookmark[]> {
+async function minimizedBookmarks(
+  row: DecisionRow,
+  captured: readonly SentBookmark[] = [],
+): Promise<SentBookmark[]> {
   const nodes = (
     await Promise.all(
       row.bookmarkIds.map(async (id) => {
         try {
           return await get(id);
         } catch {
-          return [];
+          // An unreadable reference may itself be blocked; dropping it
+          // would still leak the decision derived from it.
+          throw new ExplainError(
+            "stale",
+            "A referenced bookmark cannot be checked for explanation sending.",
+          );
         }
       }),
     )
   ).flat();
+  const blocklist = await readBlocklist();
+  function refuseBlocked(): never {
+    throw new ExplainError(
+      "stale",
+      "A referenced bookmark is blocked from explanation sending.",
+    );
+  }
+  for (const bookmark of captured) {
+    if (minimizeBookmark(bookmark, blocklist) === null) refuseBlocked();
+  }
   const bookmarks: SentBookmark[] = [];
   for (const node of nodes) {
     if (node.url === undefined) continue;
-    const sent = minimizeBookmark({ title: node.title, url: node.url });
-    if (sent !== null) bookmarks.push(sent);
+    const sent = minimizeBookmark({ title: node.title, url: node.url }, blocklist);
+    if (sent === null) refuseBlocked();
+    bookmarks.push(sent);
   }
   return bookmarks;
 }
@@ -189,11 +211,18 @@ export async function explainDecision(
     { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
     { role: "user", content: JSON.stringify(payload) },
   ];
+  const beforeSend = async () => {
+    const live = await minimizedBookmarks(row, bookmarks);
+    if (live.length === 0) {
+      throw new ExplainError("stale", "No referenced bookmark remains sendable.");
+    }
+  };
   const client = createLlmClient(providerId, {
     scope: "llm_explain",
     kind: "manual",
     maxInputTokens: MAX_INPUT_TOKENS,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    beforeSend,
     ...(options?.unknownCostConfirmed !== undefined
       ? { unknownCostConfirmed: options.unknownCostConfirmed }
       : {}),
@@ -205,7 +234,12 @@ export async function explainDecision(
     schema: ExplainResponse,
     schemaName: "explanation",
     messages,
-    send: client.send,
+    send: async (request) => {
+      // runStructured invokes this for every initial, fallback, and repair
+      // send. Native references and the retained transcript both need admission.
+      await beforeSend();
+      return client.send(request);
+    },
   });
   await persistDecisionRationale(decisionId, run.value.rationale);
   const result: ExplainResult = {

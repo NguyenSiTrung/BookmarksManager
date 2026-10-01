@@ -28,6 +28,8 @@ export interface LlmClientConfig {
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
   readonly fetchImpl?: typeof fetch;
+  /** Feature admission rerun by the gate before every fetch attempt. */
+  readonly beforeSend?: () => Promise<void>;
 }
 
 /** Statuses that may mean "structured output unsupported" — the engine's
@@ -114,6 +116,7 @@ export function createLlmClient(
           unknownCostConfirmed: config.unknownCostConfirmed,
           signal: config.signal,
           fetchImpl: config.fetchImpl,
+          beforeSend: config.beforeSend,
         },
       );
       lastReservationId = reservation.id;

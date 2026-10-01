@@ -1,5 +1,6 @@
 import { get } from "../sync/chrome-bookmarks";
 import { cleanUrl, minimizeBookmark } from "./minimize";
+import { readBlocklist } from "./blocklist";
 import { extractActivePage, type PageExtract } from "../extract/page";
 import { summarizePage } from "../llm/summarize";
 import { verifySummaryRun } from "../jev/tasks/verify-summary";
@@ -18,6 +19,7 @@ import {
 import { resolveLlmDestination } from "../llm/providers";
 import { readActiveJevProvider } from "../jev/settings";
 import { setBookmarkSummary } from "../db/meta";
+import { sendConsented } from "../net/send";
 
 /**
  * Summary orchestration (spec FR10): extract the active tab's page → send
@@ -108,6 +110,45 @@ function codeOf(cause: unknown): string {
     : "internal";
 }
 
+type SummaryAdmissionCode = "no_bookmark" | "mismatch" | "unsendable";
+
+/** Feature-local refusal; no URLs, page text, or native error causes. */
+class SummaryAdmissionError extends Error {
+  constructor(readonly code: SummaryAdmissionCode, message: string) {
+    super(message);
+    this.name = "SummaryAdmissionError";
+  }
+}
+
+/** Admit both the captured page and the current saved bookmark before egress. */
+async function admitSummary(bookmarkId: string, extract: PageExtract) {
+  let node;
+  try {
+    node = (await get(bookmarkId))[0];
+  } catch {
+    node = undefined;
+  }
+  if (node === undefined || node.url === undefined) {
+    throw new SummaryAdmissionError(
+      "no_bookmark", "No saved bookmark found for this page.",
+    );
+  }
+  const blocklist = await readBlocklist();
+  const minimized = minimizeBookmark({ title: node.title, url: node.url }, blocklist);
+  const page = minimizeBookmark({ title: extract.title, url: extract.url }, blocklist);
+  if (minimized === null || page === null) {
+    throw new SummaryAdmissionError(
+      "unsendable", "This page or its saved bookmark is blocked from summary sending.",
+    );
+  }
+  if (cleanUrl(node.url) !== cleanUrl(extract.url)) {
+    throw new SummaryAdmissionError(
+      "mismatch", "The active page's URL does not match this bookmark.",
+    );
+  }
+  return minimized;
+}
+
 /**
  * Run the extract → summarize → verify → persist pipeline for the active
  * tab's bookmark. Never persists an unverified summary; never throws.
@@ -136,50 +177,21 @@ export async function summarizeExtracted(
   extract: PageExtract,
 ): Promise<SummarizeOutcome> {
   // Bookmark + URL match — the page must BE the saved bookmark.
-  let node;
+  let minimized;
   try {
-    node = (await get(input.bookmarkId))[0];
-  } catch {
-    node = undefined;
-  }
-  if (node === undefined || node.url === undefined) {
+    minimized = await admitSummary(input.bookmarkId, extract);
+  } catch (cause) {
     return {
       ok: false,
       stage: "match",
-      code: "no_bookmark",
-      message: "No saved bookmark found for this page.",
+      code: cause instanceof SummaryAdmissionError ? cause.code : "unsendable",
+      message: cause instanceof SummaryAdmissionError
+        ? cause.message : "Summary admission could not be checked.",
     };
   }
-  const cleanedBookmark = cleanUrl(node.url);
-  const cleanedPage = cleanUrl(extract.url);
-  if (cleanedBookmark === null || cleanedPage === null) {
-    return {
-      ok: false,
-      stage: "match",
-      code: "unsendable",
-      message: "This page's address cannot be matched to a sendable bookmark URL.",
-    };
-  }
-  if (cleanedBookmark !== cleanedPage) {
-    return {
-      ok: false,
-      stage: "match",
-      code: "mismatch",
-      message: "The active page's URL does not match this bookmark.",
-    };
-  }
-  const minimized = minimizeBookmark({
-    title: node.title,
-    url: node.url,
-  });
-  if (minimized === null) {
-    return {
-      ok: false,
-      stage: "match",
-      code: "unsendable",
-      message: "This bookmark's URL is sensitive or cannot be cleaned for sending.",
-    };
-  }
+  const beforeSend = async () => {
+    await admitSummary(input.bookmarkId, extract);
+  };
 
   // Consents — `llm_summary` at the LLM origin and `jev_summary_verify` at
   // the Jev origin are separate grants (spec FR10.2).
@@ -252,6 +264,7 @@ export async function summarizeExtracted(
   let summarized;
   try {
     summarized = await summarizePage(providerId, extract, {
+      beforeSend,
       ...(input.unknownCostConfirmed !== undefined
         ? { unknownCostConfirmed: input.unknownCostConfirmed }
         : {}),
@@ -265,13 +278,16 @@ export async function summarizeExtracted(
   // non-"supported" verdict stops before persistence.
   let verdict;
   try {
+    const transport = input.jevTransport ?? sendConsented;
     const jevClient = createJevClient({
       providerId: jev.providerId,
       model: jev.model,
       scope: JEV_SUMMARY_VERIFY_SCOPE,
-      ...(input.jevTransport !== undefined
-        ? { transport: input.jevTransport }
-        : {}),
+      transport: async (...args) => {
+        // Runs after queueing and on retries as well as the first Jev hop.
+        await beforeSend();
+        return transport(...args);
+      },
     });
     const state = SummaryVerificationState.parse({
       bookmark: minimized,

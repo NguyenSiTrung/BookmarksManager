@@ -10,10 +10,12 @@ import { getMeta } from "../../src/db/meta";
 import { summarizeActiveBookmark } from "../../src/decisions/summaries";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
+import { saveProviderKey } from "../../src/security/keys";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import type { PageExtract } from "../../src/extract/page";
 import type { JevTransport } from "../../src/jev/client";
-import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import { SystemOneRequest } from "../../src/jev/wire";
+import { installBookmarksFake, type FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { makeOpenAiServer } from "../mock-servers/openai";
 
 vi.stubGlobal("crypto", webcrypto);
@@ -36,6 +38,7 @@ let server: ReturnType<typeof makeOpenAiServer>;
 let tabsGet: ReturnType<typeof vi.fn>;
 let executeScript: ReturnType<typeof vi.fn>;
 let chromeStub: Record<string, unknown>;
+let bookmarksApi: FakeBookmarksApi;
 
 function completionWith(payload: Record<string, unknown>) {
   return (body: { model: string }) => ({
@@ -164,14 +167,14 @@ function run(jevTransport: JevTransport = jevTransportFor("supported")) {
 }
 
 beforeEach(async () => {
-  const bookmarks = installBookmarksFake({
+  bookmarksApi = installBookmarksFake({
     bookmarksBar: [
       { id: BOOKMARK_ID, title: "An article", url: PAGE_URL },
       { id: "bm-002", title: "Other", url: "https://b-site.org/" },
     ],
   });
   installChromeStub(
-    bookmarks,
+    bookmarksApi,
     { id: TAB_ID, url: PAGE_URL, incognito: false },
     {
       title: PAGE_EXTRACT.title,
@@ -193,6 +196,269 @@ afterAll(() => {
 });
 
 describe("summarizeActiveBookmark", () => {
+  it.each([
+    ["429", "blocklist"], ["transport", "blocklist"],
+    ["429", "live URL"], ["transport", "live URL"],
+  ] as const)(
+    "refuses an internal summary %s retry after a changed %s without losing prior exposure",
+    async (failure, change) => {
+      await seedProvider();
+      await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
+      server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+        completion: completionWith({ summary: "Retry draft." }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          if (change === "blocklist") {
+            await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+          } else {
+            await bookmarksApi.update(BOOKMARK_ID, { url: "https://blocked-site.dev/article" });
+          }
+        }
+      });
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({
+        ok: false, stage: "summarize", code: "unsendable",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect(jevTransport).not.toHaveBeenCalled();
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+      const reservations = await db.llmReservations.toArray();
+      expect(reservations).toHaveLength(1);
+      expect(reservations[0]?.status).toBe("settled");
+      const usage = await db.llmUsage.toArray();
+      expect(usage).toHaveLength(1);
+      expect(usage[0]).toMatchObject({
+        inputTokens: 24_000, outputTokens: 1_024,
+        estimatedCostUsd: expect.closeTo(0.0042144, 10),
+      });
+    },
+  );
+
+  it.each(["429", "transport"] as const)(
+    "keeps the internal summary %s retry when feature admission remains allowed",
+    async (failure) => {
+      await seedProvider();
+      server = makeOpenAiServer({
+        failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
+        completion: completionWith({ summary: "Allowed retry." }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        try {
+          return await server.fetch(...args);
+        } finally {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
+        }
+      });
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({ ok: true, summary: "Allowed retry." });
+      expect(server.requests).toHaveLength(2);
+      expect(jevTransport).toHaveBeenCalledOnce();
+      expect((await getMeta(BOOKMARK_ID))?.summary).toBe("Allowed retry.");
+    },
+  );
+
+  it.each(["allowed", "blocked initially", "blocked after LLM", "live URL blocked after LLM"] as const)(
+    "uses both real origin gates with fake provider wires: %s",
+    async (scenario) => {
+      await seedProvider();
+      await saveProviderKey("typesafe", "jev-test-1234");
+      await db.metadata.put({
+        key: "decisions:blocklist",
+        value: scenario === "blocked initially" ? ["a-site.com"] : ["blocked-site.dev"],
+      });
+      const jevWire = jevTransportFor("supported");
+      vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).startsWith(JEV_ORIGIN)) {
+          const request = SystemOneRequest.parse(JSON.parse(String(init?.body)));
+          return jevWire("jev_summary_verify", "typesafe", request.model, request);
+        }
+        const response = await server.fetch(url, init);
+        if (scenario === "blocked after LLM") {
+          await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+        }
+        if (scenario === "live URL blocked after LLM") {
+          await bookmarksApi.update(BOOKMARK_ID, { url: "https://blocked-site.dev/article" });
+        }
+        return response;
+      });
+      const outcome = await summarizeActiveBookmark({
+        tabId: TAB_ID, bookmarkId: BOOKMARK_ID, unknownCostConfirmed: true,
+      });
+      if (scenario === "allowed") {
+        expect(outcome).toMatchObject({ ok: true, summary: "A page about a caching layer." });
+        expect(server.requests).toHaveLength(1);
+        expect(jevWire).toHaveBeenCalledOnce();
+        expect((await getMeta(BOOKMARK_ID))?.summary).toBe("A page about a caching layer.");
+      } else {
+        expect(outcome).toMatchObject({
+          ok: false,
+          stage: scenario === "blocked initially" ? "match" : "verify",
+          code: "unsendable",
+        });
+        expect(server.requests).toHaveLength(scenario === "blocked initially" ? 0 : 1);
+        expect(jevWire).not.toHaveBeenCalled();
+        expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+      }
+    },
+  );
+
+  it("rereads admission before retrying a rejected Jev verification", async () => {
+    await seedProvider();
+    const jevTransport = jevTransportFor("supported");
+    jevTransport.mockImplementationOnce(async () => {
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      return new Response(null, { status: 429, headers: { "retry-after": "0" } });
+    });
+    expect(await run(jevTransport)).toMatchObject({
+      ok: false, stage: "verify", code: "unsendable",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).toHaveBeenCalledOnce();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it.each(["https://a-site.com/article", "https://docs.a-site.com/article"])(
+    "refuses persisted blocked summaries for %s before either provider hop",
+    async (url) => {
+      await seedProvider();
+      await grantAll();
+      await bookmarksApi.update(BOOKMARK_ID, { url });
+      tabsGet.mockResolvedValue({ id: TAB_ID, url, incognito: false });
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      const jevTransport = jevTransportFor("supported");
+      const outcome = await run(jevTransport);
+      expect(outcome).toMatchObject({ ok: false, code: "unsendable" });
+      expect(JSON.stringify(outcome)).not.toContain("a-site.com");
+      expect(server.requests).toHaveLength(0);
+      expect(jevTransport).not.toHaveBeenCalled();
+      expect(await db.llmUsage.count()).toBe(0);
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    },
+  );
+
+  it("allows an unblocked summary with a persisted unrelated blocklist", async () => {
+    await seedProvider();
+    await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({
+      ok: true, summary: "A page about a caching layer.",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).toHaveBeenCalledOnce();
+    expect((await getMeta(BOOKMARK_ID))?.summary).toBe("A page about a caching layer.");
+  });
+
+  it("allows a look-alike summary host rather than matching a suffix without a dot boundary", async () => {
+    await seedProvider();
+    const url = "https://not-a-site.com/article";
+    await bookmarksApi.update(BOOKMARK_ID, { url });
+    tabsGet.mockResolvedValue({ id: TAB_ID, url, incognito: false });
+    await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({ ok: true });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).toHaveBeenCalledOnce();
+  });
+
+  it.each(["fallback", "repair"] as const)(
+    "rereads the blocklist before a summary %s send and saves nothing",
+    async (hop) => {
+      await seedProvider();
+      server = makeOpenAiServer({
+        ...(hop === "fallback"
+          ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+          : {}),
+        completion: completionWith({ summary: "" }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        const response = await server.fetch(...args);
+        await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+        return response;
+      });
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({
+        ok: false, stage: "summarize", code: "unsendable",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect(jevTransport).not.toHaveBeenCalled();
+      expect(await db.llmUsage.count()).toBe(1);
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    },
+  );
+
+  it.each(["fallback", "repair"] as const)(
+    "allows a summary %s when a changed blocklist does not affect the page",
+    async (hop) => {
+      await seedProvider();
+      server = makeOpenAiServer({
+        ...(hop === "fallback"
+          ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+          : {}),
+        completion: (body) => completionWith({
+          summary: hop === "repair" && server.requests.length === 1
+            ? ""
+            : "Still allowed.",
+        })(body),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        const response = await server.fetch(...args);
+        await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
+        return response;
+      });
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({ ok: true, summary: "Still allowed." });
+      expect(server.requests).toHaveLength(2);
+      expect(jevTransport).toHaveBeenCalledOnce();
+      expect((await getMeta(BOOKMARK_ID))?.summary).toBe("Still allowed.");
+    },
+  );
+
+  it("rereads the blocklist after LLM completion before Jev verification", async () => {
+    await seedProvider();
+    vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+      const response = await server.fetch(...args);
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      return response;
+    });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({
+      ok: false, stage: "verify", code: "unsendable",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it.each(["fallback", "verify"] as const)(
+    "rereads the live saved URL before the summary %s hop",
+    async (hop) => {
+      await seedProvider();
+      await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
+      server = makeOpenAiServer({
+        ...(hop === "fallback"
+          ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+          : {}),
+        completion: completionWith({ summary: "Draft." }),
+      });
+      vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+        const response = await server.fetch(...args);
+        await bookmarksApi.update(BOOKMARK_ID, { url: "https://blocked-site.dev/article" });
+        return response;
+      });
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({
+        ok: false, stage: hop === "fallback" ? "summarize" : "verify", code: "unsendable",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect(jevTransport).not.toHaveBeenCalled();
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    },
+  );
+
   it("extracts, summarizes, verifies, and persists on `supported`", async () => {
     await seedProvider();
     await grantAll();

@@ -91,6 +91,9 @@ export interface LlmSendOptions {
   readonly now?: () => Date;
   /** Test seam; defaults to global `fetch`. */
   readonly fetchImpl?: typeof fetch;
+  /** Feature admission before EACH fetch attempt, including internal retries.
+   * Throw a typed, content-free refusal; this does not bypass the origin gate. */
+  readonly beforeSend?: () => Promise<void>;
 }
 
 export interface LlmSendResult {
@@ -205,8 +208,10 @@ export async function settleLlmUsage(
  * at most `retries` extra attempts on transport failures and 408/429/5xx
  * (honoring a bounded Retry-After). A `sentLog` metadata row — timestamp,
  * origin, feature, top-level field names — is appended only after `fetch`
- * resolves. Every refusal throws `LlmGateError`; bodies, headers, and
- * credentials never appear in errors.
+ * resolves. Feature admission runs before each fetch attempt and propagates
+ * its typed refusal unchanged, conservatively settling prior exposure.
+ * Gate refusals throw `LlmGateError`; bodies, headers, and credentials never
+ * appear in errors.
  */
 export async function sendLlmConsented(
   input: LlmSendInput,
@@ -379,13 +384,34 @@ export async function sendLlmConsented(
   const body = JSON.stringify(parsed.data);
 
   let attempt = 0;
+  let sentAttempts = 0;
   for (;;) {
+    // Keep feature refusals out of the transport catch: they are permanent,
+    // must retain their typed code, and must never trigger another retry.
+    try {
+      await options?.beforeSend?.();
+    } catch (cause) {
+      if (sentAttempts === 0) {
+        await db.llmReservations.put(releaseBudget(reservation, now()));
+      } else {
+        // A failed/cancelled attempt may still have incurred provider cost.
+        // Its usage is unavailable here; account conservatively using the
+        // durable pricing snapshot and bounds for EACH prior fetch attempt.
+        // Never release paid exposure merely because the next send is blocked.
+        await settleLlmUsage(reservation.id, input.scope, {
+          inputTokens: reservation.maxInputTokens * sentAttempts,
+          outputTokens: reservation.maxOutputTokens * sentAttempts,
+        }, now());
+      }
+      throw cause;
+    }
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal =
       options?.signal !== undefined
         ? AbortSignal.any([options.signal, timeoutSignal])
         : timeoutSignal;
     try {
+      sentAttempts += 1;
       const response = await fetchImpl(destination.chatCompletionsUrl, {
         method: "POST",
         credentials: "omit",

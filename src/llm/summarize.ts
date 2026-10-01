@@ -31,6 +31,9 @@ export interface SummarizeOptions {
   /** One-shot manual confirmation for an unpriced provider. */
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
+  /** Feature admission before initial/fallback/repair sends and internal
+   * transport retries. Throw a typed, content-free refusal to stop egress. */
+  readonly beforeSend?: () => Promise<void>;
 }
 
 const MAX_INPUT_TOKENS = 24_000;
@@ -77,6 +80,7 @@ export async function summarizePage(
     kind: "manual",
     maxInputTokens: MAX_INPUT_TOKENS,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
+    ...(options?.beforeSend !== undefined ? { beforeSend: options.beforeSend } : {}),
     ...(options?.unknownCostConfirmed !== undefined
       ? { unknownCostConfirmed: options.unknownCostConfirmed }
       : {}),
@@ -88,7 +92,10 @@ export async function summarizePage(
     schema: SummaryDraft,
     schemaName: "page_summary",
     messages,
-    send: client.send,
+    send: async (request) => {
+      await options?.beforeSend?.();
+      return client.send(request);
+    },
   });
   return {
     summary: run.value.summary,
