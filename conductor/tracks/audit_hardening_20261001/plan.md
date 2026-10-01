@@ -645,7 +645,7 @@ implementation work.
 ## Phase 5: Bounded performance
 <!-- execution: parallel -->
 
-- [ ] Task 1: Coalesce native bookmark refresh bursts
+- [x] Task 1: Coalesce native bookmark refresh bursts
   <!-- files: src/ui/hooks/useBookmarkTree.ts, tests/components/useBookmarkTree.test.tsx -->
   - Covers **I02**. Preserve `useBookmarkTree(): FlattenedTree`.
   - [ ] Red: use fake timers to emit 100 synchronous events after the

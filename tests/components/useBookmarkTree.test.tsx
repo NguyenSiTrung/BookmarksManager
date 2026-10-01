@@ -1,8 +1,9 @@
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 import {
   afterAll,
   afterEach,
   beforeAll,
+  beforeEach,
   describe,
   expect,
   it,
@@ -20,17 +21,26 @@ import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 
 /**
- * Hook coverage: `useBookmarkTree` loads `getTree()` on mount, re-flattens on
- * every one of the five bookmark events, and unsubscribes on unmount. The
- * in-memory fake emits synchronously, so `act()` boundaries observe the exact
- * render after each mutation's refetch resolves.
+ * Hook coverage: `useBookmarkTree` loads `getTree()` immediately on mount,
+ * then refreshes through a 50 ms coalescing window on any of the five
+ * bookmark events. Bursts collapse to a single trailing read, while a read is
+ * already in flight only one dirty trailing read is queued, and a failed read
+ * waits for a fresh event instead of spinning. Timers are faked so the window
+ * is advanced deterministically; the in-memory fake emits synchronously, so
+ * `act()` boundaries observe the exact render after each refresh resolves.
  */
+const COALESCE_MS = 50;
+
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
 });
+beforeEach(() => {
+  vi.useFakeTimers();
+});
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 afterAll(() => {
@@ -58,11 +68,44 @@ function Probe() {
   );
 }
 
+/** Drains the microtasks behind the immediate initial `getTree()` read. */
+async function flushInitialRead(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 async function renderProbe(): Promise<ReturnType<typeof render>> {
   const view = render(<Probe />);
-  // First paint shows the empty model; wait for the initial getTree to land.
-  await waitFor(() => expect(latest?.folders.size).toBeGreaterThan(0));
+  // First paint shows the empty model; the immediate initial read is not
+  // coalesced, so only its microtasks need to drain.
+  await flushInitialRead();
+  expect(latest?.folders.size).toBeGreaterThan(0);
   return view;
+}
+
+/**
+ * Emit an event (or a synchronous burst) and let the intentional coalescing
+ * window elapse so the resulting refresh lands.
+ */
+async function emitAndSettle(emit: () => unknown): Promise<void> {
+  await act(async () => {
+    await emit();
+    await vi.advanceTimersByTimeAsync(COALESCE_MS);
+  });
+}
+
+/** 100 synchronous `onCreated` events from the installed event fake. */
+function emitOneHundredBookmarkEvents(): void {
+  for (let index = 0; index < 100; index += 1) {
+    void fake.create({
+      parentId: BOOKMARKS_BAR_ID,
+      title: `burst-${index}`,
+      url: `https://burst-${index}.example/`,
+    });
+  }
 }
 
 function barChildIds(): string[] {
@@ -107,7 +150,7 @@ describe("useBookmarkTree", () => {
     const rendersBefore = renders;
 
     let createdId = "";
-    await act(async () => {
+    await emitAndSettle(async () => {
       const node = await fake.create({
         parentId: BOOKMARKS_BAR_ID,
         title: "New",
@@ -135,15 +178,11 @@ describe("useBookmarkTree", () => {
     expect(barChildIds()).toEqual(["a", "b", "folder"]);
 
     // onChanged: title updates flow through a fresh flatten.
-    await act(async () => {
-      await fake.update("a", { title: "renamed" });
-    });
+    await emitAndSettle(() => fake.update("a", { title: "renamed" }));
     expect(latest?.bookmarks.get("a")?.title).toBe("renamed");
 
     // onMoved: the node lands in the destination folder's childIds.
-    await act(async () => {
-      await fake.move("b", { parentId: "folder" });
-    });
+    await emitAndSettle(() => fake.move("b", { parentId: "folder" }));
     expect(barChildIds()).toEqual(["a", "folder"]);
     expect(latest?.folders.get("folder")?.childIds).toEqual(["b"]);
     expect(latest?.bookmarks.get("b")?.path).toEqual([
@@ -152,15 +191,13 @@ describe("useBookmarkTree", () => {
     ]);
 
     // onChildrenReordered: childIds reflect the new order.
-    await act(async () => {
-      fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, ["folder", "a"]);
-    });
+    await emitAndSettle(() =>
+      fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, ["folder", "a"]),
+    );
     expect(barChildIds()).toEqual(["folder", "a"]);
 
     // onRemoved: the node leaves the model.
-    await act(async () => {
-      await fake.remove("a");
-    });
+    await emitAndSettle(() => fake.remove("a"));
     expect(latest?.bookmarks.has("a")).toBe(false);
     expect(barChildIds()).toEqual(["folder"]);
   });
@@ -181,9 +218,7 @@ describe("useBookmarkTree", () => {
     await renderProbe();
     expect(latest?.folders.has("parent")).toBe(true);
 
-    await act(async () => {
-      await fake.removeTree("parent");
-    });
+    await emitAndSettle(() => fake.removeTree("parent"));
 
     expect(latest?.folders.has("parent")).toBe(false);
     expect(latest?.bookmarks.has("inner")).toBe(false);
@@ -232,9 +267,186 @@ describe("useBookmarkTree", () => {
         parentId: OTHER_BOOKMARKS_ID,
         title: "later",
       });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
     });
     expect(renders).toBe(rendersAtUnmount);
     expect(latest?.bookmarks.size).toBe(0);
+  });
+
+  it("coalesces a 100-event burst into a single trailing refresh", async () => {
+    fake = installBookmarksFake();
+    const getTreeSpy = vi.spyOn(fake, "getTree");
+    renders = 0;
+    await renderProbe();
+
+    // The initial read is immediate and uncompressed.
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      emitOneHundredBookmarkEvents();
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+
+    // 100 synchronous events collapse into exactly one trailing read.
+    expect(getTreeSpy).toHaveBeenCalledTimes(2);
+    expect(latest?.bookmarks.size).toBe(100);
+    expect(barChildIds()).toHaveLength(100);
+  });
+
+  it("queues exactly one trailing read when events arrive during a held read", async () => {
+    fake = installBookmarksFake();
+    renders = 0;
+    await renderProbe();
+
+    const realGetTree = fake.getTree.bind(fake);
+    let release: (() => void) | undefined;
+    const getTreeSpy = vi
+      .spyOn(fake, "getTree")
+      .mockImplementation(async () => {
+        if (release === undefined) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return realGetTree();
+      });
+
+    // The first event opens the window; the read then blocks on `release`.
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "first",
+        url: "https://first.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+
+    // Two more events land while that read is still in flight: no new read
+    // starts, only a single dirty trailing refresh is remembered.
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "second",
+        url: "https://second.example/",
+      });
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "third",
+        url: "https://third.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+
+    // Release the held read; the dirty flag yields one trailing refresh.
+    await act(async () => {
+      release?.();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(2);
+    expect(latest?.bookmarks.size).toBe(3);
+  });
+
+  it("settles a burst to the final state and stays quiet afterwards", async () => {
+    fake = installBookmarksFake();
+    const getTreeSpy = vi.spyOn(fake, "getTree");
+    renders = 0;
+    await renderProbe();
+    const rendersAfterInitial = renders;
+
+    await act(async () => {
+      emitOneHundredBookmarkEvents();
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(2);
+    expect(latest?.bookmarks.size).toBe(100);
+    const rendersAfterBurst = renders;
+    expect(rendersAfterBurst).toBeGreaterThan(rendersAfterInitial);
+
+    // Nothing is pending: more time adds neither reads nor renders.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COALESCE_MS * 4);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(2);
+    expect(renders).toBe(rendersAfterBurst);
+  });
+
+  it("applies a read that resolves on later ticks exactly once", async () => {
+    fake = installBookmarksFake();
+    renders = 0;
+    await renderProbe();
+
+    const realGetTree = fake.getTree.bind(fake);
+    const getTreeSpy = vi
+      .spyOn(fake, "getTree")
+      .mockImplementation(async () => {
+        // A read that lands a few ticks later than the event that triggered it.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        return realGetTree();
+      });
+
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "delayed",
+        url: "https://delayed.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+    expect(latest?.bookmarks.size).toBe(1);
+  });
+
+  it("keeps the previous model on a failed read and waits for a new event", async () => {
+    fake = installBookmarksFake({
+      bookmarksBar: [
+        { id: "seed", title: "Seed", url: "https://seed.example/" },
+      ],
+    });
+    renders = 0;
+    await renderProbe();
+    expect(latest?.bookmarks.size).toBe(1);
+
+    const getTreeSpy = vi
+      .spyOn(fake, "getTree")
+      .mockRejectedValueOnce(new Error("boom"));
+
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "new",
+        url: "https://new.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+    // A failed read keeps the previous model.
+    expect(latest?.bookmarks.size).toBe(1);
+
+    // No event means no retry, even as the clock keeps moving.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COALESCE_MS * 4);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+
+    // A fresh event retries; the tree now includes both created bookmarks.
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "two",
+        url: "https://two.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+    expect(getTreeSpy).toHaveBeenCalledTimes(2);
+    expect(latest?.bookmarks.size).toBe(3);
   });
 });
 
@@ -248,7 +460,7 @@ describe("useBookmarkTree without a full chrome.bookmarks surface", () => {
 
     const view = render(<Probe />);
     // Flush the swallowed getTree/subscription failures.
-    await act(async () => {});
+    await flushInitialRead();
 
     expect(latest?.folders.size).toBe(0);
     expect(latest?.bookmarks.size).toBe(0);
@@ -280,7 +492,8 @@ describe("useBookmarkTree without a full chrome.bookmarks surface", () => {
     renders = 0;
 
     const view = render(<Probe />);
-    await waitFor(() => expect(latest?.folders.size).toBe(1));
+    await flushInitialRead();
+    expect(latest?.folders.size).toBe(1);
     expect(latest?.folders.get(ROOT_NODE_ID)?.isRoot).toBe(true);
     // The helper threw synchronously on the first missing event; onCreated
     // was already subscribed before that throw.

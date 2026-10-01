@@ -555,3 +555,15 @@ Selected applicable patterns from `conductor/patterns.md`:
   selection survival, and the unresolved-origin control (all
   mutation-verified) plus the copy/doc corrections — delta re-check PASS,
   provider/LLM E2E 14 passed.
+
+## Phase 5 (in progress notes)
+
+- I02 `useBookmarkTree`: the initial read stays immediate; all five native
+  event types coalesce through a 50 ms window with one in-flight read and
+  exactly one dirty trailing read; generation/cancellation guards kept;
+  unmount clears the timer and every listener; a failed read keeps the
+  previous model and waits for a new event (no spin). Review `48a85321`
+  PASS (P3: the test helper drains a fixed three-microtask chain — it fails
+  loudly rather than false-passing if the read chain deepens; accepted).
+  Isolated core-manager/search E2E batched into the Phase 5 gate at the
+  user's request to stop running heavy gates per task.
