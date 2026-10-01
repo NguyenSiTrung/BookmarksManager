@@ -14,8 +14,9 @@ import {
 } from "../llm/budget";
 import { resolveLlmDestination } from "../llm/providers";
 import { resolveProviderPricing } from "../llm/pricing";
-import { ChatCompletionRequest, TokenBound } from "../llm/wire";
+import { ChatCompletionRequest, ChatCompletionResponse, TokenBound } from "../llm/wire";
 import { LLM_CONSENT_SCOPES } from "../schemas/provider";
+import { z } from "../schemas/z";
 import { readCredential } from "../security/credentials";
 import { db } from "../db/database";
 
@@ -111,18 +112,74 @@ const DEFAULT_RETRIES = 1;
 const MAX_RETRY_AFTER_MS = 5_000;
 
 /**
- * How long an `active` reservation may live before the next request's
- * transaction reaps it as stale. A reservation's legitimate lifetime is one
- * request: `timeoutMs × (retries + 1)` plus bounded Retry-After waits, then
- * settle-or-release — under the defaults ≈65s; callers may raise the
- * timeout, so the TTL sits far above the default lifecycle (15 minutes).
- * A row older than that can only be orphaned by a request killed mid-flight
- * (MV3 worker eviction) — it never reaches settle/release, and leaving it
- * `active` would silently charge the month's cap forever.
+ * Historical stale threshold, retained for compatibility. Age alone cannot
+ * prove a request was never sent or free: active exposure and its pricing
+ * snapshot remain durable until explicit settlement or a never-sent release.
+ * In particular, worker eviction must not free paid exposure at this age.
  */
 export const STALE_RESERVATION_TTL_MS = 15 * 60_000;
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+
+/** Shared bounded reader for retry accounting and final error classification. */
+const MAX_ERROR_BODY_BYTES = 4096;
+export async function readLlmErrorBody(response: Response): Promise<string | null> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
+  try {
+    reader = response.body?.getReader();
+    if (reader === undefined) return null;
+    const bytes = new Uint8Array(MAX_ERROR_BODY_BYTES);
+    let length = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        completed = true;
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length));
+      }
+      if (value.byteLength > MAX_ERROR_BODY_BYTES - length) return null;
+      bytes.set(value, length);
+      length += value.byteLength;
+    }
+  } catch {
+    return null;
+  } finally {
+    if (reader !== undefined && !completed) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Untrusted cancellation failures must never become native causes.
+      }
+    }
+    reader?.releaseLock();
+  }
+}
+
+const UsageEnvelope = z.object({
+  usage: z.object({
+    prompt_tokens: z.unknown().optional(),
+    completion_tokens: z.unknown().optional(),
+    cost: z.unknown().optional(),
+  }).optional(),
+});
+const UsageFields = ChatCompletionResponse.shape.usage.unwrap().shape;
+
+/** Usage fields validate independently; absent/invalid never means zero. */
+export function parseLlmUsage(raw: unknown): ActualUsage {
+  const parsed = UsageEnvelope.safeParse(raw);
+  if (!parsed.success || parsed.data.usage === undefined) return {};
+  const usage = parsed.data.usage;
+  const input = UsageFields.prompt_tokens.safeParse(usage.prompt_tokens);
+  const output = UsageFields.completion_tokens.safeParse(usage.completion_tokens);
+  const cost = UsageFields.cost.safeParse(usage.cost);
+  return {
+    ...(input.success && input.data !== undefined ? { inputTokens: input.data } : {}),
+    ...(output.success && output.data !== undefined ? { outputTokens: output.data } : {}),
+    ...(cost.success && typeof cost.data === "number" && cost.data >= 0
+      ? { reportedCostUsd: cost.data }
+      : {}),
+  };
+}
 
 function isRegisteredScope(scope: string): scope is ConsentScope {
   return (LLM_CONSENT_SCOPES as readonly string[]).includes(scope);
@@ -204,7 +261,7 @@ export async function settleLlmUsage(
  * provider record → destination re-resolved and canonical → closed wire
  * schema + configured-model pin + token bounds → current versioned consent at the exact
  * origin → Chrome host permission → stored credential (when auth requires
- * one) → stale-reservation sweep + budget reservation persisted as
+ * one) → budget reservation persisted as
  * `active`, all inside one `rw` transaction. Only then does `fetch`
  * run — `credentials: "omit"`, `redirect: "error"`, per-attempt timeout, and
  * at most `retries` extra attempts on transport failures and 408/429/5xx
@@ -312,14 +369,13 @@ export async function sendLlmConsented(
   // crash mid-request cannot spend unrecorded. Manual requests may carry the
   // user's unknown-cost confirmation; automatic ones cannot.
   //
-  // The whole read → sweep → check → write runs inside ONE Dexie `rw`
+  // The whole read → check → write runs inside ONE Dexie `rw`
   // transaction — IndexedDB serializes `rw` transactions on these stores,
   // so two parallel sends (a `library_scan` batch fanning out) can never
   // each pass the cap check against the other's pre-reservation state and
-  // overshoot the monthly cap together (TOCTOU). The sweep runs inside the
-  // same transaction: `active` rows older than `STALE_RESERVATION_TTL_MS`
-  // are released before the cap math, so a reservation orphaned by worker
-  // eviction stops charging the cap at the next request instead of never.
+  // overshoot the monthly cap together (TOCTOU). Never reap active rows by
+  // age: an orphaned request may have incurred cost and a late response must
+  // still be able to settle honestly and exactly once.
   const unknownCostConfirmed =
     input.kind === "manual" && options?.unknownCostConfirmed === true;
   const reservationId = crypto.randomUUID();
@@ -336,18 +392,6 @@ export async function sendLlmConsented(
           .toArray(),
       ]);
       const nowDate = now();
-      const staleBefore = nowDate.getTime() - STALE_RESERVATION_TTL_MS;
-      const liveReservations: BudgetReservation[] = [];
-      for (const row of reservationRows) {
-        if (
-          row.status === "active" &&
-          Date.parse(row.createdAt) < staleBefore
-        ) {
-          await db.llmReservations.put(releaseBudget(row, nowDate));
-        } else {
-          liveReservations.push(row);
-        }
-      }
       const pricing = resolveProviderPricing(record.provider);
       const result = reserveBudget({
         reservationId,
@@ -361,7 +405,7 @@ export async function sendLlmConsented(
           ? { monthlyBudgetUsd: record.monthlyBudgetUsd }
           : {}),
         usage: usageRows,
-        reservations: liveReservations,
+        reservations: reservationRows,
         now: nowDate,
         unknownCostConfirmed,
       });
@@ -372,8 +416,7 @@ export async function sendLlmConsented(
     },
   );
 
-  // Refusals throw AFTER the transaction so the stale-reservation sweep
-  // still commits — refused requests must not strand the cleanup.
+  // Refusals throw AFTER the transaction.
   if (reservationResult.status === "refused") {
     throw new LlmGateError(
       reservationResult.reason,
@@ -401,89 +444,68 @@ export async function sendLlmConsented(
   }
   const body = JSON.stringify(request);
 
-  let attempt = 0;
-  let sentAttempts = 0;
-  for (;;) {
-    // Keep feature refusals out of the transport catch: they are permanent,
-    // must retain their typed code, and must never trigger another retry.
-    try {
-      await options?.beforeSend?.();
-    } catch (cause) {
-      if (sentAttempts === 0) {
-        await db.llmReservations.put(releaseBudget(reservation, now()));
-      } else {
-        // A failed/cancelled attempt may still have incurred provider cost.
-        // Its usage is unavailable here; account conservatively using the
-        // durable pricing snapshot and bounds for EACH prior fetch attempt.
-        // Never release paid exposure merely because the next send is blocked.
-        await settleLlmUsage(reservation.id, input.scope, {
-          inputTokens: reservation.maxInputTokens * sentAttempts,
-          outputTokens: reservation.maxOutputTokens * sentAttempts,
-        }, now());
-      }
-      throw cause;
-    }
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const signal =
-      options?.signal !== undefined
-        ? AbortSignal.any([options.signal, timeoutSignal])
-        : timeoutSignal;
-    try {
-      sentAttempts += 1;
-      const response = await fetchImpl(destination.chatCompletionsUrl, {
-        method: "POST",
-        credentials: "omit",
-        redirect: "error",
-        signal,
-        headers,
-        body,
-      });
-
-      if (response.type === "opaqueredirect") {
-        throw new LlmGateError(
-          "transport",
-          "Outbound LLM request answered with an opaque redirect.",
-        );
-      }
-
-      if (RETRYABLE_STATUS.has(response.status) && attempt < retries) {
-        attempt += 1;
-        await response.body?.cancel();
-        const wait = retryAfterMs(response);
-        if (wait > 0) await sleep(wait);
-        continue;
-      }
-
-      // The request left the extension — audit metadata only.
-      await appendSentLog({
-        sentAt: now().toISOString(),
-        destination: destination.origin,
-        feature: input.scope,
-        fieldNames: Object.keys(request),
-      });
-      return { response, reservation };
-    } catch (cause) {
-      if (cause instanceof LlmGateError) {
-        throw cause;
-      }
-      if (isAbortError(cause)) {
-        await db.llmReservations.put(releaseBudget(reservation, now()));
-        throw new LlmGateError(
-          "timeout",
-          "Outbound LLM request timed out or was aborted.",
-          { cause },
-        );
-      }
-      if (attempt < retries) {
-        attempt += 1;
-        continue;
-      }
-      await db.llmReservations.put(releaseBudget(reservation, now()));
-      throw new LlmGateError(
-        "transport",
-        "Outbound LLM request failed in transport.",
-        { cause },
-      );
-    }
+  // One durable reservation per attempt. Prior attempts are already settled
+  // when the full gate reserves again, so both budget and current admission
+  // include their exposure. Keep the normalized, clamped request immutable.
+  const retry = () => sendLlmConsented(
+    { ...input, request, maxInputTokens: reservation.maxInputTokens, maxOutputTokens },
+    { ...options, retries: retries - 1 },
+  );
+  try {
+    await options?.beforeSend?.();
+  } catch (cause) {
+    await db.llmReservations.put(releaseBudget(reservation, now()));
+    throw cause;
   }
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signal = options?.signal !== undefined
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : timeoutSignal;
+  let response: Response;
+  try {
+    response = await fetchImpl(destination.chatCompletionsUrl, {
+      method: "POST",
+      credentials: "omit",
+      redirect: "error",
+      signal,
+      headers,
+      body,
+    });
+  } catch (cause) {
+    await settleLlmUsage(reservation.id, input.scope, {}, now());
+    if (cause instanceof LlmGateError) throw cause;
+    if (isAbortError(cause)) {
+      throw new LlmGateError("timeout", "Outbound LLM request timed out or was aborted.");
+    }
+    if (retries > 0) return retry();
+    throw new LlmGateError("transport", "Outbound LLM request failed in transport.");
+  }
+
+  if (response.type === "opaqueredirect") {
+    await settleLlmUsage(reservation.id, input.scope, {}, now());
+    throw new LlmGateError("transport", "Outbound LLM request answered with an opaque redirect.");
+  }
+  if (RETRYABLE_STATUS.has(response.status) && retries > 0) {
+    const text = await readLlmErrorBody(response);
+    let usage: ActualUsage = {};
+    if (text !== null) {
+      try {
+        usage = parseLlmUsage(JSON.parse(text));
+      } catch {
+        // A malformed retry body leaves conservative unknown usage.
+      }
+    }
+    await settleLlmUsage(reservation.id, input.scope, usage, now());
+    const wait = retryAfterMs(response);
+    if (wait > 0) await sleep(wait);
+    return retry();
+  }
+
+  await appendSentLog({
+    sentAt: now().toISOString(),
+    destination: destination.origin,
+    feature: input.scope,
+    fieldNames: Object.keys(request),
+  });
+  return { response, reservation };
 }

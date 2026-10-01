@@ -7,7 +7,7 @@ import {
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { readBlocklist } from "../../src/decisions/blocklist";
-import type { BudgetReservation } from "../../src/llm/budget";
+import { monthlyBudgetSnapshot, type BudgetReservation } from "../../src/llm/budget";
 import {
   LlmGateError,
   sendLlmConsented,
@@ -312,6 +312,74 @@ describe("sendLlmConsented happy path", () => {
     expect(await db.llmUsage.count()).toBe(0);
   });
 
+  it.each(["missing", "reported overrun", "transport"] as const)(
+    "charges prior %s exposure before budget admission can allow a retry",
+    async (failure) => {
+      await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
+      const server = makeOpenAiServer({
+        failures: [failure === "transport"
+          ? { throw: new TypeError("synthetic reset") }
+          : { status: 503, body: {
+            error: { message: "temporarily unavailable" },
+            ...(failure === "reported overrun" ? { usage: { completion_tokens: 1000, cost: 0.02 } } : {}),
+          } }],
+      });
+      await expectGateBlock(send({}, { fetchImpl: server.fetch }).result, "budget_exceeded");
+      expect(server.requests).toHaveLength(1);
+      const rows = await db.llmUsage.toArray();
+      expect(rows).toHaveLength(1);
+      if (failure === "reported overrun") {
+        expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: 0.02 });
+        expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+      } else {
+        expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+      }
+      expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
+    },
+  );
+
+  it.each(["consent", "permission", "origin"] as const)(
+    "reruns current %s admission before a paid retry",
+    async (change) => {
+      const server = makeOpenAiServer({ failures: [{ status: 503 }] });
+      const fetchImpl: typeof fetch = async (...args) => {
+        const response = await server.fetch(...args);
+        if (change === "consent") await db.consents.clear();
+        else if (change === "permission") containsSpy.mockResolvedValue(false);
+        else await saveLlmProvider(providerRecord({
+          provider: { kind: "custom", baseUrl: "https://changed.example.com/v1", model: MODEL, auth: "none" },
+        }));
+        return response;
+      };
+      await expectGateBlock(send({}, { fetchImpl }).result, change === "permission" ? "no_permission" : change === "origin" ? "invalid_provider" : "no_consent");
+      expect(server.requests).toHaveLength(1);
+      expect(await db.llmUsage.toArray()).toMatchObject([{
+        estimatedCostUsd: expect.closeTo(0.000045, 12),
+      }]);
+    },
+  );
+
+  it("uses a fresh matching capped reservation for each admitted retry", async () => {
+    const server = makeOpenAiServer({ failures: [{ status: 503 }] });
+    const { reservation } = await send({
+      request: { ...validRequest(), max_tokens: 25 },
+    }, { fetchImpl: server.fetch }).result;
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations).toHaveLength(2);
+    expect(reservations.filter((row) => row.status === "settled")).toHaveLength(1);
+    expect(reservations.filter((row) => row.id === reservation.id && row.status === "active")).toHaveLength(1);
+    for (const row of reservations) {
+      expect(row.maxOutputTokens).toBe(25);
+      expect(row.reservedUsd).toBeCloseTo(0.00003, 12);
+    }
+    expect(server.requests.map((row) => row.body)).toEqual([
+      { ...validRequest(), max_tokens: 25 }, { ...validRequest(), max_tokens: 25 },
+    ]);
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      inputTokens: 100, outputTokens: 25, estimatedCostUsd: expect.closeTo(0.00003, 12),
+    }]);
+  });
+
   it.each(["429", "transport"] as const)(
     "settles prior %s exposure when admission stops an internal retry",
     async (failure) => {
@@ -334,13 +402,12 @@ describe("sendLlmConsented happy path", () => {
       await expectGateBlock(result, "request_not_allowed");
       expect(server.requests).toHaveLength(1);
       const reservations = await db.llmReservations.toArray();
-      expect(reservations).toHaveLength(1);
-      expect(reservations[0]?.status).toBe("settled");
+      expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
       expect(await db.llmUsage.toArray()).toMatchObject([{
         inputTokens: 100, outputTokens: 50,
         estimatedCostUsd: expect.closeTo(0.000045, 10),
       }]);
-      await settleLlmUsage(reservations[0]!.id, "llm_test", {
+      await settleLlmUsage(reservations.find((row) => row.status === "settled")!.id, "llm_test", {
         inputTokens: 100, outputTokens: 50,
       }, NOW);
       expect(await db.llmUsage.count()).toBe(1);
@@ -372,10 +439,15 @@ describe("sendLlmConsented happy path", () => {
     const { result } = send({}, { fetchImpl, beforeSend, retries: 2 });
     await expectGateBlock(result, "request_not_allowed");
     expect(server.requests).toHaveLength(2);
-    expect(await db.llmUsage.toArray()).toMatchObject([{
-      inputTokens: 200, outputTokens: 100,
-      estimatedCostUsd: expect.closeTo(0.00009, 10),
-    }]);
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(2);
+    for (const row of usage) {
+      expect(row).toMatchObject({
+        inputTokens: 100, outputTokens: 50, estimatedCostUsd: expect.closeTo(0.000045, 12),
+      });
+    }
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled", "settled"]);
   });
 
   it("records unknown monetary exposure after a refused retry of a confirmed unpriced request", async () => {
@@ -396,7 +468,7 @@ describe("sendLlmConsented happy path", () => {
     const { result } = send({ request: validRequest(UNPRICED_MODEL) }, { fetchImpl, beforeSend });
     await expectGateBlock(result, "request_not_allowed");
     expect(server.requests).toHaveLength(1);
-    expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+    expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled"]);
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
@@ -523,7 +595,9 @@ describe("sendLlmConsented happy path", () => {
     await expectGateBlock(result, "request_not_allowed");
     expect(server.requests).toHaveLength(1);
     expect(server.requests[0]?.body).toMatchObject({ max_tokens: 25 });
-    expect((await db.llmReservations.toArray())[0]).toMatchObject({
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
+    expect(reservations.find((row) => row.status === "settled")).toMatchObject({
       status: "settled", maxOutputTokens: 25,
     });
     expect(await db.llmUsage.toArray()).toMatchObject([{
@@ -725,7 +799,7 @@ describe("sendLlmConsented happy path", () => {
     expect(server.requests).toHaveLength(1);
   });
 
-  it("releases the reservation and throws timeout on abort", async () => {
+  it("accounts sent exposure and throws timeout on abort", async () => {
     const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
     const server = makeOpenAiServer({
       failures: [
@@ -754,8 +828,29 @@ describe("sendLlmConsented happy path", () => {
     expect(error.code).toBe("timeout");
     const rows = await db.llmReservations.toArray();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe("released");
+    expect(rows[0]?.status).toBe("settled");
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      inputTokens: 100, outputTokens: 50,
+      estimatedCostUsd: expect.closeTo(0.000045, 12),
+    }]);
     expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("accounts missing usage for every exhausted transport attempt", async () => {
+    const server = makeOpenAiServer({
+      failures: [{ throw: new TypeError("reset") }, { throw: new TypeError("reset") }],
+    });
+    await expectGateBlock(send({}, { fetchImpl: server.fetch }).result, "transport");
+    expect(server.requests).toHaveLength(2);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled", "settled"]);
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(2);
+    for (const row of usage) {
+      expect(row).toMatchObject({
+        inputTokens: 100, outputTokens: 50, estimatedCostUsd: expect.closeTo(0.000045, 12),
+      });
+    }
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
   });
 
   it("uses api-key auth for custom providers and hits the custom origin", async () => {
@@ -821,31 +916,69 @@ describe("sendLlmConsented happy path", () => {
     expect(req.headers["api-key"]).toBeUndefined();
   });
 
-  it("releases a stale active reservation inside the reservation transaction", async () => {
-    // An `active` row older than the TTL can only be orphaned by a request
-    // killed mid-flight — the next send releases it instead of letting it
-    // charge the cap forever.
-    const stale: BudgetReservation = {
-      id: "stale-1",
-      providerId: PROVIDER_ID,
-      model: MODEL,
-      month: "2026-09",
-      reservedUsd: 0.5,
-      maxInputTokens: 1,
-      maxOutputTokens: 1,
-      kind: "manual",
-      status: "active",
-      createdAt: new Date(
-        NOW.getTime() - STALE_RESERVATION_TTL_MS - 1,
-      ).toISOString(),
-    };
-    await db.llmReservations.put(stale);
-
+  it("retains stale sent exposure against the cap and accepts one late honest settlement", async () => {
+    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
     const { reservation } = await send().result;
-    expect(reservation.status).toBe("active");
-    expect((await db.llmReservations.get("stale-1"))?.status).toBe(
-      "released",
-    );
+    const late = new Date(NOW.getTime() + STALE_RESERVATION_TTL_MS + 1);
+    const next = send({}, { now: () => late });
+    await expectGateBlock(next.result, "budget_exceeded");
+    expect(next.fetch.requests).toHaveLength(0);
+    expect((await db.llmReservations.get(reservation.id))?.status).toBe("active");
+    expect(await db.llmUsage.count()).toBe(0);
+
+    await Promise.all([
+      settleLlmUsage(reservation.id, "llm_test", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
+      settleLlmUsage(reservation.id, "llm_test", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
+    ]);
+    await settleLlmUsage(reservation.id, "llm_test", {}, late);
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: 0.02 });
+    expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+    expect((await db.llmReservations.get(reservation.id))?.status).toBe("settled");
+  });
+
+  it("retains unresolved stale unknown exposure and settles it idempotently without inventing a cost", async () => {
+    await saveLlmProvider(providerRecord({
+      provider: { kind: "preset", preset: "openai", model: UNPRICED_MODEL },
+    }));
+    const { reservation } = await send({ request: validRequest(UNPRICED_MODEL) }).result;
+    const late = new Date(NOW.getTime() + STALE_RESERVATION_TTL_MS + 1);
+    await send({ request: validRequest(UNPRICED_MODEL) }, { now: () => late }).result;
+    expect((await db.llmReservations.get(reservation.id))?.status).toBe("active");
+    const snapshot = () => Promise.all([db.llmUsage.toArray(), db.llmReservations.toArray()])
+      .then(([usage, reservations]) => monthlyBudgetSnapshot({
+        providerId: PROVIDER_ID, usage, reservations, now: late,
+      }));
+    expect(await snapshot()).toMatchObject({ hasUnknownCost: true, unknownCostRequests: 2 });
+    await Promise.all([
+      settleLlmUsage(reservation.id, "llm_test", {}, late),
+      settleLlmUsage(reservation.id, "llm_test", {}, late),
+    ]);
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[0]?.costUsd).toBeUndefined();
+    expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+    expect(await snapshot()).toMatchObject({ hasUnknownCost: true, unknownCostRequests: 2 });
+  });
+
+  it("settles missing usage once using the admitted numeric pricing snapshot", async () => {
+    const { reservation } = await send().result;
+    await saveLlmProvider(providerRecord({
+      provider: { kind: "preset", preset: "openai", model: MODEL,
+        pricing: { inputPerMillion: 10, outputPerMillion: 20 } },
+    }));
+    await Promise.all([
+      settleLlmUsage(reservation.id, "llm_test", { inputTokens: 10 }, NOW),
+      settleLlmUsage(reservation.id, "llm_test", { inputTokens: 10 }, NOW),
+    ]);
+    await settleLlmUsage(reservation.id, "llm_test", { reportedCostUsd: 9 }, NOW);
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: 10, outputTokens: 50 });
+    expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.0000315, 12);
+    expect(rows[0]?.costUsd).toBeUndefined();
   });
 
   it("does NOT release a fresh active reservation — it still charges the cap", async () => {
@@ -886,7 +1019,7 @@ describe("sendLlmConsented happy path", () => {
     );
     await expectGateBlock(result, "budget_exceeded");
     expect(server.requests).toHaveLength(0);
-    // The fresh reservation stays active — only stale ones are swept.
+    // Pending exposure stays active until explicitly settled or never sent.
     expect((await db.llmReservations.get("fresh-1"))?.status).toBe(
       "active",
     );

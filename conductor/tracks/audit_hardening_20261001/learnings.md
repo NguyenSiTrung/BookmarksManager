@@ -352,6 +352,41 @@ Selected applicable patterns from `conductor/patterns.md`:
   from unsupported structured output. Validate a bounded envelope and
   conservatively refuse ambiguous/token-limit errors, never remove the cap.
 - B09 missing/partial usage and B10 revoke settlement remain pending.
+- Local commit: `a43400f`; task `BookmarksManager-lgd.3.1` closed.
+
+### Phase 3 Task 2: Conservative missing usage and per-attempt accounting
+
+- Omitted counts remain absent; each missing dimension uses its admitted
+  reservation bound and pricing snapshot. Explicit zero is preserved.
+  Independently validate consumed usage fields so a malformed sibling or
+  unused total cannot erase a valid count, overrun or reported cost.
+- Finite nonnegative reported cost takes precedence, including zero.
+  Missing prices/cost stay unknown, never an invented monetary zero.
+  Malformed/read-failed bodies settle conservative exposure.
+- Removed age-based release of active reservations. Age is not proof that
+  an attempted send was free. Pending unpriced rows surface as unknown;
+  active snapshots remain available for late concurrent/idempotent settlement.
+- Review found successful retries still erased earlier exposure. Revision 7
+  uses existing reservation/usage tables per attempt: settle before a retry,
+  then repeat current model/origin/consent/permission/feature/budget admission.
+  The client receives and settles the final attempt separately.
+- Two missing-usage attempts commit $0.00009, not $0.000045. A final reported
+  zero leaves the earlier $0.000045 estimate intact. Earlier reported $0.02
+  survives a final zero. Under a $0.00005 cap, the first $0.000045 estimate
+  blocks a second $0.000045 paid attempt.
+- Initial red: 49 failures / 177 tests; sibling-field red: 12 / 189;
+  retry red: 14 / 203. Final named green: 203 tests. Covering consumers:
+  14 files / 497 passed. Consumer row expectations now reflect attempts,
+  retaining exact costs/request counts/caps/zero-egress checks.
+- Scoped retry re-review: P1 addressed, Spec PASS, Quality PASS.
+  Fresh coordinator gate: lint/types, 152 files / 2,889 tests
+  (`--maxWorkers=1`), build/manifest/bundle/store and 10 isolated LLM E2E
+  passed, no skips. Existing non-fatal React act warnings remain.
+- No new tables, migrations, dependencies, permissions, logs or native
+  causes. Native permission prompts and key-gated live/eval remain excluded.
+  Crash-orphaned active exposure is intentionally retained rather than freed;
+  no exactly-once external billing guarantee is claimed.
+- B10 ordinary revoke still needs to preserve these active snapshots.
 
 ## Planning Validation
 

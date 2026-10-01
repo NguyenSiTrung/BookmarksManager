@@ -144,14 +144,15 @@ describe("explainDecision", () => {
       expect(server.requests).toHaveLength(1);
       expect((await getDecision(UUID))?.rationale).toBeUndefined();
       const reservations = await db.llmReservations.toArray();
-      expect(reservations).toHaveLength(1);
-      expect(reservations[0]?.status).toBe("settled");
+      expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
       const usage = await db.llmUsage.toArray();
       expect(usage).toHaveLength(1);
       expect(usage[0]).toMatchObject({
         inputTokens: 8_192, outputTokens: 1_024,
         estimatedCostUsd: expect.closeTo(0.0018432, 10),
       });
+      expect(usage[0]?.costUsd).toBeUndefined();
+      expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0018432, 12);
     },
   );
 

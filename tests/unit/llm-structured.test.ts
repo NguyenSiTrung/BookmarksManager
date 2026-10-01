@@ -388,7 +388,17 @@ describe("structured output caps through the real client and gate", () => {
     expect(bodies.map((body) => body.response_format?.type)).toEqual([
       "json_schema", "json_schema", "json_object", "json_object", undefined, undefined, undefined,
     ]);
-    expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([50, 50, 50, 50, 50]);
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations.map((row) => row.maxOutputTokens)).toEqual([50, 50, 50, 50, 50, 50, 50]);
+    expect(reservations.every((row) => row.status === "settled")).toBe(true);
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(7);
+    for (const row of usage) {
+      expect(row).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+      expect(row.costUsd).toBeUndefined();
+      expect(row.estimatedCostUsd).toBeCloseTo(0.0002, 12);
+    }
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0014, 12);
   });
 
   it.each([25, 1000])("retains caller limit %s clamping through fallback and repair", async (caller) => {

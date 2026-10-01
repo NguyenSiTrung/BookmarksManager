@@ -399,11 +399,11 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(llm): enforce reserved output limits`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [~] Task 2: Conservative missing and partial usage settlement
+- [x] Task 2: Conservative missing and partial usage settlement
   <!-- files: src/llm/client.ts, src/llm/budget.ts, src/net/llm-send.ts, tests/unit/llm-client.test.ts, tests/unit/llm-budget.test.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-structured.test.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B09**. Extend `ActualUsage` so absent input/output token counts
     remain absent, rather than becoming zero. Preserve `settleLlmUsage`.
-  - [ ] Red: successful missing/partial usage and malformed JSON must not
+  - [x] Red: successful missing/partial usage and malformed JSON must not
     turn priced spending into zero; reported zero remains distinguishable
     from absence, and reported cost takes precedence.
     ```ts
@@ -413,9 +413,9 @@ implementation work.
     ```
     Use the existing priced reservation fixture; add explicit unpriced
     manual and automatic refusal controls.
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/llm-client.test.ts tests/unit/llm-budget.test.ts tests/unit/llm-gate.test.ts`.
-  - [ ] Green: parse usage without substituting zeros. For each missing
+  - [x] Green: parse usage without substituting zeros. For each missing
     token dimension, reconcile with its reservation bound; estimate from
     the reservation's pricing snapshot. Without prices/cost, record unknown
     monetary cost. Retain atomic/idempotent settlement and prevent the
@@ -427,13 +427,13 @@ implementation work.
     current provider/model/origin, consent/permission and feature checks.
     Update adjacent consumer row expectations for per-attempt reservations,
     retaining exact spend, wire-cap and zero-egress assertions.
-  - [ ] Verify green: rerun named tests for partial counts, null/negative
+  - [x] Verify green: rerun named tests for partial counts, null/negative
     costs, genuine zeros, concurrent settlement, UTC month boundaries,
     missing usage on HTTP/error paths, and subsequent budget admission.
-  - [ ] Coordinator gate/commit: `fix(llm): account conservatively for missing usage`,
+  - [x] Coordinator gate/commit: `fix(llm): account conservatively for missing usage`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 3: Preserve in-flight accounting through provider revoke
+- [~] Task 3: Preserve in-flight accounting through provider revoke
   <!-- files: src/messages/llm-provider.ts, src/net/llm-send.ts, tests/unit/llm-provider-messages.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts -->
   - Covers **B10**. Consent removal remains first. Settlement uses the
     reservation snapshot, not the provider settings that revoke removes.

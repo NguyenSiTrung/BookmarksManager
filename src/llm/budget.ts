@@ -115,7 +115,7 @@ export interface MonthlyBudgetSnapshot {
   reportedCostUsd: number;
   /** Sum over locally estimated costs only. */
   estimatedCostUsd: number;
-  /** Count of requests with no monetary figure — surfaced, never zeroed. */
+  /** Settled requests plus active reservations with no monetary figure. */
   unknownCostRequests: number;
   hasUnknownCost: boolean;
   /** Sum of active reservations' known amounts. */
@@ -181,14 +181,14 @@ export function monthlyBudgetSnapshot(input: {
     }
   }
 
-  const reservedUsd = input.reservations
-    .filter(
-      (reservation) =>
-        reservation.providerId === input.providerId &&
-        reservation.month === month &&
-        reservation.status === "active" &&
-        reservation.reservedUsd !== null,
-    )
+  const activeReservations = input.reservations.filter(
+    (reservation) =>
+      reservation.providerId === input.providerId &&
+      reservation.month === month &&
+      reservation.status === "active",
+  );
+  unknown += activeReservations.filter((reservation) => reservation.reservedUsd === null).length;
+  const reservedUsd = activeReservations
     .reduce((sum, reservation) => sum + (reservation.reservedUsd ?? 0), 0);
 
   const committed = reported + estimated + reservedUsd;
@@ -272,8 +272,9 @@ export function reserveBudget(input: ReserveBudgetInput): ReserveBudgetResult {
 }
 
 export interface ActualUsage {
-  inputTokens: number;
-  outputTokens: number;
+  /** Absent is unknown, not an explicitly reported zero. */
+  inputTokens?: number;
+  outputTokens?: number;
   /** Provider-reported USD cost, when the response carried one. */
   reportedCostUsd?: number;
 }
@@ -286,7 +287,8 @@ export interface ReconciledUsage {
 
 /**
  * Settle a reservation with the returned usage. Reported cost wins;
- * configured rates produce a local estimate; otherwise the cost is unknown.
+ * configured rates produce a local estimate, substituting the reservation
+ * bound for each missing token dimension; otherwise the cost is unknown.
  * Settling frees the reserved amount — the snapshot then counts the actual
  * row instead of the reservation.
  */
@@ -298,20 +300,24 @@ export function reconcileBudget(
   const usageRow: LlmUsageRow & { provenance: CostProvenance } = {
     providerId: reservation.providerId,
     model: reservation.model,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
+    inputTokens: usage.inputTokens ?? reservation.maxInputTokens,
+    outputTokens: usage.outputTokens ?? reservation.maxOutputTokens,
     recordedAt: now.toISOString(),
     provenance: "unknown",
   };
 
-  if (usage.reportedCostUsd !== undefined) {
+  if (
+    typeof usage.reportedCostUsd === "number" &&
+    Number.isFinite(usage.reportedCostUsd) &&
+    usage.reportedCostUsd >= 0
+  ) {
     usageRow.costUsd = usage.reportedCostUsd;
     usageRow.provenance = "reported";
   } else if (reservation.pricing !== undefined) {
     usageRow.estimatedCostUsd = estimateUsd(
       reservation.pricing,
-      usage.inputTokens,
-      usage.outputTokens,
+      usageRow.inputTokens,
+      usageRow.outputTokens,
     );
     usageRow.provenance = "estimated";
   }
@@ -327,7 +333,7 @@ export function reconcileBudget(
 }
 
 /**
- * Release a reservation without spending (request aborted or never sent).
+ * Release a reservation without spending (request never sent).
  * Released reservations no longer count against the cap.
  */
 export function releaseBudget(

@@ -6,7 +6,8 @@ import { grantConsentAtOrigin } from "../../src/consent/records";
 import { readBlocklist } from "../../src/decisions/blocklist";
 import { db } from "../../src/db/database";
 import { createLlmClient, LlmHttpError } from "../../src/llm/client";
-import { LlmGateError } from "../../src/net/llm-send";
+import { LlmGateError, settleLlmUsage } from "../../src/net/llm-send";
+import { monthlyBudgetSnapshot } from "../../src/llm/budget";
 import { LlmCapabilityError } from "../../src/llm/structured";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
@@ -141,7 +142,7 @@ describe("createLlmClient", () => {
         code: "request_not_allowed",
       });
       expect(server.requests).toHaveLength(1);
-      expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+      expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled"]);
       expect(await db.llmUsage.toArray()).toMatchObject([{
         feature: "llm_test", inputTokens: 100, outputTokens: 50,
         estimatedCostUsd: expect.closeTo(0.000045, 10),
@@ -413,7 +414,7 @@ describe("createLlmClient", () => {
     expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
   });
 
-  it("settles zero-usage on a non-JSON body", async () => {
+  it("settles conservatively on a non-JSON body", async () => {
     const fetchImpl = (async () =>
       new Response("<html>oops</html>", { status: 200 })) as typeof fetch;
     const error = await client(fetchImpl)
@@ -422,6 +423,197 @@ describe("createLlmClient", () => {
     expect(error).toBeInstanceOf(Error);
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(1);
-    expect(usage[0]).toMatchObject({ inputTokens: 0, outputTokens: 0 });
+    expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(usage[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+  });
+
+  // These exercise wire -> real client -> gate -> Dexie accounting. Zero
+  // substitution, ignoring error-envelope usage, or accepting negative costs
+  // would reduce the observed spend below these hand-derived values.
+  describe.each([200, 400])("usage settlement for HTTP %s", (status) => {
+    it.each([
+      { usage: undefined, input: 100, output: 50, cost: 0.000045 },
+      { usage: {}, input: 100, output: 50, cost: 0.000045 },
+      { usage: { total_tokens: 20 }, input: 100, output: 50, cost: 0.000045 },
+      { usage: { prompt_tokens: 10 }, input: 10, output: 50, cost: 0.0000315 },
+      { usage: { completion_tokens: 5 }, input: 100, output: 5, cost: 0.000018 },
+      { usage: { prompt_tokens: 0 }, input: 0, output: 50, cost: 0.00003 },
+      { usage: { completion_tokens: 0 }, input: 100, output: 0, cost: 0.000015 },
+      { usage: { prompt_tokens: 0, completion_tokens: 0 }, input: 0, output: 0, cost: 0 },
+      { usage: { prompt_tokens: 10, cost: null }, input: 10, output: 50, cost: 0.0000315 },
+      { usage: { prompt_tokens: 10, cost: -1 }, input: 10, output: 50, cost: 0.0000315 },
+      { usage: { prompt_tokens: null, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
+      { usage: { prompt_tokens: -1, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
+      { usage: { prompt_tokens: 10, cost: "unavailable" }, input: 10, output: 50, cost: 0.0000315 },
+      { usage: { prompt_tokens: 10, total_tokens: null }, input: 10, output: 50, cost: 0.0000315 },
+    ])("preserves missing versus explicit zero usage %#", async ({ usage, input, output, cost }) => {
+      const body = status === 400
+        ? { error: { message: "request refused" }, usage }
+        : { model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }], usage };
+      const server = makeOpenAiServer({
+        ...(status === 400
+          ? { failures: [{ status, body }] }
+          : { completion: () => body }),
+      });
+      const call = client(server.fetch).send(REQUEST);
+      if (status === 400) await expect(call).rejects.toBeInstanceOf(LlmHttpError);
+      else expect(await call).toMatchObject({ model: "gpt-4o-mini" });
+      expect(server.requests).toHaveLength(1);
+      const rows = await db.llmUsage.toArray();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ inputTokens: input, outputTokens: output });
+      expect(rows[0]?.estimatedCostUsd).toBeCloseTo(cost, 12);
+      expect(rows[0]?.costUsd).toBeUndefined();
+      expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+    });
+
+    it.each([0, 0.02])("retains reported cost %s over estimates without token counts", async (cost) => {
+      const body = status === 400
+        ? { error: { message: "request refused" }, usage: { cost } }
+        : { model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }], usage: { cost } };
+      const response = new Response(JSON.stringify(body), { status });
+      const call = client(async () => response).send(REQUEST);
+      if (status === 400) await expect(call).rejects.toBeInstanceOf(LlmHttpError);
+      else await call;
+      const rows = await db.llmUsage.toArray();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50, costUsd: cost });
+      expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+    });
+
+    it.each([0, 0.02])("retains reported cost %s when another usage field is invalid", async (cost) => {
+      const response = new Response(JSON.stringify({
+        error: { message: "request refused" },
+        usage: { prompt_tokens: null, completion_tokens: 1000, cost },
+      }), { status });
+      const call = client(async () => response).send(REQUEST);
+      if (status === 400) await expect(call).rejects.toBeInstanceOf(LlmHttpError);
+      else await call;
+      const rows = await db.llmUsage.toArray();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: cost });
+      expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+    });
+
+    it.each(["malformed JSON", "body read failure"])("charges missing usage after %s", async (failure) => {
+      const response = failure === "malformed JSON"
+        ? new Response("{", { status })
+        : new Response(new ReadableStream<Uint8Array>({
+          start(controller) { controller.error(new Error("synthetic read failure")); },
+        }), { status });
+      const error = await client(async () => response).send(REQUEST).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(status === 400 ? LlmHttpError : LlmGateError);
+      expectRedacted(error);
+      const rows = await db.llmUsage.toArray();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+      expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+    });
+  });
+
+  it("blocks subsequent priced admission after a successful missing-usage response", async () => {
+    await saveLlmProvider({ ...record, monthlyBudgetUsd: 0.00005 });
+    const server = makeOpenAiServer({
+      completion: () => ({ model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }] }),
+    });
+    await client(server.fetch).send(REQUEST);
+    await expect(client(server.fetch).send(REQUEST)).rejects.toMatchObject({ code: "budget_exceeded" });
+    expect(server.requests).toHaveLength(1);
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  // Losing an earlier attempt or applying the final reported zero to the whole
+  // send would understate committed spend and admit the third provider send.
+  it.each([
+    { prior: undefined, final: undefined, estimated: 0.00009, reported: 0 },
+    { prior: { prompt_tokens: 10 }, final: { completion_tokens: 5 }, estimated: 0.0000495, reported: 0 },
+    { prior: undefined, final: { cost: 0 }, estimated: 0.000045, reported: 0 },
+    { prior: { completion_tokens: 1000 }, final: { cost: 0 }, estimated: 0.000615, reported: 0 },
+    { prior: { prompt_tokens: 10, completion_tokens: 1000, cost: 0.02 }, final: { cost: 0 }, estimated: 0, reported: 0.02 },
+  ])("settles retry-to-success attempts separately and blocks subsequent admission %#", async ({ prior, final, estimated, reported }) => {
+    const cap = estimated + reported + 0.00001;
+    await saveLlmProvider({ ...record, monthlyBudgetUsd: cap + 0.00009 });
+    const server = makeOpenAiServer({
+      failures: [{ status: 503, body: { error: { message: "temporarily unavailable" }, usage: prior } }],
+      completion: () => ({
+        model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }], usage: final,
+      }),
+    });
+    const llm = client(server.fetch);
+    expect(await llm.send(REQUEST)).toMatchObject({ model: "gpt-4o-mini" });
+    expect(server.requests).toHaveLength(2);
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations).toHaveLength(2);
+    expect(reservations.every((row) => row.status === "settled")).toBe(true);
+    const finalReservation = reservations.find((row) => row.id === llm.lastReservationId);
+    expect(finalReservation).toBeDefined();
+    await Promise.all(reservations.map((row) => settleLlmUsage(row.id, "llm_test", { reportedCostUsd: 0 })));
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(2);
+    const snap = monthlyBudgetSnapshot({ providerId: PROVIDER_ID, usage, reservations, now: new Date() });
+    expect(snap.estimatedCostUsd).toBeCloseTo(estimated, 12);
+    expect(snap.reportedCostUsd).toBe(reported);
+    expect(snap.reservedUsd).toBe(0);
+    if (final?.cost === 0) {
+      expect(usage.filter((row) => row.costUsd === 0)).toHaveLength(1);
+      expect(usage.find((row) => row.costUsd === 0)?.estimatedCostUsd).toBeUndefined();
+    }
+    // Tighten the cap after inspecting both settlements; zeroed/missing prior
+    // exposure would incorrectly leave room for this new reservation.
+    await saveLlmProvider({ ...record, monthlyBudgetUsd: cap });
+    await expect(llm.send(REQUEST)).rejects.toMatchObject({ code: "budget_exceeded" });
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("keeps confirmed unpriced retry exposure unknown beside a final reported zero", async () => {
+    const model = "gpt-4o-mini-2024-07-18";
+    await saveLlmProvider({ ...record, provider: { ...record.provider, model } });
+    const server = makeOpenAiServer({
+      failures: [{ status: 503 }],
+      completion: () => ({ model, choices: [{ message: { content: "{}" } }], usage: { cost: 0 } }),
+    });
+    await createLlmClient(PROVIDER_ID, {
+      scope: "llm_test", kind: "manual", maxInputTokens: 100, maxOutputTokens: 50,
+      unknownCostConfirmed: true, fetchImpl: server.fetch,
+    }).send({ ...REQUEST, model });
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(2);
+    expect(usage.filter((row) => row.costUsd === undefined && row.estimatedCostUsd === undefined)).toHaveLength(1);
+    expect(usage.filter((row) => row.costUsd === 0)).toHaveLength(1);
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("accounts a failed transport attempt before settling a missing-usage success", async () => {
+    const server = makeOpenAiServer({
+      failures: [{ throw: new TypeError("synthetic reset") }],
+      completion: () => ({ model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }] }),
+    });
+    await client(server.fetch).send(REQUEST);
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(2);
+    expect(usage.every((row) => row.costUsd === undefined)).toBe(true);
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect(server.requests).toHaveLength(2);
+  });
+
+  it("settles a confirmed manual unpriced success as unknown while refusing automatic egress", async () => {
+    const model = "gpt-4o-mini-2024-07-18";
+    await saveLlmProvider({ ...record, provider: { ...record.provider, model } });
+    const server = makeOpenAiServer({
+      completion: () => ({ model, choices: [{ message: { content: "{}" } }] }),
+    });
+    const config = {
+      scope: "llm_test" as const, maxInputTokens: 100, maxOutputTokens: 50,
+      unknownCostConfirmed: true, fetchImpl: server.fetch,
+    };
+    await createLlmClient(PROVIDER_ID, { ...config, kind: "manual" }).send({ ...REQUEST, model });
+    await expect(createLlmClient(PROVIDER_ID, { ...config, kind: "automatic" }).send({ ...REQUEST, model }))
+      .rejects.toMatchObject({ code: "pricing_required" });
+    expect(server.requests).toHaveLength(1);
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[0]?.costUsd).toBeUndefined();
+    expect(rows[0]?.estimatedCostUsd).toBeUndefined();
   });
 });

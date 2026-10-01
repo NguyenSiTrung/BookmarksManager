@@ -391,7 +391,10 @@ describe("summarizeActiveBookmark", () => {
     });
     const jevTransport = jevTransportFor("supported");
     expect(await run(jevTransport)).toMatchObject({
-      ok: false, stage: hop === "Jev verification" ? "verify" : "summarize", code: "no_consent",
+      ok: false, stage: hop === "Jev verification" ? "verify" : "summarize",
+      // The actual retry's current configured-model guard precedes feature
+      // admission; fallback/verification still retain their consent refusal.
+      code: hop === "internal retry" && change === "provider change" ? "unlisted_model" : "no_consent",
     });
     expect(server.requests).toHaveLength(1);
     expect(jevTransport).not.toHaveBeenCalled();
@@ -430,14 +433,15 @@ describe("summarizeActiveBookmark", () => {
       expect(jevTransport).not.toHaveBeenCalled();
       expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
       const reservations = await db.llmReservations.toArray();
-      expect(reservations).toHaveLength(1);
-      expect(reservations[0]?.status).toBe("settled");
+      expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
       const usage = await db.llmUsage.toArray();
       expect(usage).toHaveLength(1);
       expect(usage[0]).toMatchObject({
         inputTokens: 24_000, outputTokens: 1_024,
         estimatedCostUsd: expect.closeTo(0.0042144, 10),
       });
+      expect(usage[0]?.costUsd).toBeUndefined();
+      expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0042144, 12);
     },
   );
 

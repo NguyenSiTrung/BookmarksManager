@@ -4,6 +4,7 @@ import {
   reconcileBudget,
   releaseBudget,
   reserveBudget,
+  type ActualUsage,
   type BudgetReservation,
   type LlmUsageRow,
 } from "../../src/llm/budget";
@@ -184,6 +185,49 @@ describe("reconcileBudget", () => {
     return result.reservation;
   }
 
+  // Zero-filling an absent dimension would undercharge each of these fixtures.
+  it.each([
+    { usage: {}, input: 1000, output: 500, cost: 0.00045 },
+    { usage: { inputTokens: 100 }, input: 100, output: 500, cost: 0.000315 },
+    { usage: { outputTokens: 50 }, input: 1000, output: 50, cost: 0.00018 },
+    { usage: { inputTokens: 0 }, input: 0, output: 500, cost: 0.0003 },
+    { usage: { outputTokens: 0 }, input: 1000, output: 0, cost: 0.00015 },
+    { usage: { inputTokens: 0, outputTokens: 0 }, input: 0, output: 0, cost: 0 },
+  ])("estimates missing dimensions from reservation bounds %#", ({ usage, input, output, cost }) => {
+    const settled = reconcileBudget(activeReservation(), usage, SEP_15);
+    expect(settled.usageRow).toMatchObject({
+      inputTokens: input, outputTokens: output, provenance: "estimated",
+    });
+    expect(settled.usageRow.estimatedCostUsd).toBeCloseTo(cost, 12);
+    expect(settled.usageRow.costUsd).toBeUndefined();
+  });
+
+  it.each([0, 0.0001, 2])("gives reported cost %s precedence even without token counts", (reportedCostUsd) => {
+    const settled = reconcileBudget(activeReservation(), { reportedCostUsd }, SEP_15);
+    expect(settled.usageRow).toMatchObject({
+      inputTokens: 1000, outputTokens: 500, costUsd: reportedCostUsd, provenance: "reported",
+    });
+    expect(settled.usageRow.estimatedCostUsd).toBeUndefined();
+  });
+
+  it.each([null, -1, NaN, Infinity])("does not count invalid reported cost %s as free or negative spend", (reportedCostUsd) => {
+    const settled = reconcileBudget(activeReservation(), { reportedCostUsd } as unknown as ActualUsage, SEP_15);
+    expect(settled.usageRow.provenance).toBe("estimated");
+    expect(settled.usageRow.estimatedCostUsd).toBeCloseTo(0.00045, 12);
+    expect(settled.usageRow.costUsd).toBeUndefined();
+  });
+
+  it("records missing unpriced usage as unknown, not a monetary zero", () => {
+    const pending = reserveBudget(baseInput({ pricing: undefined, unknownCostConfirmed: true }));
+    if (pending.status !== "reserved") throw new Error("expected reservation");
+    const settled = reconcileBudget(pending.reservation, {}, SEP_15);
+    expect(settled.usageRow).toMatchObject({
+      inputTokens: 1000, outputTokens: 500, provenance: "unknown",
+    });
+    expect(settled.usageRow.costUsd).toBeUndefined();
+    expect(settled.usageRow.estimatedCostUsd).toBeUndefined();
+  });
+
   it("settles with reported cost when the provider returned one", () => {
     const settled = reconcileBudget(activeReservation(), {
       inputTokens: 800,
@@ -266,6 +310,44 @@ describe("releaseBudget", () => {
 });
 
 describe("monthlyBudgetSnapshot", () => {
+  it("surfaces unresolved unknown exposure until settlement, excluding other providers and months", () => {
+    const pending = reserveBudget(baseInput({ pricing: undefined, unknownCostConfirmed: true }));
+    if (pending.status !== "reserved") throw new Error("expected reservation");
+    const snap = monthlyBudgetSnapshot({
+      providerId: "preset:openai",
+      usage: [],
+      reservations: [
+        pending.reservation,
+        { ...pending.reservation, id: "other-provider", providerId: "preset:openrouter" },
+        { ...pending.reservation, id: "other-month", month: "2026-08" },
+        releaseBudget({ ...pending.reservation, id: "released" }, SEP_15),
+      ],
+      now: SEP_15,
+    });
+    expect(snap.hasUnknownCost).toBe(true);
+    expect(snap.unknownCostRequests).toBe(1);
+    expect(snap.requestCount).toBe(0);
+  });
+
+  it("moves late missing-usage settlement into the actual UTC recording month without double counting", () => {
+    const pending = reserveBudget(baseInput({ now: new Date("2026-09-30T23:59:59.999Z") }));
+    if (pending.status !== "reserved") throw new Error("expected reservation");
+    const nextMonth = new Date("2026-10-01T00:00:00.000Z");
+    const settled = reconcileBudget(pending.reservation, {}, nextMonth);
+    const september = monthlyBudgetSnapshot({
+      providerId: "preset:openai", usage: [settled.usageRow],
+      reservations: [settled.reservation], now: SEP_15,
+    });
+    const october = monthlyBudgetSnapshot({
+      providerId: "preset:openai", usage: [settled.usageRow],
+      reservations: [settled.reservation], now: nextMonth,
+    });
+    expect(september.committedUsd).toBe(0);
+    expect(october.requestCount).toBe(1);
+    expect(october.reservedUsd).toBe(0);
+    expect(october.estimatedCostUsd).toBeCloseTo(0.00045, 12);
+  });
+
   it("filters usage rows to the current UTC month", () => {
     const usage = [
       row({ costUsd: 1, recordedAt: "2026-09-30T23:59:59Z" }),
