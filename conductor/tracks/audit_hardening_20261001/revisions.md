@@ -96,3 +96,24 @@
   to ownership and an explicit typed `error` reply that emits `{error: ...}`.
   The first fixture-only retry still failed, revealing that wrapper rather
   than a production classifier defect. Existing completion replies are unchanged.
+
+## Revision 7 — 2026-10-01 — B09 retry accounting / consumer ownership
+
+- **Trigger:** Review found successful retries erased earlier exposure when
+  only the final response settled the logical-send reservation. A final
+  reported zero could erase missing usage or an earlier reported overrun.
+- **Current task:** Phase 3 Task 2, review fix round 1.
+- **Change:** Account each attempted send with existing reservation/usage
+  rows, settling before another paid retry is admitted. Preserve independent
+  estimated/unknown/reported provenance and current per-attempt admission.
+  Add structured/explain/summary consumer tests to this task's ownership.
+- **Evidence:** Fourteen new regressions failed before the retry fix;
+  203 named tests then passed. Ten consumer assertions still expected the
+  old single-reservation representation or previous refusal order.
+- **Ruling:** Update consumer expectations to per-attempt accounting without
+  weakening request-count, wire-cap, spend or zero-egress assertions.
+  Reconfiguration may fail current model validation (`unlisted_model`)
+  before feature admission (`no_consent`); preserve the gate's cheap-before-
+  sensitive order rather than bypass current configuration checks.
+  Cost if wrong: callers see a more precise typed refusal instead of the
+  previous code; no additional egress is authorized.

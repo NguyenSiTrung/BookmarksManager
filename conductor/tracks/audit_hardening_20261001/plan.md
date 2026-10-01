@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — B08 bounded classification and wire fixture alignment -->
+<!-- Last Revised: 2026-10-01 — B09 per-attempt accounting and consumer ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -367,7 +367,7 @@ implementation work.
 ## Phase 3: LLM limits and accounting
 <!-- execution: sequential -->
 
-- [x] Task 1: Enforce the reserved output allowance on the wire
+- [x] Task 1: Enforce the reserved output allowance on the wire (a43400f)
   <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Covers **B08**. Existing `max_tokens` is the default OpenAI-compatible
     limit; the gate, not a caller-supplied policy, owns serialization.
@@ -400,7 +400,7 @@ implementation work.
     relevant isolated LLM E2E, notes/learnings, close this task.
 
 - [~] Task 2: Conservative missing and partial usage settlement
-  <!-- files: src/llm/client.ts, src/llm/budget.ts, src/net/llm-send.ts, tests/unit/llm-client.test.ts, tests/unit/llm-budget.test.ts, tests/unit/llm-gate.test.ts -->
+  <!-- files: src/llm/client.ts, src/llm/budget.ts, src/net/llm-send.ts, tests/unit/llm-client.test.ts, tests/unit/llm-budget.test.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-structured.test.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B09**. Extend `ActualUsage` so absent input/output token counts
     remain absent, rather than becoming zero. Preserve `settleLlmUsage`.
   - [ ] Red: successful missing/partial usage and malformed JSON must not
@@ -421,6 +421,12 @@ implementation work.
     monetary cost. Retain atomic/idempotent settlement and prevent the
     current TTL cleanup from silently converting unresolved paid exposure
     into free requests; test the unknown-exposure path explicitly.
+    Settle each actual retry attempt separately before admitting another,
+    preserving earlier estimated/unknown amounts alongside final reported
+    cost, including reported zero and prior overruns. Retry admission repeats
+    current provider/model/origin, consent/permission and feature checks.
+    Update adjacent consumer row expectations for per-attempt reservations,
+    retaining exact spend, wire-cap and zero-egress assertions.
   - [ ] Verify green: rerun named tests for partial counts, null/negative
     costs, genuine zeros, concurrent settlement, UTC month boundaries,
     missing usage on HTTP/error paths, and subsequent budget admission.
