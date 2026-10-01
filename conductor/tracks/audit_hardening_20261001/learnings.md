@@ -525,3 +525,16 @@ Selected applicable patterns from `conductor/patterns.md`:
   pre-existing notes: `applyMerge` records a peeked id outside the lock but
   revert re-verifies head, and the snapshot cap evicts oldest rows, never
   the head). Core-manager E2E 6 passed.
+- B12: a synchronous `decisionUndoBusyRef` is acquired before the
+  decision-vs-generic branch (React state lags the click and the command
+  palette bypasses the disabled control); the armed decision id survives to
+  settlement and is re-armed only on refusals that left the row applied.
+  A toast generation token retires the armed target on every slot
+  transition (new toast, dismissal, auto-hide), so a late completion can
+  neither resurrect nor overwrite a newer toast. `state_unrecorded` reports
+  the typed message with no Undo affordance and no re-arm because the
+  replay already ran — the row stays `applied` until worker-side recovery,
+  which is accepted (a retry could only be refused as `undo_conflict`).
+  `undoToastAutoHideMs` is a test-only prop mirroring the `askDebounceMs`
+  precedent; production always uses the 8 s constant. Review `8a58e3b7`
+  PASS plus delta re-check PASS; decisions E2E 6 passed.

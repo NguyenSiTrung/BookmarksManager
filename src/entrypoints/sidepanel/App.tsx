@@ -76,7 +76,12 @@ import { ViewChips } from "./ViewChips";
 import { aiVisibility, categoryCounts } from "./scope";
 import { useAiConnected } from "./useAiConnected";
 import { useIsWide } from "./useIsWide";
-import { ToastProvider, UndoToast, useUndoToastController } from "./UndoToast";
+import {
+  UNDO_TOAST_AUTO_HIDE_MS,
+  ToastProvider,
+  UndoToast,
+  useUndoToastController,
+} from "./UndoToast";
 import type { ToastApi, ToastState } from "./UndoToast";
 import { resolveDuplicateGroups, resolveView, viewTitle } from "./views";
 import type { SidePanelView } from "./views";
@@ -194,7 +199,16 @@ function applyRerankOrder(
   return [...ranked, ...items.filter((item) => !rankedIds.has(item.id))];
 }
 
-export function App(props?: { askDebounceMs?: number }) {
+export function App(props?: {
+  askDebounceMs?: number;
+  /**
+   * Override the toast's ~8s auto-hide. Production leaves it undefined; tests
+   * mount the shell with a short delay so the real timer retires a toast
+   * inside the test (see `undo-reentry.test.tsx`), which is what pins the
+   * `onAutoHide` retirement wiring below.
+   */
+  undoToastAutoHideMs?: number;
+}) {
   const tree = useBookmarkTree();
   // liveQuery emits fresh rows on any write to the touched tables; a missing
   // or failing IndexedDB degrades to an empty list instead of throwing the
@@ -332,23 +346,51 @@ export function App(props?: { askDebounceMs?: number }) {
   // P4.T3 action surface: the toast controller owns notifications and the
   // Undo affordance; dialog targets are plain state so every row menu, the
   // bulk bar, and the keyboard all funnel into the same flows.
-  const toastCtl = useUndoToastController();
+  //
+  // B12 — an applied-decision toast's Undo is a round trip to the worker, and
+  // the dispatch that starts it CONSUMES its target. Two pieces of
+  // bookkeeping the controller cannot see are needed on top of it: a
+  // synchronous in-flight ref (`decisionUndoBusyRef` — state lags a fast
+  // second activation) and a generation token for the toast on screen
+  // (`toastTokenRef` — so a late completion cannot report into, or re-arm
+  // against, a newer toast).
   /**
    * When the visible toast is an applied-decision toast, this ref holds the
    * decision id its Undo button reverts via REVERT_DECISION; `null` means
    * the toast belongs to a snapshot-stack action (delete/move/tag ops) and
    * Undo goes through the controller's `undoLatest`. `reportToast` disarms
    * it on every new toast — ReviewView arms it via `armDecisionRevert`
-   * AFTER its own toast is up (the arming must follow the disarm).
+   * AFTER its own toast is up (the arming must follow the disarm) — and it
+   * is PRESERVED until the revert settles, so a second activation resolves
+   * to the same decision instead of the snapshot stack.
    */
   const decisionRevertRef = useRef<string | null>(null);
+  const decisionUndoBusyRef = useRef(false);
+  const toastTokenRef = useRef(0);
+  /** Mirrors the ref for the Undo control's disabled/busy state. */
+  const [decisionUndoBusy, setDecisionUndoBusy] = useState(false);
+  /**
+   * Retire the toast on screen: bump its generation and drop any armed
+   * decision-revert target. Called on EVERY transition of the toast slot — a
+   * new toast, a dismissal, and the controller's auto-hide — so a round trip
+   * that started in the previous generation can never report into (or
+   * re-arm) this one.
+   */
+  const retireCurrentToast = useCallback((): void => {
+    toastTokenRef.current += 1;
+    decisionRevertRef.current = null;
+  }, []);
+  const toastCtl = useUndoToastController(
+    props?.undoToastAutoHideMs ?? UNDO_TOAST_AUTO_HIDE_MS,
+    retireCurrentToast,
+  );
   /** Every toast goes through here so a new message disarms a stale revert. */
   const reportToast = useCallback(
     (next: ToastState): void => {
-      decisionRevertRef.current = null;
+      retireCurrentToast();
       toastCtl.showToast(next);
     },
-    [toastCtl],
+    [retireCurrentToast, toastCtl],
   );
   const armDecisionRevert = useCallback((decisionId: string): void => {
     decisionRevertRef.current = decisionId;
@@ -357,27 +399,74 @@ export function App(props?: { askDebounceMs?: number }) {
    * The toast's Undo button, dispatched: a decision toast sends
    * REVERT_DECISION for the armed id (the worker replays the snapshot it
    * recorded on that row); anything else pops the snapshot stack.
+   *
+   * The guard runs BEFORE the decision/generic branch. A second activation —
+   * a double click, a keyboard repeat, or the palette's "Undo last action"
+   * command, which never sees the disabled control — must not fall through
+   * to the generic path just because the decision target was consumed.
+   * `decisionUndoBusyRef` is acquired synchronously (state lags the click)
+   * and released in `finally`; one decision round trip runs at a time.
+   *
+   * A decision revert reports only into the toast generation it was
+   * dispatched from: if a newer toast took the slot, the user dismissed it,
+   * or the auto-hide retired it, the round trip still happened but neither
+   * overwrites that toast nor re-arms the retired target. A refusal keeps the
+   * row applied, so its toast stays undoable and re-armed — the retry resumes
+   * instead of replaying, exactly like a failed snapshot restore. The one
+   * exception is `state_unrecorded`, where the replay ALREADY ran (see
+   * below).
    */
   const handleToastUndo = useCallback(async (): Promise<void> => {
+    if (decisionUndoBusyRef.current) return;
     const decisionId = decisionRevertRef.current;
-    decisionRevertRef.current = null;
     if (decisionId === null) {
       await toastCtl.undo();
       return;
     }
-    const result = await sendDecisionMessage(
-      DecisionMessage.parse({ type: "REVERT_DECISION", decisionId }),
-    );
-    reportToast(
-      result.ok
-        ? { message: "Reverted the suggestion." }
-        : { message: result.message, error: true },
-    );
-  }, [reportToast, toastCtl]);
+    decisionUndoBusyRef.current = true;
+    setDecisionUndoBusy(true);
+    const token = toastTokenRef.current;
+    try {
+      const result = await sendDecisionMessage(
+        DecisionMessage.parse({ type: "REVERT_DECISION", decisionId }),
+      );
+      if (toastTokenRef.current !== token) return;
+      if (result.ok) {
+        reportToast({ message: "Reverted the suggestion." });
+        return;
+      }
+      // `state_unrecorded` is the one refusal where the undo replay ALREADY
+      // ran — the change is reverted and only the row's status write failed
+      // (`revertDecision`). The row is no longer applied, so an Undo
+      // affordance could only offer a retry the store must refuse
+      // (`undo_conflict`): report the typed message plainly, with no Undo
+      // button and no armed target. This branch is valid only because this
+      // handler exclusively parses REVERT_DECISION: approve compensation
+      // reuses the same code with the opposite meaning (the change IS
+      // applied there), where suppressing Undo would be wrong.
+      if (result.code === "state_unrecorded") {
+        reportToast({ message: result.message, error: true });
+        return;
+      }
+      // Every other refusal left the row applied (or never touched it), so
+      // the revert stays retryable. Show first, then arm: `reportToast`
+      // disarms on every new toast, so the re-arm has to follow it (same
+      // order as ReviewView's approve).
+      reportToast({
+        message: result.message,
+        error: true,
+        undoable: true,
+      });
+      armDecisionRevert(decisionId);
+    } finally {
+      decisionUndoBusyRef.current = false;
+      setDecisionUndoBusy(false);
+    }
+  }, [armDecisionRevert, reportToast, toastCtl]);
   const dismissToast = useCallback(() => {
-    decisionRevertRef.current = null;
+    retireCurrentToast();
     toastCtl.dismiss();
-  }, [toastCtl]);
+  }, [retireCurrentToast, toastCtl]);
   /**
    * The ToastContext value: identical API to `toastCtl`, but `showToast`
    * runs through `reportToast` so a deeper component's toast also disarms a
@@ -1060,6 +1149,7 @@ export function App(props?: { askDebounceMs?: number }) {
         />
         <UndoToast
           toast={toastCtl.toast}
+          busy={decisionUndoBusy}
           onUndo={() => void handleToastUndo()}
           onDismiss={dismissToast}
         />

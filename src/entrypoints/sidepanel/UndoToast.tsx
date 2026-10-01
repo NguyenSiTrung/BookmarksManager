@@ -27,6 +27,11 @@ import { undoLatest } from "../../undo/restore";
  *    shows the TYPED failure message. A failed restore keeps its row on the
  *    stack (`restore.ts` pops on success only), so the failure toast keeps
  *    the Undo button — the retry resumes instead of replaying.
+ *  - {@link UndoToastProps.busy} is the SHELL's decision-revert round trip:
+ *    the Undo control is disabled (and announced `aria-busy`) while the
+ *    dispatch that consumed its target owns the toast, instead of accepting
+ *    an activation the dispatcher would refuse. The snapshot path never sets
+ *    it — that re-entry is the controller's own guard above.
  *  - {@link ToastContext}/{@link useToast} let deeper components (bulk bar,
  *    dialogs, folder actions) report without prop drilling; outside a
  *    provider the hook degrades to a no-op so components stay renderable in
@@ -79,9 +84,17 @@ export function errorMessage(cause: unknown): string {
 /**
  * Toast state machine. The auto-hide timer is cleared on every new toast and
  * on unmount, so a stale timer can never blank a newer message.
+ *
+ * `onAutoHide` fires SYNCHRONOUSLY when that timer clears the toast — the one
+ * transition of the toast slot this controller owns that a caller cannot see
+ * through `toast` alone. The shell uses it to retire whatever it keyed to the
+ * toast that just left the screen (its generation token and an armed
+ * decision-revert target); this hook stays unaware of both, and the generic
+ * `undo` path is untouched by it.
  */
 export function useUndoToastController(
   autoHideMs: number = UNDO_TOAST_AUTO_HIDE_MS,
+  onAutoHide?: () => void,
 ): UndoToastController {
   const [toast, setToast] = useState<ToastState | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,9 +123,10 @@ export function useUndoToastController(
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         setToast(null);
+        onAutoHide?.();
       }, autoHideMs);
     },
-    [autoHideMs, clearTimer],
+    [autoHideMs, clearTimer, onAutoHide],
   );
 
   const undo = useCallback(async () => {
@@ -172,10 +186,18 @@ export interface UndoToastProps {
   toast: ToastState | null;
   onUndo: () => void;
   onDismiss: () => void;
+  /**
+   * A decision revert is in flight: the undo round trip owns the toast slot
+   * by then, so the button is disabled and announced busy rather than
+   * accepting an activation the dispatcher would refuse. Generic snapshot
+   * undos leave it false — their own controller guard governs re-entry.
+   */
+  busy?: boolean;
 }
 
 /** The toast itself — bottom of the panel, message + Undo + dismiss. */
-export function UndoToast({ toast, onUndo, onDismiss }: UndoToastProps) {
+export function UndoToast({ toast, onUndo, onDismiss, busy }: UndoToastProps) {
+  const undoBusy = busy === true;
   if (toast === null) return null;
   return (
     <div
@@ -194,10 +216,13 @@ export function UndoToast({ toast, onUndo, onDismiss }: UndoToastProps) {
         <button
           type="button"
           onClick={onUndo}
+          disabled={undoBusy}
+          aria-busy={undoBusy ? true : undefined}
           className={
             "shrink-0 rounded-sm px-2 py-1 text-xs font-medium " +
             "text-primary outline-hidden hover:bg-accent " +
-            "focus-visible:ring-2 focus-visible:ring-ring"
+            "focus-visible:ring-2 focus-visible:ring-ring " +
+            "disabled:cursor-not-allowed disabled:opacity-50"
           }
         >
           Undo

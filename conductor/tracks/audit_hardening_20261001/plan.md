@@ -559,7 +559,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(undo): coordinate restores across contexts`,
     isolated core-manager E2E, notes/learnings, close this task.
 
-- [ ] Task 3: Re-entry-safe decision toast undo
+- [x] Task 3: Re-entry-safe decision toast undo
   <!-- files: src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/UndoToast.tsx, tests/components/sidepanel-actions.test.tsx, tests/components/undo-reentry.test.tsx -->
   - Covers **B12**. The dispatch guard lives before choosing decision versus
     generic undo; the existing generic controller guard alone is insufficient.
