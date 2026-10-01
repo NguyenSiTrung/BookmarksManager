@@ -726,3 +726,33 @@ Selected applicable patterns from `conductor/patterns.md`:
   across the fix (`diff` clean). Residual: absence windows cannot be fully
   event-driven, so two bounded, commented soak windows remain (2 000 ms
   mismatch, 1 500 ms paused scan) — they still discriminate at `c779b2e`.
+- Phase 6 Task 5 final checkpoint — the single deferred full gate (user
+  ruling: keep deferring, run everything once at the end). Command:
+  `bash .superpowers/sdd/audit_hardening_20261001/phase6-task5-gate.sh` at
+  `759eadf` -> `FAILED=0`. Steps and exact counts: lint 13 s; typecheck 13 s;
+  unit `npm test -- --run --maxWorkers=1` **158 files / 3085 tests passed**
+  (137 s); build 2 s; `check:manifest` OK; `check:bundle` OK;
+  `check:store` OK (release 1.0.0 store-readiness); `check:site` OK;
+  `xvfb-run -a env E2E_HEADLESS=1 npm run test:e2e` **43 passed / 1 skipped**
+  (2.6 m; the skip is the store-assets screenshot capture, unchanged); perf
+  rerun 12 passed — analyze-on-save median **39.1 ms** (budget 1500 ms over a
+  10k library), near-duplicate plan **50 000 comparisons / 500 pairs, first
+  pass 133.8 ms** (budget 500 ms). Never part of the local gate and reported
+  as such: `npm run test:live` / `test:eval` (key-gated) and the native
+  `chrome.permissions.request` prompt.
+- The first gate run (at `6ba4dd9`) caught **three real failures, all test
+  drift rather than product bugs**, fixed in `759eadf`:
+  (1) two `tests/e2e/search.spec.ts` popup legs hung for their full 120 s
+  timeout because `95d8468` ("feat(popup): move search into an expanding
+  header control", landed after the `fa021d0` baseline) renders the search
+  input only after the header toggle is clicked; the spec still expected an
+  always-rendered combobox and `fill("")` to restore the form. The fix clicks
+  the `aria-label="Search bookmarks"` toggle and closes the row (Escape on an
+  empty query) per `PopupSearch`'s documented contract — the leg then passed
+  in 1.1 s.
+  (2) `tests/components/sidepanel-actions.test.tsx` `openFolderMenu` read the
+  renamed row with a synchronous `getByRole` right after the mutation; I02's
+  intended 50 ms coalescing window means the row lands a tick later, so the
+  helper now awaits `findByRole` (the store and toast had already updated;
+  only the tree render was deferred). This is the exact class of drift the
+  deferred gate existed to surface — heavy suites must run before closure.
