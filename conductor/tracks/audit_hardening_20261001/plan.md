@@ -178,7 +178,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(undo): retain summaries during restore`,
     notes/learnings, close this task.
 
-- [x] Task 3: Preserve summaries through the JSON import pipeline
+- [x] Task 3: Preserve summaries through the JSON import pipeline (e6a71cd)
   <!-- files: src/io/import-plan.ts, src/io/import-write.ts, tests/unit/io-import.test.ts -->
   - Covers **B03**. Extend `ImportMeta` with optional `summary?: string`;
     `fromEnvelope`, `planImport`, and `writeImport` retain existing interfaces.
@@ -208,10 +208,10 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(io): restore summaries from JSON backups`,
     notes/learnings, close this task.
 
-- [~] Task 4: Race-safe startup metadata reconciliation
+- [x] Task 4: Race-safe startup metadata reconciliation
   <!-- files: src/sync/reconcile.ts, tests/unit/sync-reconcile.test.ts -->
   - Covers **B04**. Preserve `reconcileMetadata(): Promise<number>`.
-  - [ ] Red: defer `getTree`, create a bookmark and summary metadata after
+  - [x] Red: defer `getTree`, create a bookmark and summary metadata after
     the stale tree snapshot, then resume reconciliation. Assert live metadata
     survives; truly dead rows are still removed.
     ```ts
@@ -223,14 +223,14 @@ implementation work.
     expect((await getMeta("concurrent"))?.summary).toBe("Keep me.");
     ```
     Add the deferred read/release pair in this test file, not production code.
-  - [ ] Verify red: `npx vitest run tests/unit/sync-reconcile.test.ts`.
-  - [ ] Green: snapshot stored IDs before the native-tree read; operate only
+  - [x] Verify red: `npx vitest run tests/unit/sync-reconcile.test.ts`.
+  - [x] Green: snapshot stored IDs before the native-tree read; operate only
     on those initial candidates. Re-check candidate absence against a fresh
     successful native read/probe before deletion. Preserve the empty-tree
     guard and defer cleanup when state or API reads are ambiguous.
-  - [ ] Verify green: rerun reconcile tests for creation during both read
+  - [x] Verify green: rerun reconcile tests for creation during both read
     windows, deletion, invalid-but-live rows, failed probes, and empty trees.
-  - [ ] Coordinator gate/commit: `fix(sync): preserve concurrently created metadata`,
+  - [x] Coordinator gate/commit: `fix(sync): preserve concurrently created metadata`,
     notes/learnings, close this task.
 
 - [ ] Task 5: Automated checkpoint for data safety

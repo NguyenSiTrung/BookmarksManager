@@ -23,7 +23,7 @@ function collectLiveIds(node: BookmarksTreeNode, into: Set<string>): void {
 }
 
 /**
- * Delete every `bookmarkMeta` row whose id is absent from the live tree.
+ * Delete initially stored rows whose ids are absent from two native reads.
  *
  * Stored ids are read from the raw primary keys (`toCollection().primaryKeys()`)
  * rather than `listMeta()`: a schema-invalid row is "absent" to every read
@@ -44,15 +44,30 @@ function collectLiveIds(node: BookmarksTreeNode, into: Set<string>): void {
  * site. Returns the number of rows deleted.
  */
 export async function reconcileMetadata(): Promise<number> {
+  const storedIds = await db.bookmarkMeta.toCollection().primaryKeys();
+  if (storedIds.length === 0) return 0;
   const tree = await getTree();
   const liveIds = new Set<string>();
   for (const top of tree) {
     collectLiveIds(top, liveIds);
   }
-  const storedIds = await db.bookmarkMeta.toCollection().primaryKeys();
-  if (storedIds.length > 0 && liveIds.size === 0) {
+  if (liveIds.size === 0) {
     return 0;
   }
   const orphanedIds = storedIds.filter((id) => !liveIds.has(id));
-  return deleteMetaByIds(orphanedIds);
+  if (orphanedIds.length === 0) return 0;
+
+  // Chrome never reuses IDs. Rows created after the initial key snapshot
+  // cannot be candidates; a second read protects live IDs missing from a
+  // stale first response. An unavailable confirming read authorizes nothing.
+  const confirmedIds = new Set<string>();
+  try {
+    for (const top of await getTree()) {
+      collectLiveIds(top, confirmedIds);
+    }
+  } catch {
+    return 0;
+  }
+  if (confirmedIds.size === 0) return 0;
+  return deleteMetaByIds(orphanedIds.filter((id) => !confirmedIds.has(id)));
 }

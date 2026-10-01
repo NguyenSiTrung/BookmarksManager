@@ -128,6 +128,23 @@ Selected applicable patterns from `conductor/patterns.md`:
   checks passed. Isolated core-manager/LLM browser run: 16 passed, no skips.
 - Pattern: fields in the export schema must also cross the normalized
   import adapter, metadata-presence predicate, and replacement writer.
+- Local commit: `e6a71cd`; task `BookmarksManager-lgd.1.3` closed.
+
+### Phase 1 Task 4: Race-safe startup reconcile
+
+- Take the raw metadata key snapshot before reading Chrome and only remove
+  initial candidates also absent from a fresh successful confirming read.
+  Empty or failed confirming reads authorize no cleanup.
+- Red: `npx vitest run tests/unit/sync-reconcile.test.ts`, 5 expected
+  failures, 8 passing. Green: 13 passing, including both creation windows,
+  stale initial state, failed/empty confirmation, dead invalid rows and
+  invalid-but-live preservation. No network call is made.
+- Applicable gate: lint, typecheck, full 151 files / 2,563 tests
+  (`--maxWorkers=1`), build, manifest/bundle/store checks, and isolated
+  core-manager/LLM E2E (16 passing, no skips).
+- Pattern: Chrome does not reuse native IDs. A pre-read candidate set keeps
+  newly created sidecars out of orphan cleanup; confirmation protects
+  candidates incorrectly absent from a stale snapshot.
 
 ## Planning Validation
 

@@ -25,6 +25,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -33,6 +34,74 @@ afterAll(() => {
 });
 
 describe("reconcileMetadata", () => {
+  it("preserves metadata created while the initial tree snapshot is held", async () => {
+    const api = installBookmarksFake();
+    await putMeta("ghost", { notes: "dead" });
+    const snapshot = await api.getTree();
+    const held = Promise.withResolvers<typeof snapshot>();
+    const treeRead = vi.spyOn(api, "getTree").mockReturnValueOnce(held.promise);
+    const cleanup = reconcileMetadata();
+    await vi.waitFor(() => expect(treeRead).toHaveBeenCalledTimes(1));
+    const created = await api.create({
+      parentId: "1", title: "Concurrent", url: "https://concurrent.dev/",
+    });
+    await putMeta(created.id, { tags: [], summary: "Keep me." });
+    held.resolve(snapshot);
+
+    expect(await cleanup).toBe(1);
+    expect((await getMeta(created.id))?.summary).toBe("Keep me.");
+    expect(await getMeta("ghost")).toBeUndefined();
+  });
+
+  it("confirms old candidates against a current native tree before deleting", async () => {
+    const api = installBookmarksFake({
+      bookmarksBar: [{ id: "live", title: "Live", url: "https://live.dev/" }],
+    });
+    await putMeta("live", { tags: [], summary: "Still live." });
+    await putMeta("ghost", { notes: "dead" });
+    // The first response is an outdated but otherwise valid roots-only tree.
+    const staleApi = installBookmarksFake();
+    const stale = await staleApi.getTree();
+    api.install();
+    vi.spyOn(api, "getTree").mockResolvedValueOnce(stale);
+
+    expect(await reconcileMetadata()).toBe(1);
+    expect((await getMeta("live"))?.summary).toBe("Still live.");
+    expect(await getMeta("ghost")).toBeUndefined();
+  });
+
+  it("preserves a candidate created while the confirming read is held", async () => {
+    const api = installBookmarksFake();
+    const stale = await api.getTree();
+    await putMeta("1000", { tags: [], summary: "Retain during confirmation." });
+    const held = Promise.withResolvers<typeof stale>();
+    const read = vi.spyOn(api, "getTree")
+      .mockResolvedValueOnce(stale)
+      .mockReturnValueOnce(held.promise);
+    const cleanup = reconcileMetadata();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    const created = await api.create({
+      parentId: "1", title: "Concurrent", url: "https://live.dev/",
+    });
+    expect(created.id).toBe("1000");
+    held.resolve(await api.getTree());
+
+    expect(await cleanup).toBe(0);
+    expect((await getMeta(created.id))?.summary).toBe("Retain during confirmation.");
+  });
+
+  it.each(["reject", "empty"] as const)("defers deletion on a %s confirming read", async (outcome) => {
+    const api = installBookmarksFake();
+    const tree = await api.getTree();
+    await putMeta("ghost", { summary: "Preserve ambiguous state." });
+    const read = vi.spyOn(api, "getTree").mockResolvedValueOnce(tree);
+    if (outcome === "reject") read.mockRejectedValueOnce(new Error("Native read failed"));
+    else read.mockResolvedValueOnce([]);
+
+    expect(await reconcileMetadata()).toBe(0);
+    expect((await getMeta("ghost"))?.summary).toBe("Preserve ambiguous state.");
+  });
+
   it("deletes rows whose ids are absent from the tree, keeps live rows", async () => {
     installBookmarksFake({
       bookmarksBar: [
