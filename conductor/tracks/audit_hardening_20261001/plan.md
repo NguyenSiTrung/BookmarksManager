@@ -1,5 +1,7 @@
 # Audit Hardening Implementation Plan
 
+<!-- Last Revised: 2026-10-01 — Phase 2 Task 1 summary admission ownership -->
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
 > task-by-task. Steps use checkbox (`- [ ]`) syntax. Read the spec and task's
@@ -246,7 +248,7 @@ implementation work.
 <!-- execution: sequential -->
 
 - [ ] Task 1: Enforce current blocklist for explanation and summary egress
-  <!-- files: src/llm/explain.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
+  <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B05**. Reuse `readBlocklist()` and `minimizeBookmark`; refuse
     blocked multi-bookmark explanations instead of sending partial derived
     state. Re-read before subsequent repair/fallback sends and the Jev hop.
@@ -273,6 +275,8 @@ implementation work.
     persisted list and live referenced URLs; wrap structured `send` calls so
     each actual send rechecks admission. Keep typed, content-free refusal
     results and the existing per-origin transport gates.
+    `summarizePage` owns the summary structured-send wrapper, so its options
+    carry the orchestrator's admission callback into fallback/repair sends.
   - [ ] Verify green: rerun named tests with blocked/allowed positive
     controls, subdomain matching, and list changes between hops.
   - [ ] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
