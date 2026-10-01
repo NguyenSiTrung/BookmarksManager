@@ -9,7 +9,7 @@ import {
 import {
   createFolder,
   moveNode,
-  removeTree,
+  removeNode,
   MutationError,
 } from "../sync/mutations";
 import { getJob } from "../jobs/queue";
@@ -28,8 +28,8 @@ import { undoLatest } from "../undo/restore";
  * job; every resolved bookmark still exists, is a leaf, and sits outside a
  * managed subtree; every proposed path is schema-valid and resolvable to a
  * folder id. On any mid-apply failure the already-applied moves are replayed
- * in reverse (best effort) and the created folders removed — compensating
- * rollback leaves the tree as close to the pre-apply state as possible.
+ * in reverse (best effort) and only confirmed-empty created folders removed.
+ * The snapshot is kept so incomplete compensation can be retried via undo.
  * The plan never auto-applies: this module only runs when a message handler
  * has passed the user's explicit confirmation.
  */
@@ -197,13 +197,21 @@ export async function applyRestructurePlan(
     return { moved: moved.length, reusedPaths, snapshotId };
   } catch (cause) {
     // Compensating rollback: replay moved bookmarks back to their captured
-    // positions, then remove the created folders (bottom-up, empty-only
-    // isn't guaranteed mid-failure — removeTree whatever we created).
+    // positions, then remove confirmed-empty created folders bottom-up.
+    // Failed reads never authorize deletion; non-recursive removal also
+    // protects children inserted between the emptiness check and removal.
+    // Keep the snapshot, especially when an inverse move or cleanup fails.
     for (const m of [...moved].reverse()) {
       await moveNode(m.id, { parentId: m.parentId, index: m.index }).catch(() => {});
     }
     for (const id of [...createdFolderIds].reverse()) {
-      await removeTree(id).catch(() => {});
+      try {
+        const children = await getChildren(id);
+        if (children.length !== 0) continue;
+        await removeNode(id);
+      } catch {
+        // Occupied, managed, missing, or unreadable: leave it for undo.
+      }
     }
     if (cause instanceof ApplyError) throw cause;
     if (cause instanceof MutationError) {

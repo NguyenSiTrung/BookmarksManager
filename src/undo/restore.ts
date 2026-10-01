@@ -11,13 +11,15 @@ import type { UndoNode, UndoSnapshot } from "../schemas/undo";
 import {
   get,
   getChildren,
+  isFolder,
   OTHER_BOOKMARKS_ID,
 } from "../sync/chrome-bookmarks";
+import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import {
   createBookmark,
   createFolder,
   moveNode,
-  removeTree as removeTreeForRestore,
+  removeNode,
   MutationError,
 } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
@@ -142,6 +144,7 @@ export interface DiscardSuccess {
 export type DiscardResult = DiscardSuccess | UndoFailure;
 
 interface RestoreContext {
+  kind: UndoSnapshot["kind"];
   restoredIds: string[];
   idMap: Record<string, string>;
   fellBackToOther: boolean;
@@ -171,8 +174,31 @@ function serialize<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
-/** Total existence probe — `get` rejects on unknown ids. */
-async function nodeExists(id: string): Promise<boolean> {
+/**
+ * Restructure must prove a node is missing before recreating it or treating
+ * its remap as dead. Match the mutation service's missing-ID classification;
+ * an unrelated native failure keeps the snapshot rather than making a clone.
+ */
+async function getRestructureNode(
+  id: string,
+): Promise<BookmarksTreeNode | undefined> {
+  try {
+    return (await get(id))[0];
+  } catch (cause) {
+    if (cause instanceof Error && /can't find bookmark/i.test(cause.message)) {
+      return undefined;
+    }
+    throw new MutationError("api", `chrome.bookmarks get for undo node "${id}" failed.`, {
+      cause,
+    });
+  }
+}
+
+/** Legacy probes are total; restructure probes reject ambiguous failures. */
+async function nodeExists(id: string, ctx?: RestoreContext): Promise<boolean> {
+  if (ctx?.kind === "restructure") {
+    return (await getRestructureNode(id)) !== undefined;
+  }
   try {
     return (await get(id))[0] !== undefined;
   } catch {
@@ -188,7 +214,7 @@ async function resolveParent(
   parentId: string,
   ctx: RestoreContext,
 ): Promise<string> {
-  if (await nodeExists(parentId)) return parentId;
+  if (await nodeExists(parentId, ctx)) return parentId;
   ctx.fellBackToOther = true;
   return OTHER_BOOKMARKS_ID;
 }
@@ -226,7 +252,7 @@ async function recreateSubtree(
   ctx: RestoreContext,
 ): Promise<void> {
   let createdId = ctx.idMap[node.id];
-  if (createdId !== undefined && !(await nodeExists(createdId))) {
+  if (createdId !== undefined && !(await nodeExists(createdId, ctx))) {
     // An earlier attempt's recreation has itself been removed since —
     // the persisted mapping is dead; recreate the node fresh.
     delete ctx.idMap[node.id];
@@ -311,10 +337,11 @@ async function restoreMetaRows(
 }
 
 /**
- * `bulk_move`: move each recorded node back to its original parent+index,
+ * `bulk_move`/`restructure`: move each recorded node back to its original parent+index,
  * ascending by index so earlier siblings are reinserted first and later
  * ones land after them. `meta` is deliberately untouched — a move never
- * altered it.
+ * altered it. Only restructure recreates missing captured nodes, using
+ * the same durable idMap as delete/merge restores.
  */
 async function restoreMoves(
   snapshot: UndoSnapshot,
@@ -322,11 +349,19 @@ async function restoreMoves(
 ): Promise<void> {
   const ordered = [...snapshot.nodes].sort((a, b) => a.index - b.index);
   for (const node of ordered) {
-    const current = await get(node.id)
-      .then((found) => found[0])
-      .catch(() => undefined);
-    // Deleted since the move — nothing to move back; not a failure.
-    if (current === undefined) continue;
+    const current = snapshot.kind === "restructure"
+      ? await getRestructureNode(node.id)
+      : await get(node.id)
+          .then((found) => found[0])
+          .catch(() => undefined);
+    if (current === undefined) {
+      // A plain move skips deleted nodes; restructure must recover them.
+      if (snapshot.kind !== "restructure") continue;
+      const parentId = await resolveParent(node.parentId, ctx);
+      const siblings = await getChildren(parentId);
+      await recreateSubtree(node, parentId, Math.min(node.index, siblings.length), ctx);
+      continue;
+    }
     const parentId = await resolveParent(node.parentId, ctx);
     const siblings = await getChildren(parentId);
     // Post-removal indexing: moving within the same parent frees one slot.
@@ -343,8 +378,9 @@ async function restoreMoves(
 }
 
 /**
- * `restructure`: replay the recorded moves back to their original parents —
- * identical to `bulk_move` — then remove each folder the apply created iff
+ * `restructure`: replay the recorded moves back to their original parents,
+ * recreating missing captured nodes and restoring only their metadata.
+ * Surviving nodes keep their later metadata edits. Remove each created folder iff
  * it still exists, is a folder, and is empty (a folder the user has since
  * filed into is kept). Removed-first ordering is bottom-up so a parent is
  * only removed after its created children.
@@ -354,27 +390,29 @@ async function restoreRestructure(
   ctx: RestoreContext,
 ): Promise<void> {
   await restoreMoves(snapshot, ctx);
+  for (const meta of snapshot.meta) {
+    const remapped = ctx.idMap[meta.id];
+    if (remapped === undefined) continue;
+    await putMeta(remapped, {
+      tags: meta.tags,
+      category: meta.category ?? null,
+      notes: meta.notes ?? null,
+      summary: meta.summary ?? null,
+    });
+  }
   for (const id of [...(snapshot.createdFolderIds ?? [])].reverse()) {
-    const current = await get(id)
-      .then((found) => found[0])
-      .catch(() => undefined);
+    const current = await getRestructureNode(id);
     if (current === undefined) {
       ctx.restoredIds.push(id); // already gone — nothing to remove
       continue;
     }
-    const children = await getChildren(id).catch(() => []);
+    if (!isFolder(current)) continue;
+    // A failed read retains the snapshot for retry, never means "empty".
+    const children = await getChildren(id);
     if (children.length > 0) continue; // user filed into it since — keep
-    await apiRemoveOrSkip(id);
+    // Chrome's non-recursive remove protects even a racing child insertion.
+    await removeNode(id);
     ctx.restoredIds.push(id);
-  }
-}
-
-async function apiRemoveOrSkip(id: string): Promise<void> {
-  try {
-    await removeTreeForRestore(id);
-  } catch {
-    // Folder already gone or managed — the tree is closer to the
-    // pre-apply state either way; skipping preserves idempotency.
   }
 }
 
@@ -457,6 +495,7 @@ async function runUndoLatest(): Promise<UndoResult> {
       return { ok: false, code: "empty", message: "Nothing to undo." };
     }
     const ctx: RestoreContext = {
+      kind: snapshot.kind,
       restoredIds: [],
       // Progress persisted by an earlier failed attempt resumes the
       // replay where it stopped.

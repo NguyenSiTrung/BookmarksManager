@@ -738,6 +738,303 @@ describe("undoLatest — bulk_move", () => {
 });
 
 // ---------------------------------------------------------------------------
+// undoLatest — restructure
+// ---------------------------------------------------------------------------
+
+describe("undoLatest — restructure", () => {
+  it("retains the snapshot without cloning a live bookmark when its original-id lookup fails once", async () => {
+    const capture = await captureNodes(["bm-b"]);
+    const rowId = await pushSnapshot({ kind: "restructure", ...capture });
+    await moveNode("bm-b", { parentId: "folder-x" });
+    const before = await fake.getTree();
+    const originalGet = fake.get.bind(fake);
+    let failLookup = true;
+    vi.spyOn(fake, "get").mockImplementation(async (id) => {
+      if (id === "bm-b" && failLookup) {
+        failLookup = false;
+        throw new Error("controlled original-id lookup failure");
+      }
+      return originalGet(id);
+    });
+
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    expect(await fake.getTree()).toEqual(before); // no new bookmark or move
+    expect((await get("bm-b"))[0]?.parentId).toBe("folder-x");
+    expect(await db.undo.get(rowId)).toMatchObject({ id: rowId });
+    expect((await db.undo.get(rowId))?.idMap).toBeUndefined();
+
+    const retried = expectOk(await undoLatest());
+    expect(retried.idMap).toEqual({});
+    expect(retried.restoredIds).toEqual(["bm-b"]);
+    expect((await get("bm-b"))[0]).toMatchObject({ parentId: "1", index: 1 });
+    expect((await getChildren("1")).filter((node) => node.title === "B")).toHaveLength(1);
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("keeps a live persisted remap when its lookup fails once instead of recreating it", async () => {
+    await putMeta("bm-b", { tags: ["docs"], notes: "captured note" });
+    const capture = await captureNodes(["bm-b"]);
+    const rowId = await pushSnapshot({ kind: "restructure", ...capture });
+    await removeWithCascade("bm-b");
+    vi.spyOn(db.bookmarkMeta, "put").mockRejectedValue(new Error("controlled metadata failure"));
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    const kept = await db.undo.get(rowId);
+    const mappedId = kept?.idMap?.["bm-b"];
+    expect(mappedId).toBeDefined();
+    vi.restoreAllMocks();
+
+    const before = await fake.getTree();
+    const originalGet = fake.get.bind(fake);
+    let failLookup = true;
+    vi.spyOn(fake, "get").mockImplementation(async (id) => {
+      if (id === mappedId && failLookup) {
+        failLookup = false;
+        throw new Error("controlled remapped-id lookup failure");
+      }
+      return originalGet(id);
+    });
+
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    expect(await fake.getTree()).toEqual(before); // no duplicate native node
+    expect((await db.undo.get(rowId))?.idMap).toEqual(kept?.idMap);
+    expect((await get(mappedId!))[0]?.title).toBe("B");
+
+    const retried = expectOk(await undoLatest());
+    expect(retried.idMap["bm-b"]).toBe(mappedId);
+    expect((await getChildren("1")).filter((node) => node.title === "B")).toHaveLength(1);
+    expect(await getMeta(mappedId!)).toMatchObject({ tags: ["docs"], notes: "captured note" });
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("does not fall back or create a bookmark when its recorded parent lookup fails once", async () => {
+    const capture = await captureNodes(["bm-b"]);
+    const rowId = await pushSnapshot({ kind: "restructure", ...capture });
+    await removeWithCascade("bm-b");
+    const before = await fake.getTree();
+    const originalGet = fake.get.bind(fake);
+    let failLookup = true;
+    vi.spyOn(fake, "get").mockImplementation(async (id) => {
+      if (id === "1" && failLookup) {
+        failLookup = false;
+        throw new Error("controlled parent lookup failure");
+      }
+      return originalGet(id);
+    });
+
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    expect(await fake.getTree()).toEqual(before);
+    expect(await db.undo.get(rowId)).toBeDefined();
+    const retried = expectOk(await undoLatest());
+    expect(retried.fellBackToOther).toBe(false);
+    expect((await get(retried.idMap["bm-b"]!))[0]?.parentId).toBe("1");
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("retains the snapshot when a created-folder lookup fails once during cleanup", async () => {
+    const folder = await fake.create({ parentId: "1", title: "Created" });
+    const rowId = await pushSnapshot({
+      kind: "restructure", nodes: [], meta: [], createdFolderIds: [folder.id],
+    });
+    const originalGet = fake.get.bind(fake);
+    let failLookup = true;
+    vi.spyOn(fake, "get").mockImplementation(async (id) => {
+      if (id === folder.id && failLookup) {
+        failLookup = false;
+        throw new Error("controlled created-folder lookup failure");
+      }
+      return originalGet(id);
+    });
+
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    expect((await get(folder.id))[0]?.title).toBe("Created");
+    expect(await db.undo.get(rowId)).toBeDefined();
+    expectOk(await undoLatest());
+    expect((await getChildren("1")).some((node) => node.id === folder.id)).toBe(false);
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("restores metadata on recreated ids without overwriting surviving nodes' later edits", async () => {
+    await putMeta("bm-b", {
+      tags: ["captured"], category: "docs", notes: "captured note",
+      summary: "Captured public page summary.",
+    });
+    await putMeta("bm-c", { tags: ["before"], notes: "before" });
+    const capture = await captureNodes(["bm-b", "bm-c"]);
+    await pushSnapshot({ kind: "restructure", ...capture });
+    await moveNode("bm-b", { parentId: "folder-x" });
+    await moveNode("bm-c", { parentId: "folder-x" });
+    await removeWithCascade("bm-b");
+    const laterMeta = await putMeta("bm-c", {
+      tags: ["later"], category: "course", notes: "later edit",
+      summary: "Later public page summary.",
+    });
+
+    const result = expectOk(await undoLatest());
+    const newB = result.idMap["bm-b"];
+    expect(newB).toBeDefined();
+    expect((await get(newB!))[0]).toMatchObject({
+      title: "B", url: "https://b.example/", parentId: "1", index: 1,
+    });
+    expect(await getMeta(newB!)).toMatchObject({
+      tags: ["captured"], category: "docs", notes: "captured note",
+      summary: "Captured public page summary.",
+    });
+    expect((await get("bm-c"))[0]).toMatchObject({ parentId: "1", index: 2 });
+    expect(await getMeta("bm-c")).toEqual(laterMeta);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it.each([false, true])(
+    "resumes partial recreation from a durable idMap (mapped node deleted before retry: %s)",
+    async (deleteMappedNode) => {
+      await putMeta("bm-b", { tags: ["b"], notes: "B note" });
+      await putMeta("bm-c", { category: "docs" });
+      const capture = await captureNodes(["bm-b", "bm-c"]);
+      const rowId = await pushSnapshot({ kind: "restructure", ...capture });
+      await removeWithCascade("bm-b");
+      await removeWithCascade("bm-c");
+      const originalCreate = fake.create.bind(fake);
+      vi.spyOn(fake, "create").mockImplementation(async (details) => {
+        if (details.title === "C") throw new Error("controlled second create failure");
+        return originalCreate(details);
+      });
+
+      expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+      const kept = await db.undo.get(rowId);
+      const firstB = kept?.idMap?.["bm-b"];
+      expect(firstB).toBeDefined();
+      expect((await get(firstB!))[0]?.title).toBe("B");
+      expect(kept?.idMap?.["bm-c"]).toBeUndefined();
+      vi.restoreAllMocks();
+      if (deleteMappedNode) await removeWithCascade(firstB!);
+
+      const retried = expectOk(await undoLatest());
+      const newB = retried.idMap["bm-b"];
+      const newC = retried.idMap["bm-c"];
+      expect(newB).toBeDefined();
+      expect(newC).toBeDefined();
+      if (deleteMappedNode) expect(newB).not.toBe(firstB);
+      else expect(newB).toBe(firstB);
+      expect((await getChildren("1")).map((node) => node.id)).toEqual([
+        "folder-a", newB, newC, "bm-k", "bm-l1", "bm-l2",
+      ]);
+      expect((await getChildren("1")).filter((node) => node.title === "B")).toHaveLength(1);
+      expect(await getMeta(newB!)).toMatchObject({ tags: ["b"], notes: "B note" });
+      expect(await getMeta(newC!)).toMatchObject({ category: "docs" });
+      expect(await db.undo.get(rowId)).toBeUndefined();
+    },
+  );
+
+  it("retries a recreated-node metadata failure without duplicating bookmarks", async () => {
+    await putMeta("bm-b", { tags: ["docs"], notes: "saved note" });
+    const capture = await captureNodes(["bm-b"]);
+    const rowId = await pushSnapshot({ kind: "restructure", ...capture });
+    await removeWithCascade("bm-b");
+    vi.spyOn(db.bookmarkMeta, "put").mockRejectedValue(new Error("controlled metadata failure"));
+
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
+    const remapped = (await db.undo.get(rowId))?.idMap?.["bm-b"];
+    expect(remapped).toBeDefined();
+    vi.restoreAllMocks();
+    const retried = expectOk(await undoLatest());
+    expect(retried.idMap["bm-b"]).toBe(remapped);
+    expect((await getChildren("1")).filter((node) => node.title === "B")).toHaveLength(1);
+    expect(await getMeta(remapped!)).toMatchObject({ tags: ["docs"], notes: "saved note" });
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("keeps an occupied created folder and the snapshot when its child lookup fails", async () => {
+    const capture = await captureNodes(["bm-b"]);
+    const rowId = await pushSnapshot({
+      kind: "restructure", ...capture, createdFolderIds: ["folder-x"],
+    });
+    await moveNode("bm-b", { parentId: "folder-x" });
+    const originalChildren = fake.getChildren.bind(fake);
+    vi.spyOn(fake, "getChildren").mockImplementation(async (id) => {
+      if (id === "folder-x") throw new Error("controlled child lookup failure");
+      return originalChildren(id);
+    });
+
+    const result = await undoLatest();
+    await expect(get(["bm-b", "bm-x1"])).resolves.toMatchObject([
+      { id: "bm-b" }, { id: "bm-x1" },
+    ]);
+    expect((await get("folder-x"))[0]?.title).toBe("Folder X");
+    expect(result).toMatchObject({ ok: false, code: "api" });
+    expect(await db.undo.get(rowId)).toBeDefined();
+    vi.restoreAllMocks();
+    expectOk(await undoLatest());
+    expect((await getChildren("folder-x")).map((node) => node.id)).toEqual(["bm-x1"]);
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it("preserves a racing child at the native non-recursive cleanup boundary", async () => {
+    const folder = await fake.create({ parentId: "1", title: "Created" });
+    const rowId = await pushSnapshot({
+      kind: "restructure", nodes: [], meta: [], createdFolderIds: [folder.id],
+    });
+    const originalRemove = fake.remove.bind(fake);
+    const originalRemoveTree = fake.removeTree.bind(fake);
+    let childId = "";
+    const insertChild = async (id: string) => {
+      childId = (await fake.create({
+        parentId: id, title: "Racing child", url: "https://racing.io/",
+      })).id;
+    };
+    vi.spyOn(fake, "remove").mockImplementation(async (id) => {
+      await insertChild(id);
+      return originalRemove(id);
+    });
+    vi.spyOn(fake, "removeTree").mockImplementation(async (id) => {
+      await insertChild(id);
+      return originalRemoveTree(id);
+    });
+
+    const result = await undoLatest();
+    await expect(get(childId)).resolves.toMatchObject([{ parentId: folder.id }]);
+    expect((await get(folder.id))[0]?.title).toBe("Created");
+    expect(result).toMatchObject({ ok: false, code: "api" });
+    expect(await db.undo.get(rowId)).toBeDefined();
+    vi.restoreAllMocks();
+    expectOk(await undoLatest());
+    expect((await get(childId))[0]?.parentId).toBe(folder.id);
+    expect(await db.undo.get(rowId)).toBeUndefined();
+  });
+
+  it.each(["1", "managed", "bm-b"])(
+    "never cleans up a fixed root, managed folder, or bookmark recorded as a created folder (%s)",
+    async (id) => {
+      await pushSnapshot({
+        kind: "restructure", nodes: [], meta: [], createdFolderIds: [id],
+      });
+      const before = await fake.getTree();
+      await undoLatest();
+      expect(await fake.getTree()).toEqual(before);
+    },
+  );
+
+  it("retains the snapshot when a missing bookmark's recorded parent is managed", async () => {
+    await pushSnapshot({
+      kind: "restructure", nodes: [leafSnapshotNode("gone", "managed", 0)], meta: [],
+    });
+    const before = await fake.getTree();
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "managed" });
+    expect(await fake.getTree()).toEqual(before);
+    expect(await peekLatest()).toBeDefined();
+  });
+
+  it("falls back to Other bookmarks when recreating under a missing original parent", async () => {
+    const capture = await captureNodes(["bm-x1"]);
+    await pushSnapshot({ kind: "restructure", ...capture });
+    await removeWithCascade("folder-x");
+    const result = expectOk(await undoLatest());
+    expect(result.idMap["bm-x1"]).toBeDefined();
+    expect(result.fellBackToOther).toBe(true);
+    expect((await get(result.idMap["bm-x1"]!))[0]?.parentId).toBe("2");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // undoLatest — merge
 // ---------------------------------------------------------------------------
 

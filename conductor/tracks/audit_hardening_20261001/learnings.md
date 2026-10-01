@@ -104,7 +104,7 @@ Selected applicable patterns from `conductor/patterns.md`:
 ### Session setup
 
 - User explicitly selected implementation directly on `main`.
-- Loaded 93 project patterns. The approved track already supplies the design
+- Loaded the project patterns (117 top-level bullet entries). The approved track already supplies the design
   and plan; no new design or manual verification gate was added.
 - Baseline `npm run test -- --run`: 151 files, 2,532 passing and 3 timing
   failures (two sidepanel actions and search index construction). Both files
@@ -145,6 +145,32 @@ Selected applicable patterns from `conductor/patterns.md`:
 - Pattern: Chrome does not reuse native IDs. A pre-read candidate set keeps
   newly created sidecars out of orphan cleanup; confirmation protects
   candidates incorrectly absent from a stale snapshot.
+- Local commit: `e183cc2`; task `BookmarksManager-lgd.1.4` closed.
+
+### Phase 1 Task 1: Non-destructive restructure recovery
+
+- Initial implementation passed 66 targeted tests and the full
+  2,563-test gate plus 16 isolated browser tests, but task-scoped review
+  found a remaining P1 failure: converting every native ID lookup
+  rejection into absence can duplicate a still-live bookmark during the
+  new restructure recreation path.
+- Fixed original/mapped/parent/cleanup lookup handling for restructure.
+  Confirmed missing IDs may recreate; transient failures return typed
+  `api`, leave native state unchanged, and retain the snapshot/remap.
+- Initial red: 13 expected failures, 53 passing. Review red: 4 additional
+  failures, 66 passing. Final targeted green: 70 tests in restructure/undo,
+  adjacent green: 157 tests across five files.
+- Guarded non-recursive empty-folder removal protects original bookmarks
+  after failed inverse moves, failed child reads, and racing insertion.
+  Missing captured nodes recreate with durable ID remaps; surviving
+  originals retain their later metadata edits, including summaries.
+- Scoped re-review: Spec PASS, Quality PASS; original finding addressed.
+- Fresh coordinator gate: lint/typecheck, 151 files / 2,567 tests
+  (`--maxWorkers=1`), build, manifest/bundle/store and isolated
+  core-manager/LLM E2E (16 passing, no skips).
+- Limitations: native creation and durable remap persistence are separate
+  calls, not crash-atomic. Cross-context locking is Phase 4 work. B02 shared
+  delete/merge summary paths remain for the next task.
 
 ## Planning Validation
 

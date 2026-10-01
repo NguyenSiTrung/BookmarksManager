@@ -113,11 +113,11 @@ implementation work.
 ## Phase 1: Data safety
 <!-- execution: parallel -->
 
-- [~] Task 1: Non-destructive restructure compensation and resumable undo
+- [x] Task 1: Non-destructive restructure compensation and resumable undo
   <!-- files: src/restructure/apply.ts, src/undo/restore.ts, tests/unit/restructure-apply.test.ts, tests/unit/undo.test.ts -->
   - Covers **B01**. Preserve `applyRestructurePlan(jobId, acceptedBookmarkIds?)`
     and `UndoResult`; add no unsafe bypass of mutation guards.
-  - [ ] Red: add controlled failures for the second forward move, the first
+  - [x] Red: add controlled failures for the second forward move, the first
     inverse move, and a child lookup. Assert every original bookmark still
     resolves and occupied created folders remain. Add restructure undo of a
     deleted captured node plus a partial-replay retry with a persisted ID map.
@@ -134,9 +134,9 @@ implementation work.
     }
     expect(result.snapshotId).toBeGreaterThan(0);
     ```
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/restructure-apply.test.ts tests/unit/undo.test.ts`.
-  - [ ] Green: preserve the snapshot after incomplete compensation. Remove
+  - [x] Green: preserve the snapshot after incomplete compensation. Remove
     created folders bottom-up only after a successful empty-child read; use
     non-recursive empty removal so a racing child insertion fails safely.
     Recreate missing restructure nodes using existing `recreateSubtree`/
@@ -147,12 +147,12 @@ implementation work.
     if (children.length !== 0) continue;
     await removeNode(id); // existing guard + Chrome's non-recursive remove
     ```
-  - [ ] Verify green: rerun the named tests; assert rollback failure retains a
+  - [x] Verify green: rerun the named tests; assert rollback failure retains a
     retryable snapshot and managed/root/occupied-folder cases remain safe.
-  - [ ] Coordinator gate/commit: use `fix(restructure): preserve bookmarks on
+  - [x] Coordinator gate/commit: use `fix(restructure): preserve bookmarks on
     failed compensation`, add notes, update learnings, close this task.
 
-- [ ] Task 2: Preserve summaries in undo metadata rewrites
+- [~] Task 2: Preserve summaries in undo metadata rewrites
   <!-- files: src/undo/restore.ts, tests/unit/undo.test.ts -->
   <!-- depends: task1 -->
   - Covers **B02**. Existing `putMeta(id, fields)` remains the writer; both
