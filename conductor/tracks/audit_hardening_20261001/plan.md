@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — Phase 2 Task 1 summary admission ownership -->
+<!-- Last Revised: 2026-10-01 — Phase 2 consent and summary admission ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -283,7 +283,7 @@ implementation work.
     relevant isolated LLM E2E, notes/learnings, close this task.
 
 - [ ] Task 2: Minimized summary payload and accurate disclosures
-  <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/schemas/provider.ts, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts -->
+  <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/e2e/provider.spec.ts -->
   - Covers **B06**. Preserve the public summary functions; build a minimized
     outbound payload separately from the original extraction used locally.
   - [ ] Red: add a summary with synthetic query/fragment secret markers,
@@ -303,6 +303,8 @@ implementation work.
     runtime and store/site text. Bump the existing consent version so
     stale disclosures do not authorize newly clarified grants; preserve
     origin-scoped consent and reacquisition behavior.
+    The consent version is owned by `src/consent/records.ts`; update the
+    provider browser test's expected current grant version in the same task.
   - [ ] Verify green: rerun named tests, stale/current consent cases,
     `npm run check:manifest`, `npm run check:store`, `npm run check:site`,
     and isolated LLM E2E. Do not send a raw URL just to preserve matching.

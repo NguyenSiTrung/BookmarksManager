@@ -14,3 +14,16 @@
   rather than introduce an alternate transport or skip per-send admission.
   This implements B05 without changing its scope. If incorrect, the added
   option can be revised within the same module; no new dependency is needed.
+
+## Revision 2 — 2026-10-01 — Plan
+
+- **Trigger:** Phase 2 Task 2 mandates a consent-version bump, but its file
+  list omitted the version owner, `src/consent/records.ts`. The existing
+  provider browser test also pins the current grant's version.
+- **Current task:** Phase 2 Task 1 implementation; Task 2 has not started.
+- **Change:** Add the consent record module and provider browser test to
+  Task 2 ownership. Keep the existing sequential phase and disclosure scope.
+- **Ruling:** Bump the existing shared consent version at its actual owner
+  and update the current-version browser expectation, rather than add a
+  second version source. If incorrect, this causes unnecessary consent
+  reacquisition, but cannot silently authorize obsolete grants.
