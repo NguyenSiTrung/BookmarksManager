@@ -819,7 +819,7 @@ implementation work.
 ## Phase 6: CI and integrated regressions
 <!-- execution: parallel -->
 
-- [ ] Task 1: Pull-request quality gates separated from release checks
+- [x] Task 1: Pull-request quality gates separated from release checks
   <!-- files: .github/workflows/ci.yml, tests/unit/ci-workflow.test.ts -->
   - Covers **I01**. Routine PR CI uses read-only permissions and no secrets;
     published-release/manual store packaging checks stay separate.

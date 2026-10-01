@@ -1,12 +1,19 @@
 name: CI
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
 
+# Routine PR verification never needs write access or repository secrets.
+permissions:
+  contents: read
+
 jobs:
-  check:
+  quality:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -40,10 +47,8 @@ jobs:
       - name: Check bundle for eval / remote scripts
         run: npm run check:bundle
 
-      # Release-strict store gate (Phase 6): runs keyless against local files
-      # and fails until the version bump, assets, and release record land.
-      - name: Store-readiness gate
-        run: npm run check:store
+      - name: Check static site and policy consistency
+        run: npm run check:site
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -56,3 +61,33 @@ jobs:
 
       - name: E2E smoke test (headed, under Xvfb)
         run: xvfb-run -a npm run test:e2e
+
+  # Release-strict store/packaging gate (Phase 6): keyless (no secrets), but it
+  # asserts the final version bump, assets, and release record, so it runs only
+  # for a published release or a manual dispatch — never on routine pull
+  # requests.
+  release-checks:
+    needs: quality
+    if: >-
+      github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Store-readiness gate
+        run: npm run check:store

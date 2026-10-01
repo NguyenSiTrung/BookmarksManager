@@ -620,6 +620,23 @@ Selected applicable patterns from `conductor/patterns.md`:
   pre-Task-5 `library_scan` that already committed a batch without a plan
   fails typed on resume (ambiguous offsets). Isolated decisions E2E is
   batched into the Phase 5 gate.
+
+## Phase 6 (in progress notes)
+
+- I01 `.github/workflows/ci.yml` now runs routine quality gates on
+  `pull_request` and on `push` to `main` with workflow-level
+  `permissions: contents: read` and no secrets. The `quality` job keeps
+  Node 22, `npm ci`, lint/typecheck/unit/build, manifest/bundle/site checks,
+  headed Chromium under Xvfb, and `xvfb-run -a npm run test:e2e`. A separate
+  `release-checks` job (`needs: quality`, gated on a published release or
+  manual dispatch) owns the strict `check:store`, so routine PRs never run
+  store packaging. `tests/unit/ci-workflow.test.ts` pins the triggers,
+  read-only permissions (including job-level overrides), the exact job set,
+  job gating, Chromium/Xvfb ordering, and release-only store checks. Review
+  `1af74dc6` PASS with two test-strength gaps; the fix round added the
+  job-level permission and job-set assertions (9 tests, both mutations
+  killed) and the delta re-check passed with the workflow byte-identical.
+  The routine command list itself runs in the final Phase 6 checkpoint.
 - I06 candidates: near-duplicate planning is now bounded and deterministic.
   `NEAR_DUPLICATE_PAIR_LIMIT = 500`, `NEAR_DUPLICATE_COMPARISON_LIMIT =
   50_000`; exclusion is O(1) raw-or-normalized URL equality (no intra-group
