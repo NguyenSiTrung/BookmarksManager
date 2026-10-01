@@ -57,3 +57,22 @@
   compatible, but opening/dismissing the dialog never authorizes egress.
   If incorrect, the extra affirmative step adds friction; it cannot silently
   send page text to an undisclosed recipient.
+
+## Revision 5 — 2026-10-01 — Plan and explicit user ruling
+
+- **Trigger:** B08 gate/wire regressions exposed client-owned capability
+  classification incorrectly treating token-limit rejections as structured
+  output rejection. Existing fallback requires reading the provider error
+  body, conflicting with the inherited no-non-2xx-body pattern.
+- **Current task:** Phase 3 Task 1; four regressions remain failing.
+- **User decision:** Allow bounded, validated error-body classification with
+  no logging or leakage, rather than remove fallback on ambiguous status
+  alone. This overrides the inherited pattern for LLM classification only.
+- **Change:** Add the existing LLM client and client tests to task ownership.
+  Bound the actual read (not full `text()` followed by slicing), validate the
+  envelope, and let explicit token-limit fields/mentions veto capability
+  fallback. Ambiguous, malformed or oversized errors remain HTTP failures.
+- **Ruling:** Preserve real structured fallback with an internal redacted
+  classification exception. If incorrect, fallback may require refinement
+  for another provider; error bodies still cannot become logged, persisted
+  content or surfaced exception text.

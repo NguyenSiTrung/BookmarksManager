@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — Phase 2 per-attempt admission and summary re-disclosure -->
+<!-- Last Revised: 2026-10-01 — B08 bounded LLM error classification approved -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -368,7 +368,7 @@ implementation work.
 <!-- execution: sequential -->
 
 - [~] Task 1: Enforce the reserved output allowance on the wire
-  <!-- files: src/net/llm-send.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
+  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
   - Covers **B08**. Existing `max_tokens` is the default OpenAI-compatible
     limit; the gate, not a caller-supplied policy, owns serialization.
   - [ ] Red: extend the existing happy-path `send` fixture to assert its
@@ -389,6 +389,11 @@ implementation work.
     Capability-tier fallback must not classify a token-limit rejection as a
     structured-output rejection. Charge any reported overrun rather than
     truncating usage to the reserved allowance.
+    User-approved exception (2026-10-01): LLM capability classification may
+    read a strictly bounded, validated error body internally, never log or
+    propagate it. Explicit token-limit fields/mentions veto structured
+    fallback; ambiguous, malformed and oversized bodies fail visibly.
+    Preserve actual structured-capability fallback without dropping the cap.
   - [ ] Verify green: rerun named tests and fake-provider cap rejection/
     overrun controls, including every actual repair/fallback request body.
   - [ ] Coordinator gate/commit: `fix(llm): enforce reserved output limits`,
