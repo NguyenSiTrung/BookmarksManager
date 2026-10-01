@@ -153,6 +153,27 @@ export function OptionsApp() {
   const step = (done: boolean, isCurrent: boolean): ChecklistState =>
     done ? "done" : isCurrent ? "current" : "pending";
 
+  /**
+   * Cross-panel jump used by the Permissions panel's blocked controls (the
+   * second-opinion switch names prerequisites that live in Connections).
+   * Panels stay mounted, so the anchor exists immediately; scroll on the
+   * next frame, once the panel switch has been committed.
+   */
+  const navigateToConnections = (anchorId?: string): void => {
+    setActive("connections");
+    if (anchorId === undefined) return;
+    const scroll = () => {
+      const node = document.getElementById(anchorId);
+      if (node !== null && typeof node.scrollIntoView === "function") {
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(scroll);
+    } else {
+      queueMicrotask(scroll);
+    }
+  };
 
   return (
     <div className="options-root min-h-dvh bg-background text-foreground">
@@ -276,7 +297,11 @@ export function OptionsApp() {
                   <PrivacyDraft />
                 </>
               )}
-              {panel.id === "permissions" && <DecisionSettings />}
+              {panel.id === "permissions" && (
+                <DecisionSettings
+                  onNavigateToConnections={navigateToConnections}
+                />
+              )}
               {panel.id === "activity" && <SentLog />}
               {panel.id === "data" && <DeleteAllData />}
             </div>

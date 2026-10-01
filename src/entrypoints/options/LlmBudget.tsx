@@ -199,7 +199,11 @@ export function LlmBudget() {
   };
 
   return (
-    <section aria-label="LLM budget" className={`mt-4 ${insetClass}`}>
+    <section
+      id="llm-budget"
+      aria-label="LLM budget"
+      className={`mt-4 ${insetClass}`}
+    >
       <h3 className="text-sm font-medium">Monthly budget</h3>
       {error && (
         <div className="mt-2">

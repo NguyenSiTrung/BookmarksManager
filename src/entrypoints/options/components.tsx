@@ -1,5 +1,5 @@
 import { Switch as RadixSwitch } from "radix-ui";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { cn } from "../../ui/lib/cn";
 import {
   CheckIcon,
@@ -26,39 +26,70 @@ const focusRing =
 /* ------------------------------------------------------------------ */
 
 /**
- * Radix Switch styled to the options tokens. `reason` explains a disabled
- * state — rendered inline so a gated control never looks silently frozen.
+ * Radix Switch styled to the options tokens. `disabled` is the hard,
+ * in-flight state (unfocusable and unclickable). `blocked` is the gated
+ * state: the switch stays focusable, reports `aria-disabled`, and a click
+ * calls `onBlocked` instead of toggling — so a control gated by a missing
+ * prerequisite reveals that prerequisite rather than looking dead. `reason`
+ * names the blocker(s) inline and is wired through `aria-describedby`.
  */
 export function Switch(props: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
+  /** Soft-gated state; reserve `disabled` for work in flight. */
+  blocked?: boolean;
+  /** Explains `blocked`; rendered inline and wired via `aria-describedby`. */
+  reason?: ReactNode;
+  /** Reveal action for a click on a `blocked` switch. */
+  onBlocked?: () => void;
   "aria-label"?: string;
   id?: string;
 }) {
+  const reasonId = useId();
+  const blocked = props.blocked === true;
   return (
-    <RadixSwitch.Root
-      id={props.id}
-      aria-label={props["aria-label"]}
-      checked={props.checked}
-      disabled={props.disabled}
-      onCheckedChange={props.onCheckedChange}
-      className={cn(
-        "inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full",
-        "border border-transparent transition-colors duration-200",
-        "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        focusRing,
-      )}
-    >
-      <RadixSwitch.Thumb
+    <div className="flex flex-col items-end gap-1.5">
+      <RadixSwitch.Root
+        id={props.id}
+        aria-label={props["aria-label"]}
+        aria-describedby={props.reason !== undefined ? reasonId : undefined}
+        aria-disabled={blocked ? true : undefined}
+        checked={props.checked}
+        disabled={props.disabled}
+        onCheckedChange={(next) => {
+          if (blocked) {
+            props.onBlocked?.();
+            return;
+          }
+          props.onCheckedChange(next);
+        }}
         className={cn(
-          "block size-4 rounded-full bg-white shadow-sm transition-transform",
-          "duration-200 data-[state=checked]:translate-x-4",
-          "data-[state=unchecked]:translate-x-0.5",
+          "inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full",
+          "border border-transparent transition-colors duration-200",
+          "data-[state=checked]:bg-primary data-[state=unchecked]:bg-input",
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          blocked && "opacity-50",
+          focusRing,
         )}
-      />
-    </RadixSwitch.Root>
+      >
+        <RadixSwitch.Thumb
+          className={cn(
+            "block size-4 rounded-full bg-white shadow-sm transition-transform",
+            "duration-200 data-[state=checked]:translate-x-4",
+            "data-[state=unchecked]:translate-x-0.5",
+          )}
+        />
+      </RadixSwitch.Root>
+      {props.reason !== undefined && (
+        <div
+          id={reasonId}
+          className="max-w-sm text-right text-xs text-muted-foreground"
+        >
+          {props.reason}
+        </div>
+      )}
+    </div>
   );
 }
 

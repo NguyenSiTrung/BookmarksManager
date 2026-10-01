@@ -92,6 +92,12 @@ import {
  *    blocklist: entries are normalized/deduped with `normalizeBlocklistEntry`
  *    and round-trip through SET_BLOCKLIST; the frozen
  *    `BUILTIN_SENSITIVE_SITES` list renders read-only for context.
+ * 4. **Second opinions (escalation).** The `llm_escalate` disclosure and its
+ *    read-gated consent, plus the off-by-default switch. A switch missing any
+ *    prerequisite (provider, consent, spending ceiling, pricing) is
+ *    soft-blocked: focusable, `aria-disabled`, with every unmet step rendered
+ *    inline and its own reveal/jump action. A switch that is already on stays
+ *    turnable off even when a prerequisite broke.
  *
  * Provider state is **live** (audit bug B14). The shell keeps every panel
  * mounted, so this one cannot rely on mount-time reads: the custom Jev
@@ -168,7 +174,31 @@ function LoadState({
   );
 }
 
-export function DecisionSettings() {
+/**
+ * One unmet prerequisite behind the second-opinion switch. `target` names
+ * where the step's reveal/jump goes, when one exists (a pending consent read
+ * has none); the full list renders inline so the switch never dead-ends.
+ */
+interface EscalationPrerequisite {
+  id: string;
+  text: string;
+  actionLabel?: string;
+  /** Where `actionLabel` goes: the consent block above, or Connections. */
+  target?: "consent" | "connections";
+  /** Anchor inside Connections when `target` is "connections". */
+  anchorId?: string;
+}
+
+export function DecisionSettings({
+  onNavigateToConnections,
+}: {
+  /**
+   * Switch the Options shell to the Connections panel and (when given)
+   * scroll the named anchor into view. The second-opinion prerequisites that
+   * live in Connections jump through it.
+   */
+  onNavigateToConnections?: (anchorId?: string) => void;
+} = {}) {
   const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
   /**
    * Live Jev + LLM provider state from the worker (audit bug B14): the custom
@@ -664,6 +694,86 @@ export function DecisionSettings() {
     writeBlocklist(blocklist.filter((item) => item !== entry));
   };
 
+  /**
+   * Every unmet prerequisite behind the second-opinion switch, in the order
+   * they have to be satisfied. All of them render: fixing one blocked
+   * condition used to leave the switch dead with the same copy and no clue
+   * that another remained. Each actionable step carries its own reveal/jump.
+   */
+  const escalationPrerequisites: EscalationPrerequisite[] = [];
+  if (escalation !== null) {
+    if (!escalation.providerConfigured) {
+      escalationPrerequisites.push({
+        id: "provider",
+        text: "The stored provider is gone — configure an LLM provider again in Connections.",
+        actionLabel: "Open LLM provider",
+        target: "connections",
+        anchorId: "llm-provider",
+      });
+    }
+    if (escalationConsentRead === undefined) {
+      escalationPrerequisites.push({
+        id: "consent-pending",
+        text: "Checking second-opinion consent…",
+      });
+    } else if (escalationConsentRead === null) {
+      escalationPrerequisites.push({
+        id: "consent-unreadable",
+        text: "Second-opinion consent could not be read on this device.",
+      });
+    } else if (!escalationConsentRead) {
+      escalationPrerequisites.push({
+        id: "consent",
+        text: "Grant second-opinion consent above to turn this on.",
+        actionLabel: "Review consent",
+        target: "consent",
+      });
+    }
+    if (escalation.budget === "unset") {
+      escalationPrerequisites.push({
+        id: "budget",
+        text: "No spending ceiling is chosen — escalation cannot run. Choose a monthly cap or Unlimited in Connections.",
+        actionLabel: "Open Monthly budget",
+        target: "connections",
+        anchorId: "llm-budget",
+      });
+    }
+    if (escalation.pricingKnown !== true) {
+      escalationPrerequisites.push({
+        id: "pricing",
+        text: "No per-token price is known for this model — unattended requests refuse. Enter both rates in Connections.",
+        actionLabel: "Open Monthly budget",
+        target: "connections",
+        anchorId: "llm-budget",
+      });
+    }
+  }
+  const escalationEnabled = escalation?.enabled ?? false;
+  /**
+   * Blocked only while OFF: an active switch must always be turnable off,
+   * even when its prerequisites broke after enabling (the worker accepts a
+   * disable unconditionally — only enabling needs a provider).
+   */
+  const escalationBlocked =
+    !escalationEnabled && escalationPrerequisites.length > 0;
+  /**
+   * One reveal/jump runner for both the blocked switch and each step's
+   * button. Called from event handlers only — never while rendering, which
+   * keeps the disclosure ref read out of the render pass.
+   */
+  const runEscalationPrerequisite = (step: EscalationPrerequisite): void => {
+    if (step.target === "consent") {
+      revealEscalationDisclosure();
+      return;
+    }
+    if (step.target === "connections" && step.anchorId !== undefined) {
+      onNavigateToConnections?.(step.anchorId);
+    }
+  };
+  const escalationFirstAction = escalationPrerequisites.find(
+    (step) => step.actionLabel !== undefined && step.target !== undefined,
+  );
+
   return (
     <div className="space-y-4">
       {/* Sub-card 1 — per-preset bookmark-analysis consent */}
@@ -1033,30 +1143,55 @@ export function DecisionSettings() {
               </span>
               <Switch
                 aria-label="Ask the provider for a second opinion on unsure suggestions"
-                checked={escalation?.enabled ?? false}
-                disabled={
-                  escalationBusy ||
-                  escalation === null ||
-                  !escalation.providerConfigured ||
-                  escalationConsentRead !== true ||
-                  escalation.budget === "unset" ||
-                  escalation.pricingKnown !== true
+                checked={escalationEnabled}
+                // Hard-disable only while a write is in flight; a missing
+                // prerequisite soft-blocks (reason list + reveal on click).
+                disabled={escalationBusy || escalation === null}
+                blocked={escalationBlocked}
+                onBlocked={
+                  escalationFirstAction !== undefined
+                    ? () => runEscalationPrerequisite(escalationFirstAction)
+                    : undefined
+                }
+                reason={
+                  escalationPrerequisites.length > 0 ? (
+                    <span className="block space-y-1">
+                      <span className="block font-medium text-foreground">
+                        {escalationEnabled
+                          ? "It is on, but cannot run yet:"
+                          : "To turn this on:"}
+                      </span>
+                      {escalationPrerequisites.map((step) => (
+                        <span key={step.id} className="block">
+                          {step.text}
+                          {step.actionLabel !== undefined &&
+                            step.target !== undefined && (
+                              <>
+                                {" "}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    runEscalationPrerequisite(step)
+                                  }
+                                  className="font-medium text-foreground underline underline-offset-2"
+                                >
+                                  {step.actionLabel}
+                                </button>
+                              </>
+                            )}
+                        </span>
+                      ))}
+                    </span>
+                  ) : undefined
                 }
                 onCheckedChange={(enabled) => onEscalationToggle(enabled)}
               />
             </div>
-            {escalation !== null && (
+            {escalation !== null && escalation.budget !== "unset" && (
               <p className="text-xs text-muted-foreground">
-                {escalation.budget === "unset"
-                  ? "No spending ceiling is chosen — escalation cannot run. Set a monthly cap or pick unlimited in the LLM provider section above."
-                  : escalation.pricingKnown !== true
-                    ? "No per-token price is known for this model — unattended requests refuse. Set the input/output prices in the LLM provider section above."
-                    : escalation.budget === "unlimited"
-                      ? "No monthly cap — this can spend without a limit."
-                      : `Monthly cap: $${(escalation.monthlyBudgetUsd ?? 0).toFixed(2)}.`}
-                {escalation.providerConfigured
-                  ? ""
-                  : " The stored provider is gone — configure it again above."}
+                {escalation.budget === "unlimited"
+                  ? "No monthly cap — this can spend without a limit."
+                  : `Monthly cap: $${(escalation.monthlyBudgetUsd ?? 0).toFixed(2)}.`}
               </p>
             )}
           </div>

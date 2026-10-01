@@ -1476,8 +1476,16 @@ describe("mounted shell — live provider state", () => {
       within(escalation).getByRole("switch", {
         name: /second opinion on unsure suggestions/i,
       }) as HTMLElement;
-    // No `llm_escalate` grant yet: the toggle stays disabled.
-    await waitFor(() => expect(toggle()).toHaveProperty("disabled", true));
+    // No `llm_escalate` grant yet: the toggle is soft-blocked, not dead —
+    // the reason names the consent step.
+    await waitFor(() =>
+      expect(toggle().getAttribute("aria-disabled")).toBe("true"),
+    );
+    expect(
+      await within(escalation).findByText(
+        /grant second-opinion consent above/i,
+      ),
+    ).toBeTruthy();
 
     openDetails(
       within(escalation).getByRole("region", {
@@ -1494,7 +1502,9 @@ describe("mounted shell — live provider state", () => {
     }) as HTMLButtonElement;
     await waitFor(() => expect(allow.disabled).toBe(false));
     fireEvent.click(allow);
-    await waitFor(() => expect(toggle()).toHaveProperty("disabled", false));
+    await waitFor(() =>
+      expect(toggle().getAttribute("aria-disabled")).toBeNull(),
+    );
     expect(
       await hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
     ).toBe(true);
@@ -1524,6 +1534,46 @@ describe("mounted shell — live provider state", () => {
     expect(
       within(escalation).queryByRole("switch", { name: /second opinion/i }),
     ).toBeNull();
+  });
+
+  it("jumps a blocked second-opinion toggle to its Connections prerequisite", async () => {
+    await mountOptionsShell();
+    // A priced provider with no ceiling: with consent granted, the cap is
+    // the one unmet prerequisite for the switch.
+    await enableLlmProvider();
+    await act(async () => {
+      await db.consents.put({
+        scope: LLM_ESCALATE_SCOPE,
+        origin: LLM_ORIGIN,
+        consentVersion: CONSENT_VERSION,
+        acceptedAt: new Date().toISOString(),
+      });
+    });
+    showPanel("Permissions");
+    const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
+    await within(escalation).findByText(/no spending ceiling is chosen/i);
+
+    // Clicking the blocked switch jumps to the panel that unblocks it.
+    const toggle = within(escalation).getByRole("switch", {
+      name: /second opinion on unsure suggestions/i,
+    });
+    await waitFor(() =>
+      expect(toggle.getAttribute("aria-disabled")).toBe("true"),
+    );
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(document.getElementById("connections")?.hidden).toBe(false),
+    );
+
+    // The named action in the reason list jumps the same way.
+    showPanel("Permissions");
+    fireEvent.click(
+      within(escalation).getByRole("button", { name: /open monthly budget/i }),
+    );
+    await waitFor(() =>
+      expect(document.getElementById("connections")?.hidden).toBe(false),
+    );
+    expect(document.getElementById("llm-budget")).not.toBeNull();
   });
 
   it("surfaces a settled status failure and recovers when the read is retried", async () => {

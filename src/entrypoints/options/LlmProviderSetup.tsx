@@ -477,7 +477,11 @@ export function LlmProviderSetup() {
         : presetOrigin(kind);
 
   return (
-    <section aria-labelledby="llm-provider-heading" className={cardClass}>
+    <section
+      id="llm-provider"
+      aria-labelledby="llm-provider-heading"
+      className={cardClass}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
