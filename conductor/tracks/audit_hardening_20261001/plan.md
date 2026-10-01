@@ -152,7 +152,7 @@ implementation work.
   - [x] Coordinator gate/commit: use `fix(restructure): preserve bookmarks on
     failed compensation`, add notes, update learnings, close this task.
 
-- [x] Task 2: Preserve summaries in undo metadata rewrites
+- [x] Task 2: Preserve summaries in undo metadata rewrites (1158910)
   <!-- files: src/undo/restore.ts, tests/unit/undo.test.ts -->
   <!-- depends: task1 -->
   - Covers **B02**. Existing `putMeta(id, fields)` remains the writer; both
@@ -235,19 +235,19 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(sync): preserve concurrently created metadata`,
     notes/learnings, close this task.
 
-- [ ] Task 5: Automated checkpoint for data safety
+- [x] Task 5: Automated checkpoint for data safety
   <!-- files: -->
   <!-- depends: task1, task2, task3, task4 -->
-  - [ ] Run Phase 1 tests together and the applicable local gate.
-  - [ ] Record command results, summary round-trip evidence, and failure/
+  - [x] Run Phase 1 tests together and the applicable local gate.
+  - [x] Record command results, summary round-trip evidence, and failure/
     concurrency coverage in learnings and Beads notes.
-  - [ ] Close the checkpoint and phase only after all four tasks pass.
+  - [x] Close the checkpoint and phase only after all four tasks pass.
     Continue automatically to Phase 2; do not request manual verification.
 
 ## Phase 2: Privacy and summary identity
 <!-- execution: sequential -->
 
-- [ ] Task 1: Enforce current blocklist for explanation and summary egress
+- [~] Task 1: Enforce current blocklist for explanation and summary egress
   <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B05**. Reuse `readBlocklist()` and `minimizeBookmark`; refuse
     blocked multi-bookmark explanations instead of sending partial derived

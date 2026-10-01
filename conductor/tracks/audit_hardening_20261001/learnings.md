@@ -188,6 +188,28 @@ Selected applicable patterns from `conductor/patterns.md`:
 - Review: the two-line replacement-field extension uses the same metadata
   writer and emptiness behavior; regression expectations come from fixed
   fixtures and check native remapping as well as stored metadata.
+- Local commit: `1158910`; task `BookmarksManager-lgd.1.2` closed.
+
+### Phase 1 Automated Checkpoint
+
+- B01–B04 have permanent red/green regressions and four local task commits:
+  `6c20ef0`, `1158910`, `e6a71cd`, `e183cc2`.
+- Latest combined phase command:
+  `npx vitest run tests/unit/restructure-apply.test.ts tests/unit/undo.test.ts tests/unit/io-import.test.ts tests/unit/sync-reconcile.test.ts`,
+  four files / 124 tests passed.
+- Latest full applicable gate:
+  `npm run lint && npm run typecheck && npm run test -- --run --maxWorkers=1 && npm run build && npm run check:manifest && npm run check:bundle && npm run check:store`,
+  all passed, 151 files / 2,572 tests with no skips.
+- Browser command:
+  `xvfb-run -a npm run test:e2e -- tests/e2e/core-manager.spec.ts tests/e2e/llm.spec.ts`,
+  16 passed with no skips. `git diff --check` passed.
+- Synthetic failure coverage includes incomplete compensation, child-read
+  and native-removal races, transient original/remapped lookup failures,
+  partial-remap retry, full/summary-only round trips, and creation in both
+  reconciliation windows.
+- Live/evaluation provider suites and the native permission prompt were
+  not run. No manual acceptance was requested. No remote synchronization.
+- Coordinator continues to Phase 2 automatically under the approved override.
 
 ## Planning Validation
 
