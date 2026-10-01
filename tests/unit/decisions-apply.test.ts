@@ -21,10 +21,11 @@ import { persistDecision } from "../../src/decisions/store";
 import { getMeta, putMeta } from "../../src/db/meta";
 import { Decision } from "../../src/schemas/decision";
 import { get } from "../../src/sync/chrome-bookmarks";
-import { moveNode } from "../../src/sync/mutations";
-import { peekLatest, pushSnapshot } from "../../src/undo/snapshot";
+import { moveNode, removeTree } from "../../src/sync/mutations";
+import { captureSubtree, peekLatest, pushSnapshot } from "../../src/undo/snapshot";
 import { decisionBase } from "../fixtures/base-records";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import { removeWebLocksFake } from "../fakes/web-locks";
 
 /**
  * Coverage for `src/decisions/apply.ts` — approve (which applies through the
@@ -105,6 +106,30 @@ async function expectApplyError(
     return cause as DecisionApplyError;
   }
   throw new Error(`expected a DecisionApplyError(${code}), but it resolved`);
+}
+
+/**
+ * Pause the FIRST stack read (`listSnapshots`'s Dexie `toArray`) so a test can
+ * push an unrelated snapshot into the window between a caller's head check and
+ * its replay — the B13 interleave. Returns a handle to observe the pause and
+ * release it.
+ *
+ * Dexie resolves a `PromiseExtended`, so the gate chains on the real promise;
+ * an `async` wrapper would return a plain promise and fail the spy's type.
+ */
+function gateFirstStackRead(): { delayed: () => boolean; release: () => void } {
+  const realToArray = db.undo.toArray.bind(db.undo);
+  let delayed = false;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.spyOn(db.undo, "toArray").mockImplementation(() =>
+    realToArray().then((rows) => {
+      if (delayed) return rows;
+      delayed = true;
+      return gate.then(() => rows);
+    }),
+  );
+  return { delayed: () => delayed, release };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +475,105 @@ describe("apply rollback and compensation", () => {
     expect(await peekLatest()).toBeUndefined();
     expect((await db.decisions.get(d.id))?.status).toBe("pending");
     expect(await db.audit.toArray()).toEqual([]);
+  });
+
+  it("replays its own snapshot, never a head another context pushed mid-revert", async () => {
+    const d = await persistDecision(
+      decision({ kind: "move", bookmarkIds: ["bm-b"], targetFolderId: "f-target" }),
+    );
+    await approveDecision(d.id);
+    expect((await get("bm-b"))[0]?.parentId).toBe("f-target");
+
+    const decoy = await captureSubtree("bm-c");
+    if (decoy === undefined) throw new Error("missing fixture node bm-c");
+
+    // Pause the FIRST stack read of the revert; an unrelated snapshot lands
+    // while the revert is between its head check and its replay.
+    const read = gateFirstStackRead();
+
+    const reverting = revertDecision(d.id);
+    await vi.waitFor(() => expect(read.delayed()).toBe(true));
+    const decoyId = await pushSnapshot({
+      kind: "delete",
+      nodes: [decoy.node],
+      meta: [],
+    });
+    await removeTree("bm-c");
+    read.release();
+
+    const row = await reverting;
+    expect(row.status).toBe("reverted");
+    // Its own change was undone …
+    expect((await get("bm-b"))[0]?.parentId).toBe("1");
+    // … and the unrelated snapshot was neither replayed nor popped.
+    expect((await peekLatest())?.id).toBe(decoyId);
+    await expect(get("bm-c")).rejects.toThrow();
+  });
+
+  it("compensates its own snapshot, never a head pushed during a failed status write", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    const decoy = await captureSubtree("bm-b");
+    if (decoy === undefined) throw new Error("missing fixture node bm-b");
+
+    // The status/audit write fails, so the apply must compensate its change.
+    vi.spyOn(db.audit, "add").mockRejectedValue(new Error("audit write failed"));
+
+    const read = gateFirstStackRead();
+
+    const approving = approveDecision(d.id);
+    await vi.waitFor(() => expect(read.delayed()).toBe(true));
+    const decoyId = await pushSnapshot({
+      kind: "delete",
+      nodes: [decoy.node],
+      meta: [],
+    });
+    await removeTree("bm-b");
+    read.release();
+
+    await expectApplyError(() => approving, "api");
+    // Its own mutation was compensated …
+    expect(await getMeta("bm-a")).toBeUndefined();
+    // … and the unrelated snapshot was neither replayed nor popped.
+    expect((await peekLatest())?.id).toBe(decoyId);
+    await expect(get("bm-b")).rejects.toThrow();
+  });
+
+  it("maps an unusable undo lock onto undo_conflict, mutating nothing", async () => {
+    const d = await persistDecision(
+      decision({ kind: "set_category", bookmarkIds: ["bm-a"], category: "docs" }),
+    );
+    await approveDecision(d.id);
+    expect((await getMeta("bm-a"))?.category).toBe("docs");
+    removeWebLocksFake();
+
+    const error = await expectApplyError(
+      () => revertDecision(d.id),
+      "undo_conflict",
+    );
+
+    expect(error.message).toMatch(/top of the stack/);
+    // Zero mutations: the change is still applied and the row still says so.
+    expect((await getMeta("bm-a"))?.category).toBe("docs");
+    expect((await db.decisions.get(d.id))?.status).toBe("applied");
+    expect(await peekLatest()).toBeDefined();
+  });
+
+  it("reports state_unrecorded when a failed status write cannot be compensated", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    vi.spyOn(db.audit, "add").mockRejectedValue(new Error("audit write failed"));
+    // No lock, no compensation: the apply must say so instead of pretending.
+    removeWebLocksFake();
+
+    await expectApplyError(() => approveDecision(d.id), "state_unrecorded");
+
+    // The change is applied but unrecorded — reported, never silent.
+    expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
+    expect((await db.decisions.get(d.id))?.status).toBe("pending");
+    expect((await peekLatest())?.meta.map((meta) => meta.id)).toEqual(["bm-a"]);
   });
 });
 

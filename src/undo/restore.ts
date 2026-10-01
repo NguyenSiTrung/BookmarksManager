@@ -23,6 +23,7 @@ import {
   MutationError,
 } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
+import { UndoLockError, withUndoLock } from "./lock";
 import { peekLatest } from "./snapshot";
 
 /**
@@ -43,10 +44,27 @@ import { peekLatest } from "./snapshot";
  *   atomic across `chrome.bookmarks`: a mid-restore failure can leave a
  *   partial result, which the kept row and the next undo attempt converge
  *   on.
- * - **Serialized.** `undoLatest`/`discardLatest`/`discardById` calls queue
- *   on a module-level promise chain, so peek→replay→pop can never
- *   interleave with a second call — two concurrent undos cannot both
- *   replay the same row.
+ * - **Serialized.** `undoLatest`/`discardLatest`/`discardById`/`undoExpected`
+ *   calls queue on a module-level promise chain, so peek→replay→pop can never
+ *   interleave with a second call in THIS context — two concurrent undos
+ *   cannot both replay the same row. That local queue is ordering only, never
+ *   a substitute for the lock below.
+ * - **Locked across contexts.** The promise chain says nothing about the
+ *   other extension contexts (options page, service worker), which load their
+ *   own copy of these modules over the same database. Every stack operation —
+ *   replay and discard alike — runs inside `withUndoLock`
+ *   (`src/undo/lock.ts`), i.e. inside ONE origin-scoped exclusive Web Lock
+ *   shared by every context, so the read and the pop are atomic against
+ *   them: a second context either waits its turn and finds the row gone
+ *   (`empty`) or is refused, never replays it a second time. A runtime
+ *   without Web Locks, or a rejected/aborted request, refuses typed
+ *   (`conflict`) with zero mutations instead of replaying unprotected.
+ * - **Targeted replay is atomic too.** {@link undoExpected} checks that the
+ *   expected row is still the stack head and replays that exact row inside a
+ *   single lock hold, so decision compensation/revert can never pop a
+ *   snapshot another context pushed in the meantime; a head that moved
+ *   reports `conflict`. The pop always deletes the row that was READ
+ *   (`snapshot.id`), never a freshly peeked head.
  * - **Idempotent, resumable replay.** Two mechanisms make a re-run safe:
  *   (a) a top-level snapshot node whose ORIGINAL id still resolves is
  *   skipped outright — Chrome never reuses ids, so a live original means
@@ -96,14 +114,24 @@ import { peekLatest } from "./snapshot";
  *     rows for bookmarks that no longer exist are skipped.
  * - The result is a total union, house pattern: `{ok:true, restoredIds,
  *   idMap, fellBackToOther}` or `{ok:false, code, message}`. Nothing
- *   throws — the whole operation (stack read, replay, pop) runs inside the
- *   failure boundary; `MutationError`s map to their own code,
- *   `MetaRepoError`s to theirs, and anything else reports `api`.
+ *   throws — the whole operation (lock acquisition, stack read, replay, pop)
+ *   runs inside the failure boundary; `MutationError`s map to their own code,
+ *   `MetaRepoError`s to theirs, an unusable lock and a moved head to
+ *   `conflict`, and anything else reports `api`.
  */
 
-/** `code` values on a failed undo: the empty stack plus every typed guard. */
+/** `code` values on a failed undo: the empty stack, the lock/head refusal,
+ * and every typed guard. */
 export type UndoFailureCode =
   | "empty"
+  /**
+   * The undo could not run as asked: the extension-wide undo lock is
+   * unavailable (no Web Locks, rejected or aborted request), or the row a
+   * targeted replay was asked for is no longer the stack head. Refused with
+   * zero mutations rather than risking a double replay or popping an
+   * unrelated snapshot.
+   */
+  | "conflict"
   | MutationErrorCode
   | MetaRepoErrorCode;
 
@@ -157,10 +185,14 @@ interface RestoreContext {
 // ---------------------------------------------------------------------------
 
 /**
- * The tail of the stack-operation queue. Each `undoLatest`/`discardLatest`
- * call appends its work via {@link serialize}; the tail is normalized back
- * to a resolved promise after every task so a (buggy) throwing task can
- * never wedge the queue.
+ * The tail of the stack-operation queue. Each `undoLatest`/`undoExpected`/
+ * `discardLatest`/`discardById` call appends its work via {@link serialize};
+ * the tail is normalized back to a resolved promise after every task so a
+ * (buggy) throwing task can never wedge the queue.
+ *
+ * This is SAME-CONTEXT ORDERING ONLY. Cross-context exclusion is
+ * {@link withUndoLock}'s job; the queue is deliberately not a stand-in for a
+ * missing lock (nothing here falls back to running unprotected).
  */
 let tail: Promise<void> = Promise.resolve();
 
@@ -468,6 +500,10 @@ async function restoreTagDelete(
 }
 
 function toFailure(cause: unknown): UndoFailure {
+  if (cause instanceof UndoLockError) {
+    // No lock, no replay: refused typed with zero mutations (see lock.ts).
+    return { ok: false, code: "conflict", message: cause.message };
+  }
   if (cause instanceof MutationError) {
     return { ok: false, code: cause.code, message: cause.message };
   }
@@ -482,12 +518,12 @@ function toFailure(cause: unknown): UndoFailure {
  * Pop the newest valid snapshot and replay it. The `undo` row is deleted
  * only after the restore succeeds (pop-on-success); a failure keeps the
  * row — including its persisted `idMap` progress — so a retry resumes
- * instead of replaying. The whole operation is serialized against other
- * `undoLatest`/`discardLatest` calls and returns the union described in
- * the module header — never throws.
+ * instead of replaying. The whole operation runs inside one hold of the
+ * extension-wide undo lock, queued behind earlier calls in this context, and
+ * returns the union described in the module header — never throws.
  */
 export function undoLatest(): Promise<UndoResult> {
-  return serialize(runUndoLatest);
+  return serialize(() => withUndoLock(runUndoLatest).catch(toFailure));
 }
 
 async function runUndoLatest(): Promise<UndoResult> {
@@ -496,43 +532,91 @@ async function runUndoLatest(): Promise<UndoResult> {
     if (snapshot === undefined) {
       return { ok: false, code: "empty", message: "Nothing to undo." };
     }
-    const ctx: RestoreContext = {
-      kind: snapshot.kind,
-      restoredIds: [],
-      // Progress persisted by an earlier failed attempt resumes the
-      // replay where it stopped.
-      idMap: { ...(snapshot.idMap ?? {}) },
-      fellBackToOther: false,
-      snapshotId: snapshot.id,
-    };
-    switch (snapshot.kind) {
-      case "delete":
-      case "merge":
-        // A merge snapshot is a delete restore plus the kept node's
-        // pre-merge row riding in `meta` (its id is absent from `nodes`,
-        // which is what tells it apart from the losers' rows).
-        await recreateNodes(snapshot, ctx);
-        await restoreMetaRows(snapshot, ctx);
-        break;
-      case "bulk_move":
-        await restoreMoves(snapshot, ctx);
-        break;
-      case "restructure":
-        await restoreRestructure(snapshot, ctx);
-        break;
-      case "tag_delete":
-        await restoreTagDelete(snapshot, ctx);
-        break;
+    return await replaySnapshot(snapshot);
+  } catch (cause) {
+    return toFailure(cause);
+  }
+}
+
+/**
+ * Replay ONE already-read snapshot row and pop it (pop-on-success). Throws on
+ * any failure — the entry points below own the failure boundary — and always
+ * pops the row that was READ (`snapshot.id`), never a freshly peeked head:
+ * that is what makes a targeted replay safe against a snapshot another
+ * context pushes mid-flight.
+ */
+async function replaySnapshot(snapshot: UndoSnapshot): Promise<UndoResult> {
+  const ctx: RestoreContext = {
+    kind: snapshot.kind,
+    restoredIds: [],
+    // Progress persisted by an earlier failed attempt resumes the
+    // replay where it stopped.
+    idMap: { ...(snapshot.idMap ?? {}) },
+    fellBackToOther: false,
+    snapshotId: snapshot.id,
+  };
+  switch (snapshot.kind) {
+    case "delete":
+    case "merge":
+      // A merge snapshot is a delete restore plus the kept node's
+      // pre-merge row riding in `meta` (its id is absent from `nodes`,
+      // which is what tells it apart from the losers' rows).
+      await recreateNodes(snapshot, ctx);
+      await restoreMetaRows(snapshot, ctx);
+      break;
+    case "bulk_move":
+      await restoreMoves(snapshot, ctx);
+      break;
+    case "restructure":
+      await restoreRestructure(snapshot, ctx);
+      break;
+    case "tag_delete":
+      await restoreTagDelete(snapshot, ctx);
+      break;
+  }
+  if (snapshot.id !== undefined) {
+    await db.undo.delete(snapshot.id);
+  }
+  return {
+    ok: true,
+    restoredIds: ctx.restoredIds,
+    idMap: ctx.idMap,
+    fellBackToOther: ctx.fellBackToOther,
+  };
+}
+
+/**
+ * Replay the SPECIFIC snapshot row `snapshotId` — but only if it is still the
+ * stack head, checked and replayed inside ONE hold of the extension-wide undo
+ * lock. This is the atomic replacement for a `peekLatest()` +
+ * `undoLatest()` pair: with two separate calls another context can push or
+ * pop a snapshot in between, and the replay would then pop whatever the stack
+ * happens to hold instead of the row that was verified (B13).
+ *
+ * Behaviour matches {@link undoLatest} in every other respect (same replay
+ * kinds, same pop-on-success, same persisted `idMap` resume, same failure
+ * codes); a head that is not `snapshotId` — including a stack that became
+ * empty — reports `conflict` and mutates nothing. Never throws.
+ */
+export function undoExpected(snapshotId: number): Promise<UndoResult> {
+  return serialize(() =>
+    withUndoLock(() => runUndoExpected(snapshotId)).catch(toFailure),
+  );
+}
+
+async function runUndoExpected(snapshotId: number): Promise<UndoResult> {
+  try {
+    const head = await peekLatest();
+    if (head?.id !== snapshotId) {
+      return {
+        ok: false,
+        code: "conflict",
+        message:
+          `Snapshot ${snapshotId} is not the top of the undo stack; ` +
+          `replay refused.`,
+      };
     }
-    if (snapshot.id !== undefined) {
-      await db.undo.delete(snapshot.id);
-    }
-    return {
-      ok: true,
-      restoredIds: ctx.restoredIds,
-      idMap: ctx.idMap,
-      fellBackToOther: ctx.fellBackToOther,
-    };
+    return await replaySnapshot(head);
   } catch (cause) {
     return toFailure(cause);
   }
@@ -543,22 +627,27 @@ async function runUndoLatest(): Promise<UndoResult> {
  * escape hatch for a head that can never restore (e.g. its recorded parent
  * has since become managed, or the snapshot predates this build's
  * fixed-root capture guard), which pop-on-success would otherwise wedge
- * atop the stack forever. Serialized with `undoLatest`; the row below the
- * discarded head becomes the next undo target. Never throws.
+ * atop the stack forever. Runs inside the extension-wide undo lock, like
+ * every other stack mutation: a discard must not slip past another
+ * context's replay, or it could drop the row that replay is about to pop.
+ * The row below the discarded head becomes the next undo target. Never
+ * throws.
  */
 export function discardLatest(): Promise<DiscardResult> {
-  return serialize(async (): Promise<DiscardResult> => {
-    try {
-      const snapshot = await peekLatest();
-      if (snapshot === undefined || snapshot.id === undefined) {
-        return { ok: false, code: "empty", message: "Nothing to discard." };
+  return serialize(() =>
+    withUndoLock(async (): Promise<DiscardResult> => {
+      try {
+        const snapshot = await peekLatest();
+        if (snapshot === undefined || snapshot.id === undefined) {
+          return { ok: false, code: "empty", message: "Nothing to discard." };
+        }
+        await db.undo.delete(snapshot.id);
+        return { ok: true, discardedId: snapshot.id };
+      } catch (cause) {
+        return toFailure(cause);
       }
-      await db.undo.delete(snapshot.id);
-      return { ok: true, discardedId: snapshot.id };
-    } catch (cause) {
-      return toFailure(cause);
-    }
-  });
+    }).catch(toFailure),
+  );
 }
 
 /**
@@ -569,19 +658,22 @@ export function discardLatest(): Promise<DiscardResult> {
  * UNRELATED snapshot a concurrent flow pushed on top: `pushSnapshot` is not
  * part of the serialized stack queue, so a flow's `discardLatest()` can
  * otherwise pop another flow's head. Serialized with `undoLatest`/
- * `discardLatest`; a missing row reports `empty` and never throws.
+ * `discardLatest` and taken under the same extension-wide undo lock; a
+ * missing row reports `empty` and never throws.
  */
 export function discardById(id: number): Promise<DiscardResult> {
-  return serialize(async (): Promise<DiscardResult> => {
-    try {
-      const row = await db.undo.get(id);
-      if (row === undefined) {
-        return { ok: false, code: "empty", message: "Nothing to discard." };
+  return serialize(() =>
+    withUndoLock(async (): Promise<DiscardResult> => {
+      try {
+        const row = await db.undo.get(id);
+        if (row === undefined) {
+          return { ok: false, code: "empty", message: "Nothing to discard." };
+        }
+        await db.undo.delete(id);
+        return { ok: true, discardedId: id };
+      } catch (cause) {
+        return toFailure(cause);
       }
-      await db.undo.delete(id);
-      return { ok: true, discardedId: id };
-    } catch (cause) {
-      return toFailure(cause);
-    }
-  });
+    }).catch(toFailure),
+  );
 }

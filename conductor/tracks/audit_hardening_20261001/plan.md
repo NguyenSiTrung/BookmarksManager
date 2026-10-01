@@ -520,7 +520,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(jobs): serialize pause and resume runners`,
     isolated decisions E2E, notes/learnings, close this task.
 
-- [ ] Task 2: Extension-wide undo serialization and atomic targeted replay
+- [x] Task 2: Extension-wide undo serialization and atomic targeted replay
   <!-- files: src/undo/lock.ts, src/undo/restore.ts, src/decisions/apply.ts, tests/fakes/web-locks.ts, tests/setup-web-locks.ts, vitest.config.ts, tests/unit/undo-lock.test.ts, tests/unit/undo.test.ts, tests/unit/decisions-apply.test.ts -->
   - Covers **B13**. One origin-scoped exclusive Web Lock protects every
     replay/discard path. Preserve public generic undo/discard result unions.

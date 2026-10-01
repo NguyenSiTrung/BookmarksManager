@@ -37,7 +37,7 @@ import {
   pushSnapshot,
   UNDO_STACK_LIMIT,
 } from "../../src/undo/snapshot";
-import { discardLatest, undoLatest } from "../../src/undo/restore";
+import { discardLatest, undoExpected, undoLatest } from "../../src/undo/restore";
 import type { UndoResult, UndoSuccess } from "../../src/undo/restore";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -1333,5 +1333,118 @@ describe("discardLatest", () => {
 
   it("reports empty when there is nothing to discard", async () => {
     expect(await discardLatest()).toMatchObject({ ok: false, code: "empty" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// undoExpected — atomic targeted replay
+// ---------------------------------------------------------------------------
+
+describe("undoExpected", () => {
+  it("replays the head it was asked for and leaves the snapshot below it next", async () => {
+    const b = await captureSubtree("bm-b");
+    await pushSnapshot({ kind: "delete", nodes: [b!.node], meta: [] });
+    await removeTree("bm-b");
+    const c = await captureSubtree("bm-c");
+    const cRowId = await pushSnapshot({
+      kind: "delete",
+      nodes: [c!.node],
+      meta: [],
+    });
+    await removeTree("bm-c");
+
+    const targeted = expectOk(await undoExpected(cRowId));
+    expect(targeted.restoredIds).toHaveLength(1);
+    // Only the targeted row was replayed: bm-c is back, bm-b is still gone.
+    const bar = await getChildren(BOOKMARKS_BAR_ID);
+    expect(bar.filter((node) => node.url === "https://c.example/")).toHaveLength(1);
+    await expect(get("bm-b")).rejects.toThrow();
+    // The row below the popped head is the next undo target.
+    const next = expectOk(await undoLatest());
+    expect(next.idMap["bm-b"]).toBeDefined();
+    expect(
+      (await getChildren(BOOKMARKS_BAR_ID)).filter(
+        (node) => node.url === "https://b.example/",
+      ),
+    ).toHaveLength(1);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("resumes a partially-failed targeted replay instead of duplicating nodes", async () => {
+    const b = await captureSubtree("bm-b");
+    const c = await captureSubtree("bm-c");
+    const rowId = await pushSnapshot({
+      kind: "delete",
+      nodes: [b!.node, c!.node],
+      meta: [],
+    });
+    await removeTree("bm-b");
+    await removeTree("bm-c");
+
+    // First attempt: bm-b is recreated, then the second create fails.
+    const originalCreate = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) =>
+      details.title === "C"
+        ? Promise.reject(new Error("chrome boom"))
+        : originalCreate(details),
+    );
+    const failed = await undoExpected(rowId);
+    expect(failed).toMatchObject({ ok: false, code: "api" });
+    // The kept row carries its progress: bm-b's old→new id mapping survived.
+    expect((await peekLatest())?.idMap?.["bm-b"]).toBeDefined();
+    vi.restoreAllMocks();
+
+    const retried = expectOk(await undoExpected(rowId));
+    expect(retried.idMap["bm-b"]).toBeDefined();
+    expect(retried.idMap["bm-c"]).toBeDefined();
+    // Neither node was created twice — the resume skipped the finished one.
+    const bar = await getChildren(BOOKMARKS_BAR_ID);
+    expect(bar.filter((node) => node.title === "B")).toHaveLength(1);
+    expect(bar.filter((node) => node.title === "C")).toHaveLength(1);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("restores a merge target's summary through a targeted replay", async () => {
+    await putMeta("bm-k", { tags: ["keep"], summary: "Original summary." });
+    await putMeta("bm-l1", { tags: [], summary: "Loser summary." });
+    const captured = await captureNodes(["bm-l1"]);
+    const kept = await getMeta("bm-k");
+    if (kept === undefined) throw new Error("missing fixture metadata");
+    const rowId = await pushSnapshot({
+      kind: "merge",
+      ...captured,
+      meta: [...captured.meta, kept],
+    });
+    await putMeta("bm-k", { tags: ["merged"], summary: "Merged summary." });
+    await removeWithCascade("bm-l1");
+
+    const result = expectOk(await undoExpected(rowId));
+    // The surviving target's pre-merge summary is restored at the same id …
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep"],
+      summary: "Original summary.",
+    });
+    // … and the recreated loser carries its own captured summary.
+    expect((await getMeta(result.idMap["bm-l1"]!))?.summary).toBe(
+      "Loser summary.",
+    );
+  });
+
+  it("refuses with conflict for a row id that is not on the stack, mutating nothing", async () => {
+    const capture = await captureSubtree("bm-b");
+    const rowId = await pushSnapshot({
+      kind: "delete",
+      nodes: [capture!.node],
+      meta: [],
+    });
+    await removeTree("bm-b");
+    const createSpy = vi.spyOn(fake, "create");
+
+    const result = await undoExpected(rowId + 1000);
+
+    expect(result).toMatchObject({ ok: false, code: "conflict" });
+    expect(createSpy).not.toHaveBeenCalled();
+    expect((await peekLatest())?.id).toBe(rowId);
+    await expect(get("bm-b")).rejects.toThrow();
   });
 });

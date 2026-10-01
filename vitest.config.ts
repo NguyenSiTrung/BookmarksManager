@@ -9,6 +9,7 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
+          setupFiles: ["tests/setup-web-locks.ts"],
           include: ["tests/unit/**/*.test.{ts,tsx}"],
         },
       },
@@ -16,6 +17,7 @@ export default defineConfig({
         test: {
           name: "components",
           environment: "jsdom",
+          setupFiles: ["tests/setup-web-locks.ts"],
           include: ["tests/components/**/*.test.{ts,tsx}"],
         },
       },

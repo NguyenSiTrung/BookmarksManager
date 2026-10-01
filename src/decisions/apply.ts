@@ -10,7 +10,7 @@ import { MutationError, moveNode } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
 import { bulkAddTag, bulkSetCategory } from "../sync/tag-ops";
 import type { TagOpsErrorCode } from "../sync/tag-ops";
-import { discardById, undoLatest } from "../undo/restore";
+import { discardById, undoExpected } from "../undo/restore";
 import type { UndoFailureCode } from "../undo/restore";
 import { captureNodes, peekLatest, pushSnapshot } from "../undo/snapshot";
 import type { UndoMeta } from "../schemas/undo";
@@ -61,9 +61,10 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  * - **Compensation is targeted by id, never "latest".** Both the
  *   mutation-failure rollback and the transition-failure compensation name the
  *   exact snapshot id they pushed: `discardById` drops it when there is
- *   nothing to restore, and a replay only runs when that id is verifiably the
- *   stack head (the only replay primitive `restore.ts` exposes), so an
- *   unrelated snapshot is never popped.
+ *   nothing to restore, and `undoExpected` replays it ONLY while it is
+ *   verifiably the stack head — checking the head and replaying the checked
+ *   row inside one hold of the extension-wide undo lock, so a snapshot another
+ *   context pushed in between can never be popped in its place.
  * - **Meta undo via the `delete` kind.** The undo system has no dedicated
  *   "metadata changed" snapshot; the `delete`/`merge` replay writes every
  *   `meta` row whose id is NOT in `nodes` back onto its surviving bookmark
@@ -77,9 +78,10 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   no longer exists is `stale`/`bookmark_gone`; for a `move`, one whose
  *   `parentId` changed since the decision was made is `stale`/`bookmark_moved`.
  *   Nothing is written and no audit row is added.
- * - **Revert targets its own snapshot.** A revert only runs when the row's
- *   recorded `undoSnapshotId` is the current stack head; otherwise it reports
- *   `undo_conflict` rather than blindly popping an unrelated snapshot.
+ * - **Revert targets its own snapshot.** A revert only runs through
+ *   `undoExpected`, which replays the row's recorded `undoSnapshotId` and
+ *   reports `conflict` (mapped to `undo_conflict`) when that row is no longer
+ *   the stack head — rather than blindly popping an unrelated snapshot.
  * - **Bulk approve is per-row atomic.** Each id is approved in its own
  *   try/catch; one row's failure (e.g. stale) never affects the others, and
  *   the result reports the applied rows and the per-row failures.
@@ -99,7 +101,9 @@ export type DecisionApplyErrorCode =
   | MutationErrorCode
   | MetaRepoErrorCode
   | TagOpsErrorCode
-  | UndoFailureCode
+  /** Undo replay refusals. `conflict` never surfaces from here: it is mapped
+   * onto `undo_conflict` below. */
+  | Exclude<UndoFailureCode, "conflict">
   /** The decision's bookmark is gone or has moved since it was made. */
   | "stale"
   /** The decision kind has no apply path (mark_dead / rename / create_folder). */
@@ -243,16 +247,16 @@ async function rollback(snapshotId: number): Promise<void> {
 /**
  * Replay snapshot `snapshotId` to compensate a change that must be undone
  * (a partially-applied multi-op, or a mutation whose status write failed).
- * `restore.ts` exposes no id-targeted replay, so this verifies `snapshotId`
- * is the stack head before replaying and refuses otherwise — an unrelated
- * snapshot is never popped. Returns whether the replay ran and succeeded;
- * best-effort, never throws.
+ * {@link undoExpected} checks that the row is still the stack head AND replays
+ * that exact row inside one hold of the extension-wide undo lock, so a
+ * snapshot another context pushed in the meantime can never be popped in its
+ * place — the peek and the replay are one atomic step, not two. A head that
+ * moved reports `conflict` (and nothing is replayed). Returns whether the
+ * replay ran and succeeded; best-effort, never throws.
  */
 async function compensate(snapshotId: number): Promise<boolean> {
   try {
-    const head = await peekLatest();
-    if (head?.id !== snapshotId) return false;
-    const result = await undoLatest();
+    const result = await undoExpected(snapshotId);
     return result.ok;
   } catch {
     return false;
@@ -440,8 +444,9 @@ export async function rejectDecision(
  * Revert decision `id`: replay the undo snapshot recorded when it was applied,
  * then record `reverted`. Rejects `illegal_transition` when the row is not in
  * an applied state, `invalid` when it has no recorded snapshot, and
- * `undo_conflict` when that snapshot is not the current stack head (so an
- * unrelated snapshot is never popped by mistake).
+ * `undo_conflict` when that snapshot is no longer the current stack head — the
+ * check and the replay are one atomic step inside the extension-wide undo
+ * lock, so an unrelated snapshot is never popped by mistake.
  *
  * If the row cannot be marked `reverted` after the undo popped, the revert has
  * already happened and the error reports `state_unrecorded` rather than leaving
@@ -465,15 +470,17 @@ export async function revertDecision(
       `Decision "${id}" has no recorded undo snapshot to revert.`,
     );
   }
-  const head = await peekLatest();
-  if (head?.id !== snapshotId) {
-    throw new DecisionApplyError(
-      "undo_conflict",
-      `The undo snapshot for decision "${id}" is not the top of the stack.`,
-    );
-  }
-  const undone = await undoLatest();
+  // Atomic targeted replay: the head check and the replay happen inside one
+  // hold of the extension-wide undo lock, so a snapshot another context pushes
+  // in the meantime is never popped in this decision's place.
+  const undone = await undoExpected(snapshotId);
   if (!undone.ok) {
+    if (undone.code === "conflict") {
+      throw new DecisionApplyError(
+        "undo_conflict",
+        `The undo snapshot for decision "${id}" is not the top of the stack.`,
+      );
+    }
     throw new DecisionApplyError(undone.code, undone.message);
   }
   try {

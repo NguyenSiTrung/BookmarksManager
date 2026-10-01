@@ -499,3 +499,29 @@ Selected applicable patterns from `conductor/patterns.md`:
   instruction text ("release notes"), not leaked notes. Structural
   `state.notes`/`bookmark.notes` checks and the query-marker checks remain
   the real assertions; only the ambiguous plain word was dropped.
+
+## Phase 4 Tasks 3-5 (in progress notes)
+
+- B15 (`b62f078`): preview/status read the root subtree; apply now revalidates
+  with the full `getTree()` and filters to the reviewed accepted ids. Read
+  rejections and empty reads refuse typed (`read_failed`) before any write;
+  B01 compensation unchanged. An accepted managed row outside the bar now
+  aborts the batch with compensation instead of being dropped as stale —
+  uniform with the pre-existing bar-managed case. Follow-up bead
+  `BookmarksManager-2v9` covers flagging managed rows in the preview.
+- B13: one origin-scoped exclusive Web Lock (`bookmarks-manager:undo`) in
+  `src/undo/lock.ts`; a per-instance `holdDepth` lets nested same-context
+  calls join the hold instead of re-acquiring the non-reentrant platform
+  lock. `restore.ts` keeps its module-local promise tail strictly for
+  same-context ordering — never as a missing-lock fallback: a runtime with
+  no/rejected/aborted lock refuses typed (`conflict`, mapped to decision
+  `undo_conflict`) with zero mutations. `undoExpected(snapshotId)` checks
+  the head and replays/pops the row it READ inside one hold; decision
+  `compensate`/`revertDecision` use it instead of peek-then-undo. The
+  shared queueing LockManager fake is installed via `setupFiles` in both
+  Vitest projects; missing-lock tests explicitly remove it. Review
+  `00fd4eda` PASS (P3: the `holdDepth` fast path can run direct
+  `withUndoLock` siblings inline — contained, no production direct caller;
+  pre-existing notes: `applyMerge` records a peeked id outside the lock but
+  revert re-verifies head, and the snapshot cap evicts oldest rows, never
+  the head). Core-manager E2E 6 passed.
