@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — Phase 3 browser accounting checkpoint ownership -->
+<!-- Last Revised: 2026-10-01 — B11 restructure callback owner fencing -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -477,7 +477,7 @@ implementation work.
 <!-- execution: parallel -->
 
 - [~] Task 1: Single-owner scan runners and guarded progress
-  <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts -->
+  <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, src/restructure/assign.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts -->
   - Covers **B11**. Create a worker-local coordinator for all production
     `runPersistedJob` entry paths; one MV3 worker owns production scans.
     ```ts
@@ -506,6 +506,9 @@ implementation work.
     relaunch; terminal/canceled jobs never relaunch. Claim a generation in a
     transaction and guard every progress/status write against owner mismatch
     and terminal state. Observe pause/cancel before new paid work.
+    Pass the captured owner generation through the actual restructure
+    assignment callback, so a held superseded response cannot merge stale
+    assignments after progress/status fencing has rejected that owner.
   - [ ] Verify green: rerun named tests with repeated pause/resume/cancel,
     batch failures, both analysis and restructure jobs, and worker restart.
     Preserve documented at-least-once uncommitted-batch crash behavior.

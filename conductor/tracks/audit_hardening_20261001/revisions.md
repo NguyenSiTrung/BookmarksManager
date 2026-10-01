@@ -130,3 +130,18 @@
 - **Ruling:** Deliver those controls now rather than count Phase 6's future
   integrated tests as present checkpoint evidence. Cost if wrong: two
   overlapping regression surfaces; no product or permission change.
+
+## Revision 9 — 2026-10-01 — B11 restructure callback owner
+
+- **Trigger:** Real callback regression remains failing after runner fencing:
+  a held restructure response merges assignments after owner supersession.
+- **Current task:** Phase 4 Task 1, initial implementation validation.
+- **Change:** Add `src/restructure/assign.ts` to ownership. Pass the job's
+  captured generation into the existing guarded assignment merge, retaining
+  generation-zero legacy/direct assignment compatibility.
+- **Evidence:** 72 named tests pass, one actual stale callback regression
+  fails; 389 adjacent tests and scoped lint/types/diff pass.
+- **Ruling:** Fence the actual callback instead of mocking it away or marking
+  partial progress/status fencing complete. Cost if wrong: direct callers
+  must supply a current generation after ownership is claimed; legacy zero
+  semantics remain explicitly tested. No new network or schema abstraction.
