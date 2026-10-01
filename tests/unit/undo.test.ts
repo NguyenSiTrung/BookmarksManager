@@ -370,6 +370,26 @@ describe("listSnapshots / peekLatest", () => {
 // ---------------------------------------------------------------------------
 
 describe("undoLatest — delete", () => {
+  it.each([
+    { tags: [], summary: "Verified summary only." },
+    { tags: ["docs"], category: "paper" as const, notes: "Saved notes.", summary: "Verified with notes." },
+  ])("preserves summary metadata on a recreated ID: %j", async (fields) => {
+    await putMeta("bm-b", fields);
+    await putMeta("bm-c", { tags: ["untouched"], summary: "Unrelated summary." });
+    const unrelated = await getMeta("bm-c");
+    const captured = await captureNodes(["bm-b"]);
+    await pushSnapshot({ kind: "delete", ...captured });
+    await removeWithCascade("bm-b");
+
+    const result = expectOk(await undoLatest());
+    const newId = result.idMap["bm-b"];
+    expect(newId).toBeDefined();
+    expect(newId).not.toBe("bm-b");
+    expect(await getMeta(newId!)).toMatchObject(fields);
+    expect(await getMeta("bm-b")).toBeUndefined();
+    expect(await getMeta("bm-c")).toEqual(unrelated);
+  });
+
   it("re-creates a deleted leaf at its original parent+index and remaps its meta", async () => {
     await putMeta("bm-b", { tags: ["docs"], notes: "keep me" });
     const capture = await captureSubtree("bm-b");
@@ -1039,6 +1059,38 @@ describe("undoLatest — restructure", () => {
 // ---------------------------------------------------------------------------
 
 describe("undoLatest — merge", () => {
+  it.each([
+    { tags: [], summary: "Original summary only." },
+    { tags: ["kept"], category: "docs" as const, notes: "Kept notes.", summary: "Original full summary." },
+  ])("restores a surviving target summary alongside remapped loser metadata: %j", async (fields) => {
+    await putMeta("bm-k", fields);
+    await putMeta("bm-l1", { tags: [], summary: "Loser summary." });
+    const captured = await captureNodes(["bm-l1"]);
+    const kept = await getMeta("bm-k");
+    if (kept === undefined) throw new Error("missing fixture metadata");
+    await pushSnapshot({ kind: "merge", ...captured, meta: [...captured.meta, kept] });
+    await putMeta("bm-k", { tags: ["merged"], notes: "Merged notes.", summary: "Merged summary." });
+    await removeWithCascade("bm-l1");
+
+    const result = expectOk(await undoLatest());
+    expect(await getMeta("bm-k")).toMatchObject(fields);
+    if (!("notes" in fields)) expect((await getMeta("bm-k"))?.notes).toBeUndefined();
+    expect((await getMeta(result.idMap["bm-l1"]!))?.summary).toBe("Loser summary.");
+    expect(await getMeta("bm-l1")).toBeUndefined();
+  });
+
+  it("clears a merge-created summary when the captured target had none", async () => {
+    await putMeta("bm-k", { tags: ["original"], notes: "Original notes." });
+    const kept = await getMeta("bm-k");
+    if (kept === undefined) throw new Error("missing fixture metadata");
+    await pushSnapshot({ kind: "merge", nodes: [], meta: [kept] });
+    await putMeta("bm-k", { tags: ["merged"], summary: "Later summary." });
+
+    expectOk(await undoLatest());
+    expect(await getMeta("bm-k")).toMatchObject({ tags: ["original"], notes: "Original notes." });
+    expect((await getMeta("bm-k"))?.summary).toBeUndefined();
+  });
+
   it("re-creates the merged-away bookmarks and restores the kept node's pre-merge meta", async () => {
     await putMeta("bm-k", { tags: ["keep"], notes: "kept notes" });
     await putMeta("bm-l1", { tags: ["l1"] });

@@ -323,6 +323,7 @@ async function restoreMetaRows(
         tags: meta.tags,
         category: meta.category ?? null,
         notes: meta.notes ?? null,
+        summary: meta.summary ?? null,
       });
       continue;
     }
@@ -331,6 +332,7 @@ async function restoreMetaRows(
       tags: meta.tags,
       category: meta.category ?? null,
       notes: meta.notes ?? null,
+      summary: meta.summary ?? null,
     });
     ctx.restoredIds.push(meta.id);
   }

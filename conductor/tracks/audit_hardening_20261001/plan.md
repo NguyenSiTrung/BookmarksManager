@@ -113,7 +113,7 @@ implementation work.
 ## Phase 1: Data safety
 <!-- execution: parallel -->
 
-- [x] Task 1: Non-destructive restructure compensation and resumable undo
+- [x] Task 1: Non-destructive restructure compensation and resumable undo (6c20ef0)
   <!-- files: src/restructure/apply.ts, src/undo/restore.ts, tests/unit/restructure-apply.test.ts, tests/unit/undo.test.ts -->
   - Covers **B01**. Preserve `applyRestructurePlan(jobId, acceptedBookmarkIds?)`
     and `UndoResult`; add no unsafe bypass of mutation guards.
@@ -152,12 +152,12 @@ implementation work.
   - [x] Coordinator gate/commit: use `fix(restructure): preserve bookmarks on
     failed compensation`, add notes, update learnings, close this task.
 
-- [~] Task 2: Preserve summaries in undo metadata rewrites
+- [x] Task 2: Preserve summaries in undo metadata rewrites
   <!-- files: src/undo/restore.ts, tests/unit/undo.test.ts -->
   <!-- depends: task1 -->
   - Covers **B02**. Existing `putMeta(id, fields)` remains the writer; both
     recreated-node and surviving merge-target branches must include summary.
-  - [ ] Red: add summary+notes and summary-only delete/merge snapshots, with
+  - [x] Red: add summary+notes and summary-only delete/merge snapshots, with
     assertions on remapped IDs and a surviving kept bookmark.
     ```ts
     await putMeta("bm-a1", { tags: [], summary: "Verified summary." });
@@ -171,13 +171,13 @@ implementation work.
         .toBe("Verified summary.");
     }
     ```
-  - [ ] Verify red: `npx vitest run tests/unit/undo.test.ts`.
-  - [ ] Green: add `summary: meta.summary ?? null` to both replacement
+  - [x] Verify red: `npx vitest run tests/unit/undo.test.ts`.
+  - [x] Green: add `summary: meta.summary ?? null` to both replacement
     `putMeta` payloads in `restoreMetaRows`; retain the no-orphan and
     summary-only emptiness behavior supplied by the metadata repository.
-  - [ ] Verify green: rerun undo tests including the Phase 1 Task 1 retry and
+  - [x] Verify green: rerun undo tests including the Phase 1 Task 1 retry and
     surviving-node cases; no unrelated fields are lost.
-  - [ ] Coordinator gate/commit: `fix(undo): retain summaries during restore`,
+  - [x] Coordinator gate/commit: `fix(undo): retain summaries during restore`,
     notes/learnings, close this task.
 
 - [x] Task 3: Preserve summaries through the JSON import pipeline (e6a71cd)
@@ -210,7 +210,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(io): restore summaries from JSON backups`,
     notes/learnings, close this task.
 
-- [x] Task 4: Race-safe startup metadata reconciliation
+- [x] Task 4: Race-safe startup metadata reconciliation (e183cc2)
   <!-- files: src/sync/reconcile.ts, tests/unit/sync-reconcile.test.ts -->
   - Covers **B04**. Preserve `reconcileMetadata(): Promise<number>`.
   - [x] Red: defer `getTree`, create a bookmark and summary metadata after

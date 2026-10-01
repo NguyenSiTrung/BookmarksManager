@@ -171,6 +171,23 @@ Selected applicable patterns from `conductor/patterns.md`:
 - Limitations: native creation and durable remap persistence are separate
   calls, not crash-atomic. Cross-context locking is Phase 4 work. B02 shared
   delete/merge summary paths remain for the next task.
+- Local commit: `6c20ef0`; task `BookmarksManager-lgd.1.1` closed.
+
+### Phase 1 Task 2: Undo summary preservation
+
+- Both remapped and surviving-node `restoreMetaRows` replacement payloads
+  now include `summary: meta.summary ?? null`.
+- Red: `npx vitest run tests/unit/undo.test.ts`, 4 expected failures,
+  56 passing. Green: 60 passing. Summary-only/full delete and merge rows
+  restore under new/original IDs, unrelated rows remain unchanged, and
+  absent captured summaries still clear post-merge summaries.
+- Phase tests together: four files / 124 passing. Fresh full gate:
+  lint/typecheck, 151 files / 2,572 tests (`--maxWorkers=1`), build,
+  manifest/bundle/store and isolated core-manager/LLM E2E (16 passing).
+  Existing non-fatal React `act` warnings remain. No tests were skipped.
+- Review: the two-line replacement-field extension uses the same metadata
+  writer and emptiness behavior; regression expectations come from fixed
+  fixtures and check native remapping as well as stored metadata.
 
 ## Planning Validation
 
