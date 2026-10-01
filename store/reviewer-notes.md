@@ -185,6 +185,22 @@ grant, the permission, and the key.
   naming the exact fields sent, the user action that triggers them, and the
   credential path; a request can leave the device only while its scope's
   grant and the exact-origin permission are both in place.
+- **Summarize** (`llm_summary`) sends the page title, cleaned URL, headings,
+  bounded page excerpt, and site name and meta description when present to
+  the configured LLM origin. **Jev summary verification**
+  (`jev_summary_verify`) sends the saved bookmark title, cleaned URL,
+  domain, headings, bounded page excerpt, and LLM-generated summary to the
+  enabled Jev origin; no page title, site name, or meta description is added.
+  Both hops strip URL query strings, fragments, and embedded
+  usernames/passwords; the original URL remains local for admission/matching.
+  Notes, the extraction's byline, and the full page DOM are not sent. Only a
+  Jev-supported summary is saved locally; the excerpt is not persisted.
+  Opening the dialog only preflights consent status. Verify both exact
+  recipients, field lists, and the version before clicking **Agree and
+  summarize**. Closing it grants nothing and performs no extraction/send.
+  The worker rechecks the displayed recipients/version before new grants;
+  a provider change requires reviewing again. Unknown-cost confirmation is
+  separate and resends with the same accepted binding.
 - The monthly budget caps LLM spending; when reliable pricing is configured
   each request reserves an estimated cost, and the second-opinion flow never
   applies a change by itself.
@@ -201,7 +217,9 @@ The bookmark-data flow is shipped behind a separate, per-provider
   disclosure names the exact fields sent — the bookmark title, cleaned URL,
   domain, and folder path; tag names and descriptions; candidate folder
   paths; candidate bookmarks; the near-duplicate partner; and the Ask search
-  query — and states plainly that notes and page text are never sent. It
+  query — and states plainly that notes are never sent and page text is
+  never sent under `jev_decisions` (the separate Summarize scopes above are
+  the bounded-page-text exception). It
   names the recipient and its literal origin
   (`https://api.typesafe.ai`, `https://openrouter.ai`, or the configured
   custom origin), the purpose
@@ -211,8 +229,9 @@ The bookmark-data flow is shipped behind a separate, per-provider
   on install, on a timer, or in the background), and links the provider's
   privacy policy and this extension's privacy policy.
 - The agree checkbox starts unchecked and Enable is a separate action. The
-  consent is versioned (`consentVersion`, currently 3); a stale record
-  re-shows the disclosure before the next request.
+  consent is versioned (`consentVersion`, currently 4); older records stay
+  stored but stale and authorize no request until reacquired for the exact
+  scope and origin. Reaccepting one origin does not refresh another origin.
 - Once consented, a decision request is sent only on a user-started action
   and only to the chosen origin's System One endpoint over HTTPS with
   `Authorization: Bearer <key>` — cookies omitted, redirects refused. Only the
@@ -241,11 +260,11 @@ The bookmark-data flow is shipped behind a separate, per-provider
 ## Notes
 
 - Consent records carry a `consentVersion` field per `(scope, origin)` —
-  the synthetic `jev_test` scope and the bookmark-data `jev_decisions` scope
-  (`CONSENT_SCOPE` / `DECISIONS_CONSENT_SCOPE`, `src/schemas/provider.ts`;
-  currently version 2). The design increases the version and re-shows the
-  disclosure whenever sent fields or recipients change, and stale-version
-  grants of either scope fail the gate.
+  the synthetic `jev_test`, bookmark-data `jev_decisions`, every `llm_*`,
+  and `jev_summary_verify` scopes (`src/schemas/provider.ts`). The shared
+  current version is 4, owned by `src/consent/records.ts`, not the schema.
+  Sent-field or recipient changes require renewed consent; historical rows
+  remain stored as stale grants and fail the gate until reacquired.
 - API keys are stored encrypted at rest — an AES-GCM ciphertext envelope in
   `chrome.storage.local` with the non-extractable CryptoKey held in
   IndexedDB — and are never logged, exported, or shown in full; Options

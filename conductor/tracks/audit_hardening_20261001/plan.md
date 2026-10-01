@@ -247,7 +247,7 @@ implementation work.
 ## Phase 2: Privacy and summary identity
 <!-- execution: sequential -->
 
-- [x] Task 1: Enforce current blocklist for explanation and summary egress
+- [x] Task 1: Enforce current blocklist for explanation and summary egress (0bb1b8b)
   <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/llm/client.ts, src/net/llm-send.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts -->
   - Covers **B05**. Reuse `readBlocklist()` and `minimizeBookmark`; refuse
     blocked multi-bookmark explanations instead of sending partial derived
@@ -286,11 +286,11 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [~] Task 2: Minimized summary payload and accurate disclosures
+- [x] Task 2: Minimized summary payload and accurate disclosures
   <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, src/messages/summaries.ts, src/entrypoints/sidepanel/SummaryDialog.tsx, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/summary-messages.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/components/summary-dialog.test.tsx, tests/e2e/provider.spec.ts, tests/e2e/llm.spec.ts -->
   - Covers **B06**. Preserve the public summary functions; build a minimized
     outbound payload separately from the original extraction used locally.
-  - [ ] Red: add a summary with synthetic query/fragment secret markers,
+  - [x] Red: add a summary with synthetic query/fragment secret markers,
     capture serialized provider requests, and assert allowed summary success
     without those markers. Pin the cleaned URL in disclosure snapshots.
     ```ts
@@ -299,9 +299,9 @@ implementation work.
     expect(serialized).not.toContain("audit_fragment_secret");
     expect(serialized).toContain("https://a-site.com/article");
     ```
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/llm-summarize.test.ts tests/unit/consent-snapshot.test.ts tests/unit/consent.test.ts`.
-  - [ ] Green: pass a copy with `url: minimized.url` to `summarizePage`;
+  - [x] Green: pass a copy with `url: minimized.url` to `summarizePage`;
     add defense-in-depth cleaning/refusal in its payload builder. Disclose
     cleaned URL and actual existing summary fields consistently in the
     runtime and store/site text. Bump the existing consent version so
@@ -315,13 +315,13 @@ implementation work.
     consent version; the worker re-resolves and checks them before granting.
     Remove unconditional stale-grant refresh. Preflight/dismissal authorizes
     neither extraction nor egress; stale/missing approval refuses safely.
-  - [ ] Verify green: rerun named tests, stale/current consent cases,
+  - [x] Verify green: rerun named tests, stale/current consent cases,
     `npm run check:manifest`, `npm run check:store`, `npm run check:site`,
     and isolated LLM E2E. Do not send a raw URL just to preserve matching.
-  - [ ] Coordinator gate/commit: `fix(privacy): minimize summary URLs and disclosures`,
+  - [x] Coordinator gate/commit: `fix(privacy): minimize summary URLs and disclosures`,
     notes/learnings, close this task.
 
-- [ ] Task 3: Resource-aware local summary identity
+- [~] Task 3: Resource-aware local summary identity
   <!-- files: src/decisions/summary-identity.ts, src/decisions/summaries.ts, tests/unit/summary-identity.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B07**. Create the pure local contract:
     ```ts

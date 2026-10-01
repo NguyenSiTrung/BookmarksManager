@@ -21,6 +21,7 @@ import {
   CONSENT_SCOPE,
   DECISIONS_CONSENT_SCOPE,
   ConsentRecord,
+  CONSENT_SCOPES,
   type PresetId,
 } from "../../src/schemas/provider";
 
@@ -54,8 +55,8 @@ function consentRow(
 }
 
 describe("versioned consent records", () => {
-  it("pins CONSENT_VERSION to 3", () => {
-    expect(CONSENT_VERSION).toBe(3);
+  it("pins CONSENT_VERSION to 4", () => {
+    expect(CONSENT_VERSION).toBe(4);
   });
 
   it("reports no consent before any grant", async () => {
@@ -251,8 +252,8 @@ describe("jev_decisions scope", () => {
   });
 });
 
-describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
-  it.each([1, 2])("a v%i jev_test row fails hasConsent", async (version) => {
+describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
+  it.each([1, 2, 3])("a v%i jev_test row fails hasConsent", async (version) => {
     await db.consents.put(
       consentRow({ scope: "jev_test", consentVersion: version }),
     );
@@ -260,7 +261,7 @@ describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
     expect(await hasTestConsent("typesafe")).toBe(false);
   });
 
-  it.each([1, 2])(
+  it.each([1, 2, 3])(
     "a v%i jev_decisions row fails hasConsent",
     async (version) => {
       await db.consents.put(
@@ -272,7 +273,7 @@ describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
     },
   );
 
-  it.each([1, 2])(
+  it.each([1, 2, 3])(
     "a v%i llm-scope row fails hasConsentAtOrigin",
     async (version) => {
       await db.consents.put(
@@ -296,7 +297,7 @@ describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
     expect(await hasTestConsent("typesafe")).toBe(false);
   });
 
-  it("a fresh v3 grant passes for jev and llm scopes", async () => {
+  it("a fresh v4 grant passes for jev and llm scopes", async () => {
     await grantConsent("jev_test", "typesafe");
     await grantConsent("jev_decisions", "typesafe");
     await grantConsentAtOrigin("llm_summary", "https://api.example.com");
@@ -306,6 +307,28 @@ describe("stale v1/v2 records after the CONSENT_VERSION 3 bump", () => {
       await hasConsentAtOrigin("llm_summary", "https://api.example.com"),
     ).toBe(true);
   });
+
+  it.each(CONSENT_SCOPES)(
+    "preserves a v3 %s grant as stale until reacquired for its exact origin",
+    async (scope) => {
+      const origin = "http://localhost:11434";
+      const otherOrigin = "http://localhost:11435";
+      const old = consentRow({ scope, origin, consentVersion: 3 });
+      const other = consentRow({ scope, origin: otherOrigin, consentVersion: 3 });
+      await db.consents.bulkPut([old, other]);
+      expect(await hasConsentAtOrigin(scope, origin)).toBe(false);
+      expect(await hasConsentAtOrigin(scope, otherOrigin)).toBe(false);
+      expect(await db.consents.get([scope, origin])).toEqual(old);
+      await grantConsentAtOrigin(scope, origin);
+      expect(await hasConsentAtOrigin(scope, origin)).toBe(true);
+      expect(await db.consents.get([scope, origin])).toMatchObject({
+        scope, origin, consentVersion: 4,
+      });
+      expect(await hasConsentAtOrigin(scope, otherOrigin)).toBe(false);
+      expect(await db.consents.get([scope, otherOrigin])).toEqual(other);
+      expect(await db.consents.count()).toBe(2);
+    },
+  );
 });
 
 describe("origin-generic consent (dynamic LLM providers)", () => {

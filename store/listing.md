@@ -94,8 +94,27 @@ stored credential travels in the authentication header only, spending is
 metered against a monthly budget you set, and revoking the provider removes
 every grant, the host permission, and the key.
 
+Summarize sends the page title, cleaned URL, headings, and a bounded page
+excerpt to your LLM provider, plus site name and meta description when
+present (`llm_summary`). Jev verification sends the saved bookmark title,
+cleaned URL, domain, headings, bounded page excerpt, and LLM-generated
+summary (`jev_summary_verify`); it does not add the page title, site name,
+or meta description. Both hops strip URL query strings, fragments, and
+embedded usernames/passwords. Notes, the extraction's byline, and the full
+page DOM are not sent. Only a Jev-supported summary is saved locally, not
+the excerpt. Shared `consentVersion` is currently 4: older grants remain
+stored but stale until you reaccept for the exact scope and origin; one
+origin's reacceptance never refreshes another.
+Opening Summarize only reads consent status and shows both exact recipients,
+field lists, and the current version. **Agree and summarize** is the
+affirmative send; closing grants nothing. The worker rechecks the displayed
+recipients/version before granting consent. Changed providers require
+reviewing again; unknown-cost confirmation is a separate choice and retains
+the accepted binding.
+
 Not in this release: a link checker, cloud sync, and accounts. The extension
-requests no access to your browsing history or page content.
+requests no browsing-history permission or default access to page content.
+Page extraction happens only after your explicit Summarize action.
 
 ## What's new
 

@@ -7,7 +7,8 @@ import {
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { getMeta } from "../../src/db/meta";
-import { summarizeActiveBookmark } from "../../src/decisions/summaries";
+import { summarizeActiveBookmark, summarizeExtracted } from "../../src/decisions/summaries";
+import * as summaryLlm from "../../src/llm/summarize";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
 import { saveProviderKey } from "../../src/security/keys";
@@ -149,6 +150,8 @@ async function seedProvider() {
     value: { preset: "typesafe", model: "jev-latest", keySuffix: "1234" },
   });
   await grantConsentAtOrigin("jev_test", JEV_ORIGIN);
+  // Unrelated pipeline tests start with explicitly accepted current grants.
+  await grantAll();
 }
 
 /** Grant both consents (the plan's "separate recipient grants" baseline). */
@@ -196,6 +199,152 @@ afterAll(() => {
 });
 
 describe("summarizeActiveBookmark", () => {
+  it.each(["llm_summary", "jev_summary_verify"] as const)(
+    "does not extract or send when %s consent is stale or missing",
+    async (scope) => {
+      await seedProvider();
+      const origin = scope === "llm_summary" ? LLM_ORIGIN : JEV_ORIGIN;
+      const stale = {
+        scope, origin, consentVersion: 3,
+        acceptedAt: "2026-09-25T10:00:00.000Z",
+      };
+      await db.consents.put(stale);
+      const jevTransport = jevTransportFor("supported");
+      expect(await run(jevTransport)).toMatchObject({ ok: false, stage: "consent", code: "no_consent" });
+      expect(executeScript).not.toHaveBeenCalled();
+      expect(tabsGet).not.toHaveBeenCalled();
+      expect(await db.consents.get([scope, origin])).toEqual(stale);
+      expect(await summarizeExtracted({
+        tabId: TAB_ID, bookmarkId: BOOKMARK_ID, jevTransport,
+      }, PAGE_EXTRACT)).toMatchObject({ ok: false, stage: "consent", code: "no_consent" });
+      expect(await db.consents.get([scope, origin])).toEqual(stale);
+      await db.consents.delete([scope, origin]);
+      expect(await run(jevTransport)).toMatchObject({ ok: false, stage: "consent", code: "no_consent" });
+      expect(executeScript).not.toHaveBeenCalled();
+      expect(await db.consents.get([scope, origin])).toBeUndefined();
+      expect(server.requests).toHaveLength(0);
+      expect(jevTransport).not.toHaveBeenCalled();
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    },
+  );
+
+  it.each(["initial", "fallback", "repair", "429", "transport"] as const)(
+    "minimizes query and fragment secrets in every allowed summary %s wire request",
+    async (attempt) => {
+      await seedProvider();
+      await saveProviderKey("typesafe", "jev-test-1234");
+      const rawUrl = "https://a-site.com/article?token=audit_query_secret#audit_fragment_secret";
+      await bookmarksApi.update(BOOKMARK_ID, { title: "Saved article title", url: rawUrl });
+      tabsGet.mockResolvedValue({ id: TAB_ID, url: rawUrl, incognito: false });
+      executeScript.mockResolvedValue([{
+        result: {
+          title: PAGE_EXTRACT.title,
+          excerpt: PAGE_EXTRACT.excerpt,
+          headings: PAGE_EXTRACT.headings,
+          description: "An overview of caching.",
+          siteName: "A Site",
+          byline: "Local-only author",
+        },
+      }]);
+      const failures = attempt === "fallback"
+        ? [{ status: 400, body: { error: "response_format unsupported" } }]
+        : attempt === "429"
+          ? [{ status: 429, retryAfterSeconds: 0 }]
+          : attempt === "transport"
+            ? [{ throw: new TypeError("reset") }]
+            : [];
+      server = makeOpenAiServer({
+        failures,
+        completion: (body) => completionWith({
+          summary: attempt === "repair" && server.requests.length === 1
+            ? ""
+            : "A page about a caching layer.",
+        })(body),
+      });
+      const jevWire = jevTransportFor("supported");
+      const bodies: unknown[] = [];
+      vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        if (String(url).startsWith(JEV_ORIGIN)) {
+          const request = SystemOneRequest.parse(JSON.parse(String(init?.body)));
+          return jevWire("jev_summary_verify", "typesafe", request.model, request);
+        }
+        return server.fetch(url, init);
+      });
+      // Pass-through spy keeps the real builder/client/gates while pinning
+      // the orchestrator's separate outbound copy, not just builder cleanup.
+      const summarizeSpy = vi.spyOn(summaryLlm, "summarizePage");
+      try {
+        const outcome = await summarizeActiveBookmark({
+          tabId: TAB_ID, bookmarkId: BOOKMARK_ID, unknownCostConfirmed: true,
+        });
+        expect(outcome).toMatchObject({ ok: true, summary: "A page about a caching layer." });
+        expect(server.requests).toHaveLength(attempt === "initial" ? 1 : 2);
+        expect(jevWire).toHaveBeenCalledOnce();
+        expect(bodies).toHaveLength(attempt === "initial" ? 2 : 3);
+        const serialized = JSON.stringify(bodies);
+        expect(serialized).not.toContain("audit_query_secret");
+        expect(serialized).not.toContain("audit_fragment_secret");
+        expect(serialized).toContain("https://a-site.com/article");
+        const body = server.requests[0]?.body as { messages: { role: string; content: string }[] };
+        expect(JSON.parse(body.messages.find((message) => message.role === "user")!.content)).toEqual({
+          url: "https://a-site.com/article",
+          title: "An article",
+          excerpt: PAGE_EXTRACT.excerpt,
+          headings: ["Caching layer", "Benchmarks"],
+          description: "An overview of caching.",
+          siteName: "A Site",
+        });
+        expect(jevWire.mock.calls[0]?.[3].state).toEqual({
+          bookmark: { title: "Saved article title", url: "https://a-site.com/article", domain: "a-site.com" },
+          excerpt: PAGE_EXTRACT.excerpt,
+          headings: ["Caching layer", "Benchmarks"],
+          summary: "A page about a caching layer.",
+        });
+        expect((await getMeta(BOOKMARK_ID))?.summary).toBe("A page about a caching layer.");
+        expect(summarizeSpy.mock.calls[0]?.[1].url).toBe("https://a-site.com/article");
+        expect((await bookmarksApi.get(BOOKMARK_ID))[0]?.url).toBe(rawUrl);
+      } finally {
+        summarizeSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ["fallback", "revocation"], ["fallback", "provider change"],
+    ["internal retry", "revocation"], ["internal retry", "provider change"],
+    ["Jev verification", "revocation"], ["Jev verification", "provider change"],
+  ] as const)("retains the approved binding before %s after %s without reacquiring consent", async (hop, change) => {
+    await seedProvider();
+    server = makeOpenAiServer({
+      ...(hop === "fallback"
+        ? { failures: [{ status: 400, body: { error: "response_format unsupported" } }] }
+        : hop === "internal retry" ? { failures: [{ status: 429, retryAfterSeconds: 0 }] } : {}),
+      completion: completionWith({ summary: "A valid draft." }),
+    });
+    vi.stubGlobal("fetch", async (...args: Parameters<typeof fetch>) => {
+      const response = await server.fetch(...args);
+      if (change === "revocation") {
+        await db.consents.delete(["jev_summary_verify", JEV_ORIGIN]);
+      } else {
+        await saveLlmProvider({
+          providerId: PROVIDER_ID,
+          provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini-2024-07-18" },
+          keySuffix: "1234", configuredAt: "2026-09-15T00:00:00.000Z",
+        });
+      }
+      return response;
+    });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({
+      ok: false, stage: hop === "Jev verification" ? "verify" : "summarize", code: "no_consent",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    if (change === "revocation") expect(await db.consents.get(["jev_summary_verify", JEV_ORIGIN])).toBeUndefined();
+  });
+
   it.each([
     ["429", "blocklist"], ["transport", "blocklist"],
     ["429", "live URL"], ["transport", "live URL"],
@@ -472,12 +621,9 @@ describe("summarizeActiveBookmark", () => {
     expect(server.requests).toHaveLength(1);
   });
 
-  it("grants both scopes at the click and proceeds past consent", async () => {
+  it("uses existing current grants without silently refreshing them", async () => {
     await seedProvider();
-    // The Summarize click IS the affirmative action (spec FR3): both
-    // origin-scoped grants are written by the orchestrator before any
-    // gated send — llm_summary at the LLM origin, jev_summary_verify at
-    // the Jev origin. Without them a run could never start.
+    const grants = await db.consents.toArray();
     const jevTransport = jevTransportFor("supported");
     const outcome = await run(jevTransport);
     await expect(hasConsentAtOrigin("llm_summary", LLM_ORIGIN)).resolves.toBe(true);
@@ -488,6 +634,7 @@ describe("summarizeActiveBookmark", () => {
     // consent was already satisfied by the click.
     expect(outcome.ok).toBe(true);
     expect(jevTransport).toHaveBeenCalled();
+    expect(await db.consents.toArray()).toEqual(grants);
   });
 
   it("refuses when the active page URL does not match the bookmark", async () => {
@@ -649,5 +796,90 @@ describe("summarizeActiveBookmark", () => {
     expect(outcome.stage).toBe("summarize");
     expect(outcome.code).toBe("no_provider");
     expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+});
+
+describe("summarizePage payload defense", () => {
+  it("refuses a stale v3 summary grant without deleting it and sends only after exact-origin reacquisition", async () => {
+    await seedProvider();
+    const oldGrant = {
+      scope: "llm_summary" as const,
+      origin: LLM_ORIGIN,
+      consentVersion: 3,
+      acceptedAt: "2026-09-25T10:00:00.000Z",
+    };
+    await db.consents.put(oldGrant);
+    await grantConsentAtOrigin("llm_summary", "https://other-provider.dev");
+    await expect(summaryLlm.summarizePage(PROVIDER_ID, PAGE_EXTRACT)).rejects.toMatchObject({
+      code: "no_consent",
+    });
+    expect(server.requests).toHaveLength(0);
+    expect(await db.llmReservations.count()).toBe(0);
+    expect(await db.consents.get(["llm_summary", LLM_ORIGIN])).toEqual(oldGrant);
+    await grantConsentAtOrigin("llm_summary", LLM_ORIGIN);
+    expect(await summaryLlm.summarizePage(PROVIDER_ID, PAGE_EXTRACT)).toMatchObject({
+      summary: "A page about a caching layer.",
+    });
+    expect(server.requests).toHaveLength(1);
+    expect(await db.consents.get(["llm_summary", LLM_ORIGIN])).toMatchObject({
+      consentVersion: 4,
+    });
+  });
+
+  it("cleans a direct caller's URL without mutating its extract or dropping actual summary fields", async () => {
+    await seedProvider();
+    await grantAll();
+    const extract: PageExtract = Object.freeze({
+      ...PAGE_EXTRACT,
+      url: "https://audit_user_secret:audit_password_secret@a-site.com/article?token=audit_query_secret#audit_fragment_secret",
+      description: "An overview of caching.",
+      siteName: "A Site",
+      byline: "Local-only author",
+    });
+    const result = await summaryLlm.summarizePage(PROVIDER_ID, extract);
+    expect(result.summary).toBe("A page about a caching layer.");
+    expect(server.requests).toHaveLength(1);
+    const serialized = JSON.stringify(server.requests.map((request) => request.body));
+    for (const marker of ["audit_query_secret", "audit_fragment_secret", "audit_user_secret", "audit_password_secret", "Local-only author"]) {
+      expect(serialized).not.toContain(marker);
+    }
+    const body = server.requests[0]?.body as { messages: { role: string; content: string }[] };
+    expect(JSON.parse(body.messages.find((message) => message.role === "user")!.content)).toEqual({
+      url: "https://a-site.com/article",
+      title: "An article",
+      excerpt: PAGE_EXTRACT.excerpt,
+      headings: ["Caching layer", "Benchmarks"],
+      description: "An overview of caching.",
+      siteName: "A Site",
+    });
+    expect(extract.url).toContain("audit_query_secret");
+    expect(extract.url).toContain("audit_fragment_secret");
+  });
+
+  it.each([
+    ["malformed URL", "not-a-url?audit_query_secret#audit_fragment_secret"],
+    ["file URL", "file:///article?audit_query_secret#audit_fragment_secret"],
+    ["private host", "https://127.0.0.1/article?audit_query_secret#audit_fragment_secret"],
+    ["built-in blocked host", "https://chase.com/article?audit_query_secret#audit_fragment_secret"],
+    ["user-blocked host", "https://blocked-site.dev/article?audit_query_secret#audit_fragment_secret"],
+    ["non-HTTP scheme", "ftp://a-site.com/article?audit_query_secret#audit_fragment_secret"],
+    ["overlong cleaned URL", `https://a-site.com/${"x".repeat(2_048)}?audit_query_secret#audit_fragment_secret`],
+  ])("refuses a direct extract with %s before provider requests or reservations", async (_label, url) => {
+    await seedProvider();
+    await grantAll();
+    await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
+    let refusal: unknown;
+    try {
+      await summaryLlm.summarizePage(PROVIDER_ID, { ...PAGE_EXTRACT, url });
+    } catch (cause) {
+      refusal = cause;
+    }
+    expect(refusal).toMatchObject({ code: "request_not_allowed" });
+    expect(String(refusal)).not.toContain("audit_query_secret");
+    expect(String(refusal)).not.toContain("audit_fragment_secret");
+    expect(JSON.stringify(refusal)).not.toContain("audit_query_secret");
+    expect(server.requests).toHaveLength(0);
+    expect(await db.llmReservations.count()).toBe(0);
+    expect(await db.llmUsage.count()).toBe(0);
   });
 });

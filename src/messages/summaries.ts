@@ -1,10 +1,5 @@
 import { z } from "../schemas/z";
-import {
-  summarizeActiveBookmark,
-  type SummarizeOutcome,
-} from "../decisions/summaries";
-import { resolveLlmDestination } from "../llm/providers";
-import { readActiveLlmProvider } from "../llm/settings";
+import type { SummarizeOutcome } from "../decisions/summaries";
 
 /**
  * The worker side of the Summarize intent (plan Phase 4 Task 4): the
@@ -27,7 +22,30 @@ declare const chrome: {
   };
 };
 
+const SummaryRecipient = z.strictObject({
+  origin: z.url(),
+  providerId: z.string().min(1),
+  model: z.string().min(1),
+  endpoint: z.url(),
+});
+
+/** Content-free disclosure binding, echoed only by the affirmative send.
+ * Worker dependencies are loaded only inside the worker handlers below. */
+export const SummaryConsentApproval = z.strictObject({
+  consentVersion: z.number().int().positive(),
+  llm: SummaryRecipient,
+  jev: SummaryRecipient,
+});
+export type SummaryConsentApproval = z.infer<typeof SummaryConsentApproval>;
+export const SummaryConsentPreflight = z.strictObject({
+  approval: SummaryConsentApproval,
+  llmGranted: z.boolean(),
+  jevGranted: z.boolean(),
+});
+export type SummaryConsentPreflight = z.infer<typeof SummaryConsentPreflight>;
+
 export const SummarizeMessage = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("LLM_SUMMARY_PREFLIGHT") }),
   // Summarize the saved bookmark the active tab maps to. `unknownCostConfirmed`
   // is ONLY honored on this manual intent — it is the CostConfirmationDialog
   // resend flag (spec FR7.8).
@@ -36,6 +54,7 @@ export const SummarizeMessage = z.discriminatedUnion("type", [
     tabId: z.number().int().positive(),
     bookmarkId: z.string().min(1),
     unknownCostConfirmed: z.boolean().optional(),
+    consentApproval: SummaryConsentApproval.optional(),
   }),
   z.strictObject({
     type: z.literal("LLM_SUMMARY_READ"),
@@ -44,7 +63,7 @@ export const SummarizeMessage = z.discriminatedUnion("type", [
 ]);
 export type SummarizeMessage = z.infer<typeof SummarizeMessage>;
 
-const SUMMARIZE_TYPES = new Set(["LLM_SUMMARIZE", "LLM_SUMMARY_READ"]);
+const SUMMARIZE_TYPES = new Set(["LLM_SUMMARIZE", "LLM_SUMMARY_READ", "LLM_SUMMARY_PREFLIGHT"]);
 
 export const SummarizeErrorCode = z.enum([
   "untrusted_sender",
@@ -78,6 +97,11 @@ export const SummarizeErrorCode = z.enum([
 export type SummarizeErrorCode = z.infer<typeof SummarizeErrorCode>;
 
 export const SummarizeMessageResult = z.union([
+  z.object({
+    ok: z.literal(true),
+    code: z.literal("summary_consent"),
+    consent: SummaryConsentPreflight,
+  }),
   z.object({
     ok: z.literal(true),
     code: z.literal("summary_ok"),
@@ -176,10 +200,18 @@ async function summarize(message: {
   tabId: number;
   bookmarkId: string;
   unknownCostConfirmed?: boolean;
+  consentApproval?: SummaryConsentApproval;
 }): Promise<SummarizeMessageResult> {
+  const { summarizeActiveBookmark, readSummaryConsent } = await import("../decisions/summaries");
+  const current = await readSummaryConsent();
+  if (!current.ok) return outcomeToReply(current);
+  if (message.consentApproval === undefined) {
+    return failure("no_consent", "Review both summary recipients before agreeing to send.", "consent");
+  }
   const outcome = await summarizeActiveBookmark({
     tabId: message.tabId,
     bookmarkId: message.bookmarkId,
+    ...(message.consentApproval !== undefined ? { consentApproval: message.consentApproval } : {}),
     ...(message.unknownCostConfirmed !== undefined
       ? { unknownCostConfirmed: message.unknownCostConfirmed }
       : {}),
@@ -192,13 +224,7 @@ async function summarize(message: {
   ) {
     // The orchestrator surfaces the raw gate code — reattach the named
     // destination so the dialog can say where the resend goes.
-    const active = await readActiveLlmProvider();
-    if (active !== null) {
-      return {
-        ...reply,
-        destinationOrigin: resolveLlmDestination(active.provider).origin,
-      };
-    }
+    return { ...reply, destinationOrigin: message.consentApproval.llm.origin };
   }
   return reply;
 }
@@ -244,6 +270,13 @@ export async function handleSummarizeMessage(
       );
     }
     switch (parsed.data.type) {
+      case "LLM_SUMMARY_PREFLIGHT": {
+        const { readSummaryConsent } = await import("../decisions/summaries");
+        const current = await readSummaryConsent();
+        return current.ok
+          ? { ok: true, code: "summary_consent", consent: current.consent }
+          : outcomeToReply(current);
+      }
       case "LLM_SUMMARIZE":
         return await summarize(parsed.data);
       case "LLM_SUMMARY_READ":

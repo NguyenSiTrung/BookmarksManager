@@ -22,6 +22,7 @@ import { enableTypesafe, readStoreRows } from "./helpers/provider";
 import { createBookmark, createFolder } from "./helpers/seed";
 import { jobRows } from "./helpers/decisions";
 import { openOptionsPanel } from "./helpers/surfaces";
+import { SummaryConsentPreflight, SummarizeMessageResult } from "../../src/messages/summaries";
 
 /**
  * Phase 6 Task 1 (track spec FR7–FR10) — real-browser coverage of the LLM
@@ -626,11 +627,52 @@ test("summarize extracts, Jev-verifies, then persists the summary", async () => 
   });
   expect(tabId).toBeDefined();
 
+  const preflight = SummarizeMessageResult.parse(await sendLlmMessage(panel, {
+    type: "LLM_SUMMARY_PREFLIGHT",
+  }));
+  expect(preflight.ok).toBe(true);
+  if (!preflight.ok || preflight.code !== "summary_consent") throw new Error("Summary preflight failed.");
+  const consent = SummaryConsentPreflight.parse(preflight.consent);
+  expect(consent.approval.consentVersion).toBe(4);
+  expect(consent.approval.llm.origin).toBe(OPENAI_ORIGIN);
+  expect(consent.approval.jev.origin).toBe("https://api.typesafe.ai");
+  expect(openai.requests).toHaveLength(0);
+  expect(jev.requests).toHaveLength(0);
+  // The production disclosure must remain readable and its affirmative
+  // action reachable in a narrow, short side-panel viewport. Opening and
+  // dismissing it must remain read-only, regardless of the active tab.
+  await panel.setViewportSize({ width: 360, height: 480 });
+  await panel.getByRole("button", { name: "Actions for Fixture page", exact: true }).click();
+  await panel.getByRole("menuitem", { name: "Summarize…", exact: true }).click();
+  const disclosureDialog = panel.getByRole("dialog", { name: "Summarize “Fixture page”", exact: true });
+  const agree = disclosureDialog.getByRole("button", { name: "Agree and summarize", exact: true });
+  await expect(agree).toBeAttached();
+  await agree.scrollIntoViewIfNeeded();
+  await expect(agree).toBeInViewport();
+  await disclosureDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(disclosureDialog).toBeHidden();
+  expect(openai.requests).toHaveLength(0);
+  expect(jev.requests).toHaveLength(0);
+  // This fixture tab uses install-time permissions because Playwright
+  // cannot grant activeTab through the native toolbar action. Affirmative
+  // protocol approval echoes the real preflight, never a synthetic grant.
+  const cost = SummarizeMessageResult.parse(await sendLlmMessage(panel, {
+    type: "LLM_SUMMARIZE",
+    tabId: tabId!,
+    bookmarkId: bm.id,
+    consentApproval: consent.approval,
+  }));
+  expect(cost).toMatchObject({
+    ok: false, code: "confirmation_required", destinationOrigin: OPENAI_ORIGIN,
+  });
+  expect(openai.requests).toHaveLength(0);
+  expect(jev.requests).toHaveLength(0);
   const summarized = (await sendLlmMessage(panel, {
     type: "LLM_SUMMARIZE",
     tabId: tabId!,
     bookmarkId: bm.id,
     unknownCostConfirmed: true,
+    consentApproval: consent.approval,
   })) as { ok: boolean; code: string };
   expect(summarized.ok, JSON.stringify(summarized)).toBe(true);
   expect(summarized.code).toBe("summary_ok");

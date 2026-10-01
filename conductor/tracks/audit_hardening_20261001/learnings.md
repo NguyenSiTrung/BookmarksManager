@@ -235,6 +235,43 @@ Selected applicable patterns from `conductor/patterns.md`:
   output fallback, and never erase previous paid exposure on refusal.
 - B06 minimized summary URL/disclosures, B07 local identity, and B09/B10
   general usage/revoke lifecycle remain pending.
+- Local commit: `0bb1b8b`; task `BookmarksManager-lgd.2.1` closed.
+
+### Phase 2 Task 2: Minimized summaries and explicit renewed consent
+
+- LLM summary bodies use a separate minimized URL copy; direct builder also
+  cleans/refuses. Original extraction remains available only for local
+  admission. All initial/fallback/repair/internal-retry bodies exclude the
+  synthetic query/fragment secret markers while allowed summaries succeed.
+- Actual LLM fields: cleaned URL, page title, excerpt, headings, optional
+  site name and meta description. Jev fields: bookmark title/cleaned URL/
+  domain, excerpt, headings and generated summary. Runtime/store/site
+  disclosures now align. Shared consent version is 4; historical grants
+  remain stored but cannot authorize sends.
+- Review identified silent automatic grant refresh. Revision 4 adds
+  read-only `LLM_SUMMARY_PREFLIGHT`, both recipients' production disclosure,
+  and **Agree and summarize**. Approval binds version, origins, IDs, models
+  and endpoints to freshly resolved settings. No extraction/egress/grant
+  occurs on preflight or dismissal. Cost confirmation is separate and its
+  bound resend cannot restore revoked grants.
+- Red: initial B06 command had 28 failures / 123 tests; renewed production
+  consent command had 31 failures / 86 tests. Additional self-review caught
+  missing approval (1 failure) and revoked cost-resend grants (2 failures).
+  Final targeted consumer gate: 12 files / 345 passing, no skips.
+- Scoped consent re-review: original P1 addressed, Spec PASS. A new P2
+  disclosure-layout finding was fixed inline with a permanent browser
+  regression: at 360×480, the action had viewport ratio 0 before the fix;
+  bounded flex layout, keyboard-focusable scrolling content and fixed action
+  footer passed the same rebuilt browser test. Component/accessibility
+  slice: 15 passing. No structural/source-text layout assertion was used.
+- Fresh full gate: lint/typecheck, 151 files / 2,681 tests
+  (`--maxWorkers=1`), build, manifest/bundle/store/site passed.
+  `xvfb-run -a npm run test:e2e -- tests/e2e/llm.spec.ts tests/e2e/provider.spec.ts`:
+  12 passed, no skips. Native permission prompts/live/eval remain excluded.
+- The summary browser fixture uses real preflight/affirmative protocol for
+  extraction because toolbar `activeTab` is not automated. It separately
+  opens/dismisses the production narrow dialog and proves zero provider
+  requests. B07 resource identity is still the next dependent task.
 
 ## Planning Validation
 

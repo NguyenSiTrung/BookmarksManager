@@ -4,14 +4,17 @@ import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
 import { LlmGateError } from "../net/llm-send";
 import { readLlmProvider } from "./settings";
+import { minimizeBookmark } from "../decisions/minimize";
+import { readBlocklist } from "../decisions/blocklist";
 import type { PageExtract } from "../extract/page";
 import type { TokenUsage, ChatMessage } from "./wire";
 
 /**
  * The LLM half of spec FR10 — summarize a bounded page extract. Runs under
  * the `llm_summary` scope as a `manual` request (the Summarize action is an
- * explicit click): the page's title, excerpt, headings, and description go
- * to the provider; a strict `{summary ≤ 2,000 chars}` object comes back.
+ * explicit click): the page's title, cleaned URL, excerpt, headings, and
+ * optional description/site name go to the provider; a strict
+ * `{summary ≤ 2,000 chars}` object comes back.
  * Nothing here persists — the orchestrator in `src/decisions/summaries.ts`
  * routes the draft through Jev verification first.
  */
@@ -61,8 +64,20 @@ export async function summarizePage(
   if (record === null) {
     throw new LlmGateError("invalid_provider", "Unknown LLM provider.");
   }
+  // Defense in depth for direct callers: never serialize a raw extraction
+  // URL, even when the orchestrator has already supplied a minimized copy.
+  // Keep the original extraction untouched for feature-local admission.
+  const minimized = minimizeBookmark(extract, await readBlocklist());
+  if (
+    minimized === null ||
+    !["http:", "https:"].includes(new URL(minimized.url).protocol)
+  ) {
+    throw new LlmGateError(
+      "request_not_allowed", "This page cannot be sent for summarization.",
+    );
+  }
   const payload = {
-    url: extract.url,
+    url: minimized.url,
     title: extract.title,
     excerpt: extract.excerpt,
     headings: extract.headings,

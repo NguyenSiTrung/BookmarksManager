@@ -10,14 +10,19 @@ import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import {
   grantConsentAtOrigin,
   hasConsentAtOrigin,
+  CONSENT_VERSION,
 } from "../consent/records";
+import type {
+  SummaryConsentApproval,
+  SummaryConsentPreflight,
+} from "../messages/summaries";
 import {
   CONSENT_SCOPE,
   JEV_SUMMARY_VERIFY_SCOPE,
   LLM_SUMMARY_SCOPE,
 } from "../schemas/provider";
 import { resolveLlmDestination } from "../llm/providers";
-import { readActiveJevProvider } from "../jev/settings";
+import { readActiveJevProvider, type ActiveJevProvider } from "../jev/settings";
 import { setBookmarkSummary } from "../db/meta";
 import { sendConsented } from "../net/send";
 
@@ -42,6 +47,8 @@ export interface SummarizeInput {
   readonly providerId?: string;
   /** One-shot manual confirmation for an unpriced provider. */
   readonly unknownCostConfirmed?: boolean;
+  /** Only an affirmative disclosed send supplies this exact binding. */
+  readonly consentApproval?: SummaryConsentApproval;
   readonly signal?: AbortSignal;
   /** Test seam — production leaves this unset (`sendConsented`). */
   readonly jevTransport?: JevTransport;
@@ -156,6 +163,10 @@ async function admitSummary(bookmarkId: string, extract: PageExtract) {
 export async function summarizeActiveBookmark(
   input: SummarizeInput,
 ): Promise<SummarizeOutcome> {
+  // A cost-confirmation resend is not renewed feature consent. If revoked
+  // meanwhile, it must return to the disclosure instead of restoring grants.
+  const authorized = await authorizeSummary(input, input.unknownCostConfirmed !== true);
+  if (!authorized.ok) return authorized;
   const extracted = await extractActivePage(input.tabId);
   if (!extracted.ok) {
     return {
@@ -165,7 +176,78 @@ export async function summarizeActiveBookmark(
       message: extracted.message,
     };
   }
-  return summarizeExtracted(input, extracted.extract);
+  return summarizeExtracted({
+    ...input,
+    // Pin the same approved providers through extraction and both hops.
+    consentApproval: authorized.consent.approval,
+  }, extracted.extract);
+}
+
+type SummaryConsentContext =
+  | { readonly ok: true; readonly consent: SummaryConsentPreflight; readonly jev: ActiveJevProvider; readonly providerId: string }
+  | Exclude<SummarizeOutcome, { ok: true }>;
+
+/** Read-only: no extraction, keys, consent writes, or provider requests. */
+export async function readSummaryConsent(providerId?: string): Promise<SummaryConsentContext> {
+  const record = providerId === undefined
+    ? await readActiveLlmProvider() : await readLlmProvider(providerId);
+  if (record === null) {
+    return { ok: false, stage: "summarize", code: "no_provider", message: "No LLM provider is configured for summaries." };
+  }
+  const llm = resolveLlmDestination(record.provider);
+  const jev = await readActiveJevProvider(CONSENT_SCOPE);
+  if (jev === null) {
+    return { ok: false, stage: "verify", code: "no_provider", message: "No Jev provider is enabled for summary verification." };
+  }
+  return {
+    ok: true, providerId: record.providerId, jev,
+    consent: {
+      approval: {
+        consentVersion: CONSENT_VERSION,
+        llm: { origin: llm.origin, providerId: record.providerId, model: llm.model, endpoint: llm.chatCompletionsUrl },
+        jev: { origin: jev.destination.origin, providerId: jev.providerId, model: jev.model, endpoint: jev.destination.url },
+      },
+      llmGranted: await hasConsentAtOrigin(LLM_SUMMARY_SCOPE, llm.origin),
+      jevGranted: await hasConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jev.destination.origin),
+    },
+  };
+}
+
+function sameApproval(a: SummaryConsentApproval, b: SummaryConsentApproval): boolean {
+  return a.consentVersion === b.consentVersion &&
+    (["llm", "jev"] as const).every((hop) =>
+      (["origin", "providerId", "model", "endpoint"] as const).every((key) => a[hop][key] === b[hop][key]),
+    );
+}
+
+function consentRefusal(scope: string): Exclude<SummarizeOutcome, { ok: true }> {
+  return { ok: false, stage: "consent", code: "no_consent", scope, message: "Review the current summary recipients and disclosure before sending." };
+}
+
+async function authorizeSummary(input: SummarizeInput, allowGrant = true): Promise<SummaryConsentContext> {
+  try {
+    const current = await readSummaryConsent(input.providerId);
+    if (!current.ok) return current;
+    if (input.consentApproval !== undefined) {
+      const approval = input.consentApproval;
+      // The message trust boundary strict-parses the approval. Compare every
+      // disclosed binding field again against freshly resolved providers.
+      if (!sameApproval(approval, current.consent.approval)) {
+        return consentRefusal(LLM_SUMMARY_SCOPE);
+      }
+      if (allowGrant) {
+        if (!current.consent.llmGranted) await grantConsentAtOrigin(LLM_SUMMARY_SCOPE, approval.llm.origin);
+        if (!current.consent.jevGranted) await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, approval.jev.origin);
+      }
+    }
+    const checked = await readSummaryConsent(input.providerId);
+    if (!checked.ok || !sameApproval(current.consent.approval, checked.consent.approval)) return consentRefusal(LLM_SUMMARY_SCOPE);
+    if (!checked.consent.llmGranted) return consentRefusal(LLM_SUMMARY_SCOPE);
+    if (!checked.consent.jevGranted) return consentRefusal(JEV_SUMMARY_VERIFY_SCOPE);
+    return checked;
+  } catch {
+    return consentRefusal(LLM_SUMMARY_SCOPE);
+  }
 }
 
 /**
@@ -176,6 +258,8 @@ export async function summarizeExtracted(
   input: SummarizeInput,
   extract: PageExtract,
 ): Promise<SummarizeOutcome> {
+  const authorized = await authorizeSummary(input, false);
+  if (!authorized.ok) return authorized;
   // Bookmark + URL match — the page must BE the saved bookmark.
   let minimized;
   try {
@@ -191,79 +275,26 @@ export async function summarizeExtracted(
   }
   const beforeSend = async () => {
     await admitSummary(input.bookmarkId, extract);
+    const current = await authorizeSummary({
+      ...input, consentApproval: authorized.consent.approval,
+    }, false);
+    if (!current.ok) {
+      // No grants are refreshed on fallback/repair/retry, even after revoke.
+      const error = new Error("Summary consent or provider changed before sending.");
+      Object.assign(error, { code: "no_consent" });
+      throw error;
+    }
   };
 
-  // Consents — `llm_summary` at the LLM origin and `jev_summary_verify` at
-  // the Jev origin are separate grants (spec FR10.2).
-  const record = await readActiveLlmProvider();
-  const providerId = input.providerId ?? record?.providerId;
-  if (providerId === undefined) {
-    return {
-      ok: false,
-      stage: "summarize",
-      code: "no_provider",
-      message: "No LLM provider is configured for summaries.",
-    };
-  }
-  const provider = await readLlmProvider(providerId);
-  if (provider === null) {
-    return {
-      ok: false,
-      stage: "summarize",
-      code: "invalid_provider",
-      message: "The configured LLM provider is unknown.",
-    };
-  }
-  const llmOrigin = resolveLlmDestination(provider.provider).origin;
-  // The Jev side of the verify hop is the enabled Jev provider — whichever
-  // preset or custom endpoint holds `jev_test` consent. Before custom
-  // providers existed this was hardcoded to TypeSafe, which silently broke
-  // verification for OpenRouter-only users.
-  const jev = await readActiveJevProvider(CONSENT_SCOPE);
-  if (jev === null) {
-    return {
-      ok: false,
-      stage: "verify",
-      code: "no_provider",
-      message: "No Jev provider is enabled for summary verification.",
-    };
-  }
-  const jevOrigin = jev.destination.origin;
-  // The Summarize click is the consent trigger for both page-text scopes —
-  // write the grants so the per-scope checks below pass.
-  await grantConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin);
-  await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOrigin);
-  if (
-    !(await hasConsentAtOrigin(LLM_SUMMARY_SCOPE, llmOrigin).catch(
-      () => false,
-    ))
-  ) {
-    return {
-      ok: false,
-      stage: "consent",
-      code: "no_consent",
-      scope: LLM_SUMMARY_SCOPE,
-      message: `Page text has not been consented for ${llmOrigin}.`,
-    };
-  }
-  if (
-    !(await hasConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jevOrigin).catch(
-      () => false,
-    ))
-  ) {
-    return {
-      ok: false,
-      stage: "consent",
-      code: "no_consent",
-      scope: JEV_SUMMARY_VERIFY_SCOPE,
-      message: `Jev verification has not been consented for ${jevOrigin}.`,
-    };
-  }
+  const { providerId, jev } = authorized;
 
   // Summarize — a manual LLM call (`unknownCostConfirmed` honored).
+  // Egress gets its own minimized copy; admission retains the original
+  // captured page URL and rechecks it with the live bookmark at every send.
+  const outboundExtract: PageExtract = { ...extract, url: minimized.url };
   let summarized;
   try {
-    summarized = await summarizePage(providerId, extract, {
+    summarized = await summarizePage(providerId, outboundExtract, {
       beforeSend,
       ...(input.unknownCostConfirmed !== undefined
         ? { unknownCostConfirmed: input.unknownCostConfirmed }

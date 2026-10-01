@@ -18,9 +18,12 @@ export type { ConsentScope };
  * that changes neither (e.g. `NO_DEVELOPER_SERVER_NOTE`) does not bump it.
  * Version 2 introduced the `jev_decisions` bookmark-metadata scope; version
  * 3 introduces the Phase 5 LLM scopes and the dynamic-origin grants behind
- * them, so every earlier row is re-disclosed.
+ * them, so every earlier row is re-disclosed. Version 4 discloses all
+ * existing summary fields (including the cleaned URL and optional meta
+ * description) and Jev verification's saved bookmark/domain/headings.
+ * Older grants remain stored but cannot authorize sends until reacquired.
  */
-export const CONSENT_VERSION = 3;
+export const CONSENT_VERSION = 4;
 
 /**
  * Record the user's affirmative consent for a scope at an origin. Uses

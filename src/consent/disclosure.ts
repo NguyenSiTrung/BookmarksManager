@@ -128,9 +128,8 @@ export const DECISIONS_SENT_FIELDS = [
 ] as const;
 
 /**
- * Content that is never sent under any scope. Named explicitly so the
- * disclosure states the negative as plainly as the positive (plan §13.4:
- * notes and page text never leave the device).
+ * Content never sent under `jev_decisions`. Notes remain unsent under every
+ * scope; bounded page text is a separately consented summary-only exception.
  */
 export const DECISIONS_NEVER_SENT_FIELDS = ["notes", "page text"] as const;
 
@@ -161,7 +160,7 @@ export const DECISIONS_TRIGGER_NOTE =
 
 /** What the `jev_decisions` request is made of — disclosed before consent. */
 export const DECISIONS_DESCRIPTION =
-  "bookmark metadata only — no notes and no page text, which are never sent under any scope";
+  "bookmark metadata only — no notes under any scope and no page text under jev_decisions; bounded page text is sent only under the separate Summarize scopes";
 
 /** The public URL where the extension's privacy policy is hosted. */
 export const PRIVACY_POLICY_URL =
@@ -281,9 +280,16 @@ export const LLM_SCOPE_DISCLOSURES = {
   [LLM_SUMMARY_SCOPE]: {
     title: "Page summaries",
     purpose: "summarize the current page for a saved bookmark",
-    fields: ["page title", "site name", "headings", "bounded page excerpt"],
+    fields: [
+      "page title",
+      "cleaned URL",
+      "site name",
+      "headings",
+      "bounded page excerpt",
+      "meta description",
+    ],
     trigger:
-      'only when you click "Summarize" — the page is extracted only after that click',
+      'only when you click "Agree and summarize" after reviewing both recipients — opening the Summarize dialog does not extract or send',
     credentialUse: LLM_CREDENTIAL_USE,
   },
   [JEV_SUMMARY_VERIFY_SCOPE]: {
@@ -291,7 +297,10 @@ export const LLM_SCOPE_DISCLOSURES = {
     purpose:
       "verify that an LLM summary is supported by the extracted page text",
     fields: [
-      "page title",
+      "bookmark title",
+      "cleaned URL",
+      "domain",
+      "headings",
       "bounded page excerpt",
       "LLM-generated summary",
     ],

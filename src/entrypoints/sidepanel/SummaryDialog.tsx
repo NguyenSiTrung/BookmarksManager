@@ -3,23 +3,14 @@ import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDial
 import {
   SummarizeMessageResult,
   type SummarizeMessage,
+  type SummaryConsentApproval,
+  type SummaryConsentPreflight,
 } from "../../messages/summaries";
+import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
 
-/**
- * The Summarize dialog (spec FR10): a bookmark row action resolves the
- * active tab inside the click handler (the `activeTab` grant), opens this
- * dialog, and the worker runs extract → LLM summarize → Jev verify →
- * persist. The page text is sent ONLY after this explicit intent — the
- * dialog's own open is the consent-gated trigger; nothing runs on mount,
- * navigation, or timers.
- *
- * Progress/result states live here: `running` → `done` (the persisted
- * summary, shown only after `summary_ok` confirms verified storage) or
- * `error` (the worker's code + message verbatim). On
- * `confirmation_required` the dialog asks via `CostConfirmationDialog` and
- * resends the SAME intent with `unknownCostConfirmed: true` — the only
- * path allowed to set that flag (spec FR7.8).
- */
+/** Read-only preflight on open; only the disclosed affirmative send may
+ * authorize extraction/egress. Unknown-cost confirmation is separate and
+ * retains exactly the accepted provider/version binding. */
 
 declare const chrome: {
   runtime?: {
@@ -76,8 +67,10 @@ export interface SummaryDialogProps {
 }
 
 type Phase =
+  | { kind: "loading" }
+  | { kind: "disclosure"; consent: SummaryConsentPreflight }
   | { kind: "running" }
-  | { kind: "confirm"; destinationOrigin: string }
+  | { kind: "confirm"; destinationOrigin: string; approval: SummaryConsentApproval }
   | { kind: "done"; summary: string; model: string }
   | { kind: "error"; message: string };
 
@@ -85,19 +78,16 @@ const TITLE_ID = "summary-dialog-title";
 const ANNOUNCE_ID = "summary-dialog-announce";
 
 export function SummaryDialog(props: SummaryDialogProps) {
-  const [phase, setPhase] = useState<Phase>({ kind: "running" });
+  const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const generation = useRef(0);
-  // Render-time reset (React's adjust-state-on-prop-change pattern): when the
-  // dialog flips closed→open the phase restarts at `running` without a
-  // setState-in-effect.
-  const [prevOpen, setPrevOpen] = useState(false);
-  if (props.open && !prevOpen) {
-    setPrevOpen(true);
-    setPhase({ kind: "running" });
-  } else if (!props.open && prevOpen) {
-    setPrevOpen(false);
+  const busy = useRef(false);
+  const inputKey = JSON.stringify([props.open, props.tabId, props.bookmarkId, props.bookmarkTitle]);
+  const [previousInput, setPreviousInput] = useState(inputKey);
+  if (inputKey !== previousInput) {
+    setPreviousInput(inputKey);
+    setPhase({ kind: "loading" });
   }
 
   useEffect(() => {
@@ -108,54 +98,51 @@ export function SummaryDialog(props: SummaryDialogProps) {
       previousFocus.current.focus();
       previousFocus.current = null;
     }
-    return () => {
-      // Invalidate stale sends when the dialog closes mid-flight.
-      generation.current += 1;
-    };
   }, [props.open]);
 
   useEffect(() => {
-    if (!props.open) return;
-    const gen = generation.current;
-    void sendSummarizeMessage({
-      type: "LLM_SUMMARIZE",
-      tabId: props.tabId,
-      bookmarkId: props.bookmarkId,
-    }).then((reply) => {
-      if (generation.current !== gen) return; // closed meanwhile
-      applyReply(reply);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open]);
+    const gen = ++generation.current;
+    busy.current = false;
+    if (props.open) {
+      void sendSummarizeMessage({ type: "LLM_SUMMARY_PREFLIGHT" }).then((reply) => {
+        if (generation.current !== gen) return;
+        if (reply.ok && reply.code === "summary_consent") {
+          setPhase({ kind: "disclosure", consent: reply.consent });
+        } else {
+          setPhase({ kind: "error", message: reply.ok ? UNEXPECTED_REPLY_MESSAGE : reply.message });
+        }
+      });
+    }
+    return () => { generation.current += 1; };
+  }, [props.open, inputKey]);
 
-  function applyReply(reply: SummarizeMessageResult) {
-    if (reply.ok) {
-      if (reply.code === "summary_ok") {
-        setPhase({ kind: "done", summary: reply.summary, model: reply.model });
-      }
-      return;
-    }
-    if (
-      reply.code === "confirmation_required" &&
-      reply.destinationOrigin !== undefined
-    ) {
-      setPhase({ kind: "confirm", destinationOrigin: reply.destinationOrigin });
-      return;
-    }
-    setPhase({ kind: "error", message: reply.message });
+  function close() {
+    generation.current += 1;
+    busy.current = true;
+    props.onClose();
   }
 
-  function resendConfirmed() {
+  function sendApproved(approval: SummaryConsentApproval, unknownCostConfirmed = false) {
+    if (busy.current) return;
+    busy.current = true;
     const gen = generation.current;
     setPhase({ kind: "running" });
     void sendSummarizeMessage({
       type: "LLM_SUMMARIZE",
       tabId: props.tabId,
       bookmarkId: props.bookmarkId,
-      unknownCostConfirmed: true,
+      consentApproval: approval,
+      ...(unknownCostConfirmed ? { unknownCostConfirmed: true } : {}),
     }).then((reply) => {
       if (generation.current !== gen) return;
-      applyReply(reply);
+      busy.current = false;
+      if (reply.ok && reply.code === "summary_ok") {
+        setPhase({ kind: "done", summary: reply.summary, model: reply.model });
+      } else if (!reply.ok && reply.code === "confirmation_required" && reply.destinationOrigin === approval.llm.origin) {
+        setPhase({ kind: "confirm", destinationOrigin: reply.destinationOrigin, approval });
+      } else {
+        setPhase({ kind: "error", message: reply.ok ? UNEXPECTED_REPLY_MESSAGE : reply.message });
+      }
     });
   }
 
@@ -166,7 +153,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      props.onClose();
+      close();
     }
   };
 
@@ -180,9 +167,9 @@ export function SummaryDialog(props: SummaryDialogProps) {
         aria-modal="true"
         aria-labelledby={TITLE_ID}
         onKeyDown={onKeyDown}
-        className="mx-4 max-w-lg rounded-lg bg-white p-5 shadow-xl"
+        className="mx-4 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-lg bg-white p-5 shadow-xl"
       >
-        <h2 id={TITLE_ID} className="text-base font-semibold">
+        <h2 id={TITLE_ID} className="shrink-0 text-base font-semibold">
           Summarize “{props.bookmarkTitle}”
         </h2>
         <p
@@ -191,12 +178,41 @@ export function SummaryDialog(props: SummaryDialogProps) {
           aria-live="polite"
           className="sr-only"
         >
+          {phase.kind === "loading" && "Loading summary disclosure…"}
+          {phase.kind === "disclosure" && "Review both recipients before sending."}
           {phase.kind === "running" && "Summarizing the page…"}
           {phase.kind === "done" && "Summary saved to the bookmark."}
           {phase.kind === "error" && `Summarize failed: ${phase.message}`}
           {phase.kind === "confirm" && "The request needs a cost confirmation."}
         </p>
-        <div className="mt-3 min-h-16">
+        <div
+          role="region"
+          aria-label="Summary disclosure and result"
+          tabIndex={0}
+          className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain break-words"
+        >
+          {phase.kind === "loading" && <p>Loading summary disclosure…</p>}
+          {phase.kind === "disclosure" && (
+            <div className="space-y-3 text-sm">
+              <p>Consent version {phase.consent.approval.consentVersion}. Review both recipients before agreeing.</p>
+              {(["llm", "jev"] as const).map((hop) => {
+                const disclosure = LLM_SCOPE_DISCLOSURES[hop === "llm" ? "llm_summary" : "jev_summary_verify"];
+                return (
+                  <section key={hop} aria-label={`${disclosure.title} disclosure`}>
+                    <h3 className="font-semibold">{disclosure.title}</h3>
+                    <p>{phase.consent.approval[hop].origin}</p>
+                    <p>{disclosure.purpose}</p>
+                    <ul>{disclosure.fields.map((field) => <li key={field}>{field}</li>)}</ul>
+                    <p>{hop === "llm" ? "Site name and meta description are included when present." : "The title is the saved bookmark title."}</p>
+                    <p>{disclosure.credentialUse}</p>
+                    <p>{(hop === "llm" ? phase.consent.llmGranted : phase.consent.jevGranted) ? "Current grant" : "New or renewed consent required"}</p>
+                  </section>
+                );
+              })}
+              <p>Query strings, fragments, and embedded URL credentials are removed. Notes, byline, and the full page DOM are not sent.</p>
+              <p>Agreeing authorizes these summary scopes for these recipients and starts this request. Unknown-cost confirmation, if needed, is a separate choice.</p>
+            </div>
+          )}
           {phase.kind === "running" && (
             <p className="text-sm text-slate-600">Summarizing the page…</p>
           )}
@@ -211,23 +227,28 @@ export function SummaryDialog(props: SummaryDialogProps) {
             </p>
           )}
         </div>
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex shrink-0 justify-end gap-2">
           <button
             ref={cancelRef}
             type="button"
-            onClick={props.onClose}
+            onClick={close}
             className="rounded-md border px-3 py-1.5 text-sm"
           >
             Close
           </button>
+          {phase.kind === "disclosure" && (
+            <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => sendApproved(phase.consent.approval)}>
+              Agree and summarize
+            </button>
+          )}
         </div>
         {phase.kind === "confirm" && (
           <CostConfirmationDialog
             open
             featureLabel="Summarize this page"
             destinationOrigin={phase.destinationOrigin}
-            onConfirm={resendConfirmed}
-            onCancel={props.onClose}
+            onConfirm={() => sendApproved(phase.approval, true)}
+            onCancel={close}
           />
         )}
       </div>

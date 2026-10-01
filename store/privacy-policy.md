@@ -90,9 +90,9 @@ fresh install the extension sends zero requests.
 
 ## Data sent to third parties — only at your direction
 
-The only features that can send data are the optional **Test connection** and
-the optional **bookmark decisions** flow for the Jev AI providers. Both are off
-until you turn them on, and neither sends anything unless you start it.
+The only features that can send data are the optional **Test connection**,
+**bookmark decisions**, and the separately consented **LLM features** below.
+All are off until you configure them, and send only inside actions you start.
 
 This extension has no server of its own — the developer receives nothing;
 every request goes only to the origin you configured.
@@ -180,15 +180,29 @@ message body are never sent under any scope.
   to propose a folder structure. Proposals are plans for your review —
   nothing is applied automatically. Triggered only when you start
   "Restructure".
-- **Page summaries** (`llm_summary`) — sends the page title, site name,
-  headings, and a bounded page excerpt to summarize the current page. The
-  page is extracted only after you click "Summarize" — never in the
-  background and never in incognito.
-- **Jev summary verification** (`jev_summary_verify`) — sends the page
-  title, the bounded page excerpt, and the LLM-generated summary to your
-  Jev provider to verify the summary is supported by the page. This is the
-  only LLM feature that sends data to Jev, and only as part of a Summarize
-  action you started.
+- **Page summaries** (`llm_summary`) — sends the page title, cleaned URL,
+  headings, bounded page excerpt, and site name and meta description when
+  present to summarize the current page. The page is extracted only after
+  you click "Summarize" — never in the background and never in incognito.
+- **Jev summary verification** (`jev_summary_verify`) — sends the saved
+  bookmark title, cleaned URL, domain, headings, bounded page excerpt, and
+  LLM-generated summary to your Jev provider to verify the summary is
+  supported by the page. Only as part of a Summarize action you started;
+  the page title, site name, and meta description are not added to this hop.
+
+Both summary hops remove the URL's query string, fragment, and embedded
+username/password before sending. The original URL stays local for admission
+and matching. Notes, the extraction's byline, and the full page DOM are not
+included in either summary payload; only a Jev-supported summary is saved,
+not the excerpt.
+
+Opening the Summarize dialog only reads the configured recipients and current
+consent status. It displays both exact origins, their field lists, and the
+consent version before **Agree and summarize** authorizes extraction and
+sending. Closing it grants nothing. The worker rechecks the displayed
+recipients/version against current configuration before granting consent;
+a changed provider requires reviewing again. Unknown-cost confirmation is a
+separate choice that retains the accepted recipient/version binding.
 
 Each grant is tied to the exact configured origin (including the port for a
 loopback endpoint). Revoking the provider deletes every consent scope at its
@@ -200,8 +214,11 @@ rates you enter for any other model. When no price is known, automatic
 confirmation before sending. Nothing is sent on install, on a timer, or in
 the background.
 
-The consent is versioned — `consentVersion`, currently 3 — so a change to the
+The consent is versioned — `consentVersion`, currently 4 — so a change to the
 sent fields or recipients re-shows the disclosure before the next request.
+Older grants remain stored as stale records and authorize no request until
+the user reaccepts for that exact scope and origin; reacquiring one origin
+does not refresh another origin's grant.
 Revoking a provider deletes **every** consent grant for its origin —
 `jev_test`, `jev_decisions`, and every `llm_*` scope — removes its host
 permission, and offers to delete its key.
@@ -247,9 +264,10 @@ version and a live Chrome host permission, and stay limited to the provider
 origins listed above. The consent gate, encrypted key storage, the synthetic
 Test connection, and the bookmark-data decision flow are all in place — the
 build makes no remote requests except the synthetic test request on an
-explicit Test connection click and a `jev_decisions` request on a user-started
-save, Analyze, library scan, or Ask search, and none at all until you enable a
-provider and start one of those actions.
+explicit Test connection click, a `jev_decisions` request on a user-started
+save, Analyze, library scan, or Ask search, and the separately consented LLM
+features above (including both Summarize hops). None send until you configure
+a provider and start the corresponding action.
 
 ## Limited Use statement
 
@@ -260,7 +278,8 @@ In plain terms: this extension uses any data it handles only to provide its
 single user-facing purpose (managing your bookmarks, with an optional provider
 connection you control). It does not sell your data, does not use it for
 advertising, does not use it to determine creditworthiness, and does not let
-humans read it. No Google API data leaves the device.
+humans read it. Only the disclosed fields leave the device for the optional
+provider features you start; native bookmark management remains local.
 
 ## Children
 

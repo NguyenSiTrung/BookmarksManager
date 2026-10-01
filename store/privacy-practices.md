@@ -80,7 +80,8 @@ custom origin at runtime from a direct click, and the egress gate re-checks
 the exact origin, its consent scope, and the request schema before any send.
 The three loopback literals cover local LLM or Jev servers — Chrome patterns cannot
 express ports, so the gate enforces the port itself. The extension requests
-no host access at install time and reads no page content on any site.)
+no host access at install time. Page content is read only after an explicit
+Summarize action using activeTab and the bundled extractor.)
 
 ## Remote code
 
@@ -105,9 +106,9 @@ every request goes only to the origin you configured.
 - **Bookmark data stays on the device by default.** Titles, URLs, folder
   structure, tags, categories, and notes are read from and written to Chrome's
   own bookmarks and the extension's local IndexedDB. They are never
-  transmitted anywhere unless you enable the optional `jev_decisions`
-  bookmark-data flow described below. Imports and exports are local file reads
-  and downloads.
+  transmitted anywhere except the disclosed fields of the optional
+  `jev_decisions` and separately consented LLM/Summarize flows described below.
+  Notes remain local. Imports and exports are local file reads and downloads.
 - **Search queries are never stored or sent.** All search — the side-panel
   bar, command palette, popup, and `bm` omnibox keyword — runs against an
   in-memory local index; typing produces zero network requests. Only an
@@ -131,7 +132,10 @@ every request goes only to the origin you configured.
   or `https://openrouter.ai/privacy`; a custom endpoint is governed by its
   own policy) and this extension's privacy policy
   (https://nguyensitrung.github.io/BookmarksManager/privacy/). The
-  consent is versioned (`consentVersion`, currently 3); revoking a provider
+  consent is versioned (`consentVersion`, currently 4); older grants remain
+  stored but stale and cannot authorize requests until reacquired for their
+  exact scope and origin. Reaccepting one origin does not refresh another.
+  Revoking a provider
   deletes every consent grant for its origin — `jev_test`, `jev_decisions`,
   and every `llm_*` scope — removes its host permission, and offers to delete
   its key.
@@ -155,23 +159,38 @@ every request goes only to the origin you configured.
   - Restructure proposals (`llm_restructure`): folder paths, category
     counts, tag counts, domains, representative titles (capped) — only when
     you start "Restructure"; proposals are review-only.
-  - Page summaries (`llm_summary`): page title, site name, headings, bounded
-    page excerpt — extracted and sent only after you click "Summarize",
-    never in the background or incognito.
-  - Jev summary verification (`jev_summary_verify`): page title, bounded
-    page excerpt, LLM-generated summary — sent to your Jev provider only as
-    part of a Summarize action you started.
-- **Everything else: not collected.** The only other transmission is the test
-  connection's fixed synthetic payload (`model`, `state`, `questions`), which
-  contains no user data.
-- **Web history: only if `jev_decisions` is enabled.** Bookmark titles and
-  cleaned URLs are the Web history category, and the `jev_decisions` flow
-  sends them to the user-chosen AI provider when AI features are on — the
+  - Page summaries (`llm_summary`): page title, cleaned URL, headings,
+    bounded page excerpt, and site name and meta description when present —
+    extracted and sent only after you click "Summarize", never in the
+    background or incognito.
+  - Jev summary verification (`jev_summary_verify`): saved bookmark title,
+    cleaned URL, domain, headings, bounded page excerpt, LLM-generated
+    summary — sent to your Jev provider only as part of a Summarize action
+    you started. No page title, site name, or meta description is added.
+  Both summary hops remove query strings, fragments, and embedded URL
+  usernames/passwords. Original URLs stay local for admission and matching.
+  Notes, the extraction's byline, and the full page DOM are not in either
+  summary payload. Only a Jev-supported summary is saved, not the excerpt.
+  Opening Summarize performs a read-only consent preflight and displays both
+  exact origins, field lists, and the current version. Only **Agree and
+  summarize** authorizes extraction and sending; closing grants nothing.
+  The worker freshly checks those recipients/version before granting.
+  Provider changes require reviewing again, and any separate unknown-cost
+  confirmation retains the accepted binding.
+- **Everything else: not collected.** Beyond these disclosed flows, the Jev
+  test connection sends only its fixed synthetic payload (`model`, `state`,
+  `questions`), which contains no user data.
+- **Web history: only in optional, consented AI flows.** Bookmark/page titles
+  and cleaned URLs are the Web history category. The `jev_decisions` flow
+  sends bookmark metadata to the user-chosen AI provider when enabled — the
   bookmark title, cleaned URL, domain, and folder path; tag names and
   descriptions; candidate folder paths; candidate bookmarks; the
   near-duplicate partner; and the Ask search query. Nothing is sent until you
   enable `jev_decisions` and start a save, Analyze, library scan, or Ask
-  search.
+  search. The separately consented `llm_summary` and `jev_summary_verify`
+  scopes also send the titles and cleaned URLs listed above, only after
+  an explicit Summarize action; explanations/second opinions can carry the
+  disclosed decision state.
 - Not collected: personally identifiable information, health information,
   financial and payment information, personal communications, location, user
   activity. (No click or keystroke monitoring. Website content — a bounded

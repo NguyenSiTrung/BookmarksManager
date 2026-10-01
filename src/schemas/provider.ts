@@ -174,6 +174,8 @@ const ConsentOrigin = z
     }
   }, "origin must be a canonical https:// origin, or a canonical http:// loopback origin (localhost, 127.0.0.1, [::1]), without path, query, or trailing slash");
 
+/** Accept historical grant versions for durable storage; authorization
+ * checks the shared current version in `src/consent/records.ts`. */
 export const ConsentRecord = z.object({
   scope: ConsentScope,
   origin: ConsentOrigin,

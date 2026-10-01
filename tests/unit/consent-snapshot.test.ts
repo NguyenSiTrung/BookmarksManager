@@ -19,6 +19,7 @@ import {
 } from "../../src/consent/disclosure";
 import { PRESETS } from "../../src/net/presets";
 import { DecisionState } from "../../src/schemas/decision-state";
+import { SummaryVerificationState } from "../../src/schemas/summary-verification";
 
 /**
  * The §13.12 consent snapshot test. It fails when the set of fields a task
@@ -77,6 +78,17 @@ const SENT_FIELD_SNAPSHOTS: Readonly<Record<number, readonly string[]>> = {
     // jev_summary_verify
     "LLM-generated summary",
   ],
+  4: [
+    ...SYNTHETIC_FIELDS,
+    "bookmark title", "cleaned URL", "domain", "folder path", "folder paths",
+    "tag names and descriptions", "candidate folder paths", "candidate bookmarks",
+    "near-duplicate partner", "Ask search query", "messages", "response_format",
+    "decision state", "question", "candidate labels", "Jev probabilities",
+    "selected answer", "allowed options", "Jev answer", "category counts",
+    "tag counts", "domains", "representative titles (capped)", "page title",
+    "site name", "headings", "bounded page excerpt", "meta description",
+    "LLM-generated summary",
+  ],
 };
 
 /** Map each populated `DecisionState` field to its disclosure label. */
@@ -105,8 +117,25 @@ const STORE_TEXTS = [
 ] as const;
 
 describe("consent snapshot (§13.12)", () => {
-  it("pins CONSENT_VERSION to 3", () => {
-    expect(CONSENT_VERSION).toBe(3);
+  it("pins CONSENT_VERSION to 4", () => {
+    expect(CONSENT_VERSION).toBe(4);
+  });
+
+  it("discloses the exact LLM summary fields, including cleaned URL and optional description", () => {
+    expect(LLM_SCOPE_DISCLOSURES.llm_summary.fields).toEqual([
+      "page title", "cleaned URL", "site name", "headings",
+      "bounded page excerpt", "meta description",
+    ]);
+  });
+
+  it("discloses Jev's actual saved bookmark fields and page verification fields", () => {
+    expect(LLM_SCOPE_DISCLOSURES.jev_summary_verify.fields).toEqual([
+      "bookmark title", "cleaned URL", "domain", "headings",
+      "bounded page excerpt", "LLM-generated summary",
+    ]);
+    expect(Object.keys(SummaryVerificationState.shape).sort()).toEqual([
+      "bookmark", "excerpt", "headings", "summary",
+    ]);
   });
 
   it("pins the exact sent-field set for the current consent version", () => {

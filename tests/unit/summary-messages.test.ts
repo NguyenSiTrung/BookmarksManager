@@ -36,6 +36,19 @@ const PAGE_EXTRACT: PageExtract = {
 let server: ReturnType<typeof makeOpenAiServer>;
 let tabsGet: ReturnType<typeof vi.fn>;
 let executeScript: ReturnType<typeof vi.fn>;
+let wireRequests: unknown[];
+
+const APPROVAL = {
+  consentVersion: 4,
+  llm: { origin: LLM_ORIGIN, providerId: PROVIDER_ID, model: "gpt-4o-mini", endpoint: `${LLM_ORIGIN}/v1/chat/completions` },
+  jev: { origin: JEV_ORIGIN, providerId: "typesafe", model: "jev-latest", endpoint: `${JEV_ORIGIN}/v1/systemone` },
+};
+
+async function preflightApproval() {
+  const reply = await handleSummarizeMessage({ type: "LLM_SUMMARY_PREFLIGHT" }, TRUSTED);
+  expect(reply).toMatchObject({ ok: true, code: "summary_consent" });
+  return (reply as unknown as { consent: { approval: typeof APPROVAL } }).consent.approval;
+}
 
 function completionWith(payload: Record<string, unknown>) {
   return (body: { model: string }) => ({
@@ -135,6 +148,7 @@ async function seedProvider(model = "gpt-4o-mini") {
  */
 function combinedFetch(jevAnswer: "supported" | "unsupported" | "uncertain") {
   return async (input: RequestInfo | URL, init?: RequestInit) => {
+    wireRequests.push(JSON.parse(String(init?.body ?? "{}")));
     const url = typeof input === "string" ? input : input.toString();
     if (url.includes("api.typesafe.ai")) {
       const body = JSON.parse(String(init?.body ?? "{}"));
@@ -171,6 +185,7 @@ function combinedFetch(jevAnswer: "supported" | "unsupported" | "uncertain") {
 }
 
 beforeEach(async () => {
+  wireRequests = [];
   const bookmarks = installBookmarksFake({
     bookmarksBar: [{ id: BOOKMARK_ID, title: "An article", url: PAGE_URL }],
   });
@@ -223,12 +238,12 @@ describe("handleSummarizeMessage", () => {
     expect(reply).toMatchObject({ ok: false, code: "no_provider" });
   });
 
-  it("grants both consents at the click, then hits the cost gate", async () => {
+  it("grants both consents only after bound approval, then separately hits the cost gate", async () => {
     // An unlisted preset model has no built-in price, so the click stops at
     // the unknown-cost confirmation instead of sending.
     await seedProvider("gpt-4o-mini-2024-07-18");
     const reply = await handleSummarizeMessage(
-      { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID },
+      { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: await preflightApproval() },
       TRUSTED,
     );
     // The Summarize click IS the consent trigger (spec FR3): both
@@ -254,6 +269,7 @@ describe("handleSummarizeMessage", () => {
         tabId: 42,
         bookmarkId: BOOKMARK_ID,
         unknownCostConfirmed: true,
+        consentApproval: await preflightApproval(),
       },
       TRUSTED,
     );
@@ -271,7 +287,7 @@ describe("handleSummarizeMessage", () => {
     await grantConsentAtOrigin("llm_summary", LLM_ORIGIN);
     await grantConsentAtOrigin("jev_summary_verify", JEV_ORIGIN);
     const reply = await handleSummarizeMessage(
-      { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID },
+      { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: await preflightApproval() },
       TRUSTED,
     );
     expect(reply).toMatchObject({
@@ -280,6 +296,170 @@ describe("handleSummarizeMessage", () => {
       destinationOrigin: LLM_ORIGIN,
       stage: "summarize",
     });
+  });
+
+  it("preflights exact recipients/version/grants read-only without extracting or sending", async () => {
+    await seedProvider();
+    const stale = { scope: "llm_summary" as const, origin: LLM_ORIGIN, consentVersion: 3, acceptedAt: "2026-09-25T10:00:00.000Z" };
+    await db.consents.put(stale);
+    const before = await db.consents.toArray();
+    expect(await handleSummarizeMessage({ type: "LLM_SUMMARY_PREFLIGHT" }, TRUSTED)).toEqual({
+      ok: true, code: "summary_consent",
+      consent: { approval: APPROVAL, llmGranted: false, jevGranted: false },
+    });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(tabsGet).not.toHaveBeenCalled();
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(wireRequests).toHaveLength(0);
+  });
+
+  it("requires displayed approval at the message boundary even with current grants", async () => {
+    await seedProvider();
+    await grantConsentAtOrigin("llm_summary", LLM_ORIGIN);
+    await grantConsentAtOrigin("jev_summary_verify", JEV_ORIGIN);
+    const before = await db.consents.toArray();
+    expect(await handleSummarizeMessage({
+      type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID,
+    }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(wireRequests).toHaveLength(0);
+  });
+
+  it("rechecks the accepted binding after extraction before any provider send", async () => {
+    await seedProvider();
+    const consentApproval = await preflightApproval();
+    executeScript.mockImplementationOnce(async () => {
+      await seedProvider("gpt-4o-mini-2024-07-18");
+      return [{ result: { title: PAGE_EXTRACT.title, excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings } }];
+    });
+    expect(await handleSummarizeMessage({
+      type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval,
+    }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent" });
+    expect(executeScript).toHaveBeenCalledOnce();
+    expect(wireRequests).toHaveLength(0);
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it.each(["missing", "stale version", "LLM origin", "Jev origin", "LLM model", "Jev endpoint"] as const)(
+    "refuses %s approval before any grant, extraction, or egress",
+    async (kind) => {
+      await seedProvider();
+      await db.consents.put({ scope: "llm_summary", origin: LLM_ORIGIN, consentVersion: 3, acceptedAt: "2026-09-25T10:00:00.000Z" });
+      const before = await db.consents.toArray();
+      const approval = structuredClone(APPROVAL);
+      if (kind === "stale version") approval.consentVersion = 3;
+      if (kind === "LLM origin") approval.llm.origin = "https://wrong-provider.dev";
+      if (kind === "Jev origin") approval.jev.origin = "https://wrong-provider.dev";
+      if (kind === "LLM model") approval.llm.model = "different-model";
+      if (kind === "Jev endpoint") approval.jev.endpoint = `${JEV_ORIGIN}/other/systemone`;
+      expect(await handleSummarizeMessage({
+        type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID,
+        ...(kind === "missing" ? {} : { consentApproval: approval }),
+      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
+      expect(await db.consents.toArray()).toEqual(before);
+      expect(tabsGet).not.toHaveBeenCalled();
+      expect(executeScript).not.toHaveBeenCalled();
+      expect(wireRequests).toHaveLength(0);
+    },
+  );
+
+  it.each(["LLM origin", "LLM model", "Jev origin", "Jev model"] as const)(
+    "rejects a changed %s after preflight rather than granting the new provider",
+    async (change) => {
+      await seedProvider();
+      const approval = await preflightApproval();
+      if (change === "LLM origin") {
+        await saveLlmProvider({
+          providerId: "preset:openrouter",
+          provider: { kind: "preset", preset: "openrouter", model: "openai/gpt-4o-mini" },
+          keySuffix: "1234", configuredAt: "2026-09-15T00:00:00.000Z",
+        });
+      } else if (change === "LLM model") {
+        await seedProvider("gpt-4o-mini-2024-07-18");
+      } else if (change === "Jev origin") {
+        await db.metadata.delete("typesafe");
+        await db.metadata.put({ key: "openrouter", value: { preset: "openrouter", model: "jev-latest", keySuffix: "1234" } });
+        await grantConsentAtOrigin("jev_test", "https://openrouter.ai");
+      } else {
+        await db.metadata.put({ key: "typesafe", value: { preset: "typesafe", model: "jev-1.13.0", keySuffix: "1234" } });
+      }
+      const before = await db.consents.toArray();
+      expect(await handleSummarizeMessage({
+        type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: approval,
+      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent" });
+      expect(await db.consents.toArray()).toEqual(before);
+      expect(executeScript).not.toHaveBeenCalled();
+      expect(wireRequests).toHaveLength(0);
+    },
+  );
+
+  it.each(["LLM_SUMMARY_PREFLIGHT", "LLM_SUMMARIZE"] as const)("rejects untrusted %s without granting or extracting", async (type) => {
+    await seedProvider();
+    const before = await db.consents.toArray();
+    const message = type === "LLM_SUMMARY_PREFLIGHT" ? { type } : {
+      type, tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: APPROVAL,
+    };
+    expect(await handleSummarizeMessage(message, { url: "https://evil.example.com/" })).toMatchObject({ ok: false, code: "untrusted_sender" });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(wireRequests).toHaveLength(0);
+  });
+
+  it("retains cost-confirmation binding and refuses a changed provider on resend", async () => {
+    await seedProvider("gpt-4o-mini-2024-07-18");
+    const consentApproval = await preflightApproval();
+    const message = { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval };
+    expect(await handleSummarizeMessage(message, TRUSTED)).toMatchObject({ ok: false, code: "confirmation_required", destinationOrigin: LLM_ORIGIN });
+    const extracted = executeScript.mock.calls.length;
+    await seedProvider("gpt-4o-mini");
+    expect(await handleSummarizeMessage({ ...message, unknownCostConfirmed: true }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent" });
+    expect(executeScript).toHaveBeenCalledTimes(extracted);
+    expect(wireRequests).toHaveLength(0);
+  });
+
+  it.each(["llm_summary", "jev_summary_verify"] as const)(
+    "does not reacquire revoked %s consent from a cost-confirmation resend",
+    async (scope) => {
+      await seedProvider("gpt-4o-mini-2024-07-18");
+      const consentApproval = await preflightApproval();
+      const message = { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval };
+      expect(await handleSummarizeMessage(message, TRUSTED)).toMatchObject({ ok: false, code: "confirmation_required" });
+      const extractionCount = executeScript.mock.calls.length;
+      const origin = scope === "llm_summary" ? LLM_ORIGIN : JEV_ORIGIN;
+      await db.consents.delete([scope, origin]);
+      expect(await handleSummarizeMessage({
+        ...message, unknownCostConfirmed: true,
+      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
+      expect(await db.consents.get([scope, origin])).toBeUndefined();
+      expect(executeScript).toHaveBeenCalledTimes(extractionCount);
+      expect(wireRequests).toHaveLength(0);
+    },
+  );
+
+  it("strictly refuses malformed approval data before any sensitive operation", async () => {
+    await seedProvider();
+    const before = await db.consents.toArray();
+    expect(await handleSummarizeMessage({
+      type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID,
+      consentApproval: { ...APPROVAL, unexpected: "not disclosed" },
+    }, TRUSTED)).toMatchObject({ ok: false, code: "malformed_message" });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(wireRequests).toHaveLength(0);
+  });
+
+  it("reacquires stale grants only for valid displayed recipients and succeeds", async () => {
+    await seedProvider();
+    await db.consents.put({ scope: "llm_summary", origin: LLM_ORIGIN, consentVersion: 3, acceptedAt: "2026-09-25T10:00:00.000Z" });
+    const consentApproval = await preflightApproval();
+    expect(await handleSummarizeMessage({
+      type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval,
+    }, TRUSTED)).toMatchObject({ ok: true, code: "summary_ok" });
+    expect(await hasConsentAtOrigin("llm_summary", LLM_ORIGIN)).toBe(true);
+    expect(await hasConsentAtOrigin("jev_summary_verify", JEV_ORIGIN)).toBe(true);
+    expect(executeScript).toHaveBeenCalledOnce();
+    expect(wireRequests).toHaveLength(2);
   });
 
   it("LLM_SUMMARY_READ returns the persisted summary only", async () => {
