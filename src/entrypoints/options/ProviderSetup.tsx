@@ -39,6 +39,7 @@ import {
   ProviderCard,
   StatusBadge,
   consentFactChipClass,
+  scrollDisclosureIntoView,
 } from "./components";
 import { InfoIcon, PlugIcon, WarningIcon } from "../../ui/components/icons";
 import {
@@ -108,9 +109,17 @@ export function ProviderSetup() {
   const [disclosureOpen, setDisclosureOpen] = useState(false);
   const [openedPreset, setOpenedPreset] = useState<JevProviderId | null>(null);
   const disclosureRead = openedPreset === presetId;
+  const disclosureRef = useRef<HTMLDivElement | null>(null);
   const armDisclosureGate = (): void => {
     setDisclosureOpen(false);
     setOpenedPreset(null);
+  };
+  // Clicking the agreement before reading should not feel dead: open the
+  // disclosure for the current preset and scroll it into view instead.
+  const revealDisclosure = (): void => {
+    setDisclosureOpen(true);
+    setOpenedPreset(presetId);
+    scrollDisclosureIntoView(disclosureRef);
   };
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
   const [status, setStatus] = useState<ProviderStatus | null>(null);
@@ -511,7 +520,7 @@ export function ProviderSetup() {
         </div>
       </fieldset>
 
-      <div className="mt-4">
+      <div className="mt-4" ref={disclosureRef}>
         <Disclosure
           title={`What enabling ${disclosure.name} means`}
           subtitle="Read before enabling — this is what your consent covers."
@@ -741,14 +750,25 @@ export function ProviderSetup() {
               type="checkbox"
               className="mt-0.5"
               checked={agreed}
-              disabled={!disclosureRead}
-              onChange={(event) => setAgreed(event.target.checked)}
+              aria-disabled={disclosureRead ? undefined : "true"}
+              aria-describedby={
+                disclosureRead ? undefined : "provider-disclosure-gate"
+              }
+              onChange={(event) => {
+                // The tick is only an affirmation once the disclosure has
+                // actually been read; an early click reveals it instead.
+                if (!disclosureRead) {
+                  revealDisclosure();
+                  return;
+                }
+                setAgreed(event.target.checked);
+              }}
             />
             I have read the disclosure above and agree to enable{" "}
             {disclosure.name}.
           </label>
           {!disclosureRead && (
-            <p className="text-xs text-muted-foreground">
+            <p id="provider-disclosure-gate" className="text-xs text-muted-foreground">
               Open the disclosure above first.
             </p>
           )}

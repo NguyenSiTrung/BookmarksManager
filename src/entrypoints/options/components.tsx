@@ -349,6 +349,22 @@ export function Disclosure(props: {
   );
 }
 
+/**
+ * Bring a consent disclosure into view after a gated control opens it.
+ * Clicking the agreement checkbox before reading the disclosure would
+ * otherwise feel dead, so the click opens the panel and scrolls it to the
+ * middle of the viewport. Optional-chained because jsdom does not implement
+ * `scrollIntoView`; the guard keeps the call a no-op under test.
+ */
+export function scrollDisclosureIntoView(ref: {
+  current: HTMLElement | null;
+}): void {
+  const node = ref.current;
+  if (node !== null && typeof node.scrollIntoView === "function") {
+    node.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
 /** Chip styling shared by `ConsentFacts` rows and per-site extras. */
 export const consentFactChipClass =
   "rounded bg-muted px-1.5 py-0.5 text-xs text-foreground";

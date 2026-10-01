@@ -55,6 +55,7 @@ import {
   Field,
   ProviderCard,
   Switch,
+  scrollDisclosureIntoView,
 } from "./components";
 import { PulseIcon, ShieldIcon, ZapIcon } from "../../ui/components/icons";
 import {
@@ -231,9 +232,17 @@ export function DecisionSettings() {
   const [openedConsentPreset, setOpenedConsentPreset] =
     useState<JevProviderId | null>(null);
   const consentDisclosureRead = openedConsentPreset === selectedPreset;
+  const consentDisclosureRef = useRef<HTMLDivElement | null>(null);
   const armConsentDisclosureGate = (): void => {
     setConsentDisclosureOpen(false);
     setOpenedConsentPreset(null);
+  };
+  // Clicking the agreement before reading should not feel dead: open the
+  // disclosure for the selected provider and scroll it into view instead.
+  const revealConsentDisclosure = (): void => {
+    setConsentDisclosureOpen(true);
+    setOpenedConsentPreset(selectedPreset);
+    scrollDisclosureIntoView(consentDisclosureRef);
   };
   const [settings, setSettings] = useState<DecisionSettingsValue | null>(null);
   const [blocklist, setBlocklist] = useState<readonly string[] | null>(null);
@@ -268,6 +277,14 @@ export function DecisionSettings() {
   >(null);
   const escalationDisclosureRead =
     llmOrigin !== null && escalationOpenedOrigin === llmOrigin;
+  const escalationDisclosureRef = useRef<HTMLDivElement | null>(null);
+  // Same reveal-on-early-click behavior as the bookmark-analysis gate above.
+  const revealEscalationDisclosure = (): void => {
+    if (llmOrigin === null) return;
+    setEscalationDisclosureOpen(true);
+    setEscalationOpenedOrigin(llmOrigin);
+    scrollDisclosureIntoView(escalationDisclosureRef);
+  };
   const escalationDisclosure = LLM_SCOPE_DISCLOSURES[LLM_ESCALATE_SCOPE];
 
   /**
@@ -718,7 +735,7 @@ export function DecisionSettings() {
           </p>
         )}
 
-        <div className="mt-4">
+        <div className="mt-4" ref={consentDisclosureRef}>
           <Disclosure
             title={`What bookmark analysis sends to ${disclosure.name}`}
             open={consentDisclosureOpen}
@@ -805,16 +822,28 @@ export function DecisionSettings() {
                 type="checkbox"
                 className="mt-0.5"
                 checked={agreed}
-                disabled={!consentDisclosureRead}
-                onChange={(event) =>
-                  setAgreedFor(event.target.checked ? selectedPreset : null)
+                aria-disabled={consentDisclosureRead ? undefined : "true"}
+                aria-describedby={
+                  consentDisclosureRead ? undefined : "decisions-disclosure-gate"
                 }
+                onChange={(event) => {
+                  // The tick is only an affirmation once the disclosure has
+                  // actually been read; an early click reveals it instead.
+                  if (!consentDisclosureRead) {
+                    revealConsentDisclosure();
+                    return;
+                  }
+                  setAgreedFor(event.target.checked ? selectedPreset : null);
+                }}
               />
               I have read the disclosure above and agree to send bookmark
               metadata to {disclosure.name}.
             </label>
             {!consentDisclosureRead && (
-              <p className="text-xs text-muted-foreground">
+              <p
+                id="decisions-disclosure-gate"
+                className="text-xs text-muted-foreground"
+              >
                 Open the disclosure above first.
               </p>
             )}
@@ -916,28 +945,30 @@ export function DecisionSettings() {
           </p>
         ) : (
           <div className="mt-3 space-y-3">
-            <Disclosure
-              title={escalationDisclosure.title}
-              open={escalationDisclosureOpen}
-              onOpenChange={(open) => {
-                setEscalationDisclosureOpen(open);
-                if (open && llmOrigin !== null) {
-                  setEscalationOpenedOrigin(llmOrigin);
-                }
-              }}
-              regionLabel="Second opinion disclosure"
-            >
-              <ConsentFacts
-                recipientName="your LLM provider"
-                origin={llmOrigin}
-                sent={[...escalationDisclosure.fields]}
-                neverSent={["page content", "full URLs"]}
-                why={escalationDisclosure.purpose}
-                when={escalationDisclosure.trigger}
+            <div ref={escalationDisclosureRef}>
+              <Disclosure
+                title={escalationDisclosure.title}
+                open={escalationDisclosureOpen}
+                onOpenChange={(open) => {
+                  setEscalationDisclosureOpen(open);
+                  if (open && llmOrigin !== null) {
+                    setEscalationOpenedOrigin(llmOrigin);
+                  }
+                }}
+                regionLabel="Second opinion disclosure"
               >
-                <p>{escalationDisclosure.credentialUse}.</p>
-              </ConsentFacts>
-            </Disclosure>
+                <ConsentFacts
+                  recipientName="your LLM provider"
+                  origin={llmOrigin}
+                  sent={[...escalationDisclosure.fields]}
+                  neverSent={["page content", "full URLs"]}
+                  why={escalationDisclosure.purpose}
+                  when={escalationDisclosure.trigger}
+                >
+                  <p>{escalationDisclosure.credentialUse}.</p>
+                </ConsentFacts>
+              </Disclosure>
+            </div>
 
             {escalationConsentRead === null ? null : !escalationConsentRead ? (
               <div className="flex flex-wrap items-center gap-3">
@@ -945,15 +976,34 @@ export function DecisionSettings() {
                   <input
                     type="checkbox"
                     checked={escalationAgreed}
-                    disabled={escalationBusy || !escalationDisclosureRead}
-                    onChange={(event) =>
-                      setEscalationAgreed(event.target.checked)
+                    disabled={escalationBusy}
+                    aria-disabled={
+                      escalationBusy || !escalationDisclosureRead
+                        ? "true"
+                        : undefined
                     }
+                    aria-describedby={
+                      escalationDisclosureRead
+                        ? undefined
+                        : "escalation-disclosure-gate"
+                    }
+                    onChange={(event) => {
+                      // The tick is only an affirmation once the disclosure
+                      // has actually been read; an early click reveals it.
+                      if (!escalationDisclosureRead) {
+                        revealEscalationDisclosure();
+                        return;
+                      }
+                      setEscalationAgreed(event.target.checked);
+                    }}
                   />
                   I allow second opinions to be sent to {llmOrigin}
                 </label>
                 {!escalationDisclosureRead && (
-                  <p className="basis-full text-xs text-muted-foreground">
+                  <p
+                    id="escalation-disclosure-gate"
+                    className="basis-full text-xs text-muted-foreground"
+                  >
                     Open the disclosure above first.
                   </p>
                 )}

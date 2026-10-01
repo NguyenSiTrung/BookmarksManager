@@ -325,8 +325,9 @@ export async function enableTypesafe(
     await region.getByLabel("Model").selectOption(details.model);
   }
   await region.getByLabel("API key").fill(details.key);
-  // Task 3 read gate: the agree checkbox is disabled until the disclosure
-  // has been opened once — click its summary first.
+  // Task 3 read gate: the agree checkbox is inert until the disclosure has
+  // been opened once — click its summary first (an early click would open it,
+  // but the helpers assert the resulting enabled state).
   await region
     .locator("summary", { hasText: "What enabling TypeSafe means" })
     .click();

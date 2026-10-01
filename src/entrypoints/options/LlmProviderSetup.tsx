@@ -25,6 +25,7 @@ import {
   ProviderCard,
   StatusBadge,
   consentFactChipClass,
+  scrollDisclosureIntoView,
 } from "./components";
 import { WarningIcon, ZapIcon } from "../../ui/components/icons";
 import { LlmBudget } from "./LlmBudget";
@@ -100,9 +101,17 @@ export function LlmProviderSetup() {
   const [disclosureOpen, setDisclosureOpen] = useState(false);
   const [openedKind, setOpenedKind] = useState<ProviderKind | null>(null);
   const disclosureRead = openedKind === kind;
+  const disclosureRef = useRef<HTMLDivElement | null>(null);
   const armDisclosureGate = (): void => {
     setDisclosureOpen(false);
     setOpenedKind(null);
+  };
+  // Clicking the agreement before reading should not feel dead: open the
+  // disclosure for the current kind and scroll it into view instead.
+  const revealDisclosure = (): void => {
+    setDisclosureOpen(true);
+    setOpenedKind(kind);
+    scrollDisclosureIntoView(disclosureRef);
   };
   const [deleteStoredKey, setDeleteStoredKey] = useState(true);
   const [status, setStatus] = useState<LlmProviderStatus | null>(null);
@@ -162,6 +171,7 @@ export function LlmProviderSetup() {
     setError(null);
     setNotice(null);
     setTestOutcome(null);
+    setAgreed(false);
     armDisclosureGate();
   };
 
@@ -485,7 +495,7 @@ export function LlmProviderSetup() {
         off until you enable a provider and grant consent per feature.
       </p>
 
-      <div className="mt-4">
+      <div className="mt-4" ref={disclosureRef}>
         <Disclosure
           title="What enabling an LLM provider means"
           subtitle="Read before enabling — this is what your consent covers."
@@ -794,14 +804,25 @@ export function LlmProviderSetup() {
               type="checkbox"
               className="mt-0.5"
               checked={agreed}
-              disabled={!disclosureRead}
-              onChange={(event) => setAgreed(event.target.checked)}
+              aria-disabled={disclosureRead ? undefined : "true"}
+              aria-describedby={
+                disclosureRead ? undefined : "llm-disclosure-gate"
+              }
+              onChange={(event) => {
+                // The tick is only an affirmation once the disclosure has
+                // actually been read; an early click reveals it instead.
+                if (!disclosureRead) {
+                  revealDisclosure();
+                  return;
+                }
+                setAgreed(event.target.checked);
+              }}
             />
             I have read the disclosure above and agree to enable this LLM
             provider.
           </label>
           {!disclosureRead && (
-            <p className="text-xs text-muted-foreground">
+            <p id="llm-disclosure-gate" className="text-xs text-muted-foreground">
               Open the disclosure above first.
             </p>
           )}

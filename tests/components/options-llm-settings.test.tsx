@@ -196,11 +196,11 @@ async function section(): Promise<HTMLElement> {
 
 /**
  * The escalation disclosure read gate (Task 3): the second-opinion agree
- * checkbox is disabled until the disclosure has been opened once. jsdom
- * does not toggle `<details>` on summary clicks, so flip the DOM attribute
- * and fire `toggle` directly. `findByRole` because the disclosure mounts
- * only after the provider-status effect lands `llmOrigin` — under a loaded
- * worker that can trail the section heading by a beat.
+ * checkbox is inert (`aria-disabled`) until the disclosure has been opened
+ * once. jsdom does not toggle `<details>` on summary clicks, so flip the DOM
+ * attribute and fire `toggle` directly. `findByRole` because the disclosure
+ * mounts only after the provider-status effect lands `llmOrigin` — under a
+ * loaded worker that can trail the section heading by a beat.
  */
 async function openEscalationDisclosure(): Promise<void> {
   const region = await screen.findByRole("region", {
@@ -263,7 +263,7 @@ describe("escalation section", () => {
     const box = (await screen.findByRole("checkbox", {
       name: /allow second opinions to be sent to/i,
     })) as HTMLInputElement;
-    expect(box.disabled).toBe(true);
+    expect(box.getAttribute("aria-disabled")).toBe("true");
     // Scoped to the escalation gate's reason <p> (basis-full): the
     // bookmark-analysis gate on the same page renders the same sentence.
     expect(
@@ -271,6 +271,12 @@ describe("escalation section", () => {
         selector: "p.basis-full",
       }),
     ).toBeTruthy();
+    // An early click opens the disclosure instead of recording agreement.
+    fireEvent.click(box);
+    await waitFor(() =>
+      expect(box.getAttribute("aria-disabled")).toBeNull(),
+    );
+    expect(box.checked).toBe(false);
     await openEscalationDisclosure();
     await waitFor(() =>
       expect(
@@ -278,8 +284,8 @@ describe("escalation section", () => {
           screen.getByRole("checkbox", {
             name: /allow second opinions to be sent to/i,
           }) as HTMLInputElement
-        ).disabled,
-      ).toBe(false),
+        ).getAttribute("aria-disabled"),
+      ).toBeNull(),
     );
     fireEvent.click(
       screen.getByRole("checkbox", {
@@ -303,7 +309,9 @@ describe("escalation section", () => {
     const back = (await screen.findByRole("checkbox", {
       name: /allow second opinions to be sent to/i,
     })) as HTMLInputElement;
-    await waitFor(() => expect(back.disabled).toBe(true));
+    await waitFor(() =>
+      expect(back.getAttribute("aria-disabled")).toBe("true"),
+    );
     expect(
       screen.getByText("Open the disclosure above first.", {
         selector: "p.basis-full",

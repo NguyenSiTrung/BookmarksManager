@@ -175,9 +175,9 @@ function agreeBox(): HTMLInputElement {
 }
 
 /**
- * The disclosure read gate (Task 3): the agree box is disabled until the
- * disclosure has been opened once. jsdom does not toggle `<details>` on
- * summary clicks, so flip the DOM attribute and fire `toggle` directly —
+ * The disclosure read gate (Task 3): the agree box is inert (`aria-disabled`)
+ * until the disclosure has been opened once. jsdom does not toggle `<details>`
+ * on summary clicks, so flip the DOM attribute and fire `toggle` directly —
  * the same pattern options-primitives uses for Disclosure.
  */
 function openDisclosure(): void {
@@ -707,27 +707,36 @@ describe("settings load failure", () => {
 });
 
 describe("disclosure read gate", () => {
-  it("keeps the agree box disabled with a reason until the disclosure opens", async () => {
+  it("opens and reveals the disclosure instead of agreeing on an early click", async () => {
     render(<DecisionSettings />);
     const box = (await screen.findByRole("checkbox", {
       name: /agree/i,
     })) as HTMLInputElement;
-    expect(box.disabled).toBe(true);
+    expect(box.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-    openDisclosure();
-    await waitFor(() => expect(agreeBox().disabled).toBe(false));
+    fireEvent.click(box);
+    // The click opened the disclosure and did not record agreement.
+    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
+    expect(box.checked).toBe(false);
     expect(
       screen.queryByText("Open the disclosure above first."),
     ).toBeNull();
+    // The disclosure is read now, so the next click is an affirmation.
+    fireEvent.click(agreeBox());
+    await waitFor(() => expect(agreeBox().checked).toBe(true));
   });
 
   it("re-arms the gate when the provider preset changes", async () => {
     render(<DecisionSettings />);
     await screen.findByRole("checkbox", { name: /agree/i });
     openDisclosure();
-    await waitFor(() => expect(agreeBox().disabled).toBe(false));
+    await waitFor(() =>
+      expect(agreeBox().getAttribute("aria-disabled")).toBeNull(),
+    );
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    await waitFor(() => expect(agreeBox().disabled).toBe(true));
+    await waitFor(() =>
+      expect(agreeBox().getAttribute("aria-disabled")).toBe("true"),
+    );
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
   });
 
@@ -743,7 +752,7 @@ describe("disclosure read gate", () => {
     const box = (await screen.findByRole("checkbox", {
       name: /agree/i,
     })) as HTMLInputElement;
-    await waitFor(() => expect(box.disabled).toBe(true));
+    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBe("true"));
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
   });
 });
@@ -1229,7 +1238,7 @@ async function grantDecisionsConsentInShell(origin: string): Promise<void> {
   const box = (await within(section).findByRole("checkbox", {
     name: /agree/i,
   })) as HTMLInputElement;
-  await waitFor(() => expect(box.disabled).toBe(false));
+  await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
   fireEvent.click(box);
   const allow = within(section).getByRole("button", {
     name: /allow .* bookmark analysis/i,

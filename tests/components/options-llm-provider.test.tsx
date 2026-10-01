@@ -196,10 +196,11 @@ function agreeCheckbox(): HTMLInputElement {
   return screen.getByRole("checkbox", { name: /agree/i }) as HTMLInputElement;
 }
 /**
- * The disclosure read gate (Task 3): the agree checkbox is disabled until
- * the disclosure has been opened once. jsdom does not toggle `<details>` on
- * summary clicks, so flip the DOM attribute and fire `toggle` directly —
- * the same pattern options-primitives uses for Disclosure.
+ * The disclosure read gate (Task 3): the agree checkbox is inert
+ * (`aria-disabled`) until the disclosure has been opened once. jsdom does
+ * not toggle `<details>` on summary clicks, so flip the DOM attribute and
+ * fire `toggle` directly — the same pattern options-primitives uses for
+ * Disclosure.
  */
 function openDisclosure(): void {
   const details = screen
@@ -583,27 +584,39 @@ describe("enabled provider", () => {
 });
 
 describe("disclosure read gate", () => {
-  it("keeps the agree checkbox disabled with a reason until the disclosure opens", async () => {
+  it("opens and reveals the disclosure instead of agreeing on an early click", async () => {
     render(<LlmProviderSetup />);
     await screen.findByRole("button", { name: /^enable/i });
-    expect(agreeCheckbox().disabled).toBe(true);
+    const box = agreeCheckbox();
+    expect(box.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-    openDisclosure();
-    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    fireEvent.click(box);
+    // The click opened the disclosure and did not record agreement.
+    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
+    expect(box.checked).toBe(false);
     expect(
       screen.queryByText("Open the disclosure above first."),
     ).toBeNull();
+    // The disclosure is read now, so the next click is an affirmation.
+    fireEvent.click(agreeCheckbox());
+    await waitFor(() => expect(agreeCheckbox().checked).toBe(true));
   });
 
   it("re-arms the gate when the provider kind changes", async () => {
     render(<LlmProviderSetup />);
     await screen.findByRole("button", { name: /^enable/i });
     openDisclosure();
-    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    await waitFor(() =>
+      expect(agreeCheckbox().getAttribute("aria-disabled")).toBeNull(),
+    );
     fireEvent.click(customRadio());
-    await waitFor(() => expect(agreeCheckbox().disabled).toBe(true));
+    await waitFor(() =>
+      expect(agreeCheckbox().getAttribute("aria-disabled")).toBe("true"),
+    );
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
     openDisclosure();
-    await waitFor(() => expect(agreeCheckbox().disabled).toBe(false));
+    await waitFor(() =>
+      expect(agreeCheckbox().getAttribute("aria-disabled")).toBeNull(),
+    );
   });
 });
