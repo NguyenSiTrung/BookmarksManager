@@ -538,3 +538,20 @@ Selected applicable patterns from `conductor/patterns.md`:
   `undoToastAutoHideMs` is a test-only prop mirroring the `askDebounceMs`
   precedent; production always uses the 8 s constant. Review `8a58e3b7`
   PASS plus delta re-check PASS; decisions E2E 6 passed.
+- B14: Options provider/escalation state derives from a live-read hook keyed
+  by the revision rows (`JEV_PROVIDER_IDS`, `llmProvider:*`,
+  `llmActiveProvider`, `llmEscalation`) plus the `jev_test`/`llm_test`
+  consent grants; every read is tagged with the revision it requested, so a
+  superseded value can never render while a newer read is in flight, stale
+  reads are dropped, and settled failures surface with retry. A vanished
+  custom origin falls back to the default so consent is never requested at
+  a stale origin; the grant/revoke control is withheld (plain-text reason,
+  retry above) until the origin resolves. The escalation toggle renders the
+  worker-persisted row rather than the write reply's local snapshot. The
+  hook imports no key/credential module directly; the transitive reach
+  through message-schema modules is pre-existing and reads nothing. Review
+  `351dee7b` PASS with four P3 coverage gaps; the fix round added pinning
+  tests for the revision-tag window, consent-only keying, explicit
+  selection survival, and the unresolved-origin control (all
+  mutation-verified) plus the copy/doc corrections — delta re-check PASS,
+  provider/LLM E2E 14 passed.

@@ -19,6 +19,7 @@ import {
   vi,
 } from "vitest";
 import {
+  CUSTOM_JEV_PROVIDER_NAME,
   DECISIONS_NEVER_SENT_FIELDS,
   DECISIONS_PURPOSES,
   DECISIONS_SENT_FIELDS,
@@ -29,20 +30,42 @@ import {
 import {
   CONSENT_VERSION,
   grantConsent,
+  grantConsentAtOrigin,
   grantTestConsent,
   hasConsent,
+  hasConsentAtOrigin,
   hasTestConsent,
+  revokeConsentsAtOrigin,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { BUILTIN_SENSITIVE_SITES } from "../../src/decisions/minimize";
 import type { DecisionSettings as SettingsValue } from "../../src/decisions/policy";
 import { DecisionSettings } from "../../src/entrypoints/options/DecisionSettings";
+import { OptionsApp } from "../../src/entrypoints/options/OptionsApp";
 import { SentLog } from "../../src/entrypoints/options/SentLog";
+import { budgetChoiceOf } from "../../src/llm/budget";
+import { resolveProviderPricing } from "../../src/llm/pricing";
+import { resolveLlmDestination } from "../../src/llm/providers";
 import type { DecisionMessageResult } from "../../src/messages/decisions";
+import type { LlmFeatureMessageResult } from "../../src/messages/llm-features";
+import type {
+  LlmProviderStatus,
+} from "../../src/messages/llm-provider";
+import type { ProviderStatus } from "../../src/messages/provider";
 import { PRESETS } from "../../src/net/presets";
 import { SENT_LOG_RETENTION_CAP } from "../../src/net/sent-log";
 import {
+  LlmProviderRecord,
+  LlmProviderSettings,
+} from "../../src/schemas/llm";
+import {
+  CONSENT_SCOPE,
+  CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
+  LLM_ESCALATE_SCOPE,
+  LLM_TEST_SCOPE,
+  ProviderSettings,
+  type JevProviderId,
   type PresetId,
 } from "../../src/schemas/provider";
 
@@ -118,6 +141,7 @@ beforeEach(async () => {
     runtime: { sendMessage: sendMessageSpy },
   });
   await db.consents.clear();
+  await db.metadata.clear();
   await db.sentLog.clear();
   await db.usage.clear();
 });
@@ -721,5 +745,975 @@ describe("disclosure read gate", () => {
     })) as HTMLInputElement;
     await waitFor(() => expect(box.disabled).toBe(true));
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Mounted shell — live provider state (bug B14)                       */
+/* ------------------------------------------------------------------ */
+/*
+ * The Options shell keeps every panel mounted (`hidden` toggles visibility),
+ * so a provider enabled, changed, or revoked in the Connections panel has to
+ * reach the Permissions panel — and the hidden panels — without a reload.
+ * These cases drive the real shell and the real panels; only the worker is a
+ * double, and it owns the same IndexedDB rows the real worker owns so the
+ * panels' live queries observe exactly the changes they would in Chrome.
+ */
+
+const JEV_SECTION = /ai provider connection/i;
+const LLM_SECTION = /optional llm provider/i;
+const CONSENT_SECTION = /bookmark analysis consent/i;
+const ESCALATION_SECTION = /automatic second opinions/i;
+const BLOCKLIST_SECTION = /never send these sites/i;
+
+const CUSTOM_ORIGIN = "https://jev.example.com";
+const SECOND_ORIGIN = "https://jev2.example.com";
+const LLM_ORIGIN = "https://api.openai.com";
+
+const LLM_RECORD_PREFIX = "llmProvider:";
+const LLM_ACTIVE_KEY = "llmActiveProvider";
+const ESCALATION_KEY = "llmEscalation";
+
+/** Shell-worker controls, re-armed per test. */
+let escalationReadCount: number;
+let providerStatusCount: number;
+let holdCustomProbes: boolean;
+let holdAllJevProbes: boolean;
+let heldProbes: Array<() => void>;
+let failStatusReads: boolean;
+
+/**
+ * A valid stored custom-Jev settings row — the shape ENABLE_PROVIDER
+ * persists. `keySuffix` is the masked display hint, never key material.
+ */
+function customJevSettings(baseUrl: string): ProviderSettings {
+  return ProviderSettings.parse({
+    preset: CUSTOM_PROVIDER_ID,
+    baseUrl,
+    model: "jev-latest",
+    keySuffix: "****",
+  });
+}
+
+/** The stored Jev status for one id, as the worker's `readStatus` composes it. */
+async function readStoredJevStatus(id: JevProviderId): Promise<ProviderStatus> {
+  const row = await db.metadata.get(id);
+  const parsed = ProviderSettings.safeParse(row?.value);
+  const settings = parsed.success ? parsed.data : null;
+  const origin =
+    settings !== null
+      ? settings.preset === CUSTOM_PROVIDER_ID
+        ? new URL(settings.baseUrl).origin
+        : PRESETS[settings.preset].origin
+      : id === CUSTOM_PROVIDER_ID
+        ? null
+        : PRESETS[id].origin;
+  const consentGranted =
+    origin !== null && (await hasConsentAtOrigin(CONSENT_SCOPE, origin));
+  return {
+    enabled: settings !== null && consentGranted,
+    consentGranted,
+    ...(settings !== null
+      ? { model: settings.model, keySuffix: settings.keySuffix }
+      : {}),
+    ...(origin !== null ? { origin } : {}),
+  };
+}
+
+/** The active LLM provider record, read the way `readActiveLlmProvider` does. */
+async function readActiveLlmRecord(): Promise<LlmProviderRecord | null> {
+  const pointer = await db.metadata.get(LLM_ACTIVE_KEY);
+  const providerId = typeof pointer?.value === "string" ? pointer.value : null;
+  if (providerId === null) {
+    return null;
+  }
+  const row = await db.metadata.get(`${LLM_RECORD_PREFIX}${providerId}`);
+  const parsed = LlmProviderRecord.safeParse(row?.value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** The stored LLM provider status, as the worker's `readStatus` composes it. */
+async function readStoredLlmStatus(): Promise<LlmProviderStatus> {
+  const record = await readActiveLlmRecord();
+  if (record === null) {
+    return {
+      configured: false,
+      enabled: false,
+      consentGranted: false,
+      permissionGranted: false,
+      active: false,
+    };
+  }
+  const destination = resolveLlmDestination(record.provider);
+  const consentGranted = await hasConsentAtOrigin(
+    LLM_TEST_SCOPE,
+    destination.origin,
+  );
+  const status: LlmProviderStatus = {
+    configured: true,
+    enabled: consentGranted,
+    consentGranted,
+    permissionGranted: true,
+    active: true,
+    providerId: record.providerId,
+    origin: destination.origin,
+    model: destination.model,
+    budget: budgetChoiceOf(record),
+    pricingKnown: resolveProviderPricing(record.provider) !== undefined,
+  };
+  if (record.keySuffix !== undefined) {
+    status.keySuffix = record.keySuffix;
+  }
+  if (record.monthlyBudgetUsd !== undefined) {
+    status.monthlyBudgetUsd = record.monthlyBudgetUsd;
+  }
+  return status;
+}
+
+/** The stored escalation status, as `escalationStatus` composes it. */
+async function readStoredEscalation(): Promise<LlmFeatureMessageResult> {
+  const row = await db.metadata.get(ESCALATION_KEY);
+  const enabled =
+    (row?.value as { enabled?: boolean } | undefined)?.enabled === true;
+  const record = await readActiveLlmRecord();
+  return {
+    ok: true,
+    code: "escalation_status",
+    escalation: {
+      enabled,
+      providerConfigured: record !== null,
+      monthlyBudgetUsd: record?.monthlyBudgetUsd ?? null,
+      budget: record === null ? "unset" : budgetChoiceOf(record),
+      pricingKnown:
+        record !== null &&
+        resolveProviderPricing(record.provider) !== undefined,
+      ...(record !== null ? { providerId: record.providerId } : {}),
+    },
+  };
+}
+
+/**
+ * The mounted shell's worker double. Provider messages mirror
+ * `messages/provider` (settings row + `jev_test` grant per resolved origin);
+ * LLM messages mirror `messages/llm-provider` / `messages/llm-features`
+ * (active pointer, provider record, `llm_test` grant, escalation row).
+ */
+async function shellWorkerReply(message: unknown): Promise<unknown> {
+  const msg = message as {
+    type: string;
+    preset?: JevProviderId;
+    model?: string;
+    key?: string;
+    baseUrl?: string;
+    settings?: LlmProviderSettings;
+    enabled?: boolean;
+    monthlyBudgetUsd?: number;
+    monthlyBudgetUnlimited?: true;
+    budget?:
+      | { kind: "capped"; usd: number }
+      | { kind: "unlimited" }
+      | { kind: "unset" };
+  };
+  switch (msg.type) {
+    case "PROVIDER_STATUS": {
+      const preset = msg.preset as JevProviderId;
+      providerStatusCount += 1;
+      // The hold decision is taken synchronously, when the read is issued:
+      // a probe entered while reads are free always answers normally.
+      const hold =
+        holdAllJevProbes ||
+        (preset === CUSTOM_PROVIDER_ID && holdCustomProbes);
+      if (failStatusReads) {
+        throw new Error("provider status unavailable");
+      }
+      const status = await readStoredJevStatus(preset);
+      if (hold) {
+        return await new Promise((resolve) => {
+          heldProbes.push(() => resolve({ ok: true, status }));
+        });
+      }
+      return { ok: true, status };
+    }
+    case "ENABLE_PROVIDER": {
+      const preset = msg.preset as JevProviderId;
+      const settings =
+        preset === CUSTOM_PROVIDER_ID
+          ? ProviderSettings.parse({
+              preset: CUSTOM_PROVIDER_ID,
+              baseUrl: msg.baseUrl,
+              model: msg.model,
+              keySuffix: String(msg.key).slice(-4),
+            })
+          : ProviderSettings.parse({
+              preset,
+              model: msg.model,
+              keySuffix: String(msg.key).slice(-4),
+            });
+      await db.metadata.put({ key: preset, value: settings });
+      await grantConsentAtOrigin(
+        CONSENT_SCOPE,
+        settings.preset === CUSTOM_PROVIDER_ID
+          ? new URL(settings.baseUrl).origin
+          : PRESETS[settings.preset].origin,
+      );
+      return { ok: true, status: await readStoredJevStatus(preset) };
+    }
+    case "REVOKE_PROVIDER": {
+      const preset = msg.preset as JevProviderId;
+      const stored = ProviderSettings.safeParse(
+        (await db.metadata.get(preset))?.value,
+      );
+      if (stored.success) {
+        await revokeConsentsAtOrigin(
+          stored.data.preset === CUSTOM_PROVIDER_ID
+            ? new URL(stored.data.baseUrl).origin
+            : PRESETS[stored.data.preset].origin,
+        );
+      }
+      await db.metadata.delete(preset);
+      return { ok: true, status: await readStoredJevStatus(preset) };
+    }
+    case "TEST_PROVIDER":
+      return {
+        ok: true,
+        code: "test_ok",
+        result: { model: "jev-latest", latencyMs: 4 },
+      };
+    case "LLM_PROVIDER_STATUS": {
+      if (failStatusReads) {
+        throw new Error("llm provider status unavailable");
+      }
+      return { ok: true, status: await readStoredLlmStatus() };
+    }
+    case "LLM_CONFIGURE": {
+      const settings = LlmProviderSettings.parse(msg.settings);
+      const destination = resolveLlmDestination(settings);
+      const record = LlmProviderRecord.parse({
+        providerId: destination.providerId,
+        provider: settings,
+        ...(msg.key !== undefined
+          ? { keySuffix: String(msg.key).slice(-4) }
+          : {}),
+        ...(msg.monthlyBudgetUsd !== undefined
+          ? { monthlyBudgetUsd: msg.monthlyBudgetUsd }
+          : {}),
+        ...(msg.monthlyBudgetUnlimited === true
+          ? { monthlyBudgetUnlimited: true }
+          : {}),
+        configuredAt: new Date().toISOString(),
+      });
+      await db.transaction("rw", db.metadata, async () => {
+        await db.metadata.put({
+          key: `${LLM_RECORD_PREFIX}${record.providerId}`,
+          value: record,
+        });
+        await db.metadata.put({
+          key: LLM_ACTIVE_KEY,
+          value: record.providerId,
+        });
+      });
+      await grantConsentAtOrigin(LLM_TEST_SCOPE, destination.origin);
+      return { ok: true, status: await readStoredLlmStatus() };
+    }
+    case "LLM_REVOKE": {
+      const record = await readActiveLlmRecord();
+      if (record !== null) {
+        await revokeConsentsAtOrigin(
+          resolveLlmDestination(record.provider).origin,
+        );
+        await db.transaction("rw", db.metadata, async () => {
+          await db.metadata.delete(`${LLM_RECORD_PREFIX}${record.providerId}`);
+          await db.metadata.delete(LLM_ACTIVE_KEY);
+        });
+      }
+      return { ok: true, status: await readStoredLlmStatus() };
+    }
+    case "LLM_BUDGET_SET": {
+      const record = await readActiveLlmRecord();
+      if (record === null) {
+        return {
+          ok: false,
+          code: "not_configured",
+          message: "That provider is not configured; enable it first.",
+        };
+      }
+      const next: LlmProviderRecord = { ...record };
+      if (msg.budget?.kind === "capped") {
+        next.monthlyBudgetUsd = msg.budget.usd;
+        delete next.monthlyBudgetUnlimited;
+      } else if (msg.budget?.kind === "unlimited") {
+        next.monthlyBudgetUnlimited = true;
+        delete next.monthlyBudgetUsd;
+      } else {
+        delete next.monthlyBudgetUsd;
+        delete next.monthlyBudgetUnlimited;
+      }
+      await db.metadata.put({
+        key: `${LLM_RECORD_PREFIX}${record.providerId}`,
+        value: LlmProviderRecord.parse(next),
+      });
+      return { ok: true, status: await readStoredLlmStatus() };
+    }
+    case "LLM_BUDGET_SNAPSHOT": {
+      const record = await readActiveLlmRecord();
+      const cap = record?.monthlyBudgetUsd ?? null;
+      return {
+        ok: true,
+        code: "budget_snapshot",
+        snapshot: {
+          month: "2026-10",
+          requestCount: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          reportedCostUsd: 0,
+          estimatedCostUsd: 0,
+          unknownCostRequests: 0,
+          hasUnknownCost: false,
+          reservedUsd: 0,
+          committedUsd: 0,
+          budgetUsd: cap,
+          remainingUsd: cap,
+        },
+      };
+    }
+    case "LLM_ESCALATION_STATUS": {
+      escalationReadCount += 1;
+      if (failStatusReads) {
+        throw new Error("escalation status unavailable");
+      }
+      return await readStoredEscalation();
+    }
+    case "LLM_ESCALATION_SET": {
+      const record = await readActiveLlmRecord();
+      await db.metadata.put({
+        key: ESCALATION_KEY,
+        value: {
+          enabled: msg.enabled === true,
+          ...(record !== null ? { providerId: record.providerId } : {}),
+        },
+      });
+      return await readStoredEscalation();
+    }
+    default:
+      return workerReply(message);
+  }
+}
+
+/** Navigate the mounted shell by clicking one rail link. */
+function showPanel(label: string): void {
+  const nav = screen.getByRole("navigation", { name: "Options sections" });
+  fireEvent.click(within(nav).getByRole("link", { name: new RegExp(label) }));
+}
+
+/**
+ * Open a `Disclosure`. jsdom does not toggle `<details>` on summary clicks,
+ * so flip the DOM attribute and fire `toggle` — the primitive's own handler.
+ */
+function openDetails(region: HTMLElement): void {
+  const details = region.closest("details") as HTMLDetailsElement;
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+}
+
+/**
+ * Mount the real Options shell with a protocol-speaking worker double, and
+ * settle the mount reads: the Permissions panel's live provider read has been
+ * issued, and the Connections panel's own status probes have been entered
+ * (both batches issue their probes synchronously, so an entry proves the
+ * whole batch was sent).
+ */
+async function mountOptionsShell(): Promise<void> {
+  vi.stubGlobal("chrome", {
+    runtime: {
+      sendMessage: sendMessageSpy,
+      getURL: (path: string) => `chrome-extension://testext/${path}`,
+      getManifest: () => ({ version: "0.0.0" }),
+    },
+    permissions: {
+      request: vi.fn(async () => true),
+      remove: vi.fn(async () => true),
+      contains: vi.fn(async () => true),
+    },
+  });
+  sendMessageSpy.mockImplementation(shellWorkerReply);
+  location.hash = "";
+  const readsBefore = escalationReadCount;
+  const probesBefore = providerStatusCount;
+  render(<OptionsApp />);
+  await waitFor(() => expect(escalationReadCount).toBeGreaterThan(readsBefore));
+  await waitFor(() =>
+    expect(providerStatusCount).toBeGreaterThanOrEqual(probesBefore + 2),
+  );
+}
+
+/** Enable the custom Jev provider through the Connections panel's form. */
+async function enableCustomJevProvider(options: {
+  baseUrl: string;
+  model: string;
+  key: string;
+}): Promise<void> {
+  showPanel("Connections");
+  const section = screen.getByRole("region", { name: JEV_SECTION });
+  fireEvent.click(
+    within(section).getByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    }),
+  );
+  fireEvent.change(await within(section).findByLabelText(/^base url$/i), {
+    target: { value: options.baseUrl },
+  });
+  fireEvent.change(within(section).getByLabelText(/^model id$/i), {
+    target: { value: options.model },
+  });
+  fireEvent.change(within(section).getByLabelText(/^api key$/i), {
+    target: { value: options.key },
+  });
+  openDetails(
+    within(section).getByRole("region", {
+      name: /custom jev provider data disclosure/i,
+    }),
+  );
+  fireEvent.click(
+    within(section).getByRole("checkbox", {
+      name: /agree to enable custom jev provider/i,
+    }),
+  );
+  const enable = within(section).getByRole("button", {
+    name: /^enable custom jev provider$/i,
+  }) as HTMLButtonElement;
+  await waitFor(() => expect(enable.disabled).toBe(false));
+  fireEvent.click(enable);
+  await waitFor(async () =>
+    expect(await db.metadata.get(CUSTOM_PROVIDER_ID)).toBeDefined(),
+  );
+}
+
+/** Enable the preset OpenAI LLM provider through the Connections panel. */
+async function enableLlmProvider(options: { cap?: string } = {}): Promise<void> {
+  showPanel("Connections");
+  const section = screen.getByRole("region", { name: LLM_SECTION });
+  fireEvent.change(within(section).getByLabelText(/^api key$/i), {
+    target: { value: "sk-openai-test" },
+  });
+  if (options.cap !== undefined) {
+    fireEvent.change(within(section).getByLabelText(/monthly cap \(usd\)/i), {
+      target: { value: options.cap },
+    });
+  }
+  openDetails(
+    within(section).getByRole("region", {
+      name: /llm provider data disclosure/i,
+    }),
+  );
+  fireEvent.click(
+    within(section).getByRole("checkbox", {
+      name: /agree to enable this llm provider/i,
+    }),
+  );
+  const enable = within(section).getByRole("button", {
+    name: /^enable llm provider$/i,
+  }) as HTMLButtonElement;
+  await waitFor(() => expect(enable.disabled).toBe(false));
+  fireEvent.click(enable);
+  await waitFor(async () => expect(await readActiveLlmRecord()).not.toBeNull());
+}
+
+/** Grant the bookmark-analysis consent at the currently selected origin. */
+async function grantDecisionsConsentInShell(origin: string): Promise<void> {
+  const section = screen.getByRole("region", { name: CONSENT_SECTION });
+  openDetails(
+    await within(section).findByRole("region", {
+      name: /bookmark data disclosure/i,
+    }),
+  );
+  const box = (await within(section).findByRole("checkbox", {
+    name: /agree/i,
+  })) as HTMLInputElement;
+  await waitFor(() => expect(box.disabled).toBe(false));
+  fireEvent.click(box);
+  const allow = within(section).getByRole("button", {
+    name: /allow .* bookmark analysis/i,
+  }) as HTMLButtonElement;
+  await waitFor(() => expect(allow.disabled).toBe(false));
+  fireEvent.click(allow);
+  await waitFor(async () =>
+    expect(await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, origin)).toBe(true),
+  );
+}
+
+/** The radio input inside a provider card, by accessible name. */
+function cardFor(section: HTMLElement, name: RegExp): HTMLInputElement {
+  return within(section).getByRole("radio", { name }) as HTMLInputElement;
+}
+
+beforeEach(() => {
+  escalationReadCount = 0;
+  providerStatusCount = 0;
+  holdCustomProbes = false;
+  holdAllJevProbes = false;
+  heldProbes = [];
+  failStatusReads = false;
+});
+
+describe("mounted shell — live provider state", () => {
+  it("reflects a custom Jev provider enabled in Connections without remounting", async () => {
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    // Nothing is configured yet: only the two registry presets are offered.
+    expect(within(consent).queryByRole("radio", { name: /custom/i })).toBeNull();
+    // An uncommitted edit in this panel is the no-remount witness.
+    const blocklist = screen.getByRole("region", { name: BLOCKLIST_SECTION });
+    fireEvent.change(within(blocklist).getByLabelText(/block a host/i), {
+      target: { value: "example.org" },
+    });
+
+    await enableCustomJevProvider({
+      baseUrl: CUSTOM_ORIGIN,
+      model: "jev-latest",
+      key: "custom-key-1",
+    });
+
+    // While the Permissions panel is still hidden, it already has the card.
+    await waitFor(() =>
+      expect(
+        within(
+          document.getElementById("permissions") as HTMLElement,
+        ).queryByRole("radio", {
+          name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+          hidden: true,
+        }),
+      ).not.toBeNull(),
+    );
+
+    showPanel("Permissions");
+    const radio = await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+    // Nothing was remounted: the uncommitted edit made before the provider
+    // was enabled survived the enable and the panel switch.
+    expect(
+      (within(blocklist).getByLabelText(/block a host/i) as HTMLInputElement)
+        .value,
+    ).toBe("example.org");
+    fireEvent.click(radio);
+    await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
+    const card = radio.closest("label") as HTMLElement;
+    expect(card.textContent).toContain(CUSTOM_ORIGIN);
+    // The freshly read origin is the one consent is granted against.
+    await grantDecisionsConsentInShell(CUSTOM_ORIGIN);
+    await within(consent).findByRole("button", {
+      name: /revoke custom jev provider analysis consent/i,
+    });
+  });
+
+  it("drops a revoked custom provider and never reuses consent from a replaced origin", async () => {
+    await mountOptionsShell();
+    await enableCustomJevProvider({
+      baseUrl: CUSTOM_ORIGIN,
+      model: "jev-latest",
+      key: "custom-key-1",
+    });
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    fireEvent.click(
+      await within(consent).findByRole("radio", {
+        name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+      }),
+    );
+    await grantDecisionsConsentInShell(CUSTOM_ORIGIN);
+
+    // Revoke it from Connections while Permissions is hidden.
+    showPanel("Connections");
+    fireEvent.click(
+      within(screen.getByRole("region", { name: JEV_SECTION })).getByRole(
+        "button",
+        { name: /revoke custom jev provider access/i },
+      ),
+    );
+    await waitFor(async () =>
+      expect(await db.metadata.get(CUSTOM_PROVIDER_ID)).toBeUndefined(),
+    );
+
+    showPanel("Permissions");
+    await waitFor(() =>
+      expect(
+        within(consent).queryByRole("radio", { name: /custom/i }),
+      ).toBeNull(),
+    );
+    // The selection falls back to a provider that still exists.
+    await waitFor(() => expect(cardFor(consent, /^TypeSafe$/).checked).toBe(true));
+    // Revoking the provider removed the grant it carried at its origin.
+    expect(await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, CUSTOM_ORIGIN)).toBe(
+      false,
+    );
+
+    // Re-enabling at a different origin starts un-consented there: the grant
+    // recorded for the replaced origin is never reused.
+    await enableCustomJevProvider({
+      baseUrl: SECOND_ORIGIN,
+      model: "jev-latest",
+      key: "custom-key-2",
+    });
+    showPanel("Permissions");
+    const radio = await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+    fireEvent.click(radio);
+    await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
+    const card = radio.closest("label") as HTMLElement;
+    expect(card.textContent).toContain(SECOND_ORIGIN);
+    expect(card.textContent).not.toContain(CUSTOM_ORIGIN);
+    await within(consent).findByRole("checkbox", { name: /agree/i });
+    expect(
+      within(consent).queryByRole("button", {
+        name: /revoke .* analysis consent/i,
+      }),
+    ).toBeNull();
+  });
+
+  it("drops a superseded custom-origin reply instead of reusing it", async () => {
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+
+    // Hold every custom-provider reply, then move the provider twice.
+    holdCustomProbes = true;
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(CUSTOM_ORIGIN),
+      });
+    });
+    await waitFor(() => expect(heldProbes).toHaveLength(1));
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(SECOND_ORIGIN),
+      });
+    });
+    await waitFor(() => expect(heldProbes).toHaveLength(2));
+
+    // The newer read answers first.
+    await act(async () => {
+      heldProbes[1]!();
+    });
+    const card = () =>
+      cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).closest(
+        "label",
+      ) as HTMLElement;
+    await waitFor(() => expect(card().textContent).toContain(SECOND_ORIGIN));
+
+    // The superseded reply now settles — it must not overwrite the newer one.
+    await act(async () => {
+      heldProbes[0]!();
+    });
+    expect(card().textContent).not.toContain(CUSTOM_ORIGIN);
+    expect(card().textContent).toContain(SECOND_ORIGIN);
+  });
+
+  it("reflects the LLM origin and a changed spending ceiling in the hidden panel", async () => {
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
+    await within(escalation).findByText(
+      /configure and enable an llm provider above/i,
+    );
+
+    await enableLlmProvider({ cap: "5" });
+
+    // Already live in the hidden Permissions panel…
+    await waitFor(() =>
+      expect(
+        within(
+          document.getElementById("permissions") as HTMLElement,
+        ).getByRole("region", {
+          name: "Second opinion disclosure",
+          hidden: true,
+        }),
+      ).toBeTruthy(),
+    );
+
+    showPanel("Permissions");
+    await within(escalation).findByRole("region", {
+      name: "Second opinion disclosure",
+    });
+    expect(escalation.textContent).toContain(LLM_ORIGIN);
+    await within(escalation).findByText(/Monthly cap: \$5\.00/);
+
+    // A ceiling change in the Connections budget panel flows through too.
+    showPanel("Connections");
+    const llmSection = screen.getByRole("region", { name: LLM_SECTION });
+    fireEvent.change(
+      within(llmSection).getByLabelText(/monthly cap \(usd\)/i),
+      { target: { value: "12" } },
+    );
+    fireEvent.click(
+      within(llmSection).getByRole("button", { name: /save ceiling/i }),
+    );
+    await within(llmSection).findByText(/spending ceiling saved/i);
+    await waitFor(() =>
+      expect(escalation.textContent).toContain("Monthly cap: $12.00"),
+    );
+    expect(escalation.textContent).not.toContain("Monthly cap: $5.00");
+  });
+
+  it("keeps the second-opinion controls in step with consent, the toggle, and a revoke", async () => {
+    await mountOptionsShell();
+    await enableLlmProvider({ cap: "5" });
+    showPanel("Permissions");
+    const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
+    const toggle = () =>
+      within(escalation).getByRole("switch", {
+        name: /second opinion on unsure suggestions/i,
+      }) as HTMLElement;
+    // No `llm_escalate` grant yet: the toggle stays disabled.
+    await waitFor(() => expect(toggle()).toHaveProperty("disabled", true));
+
+    openDetails(
+      within(escalation).getByRole("region", {
+        name: "Second opinion disclosure",
+      }),
+    );
+    fireEvent.click(
+      await within(escalation).findByRole("checkbox", {
+        name: /allow second opinions to be sent to/i,
+      }),
+    );
+    const allow = await within(escalation).findByRole("button", {
+      name: /^allow second opinions$/i,
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(allow.disabled).toBe(false));
+    fireEvent.click(allow);
+    await waitFor(() => expect(toggle()).toHaveProperty("disabled", false));
+    expect(
+      await hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
+    ).toBe(true);
+
+    fireEvent.click(toggle());
+    await waitFor(() =>
+      expect(toggle().getAttribute("aria-checked")).toBe("true"),
+    );
+    await waitFor(async () =>
+      expect((await db.metadata.get(ESCALATION_KEY))?.value).toMatchObject({
+        enabled: true,
+      }),
+    );
+
+    // Revoking the provider takes the section back to the no-provider state.
+    showPanel("Connections");
+    fireEvent.click(
+      within(screen.getByRole("region", { name: LLM_SECTION })).getByRole(
+        "button",
+        { name: /revoke llm provider access/i },
+      ),
+    );
+    showPanel("Permissions");
+    await within(escalation).findByText(
+      /configure and enable an llm provider above/i,
+    );
+    expect(
+      within(escalation).queryByRole("switch", { name: /second opinion/i }),
+    ).toBeNull();
+  });
+
+  it("surfaces a settled status failure and recovers when the read is retried", async () => {
+    failStatusReads = true;
+    await mountOptionsShell();
+    showPanel("Permissions");
+    await screen.findByText(/could not read the provider status/i);
+    await screen.findByText(/could not read the second-opinion status/i);
+
+    failStatusReads = false;
+    fireEvent.click(
+      screen.getByRole("button", { name: /retry provider status/i }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/could not read the provider status/i)).toBeNull(),
+    );
+
+    // The live path is re-armed after a retry: a new provider still lands.
+    await enableCustomJevProvider({
+      baseUrl: CUSTOM_ORIGIN,
+      model: "jev-latest",
+      key: "custom-key-3",
+    });
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+  });
+
+  it("does not render a superseded origin while the newer read is in flight", async () => {
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(CUSTOM_ORIGIN),
+      });
+    });
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+    // The first read has settled: the card names the stored origin and the
+    // restore has landed the selection on it.
+    await waitFor(() => expect(consent.textContent).toContain(CUSTOM_ORIGIN));
+    await waitFor(() =>
+      expect(cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).checked).toBe(
+        true,
+      ),
+    );
+
+    // Hold the next custom-origin read, then move the provider: the settled
+    // value now belongs to a revision the current one has superseded.
+    holdCustomProbes = true;
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(SECOND_ORIGIN),
+      });
+    });
+    await waitFor(() => expect(heldProbes).toHaveLength(1));
+
+    // Pre-settle window: the superseded origin is tagged with the OLD
+    // revision, so it must not be rendered as the current provider — the
+    // panel reads as pending instead.
+    expect(consent.textContent).not.toContain(CUSTOM_ORIGIN);
+    expect(
+      within(consent).queryByRole("radio", { name: /custom/i }),
+    ).toBeNull();
+    expect(within(consent).getByText(/checking consent/i)).toBeTruthy();
+
+    // Releasing the held read lands the new origin.
+    await act(async () => {
+      heldProbes[0]!();
+    });
+    await waitFor(() => expect(consent.textContent).toContain(SECOND_ORIGIN));
+    expect(consent.textContent).not.toContain(CUSTOM_ORIGIN);
+  });
+
+  it("re-reads the worker when only a connectivity consent changes", async () => {
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    await within(consent).findByRole("radio", { name: /^TypeSafe$/ });
+
+    // No settings row moves here: the only input is a connectivity consent
+    // grant. This panel renders no control for the synthetic `jev_test` /
+    // `llm_test` scopes, so the contract under test is that the worker is
+    // re-asked at all — a status read that never re-runs is the bug.
+    const probesBefore = providerStatusCount;
+    const escalationBefore = escalationReadCount;
+    await act(async () => {
+      await grantConsentAtOrigin(CONSENT_SCOPE, CUSTOM_ORIGIN);
+    });
+    await waitFor(() =>
+      expect(providerStatusCount).toBeGreaterThanOrEqual(probesBefore + 3),
+    );
+    expect(escalationReadCount).toBeGreaterThanOrEqual(escalationBefore + 1);
+
+    // The LLM connectivity scope is a revision input too.
+    const afterJev = providerStatusCount;
+    await act(async () => {
+      await grantConsentAtOrigin(LLM_TEST_SCOPE, LLM_ORIGIN);
+    });
+    await waitFor(() =>
+      expect(providerStatusCount).toBeGreaterThanOrEqual(afterJev + 3),
+    );
+  });
+
+  it("preserves a provider selected before the first settled read", async () => {
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(CUSTOM_ORIGIN),
+      });
+    });
+    // Every Jev status probe is held, so the first settled read — and the
+    // restore-once it drives — lands only when this test releases it.
+    holdAllJevProbes = true;
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    const openrouter = cardFor(consent, /^OpenRouter$/);
+    fireEvent.click(openrouter);
+    await waitFor(() => expect(openrouter.checked).toBe(true));
+    // Nothing has settled: the configured custom provider is not even known.
+    expect(
+      within(consent).queryByRole("radio", { name: /custom/i }),
+    ).toBeNull();
+
+    // The restore would pick the stored custom provider; it must not move a
+    // selection the user already made.
+    await act(async () => {
+      for (const release of [...heldProbes]) release();
+      heldProbes.length = 0;
+    });
+    await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+    expect(cardFor(consent, /^OpenRouter$/).checked).toBe(true);
+    expect(
+      cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).checked,
+    ).toBe(false);
+  });
+
+  it("withholds the grant control until a custom origin resolves, and recovers on retry", async () => {
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(CUSTOM_ORIGIN),
+      });
+    });
+    await mountOptionsShell();
+    showPanel("Permissions");
+    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
+    // The origin is known, so the grant form is live.
+    await within(consent).findByRole("radio", {
+      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
+    });
+    await within(consent).findByRole("checkbox", { name: /agree/i });
+
+    // The status read starts failing and the provider moves: the origin is
+    // unknown, so the grant form must not render as if its Allow button
+    // could act — `onGrant` no-ops against a null origin.
+    failStatusReads = true;
+    await act(async () => {
+      await db.metadata.put({
+        key: CUSTOM_PROVIDER_ID,
+        value: customJevSettings(SECOND_ORIGIN),
+      });
+    });
+    await screen.findByText(/could not read the provider status/i);
+    expect(
+      within(consent).queryByRole("checkbox", { name: /agree/i }),
+    ).toBeNull();
+    expect(
+      within(consent).queryByRole("button", {
+        name: /allow .* bookmark analysis/i,
+      }),
+    ).toBeNull();
+    expect(
+      within(consent).getByText(/cannot be read or changed/i),
+    ).toBeTruthy();
+    // The new state adds no alert: the page's alert surface stays reserved
+    // for the worker's own {ok:false} reports.
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
+    expect(
+      within(consent)
+        .getByText(/cannot be read or changed/i)
+        .getAttribute("role"),
+    ).toBeNull();
+
+    // Retrying resolves the moved origin and the control comes back.
+    failStatusReads = false;
+    fireEvent.click(
+      screen.getByRole("button", { name: /retry provider status/i }),
+    );
+    await within(consent).findByRole("checkbox", { name: /agree/i });
+    await waitFor(() => expect(consent.textContent).toContain(SECOND_ORIGIN));
   });
 });

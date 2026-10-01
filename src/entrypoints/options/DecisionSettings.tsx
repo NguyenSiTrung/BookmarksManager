@@ -35,24 +35,18 @@ import {
   CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
   LLM_ESCALATE_SCOPE,
-  JEV_PROVIDER_IDS,
   type JevProviderId,
   PresetId,
 } from "../../schemas/provider";
-import type { BudgetChoice } from "../../schemas/llm";
-import {
-  ProviderMessage,
-  ProviderMessageResult,
-} from "../../messages/provider";
 import { PRESETS } from "../../net/presets";
 import {
   LlmFeatureMessage,
   LlmFeatureMessageResult,
 } from "../../messages/llm-features";
 import {
-  LlmProviderMessage,
-  LlmProviderMessageResult,
-} from "../../messages/llm-provider";
+  useDecisionProviderState,
+  type TaggedRead,
+} from "./useDecisionProviderState";
 import {
   Alert,
   Chip,
@@ -97,6 +91,16 @@ import {
  *    blocklist: entries are normalized/deduped with `normalizeBlocklistEntry`
  *    and round-trip through SET_BLOCKLIST; the frozen
  *    `BUILTIN_SENSITIVE_SITES` list renders read-only for context.
+ *
+ * Provider state is **live** (audit bug B14). The shell keeps every panel
+ * mounted, so this one cannot rely on mount-time reads: the custom Jev
+ * origin, the restore of the configured provider, the LLM origin, and the
+ * escalation snapshot all come from `useDecisionProviderState`, which re-asks
+ * the worker through the typed status protocols whenever the settings or
+ * connectivity-consent rows it can observe change. A provider enabled,
+ * reconfigured, capped, or revoked in the Connections panel therefore lands
+ * here without a reload, and a read that has not settled for the current
+ * revision reads as pending rather than as the superseded provider's state.
  *
  * `chrome` is the lazy-slice house pattern — only `runtime.sendMessage` is
  * used, so `vi.stubGlobal("chrome", …)` works in tests. Every reply is
@@ -166,19 +170,67 @@ function LoadState({
 export function DecisionSettings() {
   const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
   /**
-   * The configured custom Jev provider's egress origin, from the worker's
-   * PROVIDER_STATUS reply. `null` while unread or when no custom provider
-   * is configured — the custom consent card only renders once an origin
-   * exists to grant against (consent is per-origin).
+   * Live Jev + LLM provider state from the worker (audit bug B14): the custom
+   * endpoint's egress origin, the provider the worker reports as configured,
+   * and the LLM origin plus escalation snapshot. The hook re-asks the worker
+   * whenever the settings or connectivity-consent rows change — including
+   * changes made in the Connections panel, which stays mounted alongside this
+   * one — and tags every settled read with the revision it was taken for.
    */
-  const [customOrigin, setCustomOrigin] = useState<string | null>(null);
-  const [agreed, setAgreed] = useState(false);
+  const live = useDecisionProviderState();
+  /**
+   * The value a read produced for the CURRENT revision, or `undefined` while
+   * a newer revision's read is still in flight: a result tagged with a
+   * superseded revision is never reused as current state.
+   */
+  const currentRead = <T,>(read: TaggedRead<T> | null): T | undefined =>
+    read !== null && read.key === live.revision ? read.value : undefined;
+  const jevRead = currentRead(live.jev);
+  const llmRead = currentRead(live.llm);
+  /**
+   * The configured custom Jev provider's egress origin. `null` while the read
+   * is pending or failed (the failure renders its own retry below) and when
+   * no custom provider is configured — the custom consent card only renders
+   * once an origin exists to grant against (consent is per-origin).
+   */
+  const customOrigin = jevRead?.origin ?? null;
+  const llmOrigin = llmRead?.origin ?? null;
+  const escalation = llmRead?.escalation ?? null;
+  /**
+   * The provider actually rendered. The custom slot is the one selection that
+   * can disappear — revoking that provider in the Connections panel leaves no
+   * origin to consent at — so a selection whose read has settled as absent
+   * falls back to the default: this card never asks for a grant at an origin
+   * that is gone, and never shows another provider's consent state.
+   */
+  const selectedPreset: JevProviderId =
+    presetId === CUSTOM_PROVIDER_ID &&
+    jevRead !== undefined &&
+    jevRead.origin === null
+      ? "typesafe"
+      : presetId;
+  /**
+   * The selected custom endpoint's origin is not known for the current
+   * revision — either the read is still in flight, or it settled as failed.
+   * Consent is per-origin, so until an origin exists neither the verdict nor
+   * the grant/revoke control may render: `onGrant` would no-op against a null
+   * origin and leave a live-looking button that does nothing.
+   */
+  const customOriginUnresolved =
+    selectedPreset === CUSTOM_PROVIDER_ID && customOrigin === null;
+  /**
+   * The provider the current agreement was ticked for. Keying the box to the
+   * selection means a selection that moves — including the fallback above —
+   * can never carry a stale agreement into a different provider's grant.
+   */
+  const [agreedFor, setAgreedFor] = useState<JevProviderId | null>(null);
+  const agreed = agreedFor === selectedPreset;
   // Read gate (options-popup plan Task 3): see ProviderSetup. Keyed to the
   // selected preset; switching presets, granting, or revoking re-arms.
   const [consentDisclosureOpen, setConsentDisclosureOpen] = useState(false);
   const [openedConsentPreset, setOpenedConsentPreset] =
     useState<JevProviderId | null>(null);
-  const consentDisclosureRead = openedConsentPreset === presetId;
+  const consentDisclosureRead = openedConsentPreset === selectedPreset;
   const armConsentDisclosureGate = (): void => {
     setConsentDisclosureOpen(false);
     setOpenedConsentPreset(null);
@@ -202,14 +254,9 @@ export function DecisionSettings() {
   // The worker owns the `llmEscalation` metadata row and the budget reads;
   // the page writes consent directly (Dexie is shared) after showing the
   // scope's disclosure verbatim — the same split as `jev_decisions` above.
-  const [llmOrigin, setLlmOrigin] = useState<string | null>(null);
-  const [escalation, setEscalation] = useState<{
-    enabled: boolean;
-    providerConfigured: boolean;
-    monthlyBudgetUsd: number | null;
-    budget: BudgetChoice;
-    pricingKnown: boolean;
-  } | null>(null);
+  // The origin and escalation snapshot above are live reads of exactly that
+  // worker state, so a provider enabled, capped, or revoked in the
+  // Connections panel lands here without a reload.
   const [escalationAgreed, setEscalationAgreed] = useState(false);
   const [escalationBusy, setEscalationBusy] = useState(false);
   // Read gate for the escalation disclosure, keyed to the LLM origin so a
@@ -230,13 +277,13 @@ export function DecisionSettings() {
    * same read/write path here.
    */
   const consentOrigin =
-    presetId === CUSTOM_PROVIDER_ID
+    selectedPreset === CUSTOM_PROVIDER_ID
       ? customOrigin
-      : PRESETS[presetId].origin;
+      : PRESETS[selectedPreset].origin;
   const disclosure =
-    presetId === CUSTOM_PROVIDER_ID
+    selectedPreset === CUSTOM_PROVIDER_ID
       ? customJevDisclosure(customOrigin ?? undefined)
-      : PROVIDER_DISCLOSURES[presetId];
+      : PROVIDER_DISCLOSURES[selectedPreset];
 
   /**
    * The current provider's `jev_decisions` grant, live from `db.consents`.
@@ -249,23 +296,28 @@ export function DecisionSettings() {
   const consentRead = useLiveQuery(
     (): Promise<ConsentRead> =>
       consentOrigin === null
-        ? Promise.resolve({ preset: presetId, granted: false })
+        ? Promise.resolve({ preset: selectedPreset, granted: false })
         : hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
-            .then((granted) => ({ preset: presetId, granted }))
-            .catch(() => ({ preset: presetId, granted: false })),
-    [presetId, consentOrigin],
+            .then((granted) => ({ preset: selectedPreset, granted }))
+            .catch(() => ({ preset: selectedPreset, granted: false })),
+    [selectedPreset, consentOrigin],
   );
 
   /**
-   * The verdict for the CURRENT preset only — `undefined` (pending) until
-   * the query emits a read taken for this `presetId`. The mismatched-preset
-   * stale emission therefore renders "Checking consent…" instead of
-   * flashing the prior provider's panel under the new disclosure.
+   * The verdict for the CURRENT provider only — `undefined` (pending) until
+   * the query emits a read taken for this `selectedPreset`. The
+   * mismatched-preset stale emission therefore renders "Checking consent…"
+   * instead of flashing the prior provider's panel under the new disclosure.
+   * A custom provider whose origin read has not settled — or has settled as
+   * failed — for the current revision reads as unavailable too: a grant
+   * action must never be offered against an origin that is unknown.
    */
   const consentGranted =
-    consentRead !== undefined && consentRead.preset === presetId
-      ? consentRead.granted
-      : undefined;
+    customOriginUnresolved
+      ? undefined
+      : consentRead !== undefined && consentRead.preset === selectedPreset
+        ? consentRead.granted
+        : undefined;
 
   /**
    * Read the settings/blocklist snapshot through the decisions protocol.
@@ -308,98 +360,33 @@ export function DecisionSettings() {
   }, [loadSettings]);
 
   /**
-   * Probe every provider once on mount: reopen the provider the user
-   * actually configured instead of always landing on the first preset —
-   * the same restore order `ProviderSetup` uses (first fully enabled, then
-   * the first that still has saved settings, then the default). The custom
-   * provider's egress origin is captured from its status reply — the same
-   * resolved destination the egress gate would see — so the consent card
-   * below names the real recipient. A click that lands while the probe is
-   * in flight wins, because `currentPreset` would no longer be the initial
-   * default when the probe resolves.
+   * Reopen the provider the user actually configured instead of always
+   * landing on the first preset — the same restore order `ProviderSetup`
+   * uses (first fully enabled, then the first that still has saved settings,
+   * then the default). Applied once, from the first settled live read: a
+   * later revision (the user enabling or revoking a provider elsewhere on
+   * the page) refreshes the origins but never moves a selection the user
+   * made. A click that lands before the first read settles still wins,
+   * because `currentPreset` would no longer be the initial default.
    */
+  const restoredSelection = useRef(false);
   useEffect(() => {
-    queueMicrotask(() => {
-      const probe = async (id: JevProviderId) => {
-        try {
-          const raw = await chrome.runtime.sendMessage(
-            ProviderMessage.parse({ type: "PROVIDER_STATUS", preset: id }),
-          );
-          const result = ProviderMessageResult.safeParse(raw);
-          return result.success && result.data.ok && "status" in result.data
-            ? result.data.status
-            : null;
-        } catch {
-          return null;
-        }
-      };
-      void Promise.all(
-        JEV_PROVIDER_IDS.map(async (id) => ({ id, status: await probe(id) })),
-      ).then((results) => {
-        for (const { id, status } of results) {
-          if (id === CUSTOM_PROVIDER_ID) {
-            setCustomOrigin(status?.origin ?? null);
-          }
-        }
-        if (currentPreset.current !== "typesafe") return;
-        const pick =
-          results.find((entry) => entry.status?.enabled === true) ??
-          results.find((entry) => entry.status?.model !== undefined);
-        if (pick !== undefined && pick.id !== currentPreset.current) {
-          currentPreset.current = pick.id;
-          setPresetId(pick.id);
-        }
-      });
-    });
-  }, []);
+    if (restoredSelection.current || jevRead === undefined) return;
+    restoredSelection.current = true;
+    if (currentPreset.current !== "typesafe") return;
+    if (
+      jevRead.configured !== null &&
+      jevRead.configured !== currentPreset.current
+    ) {
+      currentPreset.current = jevRead.configured;
+      setPresetId(jevRead.configured);
+    }
+  }, [jevRead]);
 
   /** Re-run the settings read after a failure — the Retry button's action. */
   const onRetryLoad = () => {
     void loadSettings();
   };
-
-  /**
-   * Read the escalation state: the provider status supplies the egress
-   * origin (needed for the `llm_escalate` consent read below) and the
-   * configured cap; the feature reply carries the enabled flag. Both are
-   * worker answers — the page renders exactly what the gate would see.
-   */
-  const loadEscalation = useCallback(async () => {
-    try {
-      const [providerRaw, statusRaw] = await Promise.all([
-        chrome.runtime.sendMessage(
-          LlmProviderMessage.parse({ type: "LLM_PROVIDER_STATUS" }),
-        ),
-        chrome.runtime.sendMessage(
-          LlmFeatureMessage.parse({ type: "LLM_ESCALATION_STATUS" }),
-        ),
-      ]);
-      const provider = LlmProviderMessageResult.safeParse(providerRaw);
-      const status = LlmFeatureMessageResult.safeParse(statusRaw);
-      if (
-        provider.success &&
-        provider.data.ok &&
-        "status" in provider.data
-      ) {
-        setLlmOrigin(provider.data.status.origin ?? null);
-      }
-      if (
-        status.success &&
-        status.data.ok &&
-        "escalation" in status.data
-      ) {
-        setEscalation(status.data.escalation);
-      }
-    } catch {
-      // A missing worker surface leaves the section in its loading state.
-    }
-  }, []);
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      void loadEscalation();
-    });
-  }, [loadEscalation]);
 
   /**
    * The `llm_escalate` grant at the provider's egress origin — same
@@ -446,7 +433,12 @@ export function DecisionSettings() {
       .finally(() => setEscalationBusy(false));
   };
 
-  /** Flip the escalation flag through the worker; the reply is re-rendered. */
+  /**
+   * Flip the escalation flag through the worker. The worker persists the
+   * `llmEscalation` row before it answers, so the resulting revision change
+   * re-reads the snapshot below — the toggle renders the state the gate will
+   * see, not a page-local guess.
+   */
   const onEscalationToggle = (enabled: boolean) => {
     if (inFlight.current || escalationBusy) return;
     setEscalationBusy(true);
@@ -458,12 +450,7 @@ export function DecisionSettings() {
       )
       .then((raw) => {
         const result = LlmFeatureMessageResult.safeParse(raw);
-        if (
-          result.success &&
-          result.data.ok &&
-          "escalation" in result.data
-        ) {
-          setEscalation(result.data.escalation);
+        if (result.success && result.data.ok && "escalation" in result.data) {
           setNotice(
             enabled
               ? "Automatic second opinions are on for low-confidence suggestions."
@@ -484,7 +471,7 @@ export function DecisionSettings() {
   const onPresetChange = (next: JevProviderId) => {
     currentPreset.current = next;
     setPresetId(next);
-    setAgreed(false);
+    setAgreedFor(null);
     armConsentDisclosureGate();
     setNewEntry("");
     setNotice(null);
@@ -528,7 +515,7 @@ export function DecisionSettings() {
     // is durable local state, not a message to the worker.
     void grantConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
       .then(() => {
-        setAgreed(false);
+        setAgreedFor(null);
         armConsentDisclosureGate();
         setNotice(
           `Bookmark analysis consent recorded for ${disclosure.name}. It applies once ${disclosure.name} is connected above.`,
@@ -684,7 +671,7 @@ export function DecisionSettings() {
                 key={id}
                 name="decisions-provider"
                 value={id}
-                checked={presetId === id}
+                checked={selectedPreset === id}
                 onChange={() => onPresetChange(id)}
                 title={PROVIDER_DISCLOSURES[id].name}
                 inputLabel={PROVIDER_DISCLOSURES[id].name}
@@ -701,7 +688,7 @@ export function DecisionSettings() {
               <ProviderCard
                 name="decisions-provider"
                 value={CUSTOM_PROVIDER_ID}
-                checked={presetId === CUSTOM_PROVIDER_ID}
+                checked={selectedPreset === CUSTOM_PROVIDER_ID}
                 onChange={() => onPresetChange(CUSTOM_PROVIDER_ID)}
                 title={CUSTOM_JEV_PROVIDER_NAME}
                 inputLabel={CUSTOM_JEV_PROVIDER_NAME}
@@ -718,13 +705,26 @@ export function DecisionSettings() {
           </div>
         </fieldset>
 
+        {live.jevError !== null && (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Could not read the provider status.
+            <button
+              type="button"
+              onClick={live.retry}
+              className={`ml-2 ${smallButtonClass}`}
+            >
+              Retry provider status
+            </button>
+          </p>
+        )}
+
         <div className="mt-4">
           <Disclosure
             title={`What bookmark analysis sends to ${disclosure.name}`}
             open={consentDisclosureOpen}
             onOpenChange={(open) => {
               setConsentDisclosureOpen(open);
-              if (open) setOpenedConsentPreset(presetId);
+              if (open) setOpenedConsentPreset(selectedPreset);
             }}
             regionLabel={`${disclosure.name} bookmark data disclosure`}
           >
@@ -763,9 +763,19 @@ export function DecisionSettings() {
         </div>
 
         {consentGranted === undefined ? (
-          <p role="status" className="mt-3 text-sm text-muted-foreground">
-            Checking consent…
-          </p>
+          // A failed status read is not "still checking": say why no consent
+          // control is offered and point at the retry above, rather than
+          // leaving a form whose Allow button would silently no-op.
+          customOriginUnresolved && live.jevError !== null ? (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Consent for {disclosure.name} cannot be read or changed until
+              the provider status is available — retry above.
+            </p>
+          ) : (
+            <p role="status" className="mt-3 text-sm text-muted-foreground">
+              Checking consent…
+            </p>
+          )
         ) : consentGranted ? (
           // flex-wrap plus a non-shrinking, non-wrapping button: the longest
           // provider name ("Custom Jev provider") otherwise squeezed the
@@ -796,7 +806,9 @@ export function DecisionSettings() {
                 className="mt-0.5"
                 checked={agreed}
                 disabled={!consentDisclosureRead}
-                onChange={(event) => setAgreed(event.target.checked)}
+                onChange={(event) =>
+                  setAgreedFor(event.target.checked ? selectedPreset : null)
+                }
               />
               I have read the disclosure above and agree to send bookmark
               metadata to {disclosure.name}.
@@ -882,7 +894,22 @@ export function DecisionSettings() {
           only while the monthly cap allows it. The verdict is advisory: the
           suggestion still waits for your review.
         </p>
-        {llmOrigin === null ? (
+        {live.llmError !== null ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Could not read the second-opinion status.
+            <button
+              type="button"
+              onClick={live.retry}
+              className={`ml-2 ${smallButtonClass}`}
+            >
+              Retry second-opinion status
+            </button>
+          </p>
+        ) : llmOrigin === null && llmRead === undefined ? (
+          <p role="status" className="mt-3 text-sm text-muted-foreground">
+            Checking the second-opinion status…
+          </p>
+        ) : llmOrigin === null ? (
           <p className="mt-3 text-sm text-muted-foreground">
             Configure and enable an LLM provider above to use second
             opinions.

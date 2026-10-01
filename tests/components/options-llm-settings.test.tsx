@@ -126,11 +126,24 @@ function workerReply(message: unknown): Promise<unknown> {
         ...workerState.escalation,
         enabled: msg.enabled === true,
       };
-      return Promise.resolve({
-        ok: true,
-        code: "escalation_status",
-        escalation: workerState.escalation,
-      });
+      // The real worker persists the `llmEscalation` row before it answers
+      // (`writeLlmEscalationSettings`), and the panel reads that row through
+      // its live provider state — so the double writes it too.
+      return db.metadata
+        .put({
+          key: "llmEscalation",
+          value: {
+            enabled: msg.enabled === true,
+            ...(workerState.escalation.providerId !== undefined
+              ? { providerId: workerState.escalation.providerId }
+              : {}),
+          },
+        })
+        .then(() => ({
+          ok: true,
+          code: "escalation_status",
+          escalation: workerState.escalation,
+        }));
     }
     default:
       return Promise.resolve({

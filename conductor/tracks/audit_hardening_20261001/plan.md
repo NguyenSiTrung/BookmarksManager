@@ -606,7 +606,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(restructure): apply the full reviewed scope`,
     isolated LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 5: Reactive provider and escalation state in Options
+- [x] Task 5: Reactive provider and escalation state in Options
   <!-- files: src/entrypoints/options/DecisionSettings.tsx, src/entrypoints/options/useDecisionProviderState.ts, tests/components/options-decisions.test.tsx, tests/components/options-app.test.tsx, tests/components/options-llm-settings.test.tsx -->
   - Covers **B14**. Create a focused live-read hook keyed by relevant
     metadata/consent changes; obtain origin/status through existing worker
