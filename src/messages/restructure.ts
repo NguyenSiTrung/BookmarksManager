@@ -75,6 +75,9 @@ export const RestructureMessage = z.discriminatedUnion("type", [
     jobId: z.string().min(1),
   }),
   // The explicit user confirmation: apply the completed job's plan.
+  // `bookmarkIds` is the reviewed/accepted set from the diff; it filters the
+  // resolved rows but never narrows the tree revalidation, so apply and the
+  // preview stay on the same full scope (bar + Other + Mobile).
   z.strictObject({
     type: z.literal("RESTRUCTURE_CONFIRM"),
     jobId: z.string().min(1),
@@ -100,6 +103,8 @@ const RESTRUCTURE_TYPES = new Set([
  * Machine-readable failure codes. `LlmGateError` codes reach the page
  * verbatim (`confirmation_required` drives the CostConfirmationDialog
  * resend), plus the apply/queue codes and the protocol's own trust codes.
+ * `read_failed` is apply's typed refusal for an unreadable live tree — the
+ * reviewed scope could not be revalidated, so nothing was touched.
  */
 export const RestructureErrorCode = z.enum([
   "untrusted_sender",
@@ -108,6 +113,7 @@ export const RestructureErrorCode = z.enum([
   "invalid_job",
   "not_ready",
   "stale",
+  "read_failed",
   "mutation_failed",
   "illegal_transition",
   "unregistered_scope",

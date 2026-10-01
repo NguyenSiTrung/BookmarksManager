@@ -584,7 +584,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(ui): guard decision undo dispatch`,
     isolated decisions E2E, notes/learnings, close this task.
 
-- [ ] Task 4: Align restructure preview and apply scope
+- [x] Task 4: Align restructure preview and apply scope
   <!-- files: src/restructure/apply.ts, src/messages/restructure.ts, tests/unit/restructure-apply.test.ts, tests/unit/restructure-messages.test.ts -->
   - Covers **B15**. Existing `buildRestructureDiff` and reviewed accepted
     IDs remain authoritative; preserve the destination root policy.

@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/database";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { handleRestructureMessage } from "../../src/messages/restructure";
 import type { RestructureDeps } from "../../src/messages/restructure";
 import { proposeLayout } from "../../src/restructure/propose";
@@ -37,11 +38,50 @@ const deps: RestructureDeps = {
   },
 };
 
+let api: FakeBookmarksApi;
+
+/**
+ * Drive a persisted restructure job to `completed` with the given committed
+ * assignments — the state a `RESTRUCTURE_CONFIRM` reply acts on.
+ */
+async function completedRestructureJob(
+  bookmarkIds: string[],
+  assignments: Array<{
+    bookmarkId: string;
+    proposedPath: string;
+    confidence: number;
+  }>,
+  proposal: RestructureProposal = PROPOSAL,
+) {
+  const job = await enqueueJob({
+    kind: "restructure",
+    bookmarkIds,
+    restructureProposal: proposal,
+    now,
+  });
+  const { setJobStatus, mergeRestructureAssignments } = await import(
+    "../../src/jobs/queue"
+  );
+  await setJobStatus(job.id, "running", {}, now);
+  await mergeRestructureAssignments(job.id, assignments);
+  return setJobStatus(job.id, "completed", {}, now);
+}
+
 beforeEach(async () => {
-  const api = installBookmarksFake({
+  api = installBookmarksFake({
     bookmarksBar: [
       { id: "10", title: "Old", children: [
         { id: "11", title: "A", url: "https://a.io/" },
+      ]},
+    ],
+    otherBookmarks: [
+      { id: "50", title: "Later", children: [
+        { id: "51", title: "B", url: "https://b.io/" },
+      ]},
+    ],
+    mobileBookmarks: [
+      { id: "60", title: "Phone", children: [
+        { id: "61", title: "C", url: "https://c.io/" },
       ]},
     ],
   });
@@ -181,6 +221,48 @@ describe("RESTRUCTURE_STATUS", () => {
       .result;
     expect(result.diff?.resolved).toBe(1);
   });
+
+  it("resolves bar, Other, and Mobile assignments in the preview diff", async () => {
+    // The production preview path (`statusReply` → `getSubTree(ROOT_NODE_ID)`)
+    // must flatten to the same reviewed scope apply revalidates: a narrowing
+    // back to the bookmarks bar alone would drop the two non-bar rows.
+    const job = await completedRestructureJob(
+      ["11", "51", "61"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "51", proposedPath: "dev", confidence: 0.85 },
+        { bookmarkId: "61", proposedPath: "dev", confidence: 0.8 },
+      ],
+    );
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_STATUS", jobId: job.id },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: true, code: "job_state" });
+    const diff = (
+      reply as {
+        result: {
+          diff?: {
+            resolved: number;
+            stale: number;
+            rows: Array<{ bookmarkId: string; fromPath: string }>;
+          };
+        };
+      }
+    ).result.diff;
+    expect(diff?.resolved).toBe(3);
+    expect(diff?.stale).toBe(0);
+    expect(diff?.rows.map((r) => r.bookmarkId)).toEqual(["11", "51", "61"]);
+    expect(
+      Object.fromEntries(diff!.rows.map((r) => [r.bookmarkId, r.fromPath])),
+    ).toEqual({
+      "11": "Bookmarks bar/Old",
+      "51": "Other bookmarks/Later",
+      "61": "Mobile bookmarks/Phone",
+    });
+  });
 });
 
 describe("RESTRUCTURE_PAUSE/RESUME/CANCEL", () => {
@@ -251,6 +333,63 @@ describe("RESTRUCTURE_CONFIRM", () => {
     expect(
       dev!.children!.map((c: { id: string }) => c.id),
     ).toEqual(["11"]);
+  });
+
+  it("applies accepted IDs from the bar, Other, and Mobile roots as one batch", async () => {
+    const job = await completedRestructureJob(
+      ["11", "51", "61"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "51", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "61", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+
+    const reply = await handleRestructureMessage(
+      {
+        type: "RESTRUCTURE_CONFIRM",
+        jobId: job.id,
+        bookmarkIds: ["11", "51", "61"],
+      },
+      SENDER,
+      deps,
+    );
+
+    expect(reply).toMatchObject({ ok: true, code: "applied", moved: 3 });
+    const { getSubTree, getChildren } = await import(
+      "../../src/sync/chrome-bookmarks"
+    );
+    const bar = await getSubTree("1");
+    const dev = bar[0]!.children!.find(
+      (c: { title: string }) => c.title === "dev",
+    );
+    expect(dev).toBeDefined();
+    expect((await getChildren(dev!.id)).map((c) => c.id)).toEqual([
+      "11",
+      "51",
+      "61",
+    ]);
+  });
+
+  it("refuses a failed tree read with the typed read_failed code", async () => {
+    const job = await completedRestructureJob(
+      ["11"],
+      [{ bookmarkId: "11", proposedPath: "dev", confidence: 0.9 }],
+    );
+    const before = JSON.stringify(await api.getTree());
+    const treeSpy = vi
+      .spyOn(api, "getTree")
+      .mockRejectedValue(new Error("bookmarks api unavailable"));
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_CONFIRM", jobId: job.id },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "read_failed" });
+
+    treeSpy.mockRestore();
+    expect(JSON.stringify(await api.getTree())).toEqual(before);
   });
 
   it("refuses a still-running job (never applies early)", async () => {

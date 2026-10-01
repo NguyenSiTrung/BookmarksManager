@@ -1,11 +1,12 @@
 import { db } from "../db/database";
 import {
   get,
-  getSubTree,
+  getTree,
   getChildren,
   isFolder,
   BOOKMARKS_BAR_ID,
 } from "../sync/chrome-bookmarks";
+import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import {
   createFolder,
   moveNode,
@@ -24,6 +25,16 @@ import { undoLatest } from "../undo/restore";
  * same-named folders reused), capture a `restructure` undo snapshot of every
  * moved bookmark's pre-move position, then move each resolved bookmark.
  *
+ * Scope: preview/status read the root subtree (`getSubTree(ROOT_NODE_ID)`,
+ * see `src/messages/restructure.ts`) while apply revalidates with the full
+ * `getTree()`; both flatten to the same bar + Other + Mobile scope, so an
+ * assignment is never silently dropped just because its bookmark lives
+ * outside the bookmarks bar. Apply then filters that diff to the
+ * reviewed/accepted ids. A failed or empty tree read is a typed `read_failed`
+ * refusal, never an empty scope that would look like "nothing left to do".
+ * Created folders still go under the bookmarks bar (destination root policy,
+ * {@link ensureFolders}'s `rootId`).
+ *
  * Guards (all before any Chrome write): the job is a completed `restructure`
  * job; every resolved bookmark still exists, is a leaf, and sits outside a
  * managed subtree; every proposed path is schema-valid and resolvable to a
@@ -37,7 +48,14 @@ import { undoLatest } from "../undo/restore";
 export type ApplyErrorCode =
   | "invalid_job"
   | "not_ready"
+  /** No reviewed assignment is still resolvable against the live tree. */
   | "stale"
+  /**
+   * The live tree could not be read (or read back empty, which Chrome's
+   * `getTree()` never legitimately does) — the reviewed scope cannot be
+   * revalidated, so nothing is touched.
+   */
+  | "read_failed"
   | "mutation_failed";
 
 export class ApplyError extends Error {
@@ -117,10 +135,14 @@ async function ensureFolders(
 }
 
 /**
- * Apply a completed `restructure` job's plan. Throws `ApplyError`; on a
- * mid-apply mutation failure it replays the moves already made back to
- * their captured positions and removes the folders it created, then throws
- * `mutation_failed`.
+ * Apply a completed `restructure` job's plan, revalidated against the full
+ * live tree. `acceptedBookmarkIds` is the reviewed set the user confirmed
+ * (absent ⇒ every resolved row) — it is intersected with the rows that are
+ * still resolvable, never used to shrink the read scope. Throws `ApplyError`:
+ * `read_failed` before any write when the tree read fails; `stale` when no
+ * reviewed assignment remains; on a mid-apply mutation failure it replays the
+ * moves already made back to their captured positions and removes the folders
+ * it created, then throws `mutation_failed`.
  */
 export async function applyRestructurePlan(
   jobId: string,
@@ -137,10 +159,29 @@ export async function applyRestructurePlan(
     );
   }
   const plan = job.restructure;
-  // Live-tree revalidation: the whole tree is re-read NOW, so moves act on
-  // current positions — not the state the proposal was built against.
-  const bar = await getSubTree(BOOKMARKS_BAR_ID).catch(() => []);
-  const diff = buildRestructureDiff(bar, plan);
+  // Live-tree revalidation over the FULL library (bar + Other + Mobile), the
+  // same scope the preview/status replies build their diff from, so moves act
+  // on current positions and no reviewed assignment is dropped for living
+  // outside the bar. A read failure (or an empty read, which `getTree()`
+  // never legitimately returns) is a typed refusal: treating it as "no
+  // bookmarks" would silently shrink the reviewed scope to nothing.
+  let tree: BookmarksTreeNode[];
+  try {
+    tree = await getTree();
+  } catch (cause) {
+    throw new ApplyError(
+      "read_failed",
+      "The bookmark tree could not be read; nothing was changed.",
+      { cause },
+    );
+  }
+  if (tree.length === 0) {
+    throw new ApplyError(
+      "read_failed",
+      "The bookmark tree read came back empty; nothing was changed.",
+    );
+  }
+  const diff = buildRestructureDiff(tree, plan);
   const acceptedSet =
     acceptedBookmarkIds !== undefined ? new Set(acceptedBookmarkIds) : null;
   const resolved = diff.rows.filter(

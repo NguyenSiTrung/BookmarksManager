@@ -78,6 +78,20 @@ beforeEach(async () => {
         { id: "41", title: "Managed", url: "https://policy.io/" },
       ]},
     ],
+    otherBookmarks: [
+      { id: "50", title: "Later", children: [
+        { id: "51", title: "Other article", url: "https://other.io/x" },
+        { id: "52", title: "Other second", url: "https://other.io/y" },
+      ]},
+      { id: "70", title: "Other policy", unmodifiable: "managed", children: [
+        { id: "71", title: "Other managed", url: "https://other-policy.io/" },
+      ]},
+    ],
+    mobileBookmarks: [
+      { id: "60", title: "Phone", children: [
+        { id: "61", title: "Mobile article", url: "https://mobile.io/x" },
+      ]},
+    ],
   });
   await db.delete();
   await db.open();
@@ -218,6 +232,170 @@ describe("applyRestructurePlan", () => {
     // "21" was NOT moved into "dev" — still under "News"
     const news = bar[0]!.children!.find((c) => c.title === "News")!;
     expect(news.children!.map((c) => c.id)).toContain("21");
+  });
+
+  it("previews and applies the same reviewed scope across the bar, Other, and Mobile roots", async () => {
+    const job = await completedJob(
+      ["11", "51", "61"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "51", proposedPath: "dev", confidence: 0.85 },
+        { bookmarkId: "61", proposedPath: "dev/tools", confidence: 0.8 },
+      ],
+    );
+    // The preview the user reviewed resolves rows from every root...
+    const preview = buildRestructureDiff(await api.getTree(), job.restructure!);
+    expect(preview.resolved).toBe(3);
+    expect(
+      Object.fromEntries(preview.rows.map((r) => [r.bookmarkId, r.fromPath])),
+    ).toEqual({
+      "11": "Bookmarks bar/Old",
+      "51": "Other bookmarks/Later",
+      "61": "Mobile bookmarks/Phone",
+    });
+
+    // ...and the accepted IDs from each root all move in one batch.
+    const result = await applyRestructurePlan(job.id, ["11", "51", "61"]);
+    expect(result.moved).toBe(3);
+
+    // Destination root policy unchanged: created folders live under the bar.
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    const tools = dev.children!.find((c) => c.title === "tools")!;
+    expect(dev.parentId).toBe("1");
+    expect((await api.get("11"))[0]?.parentId).toBe(tools.id);
+    expect((await api.get("51"))[0]?.parentId).toBe(dev.id);
+    expect((await api.get("61"))[0]?.parentId).toBe(tools.id);
+
+    // One snapshot covering exactly the reviewed scope.
+    const [snapshot] = await listSnapshots();
+    expect(snapshot?.kind).toBe("restructure");
+    expect(snapshot?.nodes.map((node) => node.id)).toEqual(["11", "51", "61"]);
+
+    // Undo replays every move back to its original root.
+    expect(await undoRestructurePlan()).toMatchObject({ ok: true });
+    expect((await api.get("11"))[0]?.parentId).toBe("10");
+    expect((await api.get("51"))[0]?.parentId).toBe("50");
+    expect((await api.get("61"))[0]?.parentId).toBe("60");
+    expect(await listSnapshots()).toEqual([]);
+  });
+
+  it("moves only accepted, still-resolved rows and leaves unaccepted and stale rows in place", async () => {
+    const job = await completedJob(
+      ["11", "12", "51", "gone"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "12", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "51", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "gone", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    // "12" is resolved but not accepted; "gone" is accepted but stale.
+    const result = await applyRestructurePlan(job.id, ["11", "51", "gone"]);
+    expect(result.moved).toBe(2);
+
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    // Only the accepted bookmarks; the proposed "tools" subfolder is a folder.
+    expect(
+      (await api.getChildren(dev.id))
+        .filter((c) => c.url !== undefined)
+        .map((c) => c.id),
+    ).toEqual(["11", "51"]);
+    // Unaccepted row stayed under "Old".
+    expect((await api.get("12"))[0]?.parentId).toBe("10");
+    const [snapshot] = await listSnapshots();
+    expect(snapshot?.nodes.map((node) => node.id)).toEqual(["11", "51"]);
+  });
+
+  it("refuses a managed row from another root and compensates the whole batch", async () => {
+    const job = await completedJob(
+      ["11", "71"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "71", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    await expect(
+      applyRestructurePlan(job.id, ["11", "71"]),
+    ).rejects.toMatchObject({ code: "mutation_failed" });
+
+    // The managed row never moved...
+    expect((await api.get("71"))[0]?.parentId).toBe("70");
+    // ...and the move already applied to the bar row was rolled back.
+    expect((await api.get("11"))[0]?.parentId).toBe("10");
+    const bar = await api.getSubTree("1");
+    expect(bar[0]!.children!.some((c) => c.title === "dev")).toBe(false);
+  });
+
+  it("revalidates live positions when the user moves a bookmark between review and apply", async () => {
+    const job = await completedJob(
+      ["11"],
+      [{ bookmarkId: "11", proposedPath: "dev", confidence: 0.9 }],
+    );
+    // What the user reviewed: "11" under the bar's "Old" folder.
+    const preview = buildRestructureDiff(await api.getTree(), job.restructure!);
+    expect(preview.rows[0]).toMatchObject({
+      fromPath: "Bookmarks bar/Old",
+      status: "resolved",
+    });
+
+    // Between review and apply the user files it under Other bookmarks.
+    await api.move("11", { parentId: "50" });
+
+    const result = await applyRestructurePlan(job.id, ["11"]);
+    expect(result.moved).toBe(1);
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    expect((await api.get("11"))[0]?.parentId).toBe(dev.id);
+
+    // Undo restores the position captured at apply time — Other, not the bar.
+    expect(await undoRestructurePlan()).toMatchObject({ ok: true });
+    expect((await api.get("11"))[0]?.parentId).toBe("50");
+  });
+
+  it("refuses with a typed read_failed error, mutating nothing, when the tree read fails", async () => {
+    const job = await completedJob(
+      ["11", "51"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "51", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    const before = JSON.stringify(await api.getTree());
+    const createSpy = vi.spyOn(api, "create");
+    const moveSpy = vi.spyOn(api, "move");
+    const treeSpy = vi
+      .spyOn(api, "getTree")
+      .mockRejectedValue(new Error("bookmarks api unavailable"));
+
+    await expect(applyRestructurePlan(job.id, ["11", "51"])).rejects.toMatchObject({
+      name: "ApplyError",
+      code: "read_failed",
+    });
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(moveSpy).not.toHaveBeenCalled();
+    expect(await listSnapshots()).toEqual([]);
+
+    treeSpy.mockRestore();
+    expect(JSON.stringify(await api.getTree())).toEqual(before);
+  });
+
+  it("refuses with a typed read_failed error when the tree read comes back empty", async () => {
+    const job = await completedJob(
+      ["11"],
+      [{ bookmarkId: "11", proposedPath: "dev", confidence: 0.9 }],
+    );
+    const moveSpy = vi.spyOn(api, "move");
+    const treeSpy = vi.spyOn(api, "getTree").mockResolvedValue([]);
+
+    await expect(applyRestructurePlan(job.id, ["11"])).rejects.toMatchObject({
+      name: "ApplyError",
+      code: "read_failed",
+    });
+    expect(moveSpy).not.toHaveBeenCalled();
+    expect(await listSnapshots()).toEqual([]);
+    treeSpy.mockRestore();
   });
 
   it("rejects a job that is not completed", async () => {
