@@ -13,7 +13,10 @@ import { Favicon } from "../../ui/components/favicon";
  *
  * The title input is focused once the prefill settles so "open popup, press
  * Enter" saves the page without touching the mouse; in URL mode the URL field
- * takes focus instead, since that is the only thing left to provide.
+ * takes focus instead, since that is the only thing left to provide. Focus is
+ * placed with the caret at the end of the value rather than selecting it, and
+ * the input uses the same quiet fill when focused as on hover — no border or
+ * ring — so the popup does not open looking like a boxed text field.
  */
 
 export interface PageCardProps {
@@ -51,7 +54,16 @@ export function PageCard({
   const titleRef = useRef<HTMLInputElement>(null);
   const urlRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    (urlEditable ? urlRef : titleRef).current?.focus();
+    const el = (urlEditable ? urlRef : titleRef).current;
+    el?.focus();
+    // Place the caret at the end instead of selecting the whole title.
+    // Programmatic `.focus()` on a text input selects its contents in
+    // Chrome, which reads as "this text is already selected" the moment the
+    // popup opens. Collapsing to the end keeps "open popup, press Enter to
+    // save" working (typing appends, Enter submits) without the inverted
+    // highlight.
+    const end = el?.value.length ?? 0;
+    el?.setSelectionRange(end, end);
     // Focus once on mount; `urlEditable` is fixed for the popup's lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -82,7 +94,7 @@ export function PageCard({
           disabled={disabled}
           placeholder="Untitled page"
           onChange={(event) => onTitleChange(event.target.value)}
-          className="-mx-1.5 w-[calc(100%+0.75rem)] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[15px] leading-snug font-semibold outline-hidden transition-colors placeholder:font-normal hover:bg-secondary focus:bg-background focus:ring-2 focus:ring-ring/40 disabled:opacity-100"
+          className="-mx-1.5 w-[calc(100%+0.75rem)] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[15px] leading-snug font-semibold outline-hidden transition-colors placeholder:font-normal hover:bg-secondary focus:bg-secondary disabled:opacity-100"
         />
         {urlEditable ? (
           <>
