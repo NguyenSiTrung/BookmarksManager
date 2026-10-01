@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   JevClientError,
@@ -13,6 +14,15 @@ import type {
 import { NetworkGateError } from "../../src/net/send";
 import { startMockJevServer } from "../mock-servers/jev";
 import type { MockJevServer } from "../mock-servers/jev";
+import { db } from "../../src/db/database";
+import { grantConsent } from "../../src/consent/records";
+import { coordinateJob } from "../../src/jobs/coordinator";
+import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, resumeJob } from "../../src/jobs/queue";
+
+vi.mock("../../src/security/keys", async (original) => ({
+  ...await original<typeof import("../../src/security/keys")>(),
+  readProviderKey: vi.fn(async () => "synthetic-client-key"),
+}));
 
 /**
  * Hardened Jev client (spec FR3): validation and budget guards happen before
@@ -189,6 +199,112 @@ describe("validation and budget guards", () => {
       batches: 0,
     });
     expect(transport).not.toHaveBeenCalled();
+  });
+});
+
+describe("real-gate attempt admission and rejected split draining", () => {
+  function deferred() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
+  }
+
+  beforeEach(async () => {
+    await db.open();
+    await db.consents.clear();
+    await db.jobs.clear();
+    await db.metadata.clear();
+    await db.sentLog.clear();
+    await grantConsent("jev_decisions", "typesafe");
+    vi.stubGlobal("chrome", { permissions: { contains: async () => true } });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  function wireRequest(count = 1) {
+    return requestOf(Object.fromEntries(Array.from({ length: count }, (_, index) =>
+      [`q${index}`, noulQuestion(count > 1 ? "x".repeat(50_000) : "Relevant?")])),
+    { bookmark: { title: "Synthetic", url: "https://attempt.guides.dev/", domain: "attempt.guides.dev" } });
+  }
+
+  it("a refusal after real preflight is not classified as a retryable transport failure", async () => {
+    const entered = deferred();
+    const held = deferred();
+    let allowed = true;
+    const refusal = new NetworkGateError("transport", "Admission refused.");
+    vi.stubGlobal("chrome", { permissions: { contains: async () => {
+      entered.release(); await held.promise; return true;
+    } } });
+    const wire = vi.fn(async (_url: unknown, init?: RequestInit) => okResponse(JSON.parse(String(init?.body))));
+    vi.stubGlobal("fetch", wire);
+    const run = createJevClient({ providerId: "typesafe", model: MODEL, scope: "jev_decisions",
+      sleep: async () => {}, beforeSend: async () => { if (!allowed) throw refusal; } }).run(wireRequest());
+    await entered.promise;
+    allowed = false;
+    held.release();
+    await expect(run).rejects.toBe(refusal);
+    expect(wire).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("cancel during retry wait blocks the next real fetch and preserves the first audit", async () => {
+    const entered = deferred();
+    const held = deferred();
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["synthetic"] });
+    const authority = (await claimJobOwner(job.id))!;
+    const wire = vi.fn(async () => new Response("", { status: 429 }));
+    vi.stubGlobal("fetch", wire);
+    const run = createJevClient({ providerId: "typesafe", model: MODEL, scope: "jev_decisions",
+      sleep: async () => { entered.release(); await held.promise; },
+      beforeSend: () => assertJobAuthority(authority) }).run(wireRequest());
+    await entered.promise;
+    await cancelJob(job.id);
+    held.release();
+    await expect(run).rejects.toMatchObject({ code: "illegal_transition" });
+    expect(wire).toHaveBeenCalledTimes(1);
+    expect(await db.sentLog.count()).toBe(1);
+  });
+
+  it.each([5, 9])("retains the owner and spent sibling usage while %i split questions drain before resume", async (questionCount) => {
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["synthetic"] });
+    await claimJobOwner(job.id);
+    const bothEntered = deferred();
+    const fail = deferred();
+    const sibling = deferred();
+    let sends = 0;
+    const wire = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const request = JSON.parse(String(init?.body)) as SystemOneRequest;
+      const index = sends++;
+      if (sends === 2) bothEntered.release();
+      if (index === 0) { await fail.promise; return new Response("", { status: 401 }); }
+      if (index === 1) await sibling.promise;
+      return okResponse(request, { usage: { input_tokens: 17, output_tokens: 3, cost: 0.25 } });
+    });
+    vi.stubGlobal("fetch", wire);
+    const partial: unknown[] = [];
+    let settled = false;
+    const owner = coordinateJob(job.id, async () => {
+      await createJevClient({ providerId: "typesafe", model: MODEL, scope: "jev_decisions", maxConcurrency: 2 })
+        .run(wireRequest(questionCount), { onPartialUsage: async (result) => { partial.push(result.usage); } });
+    });
+    const outcome = owner.catch((cause: unknown) => cause).finally(() => { settled = true; });
+    await bothEntered.promise;
+    await pauseJob(job.id);
+    fail.release();
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    const resuming = resumeJob(job.id);
+    try {
+      expect(coordinateJob(job.id, async () => {})).toBe(owner);
+      expect(settled).toBe(false);
+      expect((await getJob(job.id))?.status).toBe("paused");
+      expect(sends).toBe(2); // the queued third wire batch must not start
+    } finally {
+      sibling.release();
+      await resuming;
+    }
+    expect(await outcome).toMatchObject({ code: "auth" });
+    expect(partial).toEqual([{ inputTokens: 17, outputTokens: 3, cost: 0.25 }]);
+    expect(wire).toHaveBeenCalledTimes(2);
+    expect(await db.sentLog.count()).toBe(2);
   });
 });
 

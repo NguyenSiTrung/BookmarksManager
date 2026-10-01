@@ -81,6 +81,31 @@ async function expectGateBlock(
 }
 
 describe("sendConsentedTest gate", () => {
+  it("checks final caller admission after a held permission read without wrapping its refusal", async () => {
+    await grantTestConsent("typesafe");
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    containsSpy.mockImplementation(async () => { entered(); await held; return true; });
+    const refusal = new Error("The job no longer admits outbound work.");
+    let admitted = true;
+    fetchSpy.mockResolvedValue(okResponse());
+    const running = sendConsented("jev_test", "typesafe", "jev-latest",
+      makeSyntheticRequest("jev-latest"), { beforeSend: async () => { if (!admitted) throw refusal; } });
+    await started;
+    admitted = false;
+    release();
+    await expect(running).rejects.toBe(refusal);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("a permissive caller admission does not bypass the real consent gate", async () => {
+    await expectGateBlock(sendConsented("jev_test", "typesafe", "jev-latest",
+      makeSyntheticRequest("jev-latest"), { beforeSend: async () => {} }), "no_consent");
+  });
+
   it("rejects with no_consent before any grant and never calls fetch", async () => {
     await expectGateBlock(
       sendConsentedTest("typesafe", "jev-latest"),

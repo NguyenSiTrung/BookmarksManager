@@ -14,6 +14,7 @@ import type { Job } from "../schemas/job";
 import type { UsageRecord } from "../schemas/usage";
 import {
   bookmarkChecks,
+  claimJobOwner,
   commitJobProgress,
   computeTotalBatches,
   getJob,
@@ -32,8 +33,11 @@ import {
  * the same Dexie state therefore resumes from the last committed batch and
  * never re-sends an already-committed batch.
  *
- * Pause and cancel are observed at a batch boundary: the runner re-reads the
- * row before each batch and stops when the status is no longer `running`.
+ * Pause drains the already-started batch, then stops before the next batch.
+ * Cancel and owner replacement also stop before the next bookmark request;
+ * their late batch progress cannot change terminal or newer-owner state.
+ * Paid work that survived a crash in an uncommitted batch may still replay:
+ * this is at-least-once resumption, not exactly-once external billing.
  * A batch that throws is not committed; the job is marked `failed` with a
  * redacted, content-free error (only the failure's `code`, never its message
  * or any bookmark content) — but only when the job is still `running`, so a
@@ -107,6 +111,8 @@ export interface RunJobOptions {
    * could skip or re-send a committed batch.
    */
   readonly batchSize?: number;
+  /** Already claimed by the coordinated production entry before async setup. */
+  readonly ownerGeneration?: number;
 }
 
 /** Statuses from which a job can no longer be run. */
@@ -207,6 +213,8 @@ export class JobRunner {
         `Cannot run a job that is already ${job.status}.`,
       );
     }
+    if (job.status === "paused") return job;
+    if (options.ownerGeneration !== undefined && job.ownerGeneration !== options.ownerGeneration) return job;
 
     const bookmarks = options.bookmarks;
     if (bookmarks.length === 0) {
@@ -262,7 +270,7 @@ export class JobRunner {
     const pairBatchCount = computeTotalBatches(pairs.length, batchSize);
     const totalBatches = bookmarkBatchCount + pairBatchCount;
 
-    const startBatch = job.progress.committedBatches;
+    let startBatch = job.progress.committedBatches;
     if (startBatch > totalBatches) {
       throw new JobRunnerError(
         "invalid_input",
@@ -270,19 +278,26 @@ export class JobRunner {
       );
     }
 
+    const claimed = options.ownerGeneration === undefined
+      ? await claimJobOwner(jobId, this.#now) : await getJob(jobId);
+    if (claimed === undefined) return (await getJob(jobId)) ?? job;
+    const ownerGeneration = options.ownerGeneration ?? claimed.ownerGeneration;
+    if (claimed.ownerGeneration !== ownerGeneration || claimed.status !== "running") return claimed;
     job = await setJobStatus(
       jobId,
       "running",
-      { progress: { ...job.progress, totalBatches } },
+      { progress: { ...claimed.progress, totalBatches } },
       this.#now,
+      ownerGeneration,
     );
+    startBatch = job.progress.committedBatches;
     const checks = bookmarkChecks(jobChecks(job.kind));
 
     for (let index = startBatch; index < totalBatches; index += 1) {
       // Batch boundary: a pause/cancel that landed during the previous batch
       // is observed here, before any further work is sent.
       const current = await getJob(jobId);
-      if (current === undefined || current.status !== "running") {
+      if (current === undefined || current.status !== "running" || current.ownerGeneration !== ownerGeneration) {
         return current ?? job;
       }
 
@@ -293,9 +308,14 @@ export class JobRunner {
             (index + 1) * batchSize,
           );
           for (const bookmark of batch) {
+            // Do not let a superseded owner send another request, even inside
+            // its batch. A same-owner pause still drains the current batch.
+            const live = await getJob(jobId);
+            if (live === undefined || live.ownerGeneration !== ownerGeneration ||
+              (live.status !== "running" && live.status !== "paused")) return live ?? job;
             const result = await this.#analyze({
               bookmark,
-              job: current,
+              job: live,
               checks,
             });
             await attachUsageToJob(result.sent ? result.usage : null, jobId);
@@ -314,7 +334,7 @@ export class JobRunner {
         // still `running` may move to `failed`; otherwise that transition is
         // illegal, so return the current row unchanged (redaction preserved).
         const latest = await getJob(jobId);
-        if (latest === undefined || latest.status !== "running") {
+        if (latest === undefined || latest.status !== "running" || latest.ownerGeneration !== ownerGeneration) {
           return latest ?? job;
         }
         return await setJobStatus(
@@ -322,6 +342,7 @@ export class JobRunner {
           "failed",
           { error: redactFailure(cause) },
           this.#now,
+          ownerGeneration,
         );
       }
 
@@ -343,11 +364,11 @@ export class JobRunner {
         ),
       };
       const usage = await jobUsageRollup(jobId);
-      job = await commitJobProgress(jobId, progress, usage, this.#now);
+      job = await commitJobProgress(jobId, progress, usage, this.#now, ownerGeneration);
     }
 
     const last = await getJob(jobId);
-    if (last === undefined || last.status !== "running") {
+    if (last === undefined || last.status !== "running" || last.ownerGeneration !== ownerGeneration) {
       return last ?? job;
     }
     return await setJobStatus(
@@ -362,6 +383,7 @@ export class JobRunner {
         usage: await jobUsageRollup(jobId),
       },
       this.#now,
+      ownerGeneration,
     );
   }
 }
@@ -407,13 +429,14 @@ export interface PipelineAnalyzerOptions {
 export function createPipelineAnalyzer(
   options: PipelineAnalyzerOptions,
 ): JobAnalyzeFn {
-  return ({ bookmark, checks }) =>
+  return ({ bookmark, checks, job }) =>
     analyzeBookmark({
       bookmark,
       context: options.context,
       providerId: options.providerId,
       model: options.model,
       checks,
+      job: { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 },
       ...(options.userBlocklist === undefined
         ? {}
         : { userBlocklist: options.userBlocklist }),
@@ -441,9 +464,10 @@ export interface DuplicateScannerOptions {
 export function createDuplicateScanner(
   options: DuplicateScannerOptions,
 ): JobScanDuplicatesFn {
-  return ({ pairs }) =>
+  return ({ pairs, job }) =>
     scanNearDuplicatePairs({
       pairs,
+      job: { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 },
       providerId: options.providerId,
       model: options.model,
       ...(options.userBlocklist === undefined

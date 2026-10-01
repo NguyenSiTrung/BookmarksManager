@@ -319,7 +319,7 @@ export async function sendConsented(
   providerId: string,
   model: string,
   request: unknown,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; beforeSend?: () => Promise<void> },
 ): Promise<Response> {
   const scopeEntry = resolveScope(scope);
   const destination = await resolveStoredJevDestination(providerId);
@@ -383,6 +383,10 @@ export async function sendConsented(
     );
   }
 
+  // Caller authority is additive to every existing gate above, and checked
+  // after their asynchronous preflight. Keep refusals outside fetch's catch:
+  // they are not transport failures and must not become retryable.
+  await options?.beforeSend?.();
   const signal = options?.signal;
   if (signal?.aborted === true) {
     throw new NetworkGateError(

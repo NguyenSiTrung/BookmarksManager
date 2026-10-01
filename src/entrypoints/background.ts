@@ -24,12 +24,14 @@ import { DecisionSettings } from "../decisions/policy";
 import { rerankSearch } from "../decisions/rerank";
 import {
   cancelJob,
+  claimJobOwner,
   enqueueJob,
   getJob,
   pauseJob,
   resumeJob,
   setJobStatus,
 } from "../jobs/queue";
+import { coordinateJob } from "../jobs/coordinator";
 import {
   JobRunner,
   JobRunnerError,
@@ -287,31 +289,27 @@ async function buildRunner(
  * discipline) instead of being swallowed silently; anything else
  * (transport/context) is left for the next worker start to retry.
  */
-export async function runPersistedJob(jobId: string): Promise<void> {
+export function runPersistedJob(jobId: string): Promise<void> {
+  return coordinateJob(jobId, () => drivePersistedJob(jobId));
+}
+
+async function drivePersistedJob(jobId: string): Promise<void> {
   const job = await getJob(jobId);
   if (job === undefined) return;
   if (job.status !== "running" && job.status !== "pending") return;
   const provider = await activeProvider();
   if (provider === null) return; // no consented provider — leave the job be
+  const owner = await claimJobOwner(jobId);
+  if (owner === undefined) return; // pause/cancel during provider setup wins
   const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
   if (bookmarks.length === 0) return;
   try {
     const runner = await buildRunner(provider, job.kind);
-    await runner.run(jobId, { bookmarks });
+    await runner.run(jobId, { bookmarks, ownerGeneration: owner.ownerGeneration });
   } catch (error) {
     if (!(error instanceof JobRunnerError)) throw error;
     try {
-      const current = await getJob(jobId);
-      if (current === undefined) return;
-      if (current.status === "pending") {
-        // `pending → failed` has no legal edge; every runner entry passes
-        // through `running` first, so the strand is visible from there.
-        await setJobStatus(jobId, "running");
-      } else if (current.status !== "running") {
-        // The user paused/canceled meanwhile — their status wins.
-        return;
-      }
-      await setJobStatus(jobId, "failed", { error: error.message });
+      await setJobStatus(jobId, "failed", { error: error.message }, undefined, owner.ownerGeneration);
     } catch {
       // Raced a concurrent transition — the row keeps whatever won.
     }
@@ -432,11 +430,15 @@ export function productionHandlers(
     },
     pauseJob: (id) => pauseJob(id),
     async resumeJob(id) {
+      // Capture user intent before waiting on provider/setup or a held batch.
+      // A later pause/cancel must not be undone by this older resume request.
+      const requested = await getJob(id);
       // Refuse BEFORE the flip, exactly like startJob: with no provider the
       // relaunch below would return silently and the flipped row would
       // claim "Running" forever with nothing driving it.
       await requireActiveProvider();
-      const job = await resumeJob(id);
+      const job = await resumeJob(id, undefined, requested?.controlRevision);
+      if (job.status !== "running") return job;
       // The flipped row alone is not enough (see ProductionHandlersDeps):
       // relaunch the runner, fire-and-forget exactly like startJob above.
       void relaunchJob(job.id).catch(() => {

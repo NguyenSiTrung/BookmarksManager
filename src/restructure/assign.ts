@@ -16,7 +16,7 @@ import {
   KEEP_FOLDER_KEY,
   keyForIndex,
 } from "../jev/tasks/restructure";
-import { mergeRestructureAssignments } from "../jobs/queue";
+import { assertJobAuthority, mergeRestructureAssignments } from "../jobs/queue";
 import type { JobAnalyzeFn, JobAnalyzeInput } from "../jobs/runner";
 
 /**
@@ -151,6 +151,7 @@ export async function assignProposedFolder(
       providerId: options.providerId,
       model: options.model,
       scope: DECISIONS_CONSENT_SCOPE,
+      beforeSend: () => assertJobAuthority(input.job),
       ...(options.transport === undefined
         ? {}
         : { transport: options.transport }),
@@ -165,7 +166,12 @@ export async function assignProposedFolder(
   );
   // Persist the assignment and the usage row before the runner commits the
   // batch — the commit boundary is what makes resume skip this bookmark.
-  await mergeRestructureAssignments(input.job.id, [assignment]);
+  await mergeRestructureAssignments(
+    input.job.id,
+    [assignment],
+    undefined,
+    input.job.ownerGeneration ?? 0,
+  );
   const usage = await recordUsage(client.model, run.usage);
   return { sent: true, model: run.model, decisions: [], usage };
 }

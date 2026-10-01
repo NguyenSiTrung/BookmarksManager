@@ -476,7 +476,7 @@ implementation work.
 ## Phase 4: Workflow and UI correctness
 <!-- execution: parallel -->
 
-- [~] Task 1: Single-owner scan runners and guarded progress
+- [x] Task 1: Single-owner scan runners and guarded progress
   <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, src/restructure/assign.ts, src/decisions/pipeline.ts, src/decisions/duplicates.ts, src/llm/escalate.ts, src/jev/client.ts, src/net/send.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts, tests/unit/decisions-pipeline.test.ts, tests/unit/decisions-duplicates.test.ts, tests/unit/llm-escalate.test.ts, tests/unit/jev-client.test.ts, tests/unit/network-gate.test.ts, tests/e2e/decisions.spec.ts -->
   - Covers **B11**. Create a worker-local coordinator for all production
     `runPersistedJob` entry paths; one MV3 worker owns production scans.

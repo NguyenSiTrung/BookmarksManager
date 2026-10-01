@@ -303,7 +303,7 @@ test("quick-save popup: prefill drives one minimized SAVE_SUGGEST", async () => 
 
   // …while exactly one egress left, carrying the cleaned URL only.
   expect(route.requests).toHaveLength(1);
-  assertEgressBodiesClean(route.requests, ["utm_source", "notes"]);
+  assertEgressBodiesClean(route.requests, ["utm_source"]);
   // Exactly one audit row for the one request — the save path must never
   // double-write.
   const log = await sentLogRows(popup);

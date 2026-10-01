@@ -41,6 +41,8 @@ import { DecisionStoreError, persistDecision } from "./store";
 import type { DecisionRow } from "./store";
 import { maybeEscalateDecision } from "../llm/escalate";
 import type { EscalationOption } from "../llm/escalate";
+import { assertJobAuthority } from "../jobs/queue";
+import type { Job } from "../schemas/job";
 
 /**
  * Analyze pipeline (spec FR2–FR6, PROJECT_PLAN.md §6.2/§9.1/§10.2): the
@@ -134,6 +136,8 @@ export interface AnalyzeBookmarkOptions {
   readonly client?: JevClient;
   /** Transport override when the pipeline creates its own client. */
   readonly transport?: JevTransport;
+  /** Local captured runner authority; never serialized in the request. */
+  readonly job?: Pick<Job, "id" | "ownerGeneration">;
 }
 
 /** A skipped bookmark — no request was made for it. */
@@ -701,6 +705,7 @@ async function persistDraft(
       options: draft.escalation.options,
       probabilities: draft.probabilities,
       jevAnswer: draft.escalation.jevAnswer,
+      ...(options.job === undefined ? {} : { beforeSend: () => assertJobAuthority(options.job!) }),
     });
     if (escalation !== null) {
       document.escalation = {
@@ -740,13 +745,14 @@ async function persistDraft(
 }
 
 /** Persist one `usage` row for the completed request. */
-async function recordUsage(result: JevRunResult): Promise<UsageRecord> {
+async function recordUsage(result: JevRunResult, jobId?: string): Promise<UsageRecord> {
   const record = UsageRecord.parse({
     model: result.model,
     inputTokens: result.usage.inputTokens,
     outputTokens: result.usage.outputTokens,
     ...(result.usage.cost === undefined ? {} : { costUsd: result.usage.cost }),
     recordedAt: new Date().toISOString(),
+    ...(jobId === undefined ? {} : { jobId }),
   });
   try {
     const id = await db.usage.add(record);
@@ -817,7 +823,10 @@ async function runAnalysis(
   const request = buildRequest(built, mergedState, client.model);
   let result: JevRunResult;
   try {
-    result = await client.run(request);
+    result = await client.run(request, {
+      ...(options.job === undefined ? {} : { beforeSend: () => assertJobAuthority(options.job!) }),
+      onPartialUsage: async (partial) => { await recordUsage(partial, options.job?.id); },
+    });
   } catch (cause) {
     throw toPipelineError(cause);
   }
@@ -832,7 +841,7 @@ async function runAnalysis(
   // Record the usage row BEFORE persisting decisions: the request already left
   // the device (cost incurred), so a decision that fails to persist/apply must
   // not drop the per-request cost accounting. Exactly one row per call.
-  const usage = await recordUsage(result);
+  const usage = await recordUsage(result, options.job?.id);
   const decisions: DecisionRow[] = [];
   for (const draft of drafts) {
     decisions.push(await persistDraft(draft, options, result.model, sent));

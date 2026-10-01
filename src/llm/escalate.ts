@@ -40,6 +40,8 @@ export interface EscalationContext {
   readonly probabilities: Record<string, number>;
   readonly jevAnswer: string;
   readonly signal?: AbortSignal;
+  /** Captured caller authority, checked by the gate on every actual attempt. */
+  readonly beforeSend?: () => Promise<void>;
 }
 
 /** The validated second opinion, or nothing when escalation did not run. */
@@ -154,6 +156,7 @@ export async function maybeEscalateDecision(
       maxInputTokens: MAX_INPUT_TOKENS,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       ...(context.signal !== undefined ? { signal: context.signal } : {}),
+      ...(context.beforeSend === undefined ? {} : { beforeSend: context.beforeSend }),
     });
     const run = await runStructured({
       tier: "json_schema",

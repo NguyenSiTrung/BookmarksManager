@@ -13,7 +13,7 @@ import {
   type JobAnalyzeFn,
   type JobScanDuplicatesFn,
 } from "../../src/jobs/runner";
-import { cancelJob, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
+import { cancelJob, claimJobOwner, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
 import type { NearDuplicatePair } from "../../src/decisions/candidates";
 import { flattenTree } from "../../src/sync/tree";
 
@@ -91,6 +91,34 @@ async function runningJob(ids: readonly string[], batchSize = 2) {
 }
 
 describe("JobRunner.run", () => {
+  it.each(["resolve", "reject"] as const)("stops a superseded owner after a held analysis %s", async (settlement) => {
+    const job = await runningJob(["bm-0", "bm-1"], 1);
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const analyzer = makeAnalyzer({ onCall: async () => {
+      entered();
+      await held;
+      if (settlement === "reject") throw new Error("stale failure");
+    } });
+    const running = new JobRunner({ analyze: analyzer.analyze, now }).run(job.id, { bookmarks: bookmarks(2) });
+    await started;
+    const replacement = await claimJobOwner(job.id, now);
+    release();
+    await running;
+    expect(analyzer.calls).toEqual(["bm-0"]);
+    expect(await db.jobs.get(job.id)).toEqual(replacement);
+  });
+
+  it("does not restart a paused row merely because a runner was scheduled before the pause", async () => {
+    const job = await runningJob(["bm-0"], 1);
+    await pauseJob(job.id, now);
+    const analyzer = makeAnalyzer();
+    const result = await new JobRunner({ analyze: analyzer.analyze, now }).run(job.id, { bookmarks: bookmarks(1) });
+    expect(result.status).toBe("paused");
+    expect(analyzer.calls).toEqual([]);
+  });
   it("processes in batches and commits progress only after each batch is written", async () => {
     const ids = ["bm-0", "bm-1", "bm-2", "bm-3", "bm-4"];
     const job = await runningJob(ids, 2);
@@ -270,7 +298,7 @@ describe("JobRunner.run", () => {
     expect(finished.progress.committedBatches).toBe(2);
   });
 
-  it("stops at a batch boundary on cancel and marks the job canceled", async () => {
+  it("observes cancel before the next bookmark request and keeps terminal progress frozen", async () => {
     const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
     const job = await runningJob(ids, 2);
     const { analyze, calls } = makeAnalyzer({
@@ -285,8 +313,9 @@ describe("JobRunner.run", () => {
     });
 
     expect(finished.status).toBe("canceled");
-    // Batch 1 was never started.
-    expect(calls).toEqual(["bm-0", "bm-1"]);
+    // Cancel is terminal: no new paid work, even within this batch.
+    expect(calls).toEqual(["bm-0"]);
+    expect(finished.progress.committedBatches).toBe(0);
     expect((await db.jobs.get(job.id))?.status).toBe("canceled");
   });
 
@@ -306,6 +335,7 @@ describe("JobRunner.run", () => {
     expect(paused.progress.committedBatches).toBe(1);
 
     const second = makeAnalyzer();
+    await resumeJob(job.id, now);
     const finished = await new JobRunner({ analyze: second.analyze, now }).run(
       job.id,
       { bookmarks: bookmarks(4), batchSize: 2 },

@@ -89,6 +89,10 @@ export const Job = z
     id: z.uuid(),
     kind: JobKind,
     status: JobStatus,
+    /** Monotonic runner fence; legacy rows start without an owner. */
+    ownerGeneration: z.number().int().min(0).default(0).optional(),
+    /** User control revision: a waiting resume must not undo a newer pause. */
+    controlRevision: z.number().int().min(0).default(0).optional(),
     progress: JobProgress,
     batchSize: z.number().int().positive().default(DEFAULT_BATCH_SIZE),
     bookmarkIds: z.array(z.string().min(1)).optional(),

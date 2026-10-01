@@ -16,6 +16,8 @@ import type { LlmProviderRecord } from "../../src/schemas/llm";
 import { makeOpenAiServer } from "../mock-servers/openai";
 import { decisionBase } from "../fixtures/base-records";
 
+declare const chrome: Record<string, unknown>;
+
 vi.stubGlobal("crypto", webcrypto);
 
 const PROVIDER_ID = "custom:https://llm.example.com/v1";
@@ -151,6 +153,28 @@ describe("escalation settings", () => {
 });
 
 describe("maybeEscalateDecision", () => {
+  it("rechecks captured caller authority after held LLM permission preflight and starts no canceled opinion", async () => {
+    await seedProvider();
+    await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    vi.stubGlobal("chrome", { ...chrome, permissions: { contains: async () => {
+      entered(); await held; return true;
+    } } });
+    let allowed = true;
+    const running = maybeEscalateDecision(lowConfidence(), { ...CONTEXT,
+      beforeSend: async () => { if (!allowed) throw new Error("Stopped job."); } });
+    await started;
+    allowed = false;
+    release();
+    expect(await running).toBeNull();
+    expect(server.requests).toHaveLength(0);
+    expect(await db.llmUsage.count()).toBe(0);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["released"]);
+  });
+
   it("returns null for decisions at or above the review floor", async () => {
     await seedProvider();
     await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });

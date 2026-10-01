@@ -71,7 +71,7 @@ export type JevTransport = (
   providerId: string,
   model: string,
   request: SystemOneRequestBody,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; beforeSend?: () => Promise<void> },
 ) => Promise<Response>;
 
 export interface JevClientOptions {
@@ -99,12 +99,20 @@ export interface JevClientOptions {
   readonly random?: () => number;
   /** Injectable clock for `retry-after` HTTP-date math, default `Date.now`. */
   readonly now?: () => number;
+  /** Rechecked after slots/retry waits and by the real gate after preflight. */
+  readonly beforeSend?: () => Promise<void>;
+}
+
+export interface JevRunOptions {
+  readonly beforeSend?: () => Promise<void>;
+  /** Retain valid spent sibling usage when another split wire batch fails. */
+  readonly onPartialUsage?: (result: JevRunResult) => Promise<void>;
 }
 
 export interface JevClient {
   /** The configured model id — every run request must carry it. */
   readonly model: string;
-  run(request: unknown): Promise<JevRunResult>;
+  run(request: unknown, options?: JevRunOptions): Promise<JevRunResult>;
 }
 
 export interface JevRunResult {
@@ -357,15 +365,32 @@ export function createJevClient(options: JevClientOptions): JevClient {
   /** Send one batch with the attempt timeout and the retry policy. */
   async function sendBatch(
     batch: SystemOneRequestBody,
+    beforeSend: () => Promise<void>,
+    forwardAdmission: boolean,
   ): Promise<SystemOneResponse> {
     let attempt = 0;
     for (;;) {
+      // Outside transport classification: admission failures never retry,
+      // including injected transports that do not run the real final gate.
+      await beforeSend();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let failure: ClassifiedFailure;
+      let admissionRefused = false;
       try {
         const response = await transport(scope, providerId, model, batch, {
           signal: controller.signal,
+          // Only forwarded when the caller actually captured an authority:
+          // transports that receive no admission callback keep their previous
+          // four-argument call shape.
+          ...(forwardAdmission
+            ? {
+                beforeSend: async () => {
+                  try { await beforeSend(); }
+                  catch (cause) { admissionRefused = true; throw cause; }
+                },
+              }
+            : {}),
         });
         const outcome = await inspectResponse(response, batch);
         if (outcome.ok) {
@@ -373,6 +398,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
         }
         failure = outcome.failure;
       } catch (cause) {
+        if (admissionRefused) throw cause;
         const classified = classifyThrown(cause, controller.signal.aborted);
         if (classified === undefined) {
           throw cause;
@@ -393,7 +419,7 @@ export function createJevClient(options: JevClientOptions): JevClient {
 
   return {
     model,
-    async run(request: unknown): Promise<JevRunResult> {
+    async run(request: unknown, runOptions: JevRunOptions = {}): Promise<JevRunResult> {
       const parsed = SystemOneRequest.safeParse(request);
       if (!parsed.success) {
         // No `cause` — the ZodError's issues would carry the invalid input.
@@ -418,11 +444,28 @@ export function createJevClient(options: JevClientOptions): JevClient {
         throw cause;
       }
 
-      const responses = await Promise.all(
+      let firstFailure: { cause: unknown } | undefined;
+      const assertNotFailed = () => {
+        if (firstFailure !== undefined) throw firstFailure.cause;
+      };
+      const beforeSend = async () => {
+        assertNotFailed();
+        await options.beforeSend?.();
+        await runOptions.beforeSend?.();
+        assertNotFailed();
+      };
+      const forwardAdmission =
+        options.beforeSend !== undefined || runOptions.beforeSend !== undefined;
+      // All admitted work (including queued slots and held response bodies)
+      // must settle before the job coordinator may release this run's owner.
+      const settled = await Promise.allSettled(
         batches.map(async (batch) => {
           const release = await acquireSlot(pool);
           try {
-            return await sendBatch(batch);
+            return await sendBatch(batch, beforeSend, forwardAdmission);
+          } catch (cause) {
+            firstFailure ??= { cause };
+            throw cause;
           } finally {
             release();
           }
@@ -431,21 +474,33 @@ export function createJevClient(options: JevClientOptions): JevClient {
 
       const meter = new UsageMeter();
       const answers: Record<string, Answer> = {};
+      const responses = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       for (const response of responses) {
         meter.add(response.usage, response.model);
         Object.assign(answers, response.answers);
       }
       const models = meter.models;
+      const usage: { inputTokens: number; outputTokens: number; cost?: number } =
+        { inputTokens: meter.inputTokens, outputTokens: meter.outputTokens };
+      if (meter.costUsd !== undefined) usage.cost = meter.costUsd;
+      if (firstFailure !== undefined) {
+        if (responses.length > 0) {
+          try {
+            await runOptions.onPartialUsage?.({
+              model: models[0] ?? model, answers, usage, batches: responses.length,
+            });
+          } catch {
+            // Preserve the original typed failure after draining. Persistence
+            // failures cannot replace it with provider or request contents.
+          }
+        }
+        throw firstFailure.cause;
+      }
       if (models.length > 1) {
         throw new JevClientError(
           "model_mismatch",
           `Batches were answered by different models: ${models.join(", ")}.`,
         );
-      }
-      const usage: { inputTokens: number; outputTokens: number; cost?: number } =
-        { inputTokens: meter.inputTokens, outputTokens: meter.outputTokens };
-      if (meter.costUsd !== undefined) {
-        usage.cost = meter.costUsd;
       }
       return {
         model: models[0] ?? model,

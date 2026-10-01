@@ -468,3 +468,34 @@ Selected applicable patterns from `conductor/patterns.md`:
 - `git diff --check` passed. Application tests/builds and Chromium E2E were
   not rerun for this documentation/issue-planning change. Historical audit
   results above are not fresh implementation verification.
+
+## Phase 4 Task 1 — Single-owner scan runners (B11)
+
+- `coordinateJob` keys the drive promise by job ID until every admitted batch
+  settles, so duplicate starts, resumes and startup scans coalesce into one
+  owner. Claims are transactional; progress/status/assignment writes carry the
+  captured `ownerGeneration` and no-op on mismatch or terminal state.
+- Ownership must travel with the callback, not stop at the runner entry:
+  analysis, duplicate-pair, second-opinion and restructure assignment paths
+  all forward `beforeSend` so the real gate rechecks admission after its own
+  preflight and after queued/retry waits. Refusals are rethrown outside
+  transport classification, so they never retry and never wrap content.
+- Split wire batches drain with `Promise.allSettled` before the owner
+  releases; spent sibling usage is retained once via `onPartialUsage`.
+  Same-owner pause drains the in-flight batch and stays resumable; cancel,
+  owner replacement and terminal states start no new paid request.
+- Pass `beforeSend` to injected transports only when an authority exists.
+  Always forwarding the key changes the transport call shape and broke
+  `jev-connection` callers that capture no job (found by the full gate).
+- Permanent regressions: promise identity/release, two-resume coalescing,
+  per-bookmark liveness, pair cancel/replace/pause, canceled low-confidence
+  escalation, real preflight and shared-slot cancel, retry-wait cancel,
+  split-drain partial usage, stale restructure callback, restart offsets.
+- Documented boundary: a request that left the device and returned non-2xx
+  still contributes no usage row (unknowable whether it was billed), matching
+  the earlier malformed/read-failed ruling; at-least-once uncommitted-batch
+  crash replay is likewise not exactly-once billing.
+- The browser fixture's forbidden word `notes` matched static category
+  instruction text ("release notes"), not leaked notes. Structural
+  `state.notes`/`bookmark.notes` checks and the query-marker checks remain
+  the real assertions; only the ambiguous plain word was dropped.

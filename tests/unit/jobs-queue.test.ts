@@ -11,6 +11,8 @@ import {
   NEAR_DUPLICATE_CHECK,
   bookmarkChecks,
   cancelJob,
+  claimJobOwner,
+  commitJobProgress,
   computeTotalBatches,
   enqueueJob,
   getJob,
@@ -19,6 +21,8 @@ import {
   jobUsageRollup,
   pauseJob,
   resumeJob,
+  setJobStatus,
+  mergeRestructureAssignments,
 } from "../../src/jobs/queue";
 
 /**
@@ -131,6 +135,76 @@ describe("enqueueJob", () => {
 });
 
 describe("lifecycle transitions", () => {
+  it("defaults legacy owners to zero and claims monotonically in a transaction", async () => {
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const { ownerGeneration, controlRevision, ...legacy } = job;
+    expect([ownerGeneration, controlRevision]).toEqual([0, 0]);
+    await db.jobs.put(legacy as Job);
+    expect((await getJob(job.id))?.ownerGeneration).toBe(0);
+    const claims = await Promise.all([claimJobOwner(job.id, now), claimJobOwner(job.id, now)]);
+    expect(claims.map((row) => row?.ownerGeneration)).toEqual([1, 2]);
+    expect((await getJob(job.id))?.ownerGeneration).toBe(2);
+  });
+
+  it("rejects stale progress, completion, and failure writes without changing the newer owner", async () => {
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1", "bm-2"], batchSize: 1, now });
+    const first = (await claimJobOwner(job.id, now))!;
+    const second = (await claimJobOwner(job.id, now))!;
+    const progress = { totalBatches: 2, committedBatches: 1, processedCount: 1 };
+    const usage = { inputTokens: 10, outputTokens: 2, requests: 1 };
+    await commitJobProgress(job.id, progress, usage, now, second.ownerGeneration);
+    await commitJobProgress(job.id, job.progress, job.usage, now, first.ownerGeneration);
+    await setJobStatus(job.id, "completed", {}, now, first.ownerGeneration);
+    await setJobStatus(job.id, "failed", { error: "stale" }, now, first.ownerGeneration);
+    expect(await getJob(job.id)).toEqual({ ...second, progress, usage });
+    await commitJobProgress(job.id, job.progress, job.usage, now, second.ownerGeneration);
+    expect((await getJob(job.id))?.progress).toEqual(progress);
+  });
+
+  it.each(["completed", "canceled", "failed"] as const)("keeps %s immutable against late owner writes", async (status) => {
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const owner = (await claimJobOwner(job.id, now))!;
+    const terminal = await setJobStatus(job.id, status, {}, now);
+    await commitJobProgress(job.id, { totalBatches: 1, committedBatches: 1, processedCount: 1 },
+      { inputTokens: 10, outputTokens: 2, requests: 1 }, now, owner.ownerGeneration);
+    await setJobStatus(job.id, "failed", { error: "late" }, now, owner.ownerGeneration);
+    expect(await getJob(job.id)).toEqual(terminal);
+    expect(await claimJobOwner(job.id, now)).toBeUndefined();
+  });
+
+  it("commits a settled paused batch but never changes its pause intent to completion or failure", async () => {
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const owner = (await claimJobOwner(job.id, now))!;
+    await pauseJob(job.id, now);
+    await commitJobProgress(job.id, { totalBatches: 1, committedBatches: 1, processedCount: 1 }, job.usage, now, owner.ownerGeneration);
+    await setJobStatus(job.id, "completed", {}, now, owner.ownerGeneration);
+    await setJobStatus(job.id, "failed", { error: "late" }, now, owner.ownerGeneration);
+    expect((await getJob(job.id))?.status).toBe("paused");
+    expect((await getJob(job.id))?.progress.committedBatches).toBe(1);
+    expect(await claimJobOwner(job.id, now)).toBeUndefined();
+  });
+
+  it("does not merge stale or canceled restructure assignments", async () => {
+    const job = await enqueueJob({ kind: "restructure", bookmarkIds: ["bm-1"], now,
+      restructureProposal: { folders: [{ path: "news", description: "News." }] } });
+    const first = (await claimJobOwner(job.id, now))!;
+    const second = (await claimJobOwner(job.id, now))!;
+    const rows = [{ bookmarkId: "bm-1", proposedPath: "news", confidence: 0.9 }];
+    await mergeRestructureAssignments(job.id, rows, now, first.ownerGeneration);
+    expect((await getJob(job.id))?.restructure?.assignments).toEqual([]);
+    await cancelJob(job.id, now);
+    await mergeRestructureAssignments(job.id, rows, now, second.ownerGeneration);
+    expect((await getJob(job.id))?.restructure?.assignments).toEqual([]);
+  });
+
+  it("accepts the compatible generation-zero assignment interface on an unclaimed pending job", async () => {
+    const job = await enqueueJob({ kind: "restructure", bookmarkIds: ["bm-1"], now,
+      restructureProposal: { folders: [{ path: "news", description: "News." }] } });
+    const rows = [{ bookmarkId: "bm-1", proposedPath: "news", confidence: 0.9 }];
+    await mergeRestructureAssignments(job.id, rows, now, 0);
+    expect((await getJob(job.id))?.restructure?.assignments).toEqual(rows);
+  });
+
   it("pauses, resumes, and cancels a job, persisting each transition", async () => {
     const job = await enqueueJob({
       kind: "analyze_selection",

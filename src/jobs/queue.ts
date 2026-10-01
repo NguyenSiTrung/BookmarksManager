@@ -9,6 +9,19 @@ import type {
 } from "../schemas/job";
 import type { RestructureAssignment } from "../schemas/restructure";
 import { DEFAULT_BATCH_SIZE } from "./estimate";
+import { waitForJob } from "./coordinator";
+
+/** Validated queue reads/writes always materialize legacy fence defaults. */
+type PersistedJob = Job & { ownerGeneration: number; controlRevision: number };
+
+function parseJob(value: unknown): PersistedJob {
+  const job = Job.parse(value);
+  return {
+    ...job,
+    ownerGeneration: job.ownerGeneration ?? 0,
+    controlRevision: job.controlRevision ?? 0,
+  };
+}
 
 /**
  * Job queue (spec FR7/FR8): the persisted, resumable batch-job state machine
@@ -51,7 +64,7 @@ export class JobQueueError extends Error {
 const LEGAL_TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   pending: ["running", "paused", "canceled"],
   running: ["running", "paused", "completed", "canceled", "failed"],
-  paused: ["running", "canceled"],
+  paused: ["paused", "running", "canceled"],
   completed: [],
   canceled: [],
   failed: [],
@@ -139,12 +152,12 @@ function nowIso(now?: () => string): string {
   return (now ?? (() => new Date().toISOString()))();
 }
 
-async function requireJob(id: string): Promise<Job> {
+async function requireJob(id: string): Promise<PersistedJob> {
   const job = await db.jobs.get(id);
   if (job === undefined) {
     throw new JobQueueError("not_found", `No job ${JSON.stringify(id)}.`);
   }
-  return job;
+  return parseJob(job);
 }
 
 export interface EnqueueJobOptions {
@@ -175,7 +188,7 @@ export interface EnqueueJobOptions {
  * set is resolved). The caller must pass a non-empty `bookmarkIds` or a
  * `cursor`, otherwise the row could not resume.
  */
-export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
+export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJob> {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   if (options.bookmarkIds === undefined && options.cursor === undefined) {
     throw new JobQueueError(
@@ -194,9 +207,9 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
       ? 0
       : computeTotalBatches(options.bookmarkIds.length, batchSize);
   const timestamp = nowIso(options.now);
-  let job: Job;
+  let job: PersistedJob;
   try {
-    job = Job.parse({
+    job = parseJob({
       id: options.id ?? crypto.randomUUID(),
       kind: options.kind,
       status: "pending",
@@ -226,8 +239,54 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<Job> {
 }
 
 /** Read one job, or `undefined` when it does not exist. */
-export async function getJob(id: string): Promise<Job | undefined> {
-  return db.jobs.get(id);
+export async function getJob(id: string): Promise<PersistedJob | undefined> {
+  const job = await db.jobs.get(id);
+  return job === undefined ? undefined : parseJob(job);
+}
+
+/**
+ * Claim the next durable runner generation atomically. A fresh worker may
+ * replace an interrupted `running` owner, but never resume user-paused or
+ * terminal work merely because an old launch was queued.
+ */
+export async function claimJobOwner(
+  id: string,
+  now?: () => string,
+): Promise<PersistedJob | undefined> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (job.status !== "pending" && job.status !== "running") return undefined;
+    const updated = parseJob({
+      ...job,
+      status: "running",
+      ownerGeneration: job.ownerGeneration + 1,
+      updatedAt: nowIso(now),
+    });
+    await db.jobs.put(updated);
+    return updated;
+  });
+}
+
+function ownedWritable(job: Job, generation: number, allowPaused = false): boolean {
+  return job.ownerGeneration === generation &&
+    (job.status === "running" || (allowPaused && job.status === "paused"));
+}
+
+/** Final-attempt admission for a captured owner, not a newly adopted owner. */
+export async function assertJobAuthority(
+  owner: Pick<Job, "id" | "ownerGeneration">,
+): Promise<void> {
+  const current = await getJob(owner.id);
+  const generation = owner.ownerGeneration ?? 0;
+  if (current !== undefined && current.ownerGeneration === generation &&
+    (current.status === "running" || current.status === "paused" ||
+      (current.status === "pending" && generation === 0))) return;
+  throw new JobQueueError("illegal_transition", "The job no longer admits outbound work.");
+}
+
+function progressRegresses(job: Job, progress: JobProgress): boolean {
+  return progress.committedBatches < job.progress.committedBatches ||
+    progress.processedCount < job.progress.processedCount;
 }
 
 /** Optional fields a status change may also write. */
@@ -249,40 +308,65 @@ export async function setJobStatus(
   to: JobStatus,
   patch: JobStatusPatch = {},
   now?: () => string,
-): Promise<Job> {
-  const job = await requireJob(id);
-  if (!canTransition(job.status, to)) {
-    throw new JobQueueError(
-      "illegal_transition",
-      `Cannot move a ${job.status} job to ${to}.`,
+  ownerGeneration?: number,
+): Promise<PersistedJob> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (ownerGeneration !== undefined && !ownedWritable(job, ownerGeneration)) return job;
+    if (patch.progress !== undefined && progressRegresses(job, patch.progress)) return job;
+    if (!canTransition(job.status, to)) {
+      throw new JobQueueError(
+        "illegal_transition",
+        `Cannot move a ${job.status} job to ${to}.`,
+      );
+    }
+    const base = {
+      ...job,
+      status: to,
+      controlRevision: ownerGeneration === undefined &&
+        (to === "paused" || to === "canceled" || to === "running")
+        ? job.controlRevision + 1 : job.controlRevision,
+      progress: patch.progress ?? job.progress,
+      usage: patch.usage ?? job.usage,
+      updatedAt: nowIso(now),
+    };
+    const updated = parseJob(
+      patch.error === undefined ? base : { ...base, error: patch.error },
     );
-  }
-  const base = {
-    ...job,
-    status: to,
-    progress: patch.progress ?? job.progress,
-    usage: patch.usage ?? job.usage,
-    updatedAt: nowIso(now),
-  };
-  const updated = Job.parse(
-    patch.error === undefined ? base : { ...base, error: patch.error },
-  );
-  await db.jobs.put(updated);
-  return updated;
+    await db.jobs.put(updated);
+    return updated;
+  });
 }
 
 /** Pause a pending or running job. */
-export function pauseJob(id: string, now?: () => string): Promise<Job> {
+export function pauseJob(id: string, now?: () => string): Promise<PersistedJob> {
   return setJobStatus(id, "paused", {}, now);
 }
 
 /** Resume a paused job. */
-export function resumeJob(id: string, now?: () => string): Promise<Job> {
-  return setJobStatus(id, "running", {}, now);
+export async function resumeJob(
+  id: string,
+  now?: () => string,
+  expectedControlRevision?: number,
+): Promise<PersistedJob> {
+  const requested = await requireJob(id);
+  if (expectedControlRevision === undefined && !canTransition(requested.status, "running")) {
+    throw new JobQueueError("illegal_transition", `Cannot move a ${requested.status} job to running.`);
+  }
+  const revision = expectedControlRevision ?? requested.controlRevision;
+  // Shared by JOB_RESUME and RESTRUCTURE_RESUME: never flip intent or read
+  // the restart offset until the existing owner's paused batch has settled.
+  await waitForJob(id);
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (job.controlRevision !== revision ||
+      (job.status !== "paused" && job.status !== "pending" && job.status !== "running")) return job;
+    return setJobStatus(id, "running", {}, now);
+  });
 }
 
 /** Cancel a non-terminal job. */
-export function cancelJob(id: string, now?: () => string): Promise<Job> {
+export function cancelJob(id: string, now?: () => string): Promise<PersistedJob> {
   return setJobStatus(id, "canceled", {}, now);
 }
 
@@ -296,16 +380,22 @@ export async function commitJobProgress(
   progress: JobProgress,
   usage: JobUsage,
   now?: () => string,
-): Promise<Job> {
-  const job = await requireJob(id);
-  const updated = Job.parse({
-    ...job,
-    progress,
-    usage,
-    updatedAt: nowIso(now),
+  ownerGeneration?: number,
+): Promise<PersistedJob> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (ownerGeneration !== undefined && !ownedWritable(job, ownerGeneration, true)) return job;
+    if (job.status !== "running" && job.status !== "paused" && job.status !== "pending") return job;
+    if (progressRegresses(job, progress)) return job;
+    const updated = parseJob({
+      ...job,
+      progress,
+      usage,
+      updatedAt: nowIso(now),
+    });
+    await db.jobs.put(updated);
+    return updated;
   });
-  await db.jobs.put(updated);
-  return updated;
 }
 
 /**
@@ -318,30 +408,33 @@ export async function mergeRestructureAssignments(
   id: string,
   rows: readonly RestructureAssignment[],
   now?: () => string,
-): Promise<Job> {
-  const job = await requireJob(id);
-  if (job.kind !== "restructure" || job.restructure === undefined) {
-    throw new JobQueueError(
-      "illegal_transition",
-      "Only a restructure job carries assignments.",
+  ownerGeneration?: number,
+): Promise<PersistedJob> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (ownerGeneration !== undefined && job.ownerGeneration !== ownerGeneration) return job;
+    if (job.status !== "running" && job.status !== "paused" && job.status !== "pending") return job;
+    if (job.kind !== "restructure" || job.restructure === undefined) {
+      throw new JobQueueError(
+        "illegal_transition",
+        "Only a restructure job carries assignments.",
+      );
+    }
+    const merged = new Map(
+      job.restructure.assignments.map((a) => [a.bookmarkId, a]),
     );
-  }
-  const merged = new Map(
-    job.restructure.assignments.map((a) => [a.bookmarkId, a]),
-  );
-  for (const row of rows) {
-    merged.set(row.bookmarkId, row);
-  }
-  const updated = Job.parse({
-    ...job,
-    restructure: {
-      proposal: job.restructure.proposal,
-      assignments: [...merged.values()],
-    },
-    updatedAt: nowIso(now),
+    for (const row of rows) merged.set(row.bookmarkId, row);
+    const updated = parseJob({
+      ...job,
+      restructure: {
+        proposal: job.restructure.proposal,
+        assignments: [...merged.values()],
+      },
+      updatedAt: nowIso(now),
+    });
+    await db.jobs.put(updated);
+    return updated;
   });
-  await db.jobs.put(updated);
-  return updated;
 }
 
 /**

@@ -15,6 +15,8 @@ import { evaluatePolicy } from "./policy";
 import type { PolicyOutcome } from "./policy";
 import { DecisionStoreError, persistDecision } from "./store";
 import type { DecisionRow } from "./store";
+import { assertJobAuthority } from "../jobs/queue";
+import type { Job } from "../schemas/job";
 
 /**
  * Near-duplicate scan service (spec FR3–FR5, FR7, PROJECT_PLAN.md §9.2/§10.2):
@@ -117,6 +119,8 @@ interface ScanCommonOptions {
   readonly client?: JevClient;
   /** Transport override when the service creates its own client. */
   readonly transport?: JevTransport;
+  /** Captured batch owner, local-only and rechecked at every wire attempt. */
+  readonly job?: Pick<Job, "id" | "ownerGeneration">;
 }
 
 /** The end-to-end scan input: the scan's bookmarks. */
@@ -242,13 +246,14 @@ function crossCheckLevel(
 // ---------------------------------------------------------------------------
 
 /** Persist one `usage` row for the completed request (mirrors the pipeline). */
-async function recordUsage(result: JevRunResult): Promise<UsageRecord> {
+async function recordUsage(result: JevRunResult, jobId?: string): Promise<UsageRecord> {
   const record = UsageRecord.parse({
     model: result.model,
     inputTokens: result.usage.inputTokens,
     outputTokens: result.usage.outputTokens,
     ...(result.usage.cost === undefined ? {} : { costUsd: result.usage.cost }),
     recordedAt: new Date().toISOString(),
+    ...(jobId === undefined ? {} : { jobId }),
   });
   try {
     const id = await db.usage.add(record);
@@ -388,7 +393,10 @@ async function runPairs(
     const request = set.decision.build(set.state, client.model);
     let result: JevRunResult;
     try {
-      result = await client.run(request);
+      result = await client.run(request, {
+        ...(options.job === undefined ? {} : { beforeSend: () => assertJobAuthority(options.job!) }),
+        onPartialUsage: async (partial) => { await recordUsage(partial, options.job?.id); },
+      });
     } catch (cause) {
       throw toDuplicateScanError(cause);
     }
@@ -406,7 +414,7 @@ async function runPairs(
     // The request left the device, so record its cost. This runs AFTER the
     // answer cross-check: an `answer_mismatch` throws before reaching here, so
     // it writes no usage row. Exactly one row per completed call.
-    usage.push(await recordUsage(result));
+    usage.push(await recordUsage(result, options.job?.id));
 
     const outcome = evaluatePolicy({ kind: "merge_duplicates", confidence });
     // A merge is never auto-applied; a `review` decision lands `pending`.
