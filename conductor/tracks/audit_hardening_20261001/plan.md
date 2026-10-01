@@ -847,7 +847,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `ci: run quality gates on pull requests`,
     notes/learnings, close this task.
 
-- [ ] Task 2: Cross-feature browser data-safety regressions
+- [x] Task 2: Cross-feature browser data-safety regressions
   <!-- files: tests/e2e/audit-data-safety.spec.ts, tests/e2e/helpers/audit-data.ts -->
   - Covers **I04/I08**, exercising **B01–B04/B13/B15** through real extension
     surfaces/IndexedDB and the existing isolated extension launcher.

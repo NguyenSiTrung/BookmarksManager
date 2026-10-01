@@ -637,6 +637,24 @@ Selected applicable patterns from `conductor/patterns.md`:
   job-level permission and job-set assertions (9 tests, both mutations
   killed) and the delta re-check passed with the workflow byte-identical.
   The routine command list itself runs in the final Phase 6 checkpoint.
+- I04/I08 data-safety browser regressions:
+  `tests/e2e/audit-data-safety.spec.ts` (6 legs) plus
+  `tests/e2e/helpers/audit-data.ts` drive the BUILT extension through real
+  surfaces and IndexedDB for B03 (JSON round trip preserves summaries and
+  metadata), B02 (undo restores a deleted bookmark's summary), B15
+  (bar/Other/Mobile apply scope), B01 (failed compensation preserves
+  originals and occupied folders), B13 (two sidepanels racing one undo row
+  replay it exactly once) and B04 (startup reconcile contract). RED was
+  independently reproduced in a clean extract of `2a987aa`: 5 failed / 1
+  passed, every failure a state assertion (e.g. `moved: 1`, restored counts
+  0/2). Documented limitations: the Mobile root `"3"` only exists in a
+  profile with mobile bookmarks, so the B15 leg exercises bar+Other and says
+  so in the spec header; the B04 leg is contract-only because
+  `reconcileMetadata()` runs once from service-worker startup and its
+  `getTree` cannot be held or re-entered from Playwright (the race is
+  unit-covered in `tests/unit/sync-reconcile.test.ts`). Review `215e43fd`
+  PASS + delta PASS (documentation, a bounded poll replacing a fixed sleep,
+  RED capability unchanged).
 - I06 candidates: near-duplicate planning is now bounded and deterministic.
   `NEAR_DUPLICATE_PAIR_LIMIT = 500`, `NEAR_DUPLICATE_COMPARISON_LIMIT =
   50_000`; exclusion is O(1) raw-or-normalized URL equality (no intra-group
