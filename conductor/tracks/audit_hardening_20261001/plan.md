@@ -367,11 +367,11 @@ implementation work.
 ## Phase 3: LLM limits and accounting
 <!-- execution: sequential -->
 
-- [~] Task 1: Enforce the reserved output allowance on the wire
-  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts, tests/e2e/llm.spec.ts -->
+- [x] Task 1: Enforce the reserved output allowance on the wire
+  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Covers **B08**. Existing `max_tokens` is the default OpenAI-compatible
     limit; the gate, not a caller-supplied policy, owns serialization.
-  - [ ] Red: extend the existing happy-path `send` fixture to assert its
+  - [x] Red: extend the existing happy-path `send` fixture to assert its
     50-token reservation matches the captured request; cover tighter/larger
     caller limits, invalid values, retries, tier fallback, and repair.
     ```ts
@@ -380,9 +380,9 @@ implementation work.
     expect(reservation.maxOutputTokens).toBe(50);
     expect(fakeProvider.requests[0]?.body).toMatchObject({ max_tokens: 50 });
     ```
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/llm-gate.test.ts tests/unit/llm-wire.test.ts tests/unit/llm-structured.test.ts`.
-  - [ ] Green: strict-validate positive integer bounds; use
+  - [x] Green: strict-validate positive integer bounds; use
     `Math.min(parsed.max_tokens ?? declared, declared)` in both reservation
     and serialized body. Reject conflicting alternate limit fields; do not
     silently retry without a cap if the provider rejects `max_tokens`.
@@ -394,12 +394,12 @@ implementation work.
     propagate it. Explicit token-limit fields/mentions veto structured
     fallback; ambiguous, malformed and oversized bodies fail visibly.
     Preserve actual structured-capability fallback without dropping the cap.
-  - [ ] Verify green: rerun named tests and fake-provider cap rejection/
+  - [x] Verify green: rerun named tests and fake-provider cap rejection/
     overrun controls, including every actual repair/fallback request body.
-  - [ ] Coordinator gate/commit: `fix(llm): enforce reserved output limits`,
+  - [x] Coordinator gate/commit: `fix(llm): enforce reserved output limits`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 2: Conservative missing and partial usage settlement
+- [~] Task 2: Conservative missing and partial usage settlement
   <!-- files: src/llm/client.ts, src/llm/budget.ts, src/net/llm-send.ts, tests/unit/llm-client.test.ts, tests/unit/llm-budget.test.ts, tests/unit/llm-gate.test.ts -->
   - Covers **B09**. Extend `ActualUsage` so absent input/output token counts
     remain absent, rather than becoming zero. Preserve `settleLlmUsage`.

@@ -259,13 +259,16 @@ test("budget exhaustion and revoke refuse further sends", async () => {
 test("structured tiers fall back on capability rejection", async () => {
   test.setTimeout(120_000);
   const ext = await launchLlmExtension();
-  // Reject the first two calls as capability errors (400 + response_format
-  // hint), answer the prompt_only retry with the proposal.
+  // Reject the first two calls with validated OpenAI-compatible capability
+  // errors, then answer the prompt_only retry with the proposal.
   const openai = await routeFakeOpenAi(ext.context, (body, call) =>
     call <= 2
       ? {
           status: 400,
-          content: "unsupported response_format json_schema/json_object",
+          error: {
+            param: "response_format",
+            message: "unsupported response_format json_schema/json_object",
+          },
         }
       : { content: PROPOSAL },
   );
@@ -305,6 +308,9 @@ test("structured tiers fall back on capability rejection", async () => {
         ?.type ?? null,
   );
   expect(formats).toEqual(["json_schema", "json_object", null]);
+  for (const request of openai.requests) {
+    expect(request.postData).toMatchObject({ max_tokens: 1_500 });
+  }
   expect(jev.requests.length).toBeGreaterThan(0);
 
   await ext.context.close();

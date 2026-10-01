@@ -91,3 +91,8 @@
 - **Ruling:** Align the fake with the approved validated contract, rather
   than reintroduce raw-text classification. If incorrect, a text-only provider
   cannot automatically fall back; it still fails visibly with no cap removal.
+- **Fixture follow-up:** The existing route helper wrapped all replies,
+  including failures, as successful chat-completion envelopes. Add this helper
+  to ownership and an explicit typed `error` reply that emits `{error: ...}`.
+  The first fixture-only retry still failed, revealing that wrapper rather
+  than a production classifier defect. Existing completion replies are unchanged.

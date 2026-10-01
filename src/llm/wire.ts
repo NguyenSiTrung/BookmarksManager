@@ -33,11 +33,15 @@ export const ResponseFormat = z.discriminatedUnion("type", [
 ]);
 export type ResponseFormat = z.infer<typeof ResponseFormat>;
 
+/** Positive safe-integer reservation/wire bounds; never coerce caller values. */
+export const TokenBound = z.number().int().positive();
+
 export const ChatCompletionRequest = z.strictObject({
   model: z.string().trim().min(1),
   messages: z.array(ChatMessage).min(1),
   response_format: ResponseFormat.optional(),
-  max_tokens: z.number().int().positive().optional(),
+  // The gate supplies this when omitted; alternate limit keys stay forbidden.
+  max_tokens: TokenBound.optional(),
   temperature: z.number().min(0).max(2).optional(),
 });
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequest>;

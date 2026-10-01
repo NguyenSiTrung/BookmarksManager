@@ -320,6 +320,39 @@ Selected applicable patterns from `conductor/patterns.md`:
 - No manual checks or remote synchronization; native prompts/live/eval
   excluded. Continue automatically to Phase 3 output limits/accounting.
 
+### Phase 3 Task 1: Reserved output allowances on the wire
+
+- Strict positive safe-integer declarations and wire limits, with effective
+  output `min(caller, declared)`, feed both reservation and serialized
+  `max_tokens`. Unknown alternate limit keys fail, never strip silently.
+  The actual outbound field list includes the cap, without recording values.
+- Caps survive HTTP/transport retries and all structured tiers/repairs.
+  Reported overrun example: 1,000 actual output tokens against a 50-token
+  allowance still charges $0.00201 at the fixture pricing; reported $0.02
+  takes precedence. A provider ignoring the cap is not free spending.
+- User explicitly approved bounded, validated internal LLM error
+  classification instead of the inherited no-non-2xx-read pattern.
+  Actual reading is capped at 4,096 bytes with strict UTF-8/EOF/envelope
+  validation and cancellation; body processing cannot leak native causes.
+  Token-limit fields/mentions veto structured fallback.
+- Red: 30 failures / 125 tests before gate/wire changes; four client
+  classification cases remained until approved ownership expansion.
+  Final targeted: 187 passed; feature consumers: 232 passed.
+  Task-scoped review: Spec PASS, Quality PASS.
+- Fresh full gate: lint/typecheck and 152 files / 2,814 tests passed
+  (`--maxWorkers=1`), then build/manifest/bundle/store passed.
+  Initial browser run: 4 passed, 1 failed, 5 not run, because the fake
+  wrapped non-2xx replies as completion bodies.
+- Updated the existing wire fake with an explicit typed error envelope
+  (success replies unchanged) and asserted all three browser fallback
+  requests carry the actual 1,500-token proposal allowance. Targeted
+  browser regression passed; fresh full LLM browser rerun: 10 passed,
+  no skips. Lint/types/build/compliance reran successfully after fixture fix.
+- Pattern: generic HTTP status cannot distinguish output-cap rejection
+  from unsupported structured output. Validate a bounded envelope and
+  conservatively refuse ambiguous/token-limit errors, never remove the cap.
+- B09 missing/partial usage and B10 revoke settlement remain pending.
+
 ## Planning Validation
 
 - Created Beads epic `BookmarksManager-lgd`, six phase containers, and

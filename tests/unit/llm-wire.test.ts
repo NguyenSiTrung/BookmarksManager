@@ -57,6 +57,37 @@ describe("ChatCompletionRequest", () => {
     ]);
   });
 
+  it.each([1, 50, Number.MAX_SAFE_INTEGER])("accepts positive safe-integer max_tokens %s", (max_tokens) => {
+    expect(ChatCompletionRequest.parse({
+      model: "m",
+      messages: [{ role: "user", content: "x" }],
+      max_tokens,
+    }).max_tokens).toBe(max_tokens);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null])(
+    "rejects invalid max_tokens %s instead of coercing it",
+    (max_tokens) => {
+      expect(ChatCompletionRequest.safeParse({
+        model: "m", messages: [{ role: "user", content: "x" }], max_tokens,
+      }).success).toBe(false);
+    },
+  );
+
+  it.each(["max_completion_tokens", "max_output_tokens", "max_new_tokens"])(
+    "rejects alternate %s alone or alongside max_tokens",
+    (field) => {
+      for (const max_tokens of [undefined, 25]) {
+        expect(ChatCompletionRequest.safeParse({
+          model: "m",
+          messages: [{ role: "user", content: "x" }],
+          ...(max_tokens !== undefined ? { max_tokens } : {}),
+          [field]: 25,
+        }).success).toBe(false);
+      }
+    },
+  );
+
   it.each([
     ["empty messages", { model: "m", messages: [] }],
     ["blank model", { model: "  ", messages: [{ role: "user", content: "x" }] }],

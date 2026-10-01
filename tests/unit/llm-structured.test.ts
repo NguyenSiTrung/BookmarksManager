@@ -1,4 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import "fake-indexeddb/auto";
+import { webcrypto } from "node:crypto";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { grantConsentAtOrigin } from "../../src/consent/records";
+import { db } from "../../src/db/database";
+import { createLlmClient, LlmHttpError } from "../../src/llm/client";
+import { saveLlmProvider } from "../../src/llm/settings";
+import { makeOpenAiServer } from "../mock-servers/openai";
 import { z } from "../../src/schemas/z";
 import {
   LlmCapabilityError,
@@ -284,5 +291,194 @@ describe("runStructured", () => {
     expect(error).toBeInstanceOf(StructuredOutputError);
     expect((error as Error).message).not.toContain("SECRET_MARKER");
     expect((error as Error).message).not.toContain("PROMPT_SECRET");
+  });
+});
+
+describe("structured output caps through the real client and gate", () => {
+  const providerId = "custom:http://127.0.0.1:11434";
+  const model = "local-test";
+  const scope = "llm_restructure";
+
+  function gatedClient(fetchImpl: typeof fetch) {
+    return createLlmClient(providerId, {
+      scope,
+      kind: "manual",
+      maxInputTokens: 100,
+      maxOutputTokens: 50,
+      fetchImpl,
+    });
+  }
+
+  function run(send: (request: ChatCompletionRequest) => Promise<unknown>) {
+    return runStructured({
+      tier: "json_schema",
+      model,
+      schema: AnswerSchema,
+      messages: MESSAGES,
+      send,
+    });
+  }
+
+  beforeEach(async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    vi.stubGlobal("chrome", { permissions: { contains: async () => true } });
+    await db.delete();
+    await db.open();
+    await saveLlmProvider({
+      providerId,
+      provider: {
+        kind: "custom",
+        baseUrl: "http://127.0.0.1:11434",
+        model,
+        auth: "none",
+        pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      },
+      configuredAt: "2026-10-01T00:00:00.000Z",
+      monthlyBudgetUsd: 5,
+    });
+    await grantConsentAtOrigin(scope, "http://127.0.0.1:11434");
+  });
+
+  afterAll(() => {
+    db.close();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["json_schema", "json_object", "prompt_only"] as const)(
+    "caps the initial request and both repairs on the %s tier",
+    async (tier) => {
+      let completions = 0;
+      const server = makeOpenAiServer({
+        completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+      });
+      const client = gatedClient(server.fetch);
+      const result = await runStructured({
+        tier, model, schema: AnswerSchema, messages: MESSAGES, send: client.send,
+      });
+      expect(result.value).toEqual({ answer: "42", confidence: 0.9 });
+      expect(result.tierUsed).toBe(tier);
+      expect(result.repairs).toBe(2);
+      expect(server.requests).toHaveLength(3);
+      for (const request of server.requests) {
+        expect(request.body).toMatchObject({ max_tokens: 50 });
+      }
+      expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([50, 50, 50]);
+    },
+  );
+
+  it("caps every transport retry, tier fallback and subsequent repair body", async () => {
+    let completions = 0;
+    const server = makeOpenAiServer({
+      failures: [
+        { status: 429 },
+        { status: 400, body: { error: { message: "response_format json_schema unsupported" } } },
+        { throw: new TypeError("reset") },
+        { status: 422, body: { error: { message: "response_format json_object unsupported" } } },
+      ],
+      completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+    });
+    const client = gatedClient(server.fetch);
+    const result = await run(client.send);
+    expect(result.value).toEqual({ answer: "42", confidence: 0.9 });
+    expect(result.tierUsed).toBe("prompt_only");
+    expect(result.repairs).toBe(2);
+    expect(server.requests).toHaveLength(7);
+    const bodies = server.requests.map((request) => request.body as ChatCompletionRequest);
+    expect(bodies.map((body) => body.max_tokens)).toEqual([50, 50, 50, 50, 50, 50, 50]);
+    expect(bodies.map((body) => body.response_format?.type)).toEqual([
+      "json_schema", "json_schema", "json_object", "json_object", undefined, undefined, undefined,
+    ]);
+    expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([50, 50, 50, 50, 50]);
+  });
+
+  it.each([25, 1000])("retains caller limit %s clamping through fallback and repair", async (caller) => {
+    let completions = 0;
+    const server = makeOpenAiServer({
+      failures: [{ status: 400, body: { error: { message: "response_format unsupported" } } }],
+      completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+    });
+    const client = gatedClient(server.fetch);
+    const result = await run((request) => client.send({ ...request, max_tokens: caller }));
+    expect(result.value.answer).toBe("42");
+    expect(result.tierUsed).toBe("json_object");
+    expect(result.repairs).toBe(2);
+    expect(server.requests).toHaveLength(4);
+    const expected = caller === 25 ? 25 : 50;
+    expect(server.requests.map((request) => (request.body as ChatCompletionRequest).max_tokens)).toEqual([
+      expected, expected, expected, expected,
+    ]);
+    expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([
+      expected, expected, expected, expected,
+    ]);
+  });
+
+  it.each([
+    [400, "max_tokens", "max_tokens unsupported with response_format json_schema"],
+    [404, "max_completion_tokens", "max_completion_tokens required instead of max_tokens for json_schema"],
+    [422, "max_output_tokens", "structured output requires max_output_tokens, not max_tokens"],
+  ])("surfaces HTTP %s token-limit rejection without fallback or repair", async (status, param, message) => {
+    const server = makeOpenAiServer({
+      failures: [{ status, body: { error: { param, message } } }],
+      completion: () => response(okAnswer()),
+    });
+    const client = gatedClient(server.fetch);
+    await expect(run(client.send)).rejects.toMatchObject({ name: "LlmHttpError", status });
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
+    expect(await db.llmReservations.count()).toBe(1);
+  });
+
+  it("cancels an oversized error stream and refuses fallback with the cap still present", async () => {
+    let reads = 0;
+    const cancel = vi.fn();
+    const chunks = [
+      new TextEncoder().encode(JSON.stringify({ error: "response_format unsupported" }).padEnd(4096)),
+      new TextEncoder().encode(" "),
+      new TextEncoder().encode("UNREAD_TAIL"),
+    ];
+    const failedResponse = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[reads++];
+        if (chunk === undefined) controller.close();
+        else controller.enqueue(chunk);
+      },
+      cancel,
+    }, { highWaterMark: 0 }), { status: 400 });
+    const requests: unknown[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requests.push(JSON.parse(init?.body as string));
+      return failedResponse;
+    };
+    await expect(run(gatedClient(fetchImpl).send)).rejects.toBeInstanceOf(LlmHttpError);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ max_tokens: 50 });
+    expect(reads).toBe(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(failedResponse.body?.locked).toBe(false);
+  });
+
+  it.each([undefined, 0.02])("charges a reported token overrun honestly (reported cost %s)", async (cost) => {
+    const server = makeOpenAiServer({
+      completion: () => response(okAnswer(), {
+        usage: {
+          prompt_tokens: 10, completion_tokens: 1000, total_tokens: 1010,
+          ...(cost !== undefined ? { cost } : {}),
+        },
+      }),
+    });
+    const result = await run(gatedClient(server.fetch).send);
+    expect(result.value.answer).toBe("42");
+    expect(result.usage?.completionTokens).toBe(1000);
+    expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({
+      inputTokens: 10,
+      outputTokens: 1000,
+      ...(cost !== undefined ? { costUsd: 0.02 } : { estimatedCostUsd: expect.closeTo(0.00201, 10) }),
+    });
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]).toMatchObject({ maxOutputTokens: 50, status: "settled" });
   });
 });

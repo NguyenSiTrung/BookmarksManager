@@ -19,6 +19,7 @@ import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import type { ConsentRecord } from "../../src/schemas/provider";
+import { LLM_CONSENT_SCOPES } from "../../src/schemas/provider";
 
 vi.stubGlobal("crypto", webcrypto);
 
@@ -172,6 +173,71 @@ describe("sendLlmConsented gate order", () => {
     expect(containsSpy).not.toHaveBeenCalled();
     expect(fetch.requests).toHaveLength(0);
   });
+
+  it.each(LLM_CONSENT_SCOPES)(
+    "keeps the cheap request guard before permission/key reads for %s",
+    async (scope) => {
+      const credentials = await import("../../src/security/credentials");
+      readCredentialSpy = vi.spyOn(credentials, "readCredential");
+      await saveLlmProvider(providerRecord());
+      const { result, fetch } = send({
+        scope,
+        request: { ...validRequest(), max_output_tokens: 25 },
+      });
+      await expectGateBlock(result, "request_not_allowed");
+      expect(containsSpy).not.toHaveBeenCalled();
+      expect(readCredentialSpy).not.toHaveBeenCalled();
+      expect(await db.llmReservations.count()).toBe(0);
+      expect(fetch.requests).toHaveLength(0);
+    },
+  );
+
+  it.each(["maxInputTokens", "maxOutputTokens"])(
+    "refuses invalid %s before permission/key reads or reservation",
+    async (bound) => {
+      const credentials = await import("../../src/security/credentials");
+      readCredentialSpy = vi.spyOn(credentials, "readCredential");
+      await saveLlmProvider(providerRecord());
+      for (const value of [0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
+        const { result, fetch } = send({ [bound]: value });
+        await expectGateBlock(result, "request_not_allowed");
+        expect(fetch.requests).toHaveLength(0);
+      }
+      expect(containsSpy).not.toHaveBeenCalled();
+      expect(readCredentialSpy).not.toHaveBeenCalled();
+      expect(await db.llmReservations.count()).toBe(0);
+    },
+  );
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "25", null])(
+    "refuses invalid caller max_tokens %s without egress",
+    async (max_tokens) => {
+      await saveLlmProvider(providerRecord());
+      const { result, fetch } = send({
+        request: { ...validRequest(), max_tokens },
+      });
+      await expectGateBlock(result, "request_not_allowed");
+      expect(containsSpy).not.toHaveBeenCalled();
+      expect(await db.llmReservations.count()).toBe(0);
+      expect(fetch.requests).toHaveLength(0);
+    },
+  );
+
+  it.each(["max_completion_tokens", "max_output_tokens", "max_new_tokens"])(
+    "refuses alternate %s even when it matches max_tokens",
+    async (field) => {
+      await saveLlmProvider(providerRecord());
+      for (const alternate of [25, 1000]) {
+        const { result, fetch } = send({
+          request: { ...validRequest(), max_tokens: 25, [field]: alternate },
+        });
+        await expectGateBlock(result, "request_not_allowed");
+        expect(fetch.requests).toHaveLength(0);
+      }
+      expect(containsSpy).not.toHaveBeenCalled();
+      expect(await db.llmReservations.count()).toBe(0);
+    },
+  );
 
   it("refuses a model other than the configured one", async () => {
     await saveLlmProvider(providerRecord());
@@ -356,7 +422,7 @@ describe("sendLlmConsented happy path", () => {
   );
 
   it("sends exactly one gated POST with bearer auth, no cookies, no redirects", async () => {
-    const { result, fetch } = send();
+    const { result, fetch } = send({ maxOutputTokens: 50 });
     const { response, reservation } = await result;
     expect(response.status).toBe(200);
     expect(fetch.requests).toHaveLength(1);
@@ -367,6 +433,8 @@ describe("sendLlmConsented happy path", () => {
     expect(req.headers["Content-Type"]).toBe("application/json");
     expect(reservation.status).toBe("active");
     expect(reservation.providerId).toBe(PROVIDER_ID);
+    expect(reservation.maxOutputTokens).toBe(50);
+    expect(req.body).toMatchObject({ max_tokens: 50 });
     // The reservation row is persisted as active.
     const stored = await db.llmReservations.get(reservation.id);
     expect(stored?.status).toBe("active");
@@ -377,8 +445,111 @@ describe("sendLlmConsented happy path", () => {
       destination: ORIGIN,
       feature: "llm_test",
     });
-    expect(log[0]?.fieldNames.sort()).toEqual(["messages", "model"]);
+    expect(log[0]?.fieldNames.sort()).toEqual(["max_tokens", "messages", "model"]);
     expect(JSON.stringify(log[0])).not.toContain("hello");
+  });
+
+  it.each([
+    [1, 1, 0.0000156],
+    [25, 25, 0.00003],
+    [50, 50, 0.000045],
+    [1000, 50, 0.000045],
+  ])("clamps caller max_tokens %s to %s on the wire and in the reservation", async (caller, expected, cost) => {
+    const request = { ...validRequest(), max_tokens: caller };
+    const { result, fetch } = send({ request });
+    const { reservation } = await result;
+    expect(reservation.maxOutputTokens).toBe(expected);
+    expect(reservation.reservedUsd).toBeCloseTo(cost, 10);
+    expect((await db.llmReservations.get(reservation.id))?.maxOutputTokens).toBe(expected);
+    expect(fetch.requests).toHaveLength(1);
+    expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: expected });
+    expect(request.max_tokens).toBe(caller);
+  });
+
+  it("uses the tighter limit when admitting a request against the monthly cap", async () => {
+    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.000031 }));
+    const { result, fetch } = send({
+      request: { ...validRequest(), max_tokens: 25 },
+    });
+    const { reservation } = await result;
+    expect(reservation.reservedUsd).toBeCloseTo(0.00003, 10);
+    expect(reservation.maxOutputTokens).toBe(25);
+    expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 25 });
+  });
+
+  it.each(LLM_CONSENT_SCOPES)(
+    "adds the gate-owned cap after request validation for %s",
+    async (scope) => {
+      await grantConsentAtOrigin(scope, ORIGIN);
+      const { result, fetch } = send({ scope });
+      const { reservation } = await result;
+      expect(reservation.maxOutputTokens).toBe(50);
+      expect(fetch.requests).toHaveLength(1);
+      expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 50 });
+    },
+  );
+
+  it.each(["429", "503", "transport"] as const)(
+    "preserves the clamped cap through every actual %s retry",
+    async (failure) => {
+      const server = makeOpenAiServer({
+        failures: [failure === "transport"
+          ? { throw: new TypeError("reset") }
+          : { status: Number(failure) }],
+      });
+      const { response, reservation } = await send({
+        request: { ...validRequest(), max_tokens: 25 },
+      }, { fetchImpl: server.fetch }).result;
+      expect(response.status).toBe(200);
+      expect(reservation.maxOutputTokens).toBe(25);
+      expect(server.requests.map((request) => request.body)).toEqual([
+        { ...validRequest(), max_tokens: 25 },
+        { ...validRequest(), max_tokens: 25 },
+      ]);
+    },
+  );
+
+  it("settles clamped prior exposure when admission prevents the next retry", async () => {
+    const server = makeOpenAiServer({ failures: [{ status: 429 }] });
+    let admissions = 0;
+    const beforeSend = async () => {
+      if (++admissions === 2) {
+        throw new LlmGateError("request_not_allowed", "Feature admission refused.");
+      }
+    };
+    const { result } = send({
+      request: { ...validRequest(), max_tokens: 25 },
+    }, { fetchImpl: server.fetch, beforeSend });
+    await expectGateBlock(result, "request_not_allowed");
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]?.body).toMatchObject({ max_tokens: 25 });
+    expect((await db.llmReservations.toArray())[0]).toMatchObject({
+      status: "settled", maxOutputTokens: 25,
+    });
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      inputTokens: 100, outputTokens: 25,
+      estimatedCostUsd: expect.closeTo(0.00003, 10),
+    }]);
+  });
+
+  it("returns a provider cap rejection without retrying, removing the cap or reading its body", async () => {
+    const server = makeOpenAiServer({
+      failures: [{ status: 400, body: { error: { message: "max_tokens is unsupported" } } }],
+    });
+    let rejected: Response | undefined;
+    const fetchImpl: typeof fetch = async (...args) => {
+      rejected = await server.fetch(...args);
+      vi.spyOn(rejected, "text");
+      vi.spyOn(rejected, "json");
+      return rejected;
+    };
+    const { response } = await send({}, { fetchImpl }).result;
+    expect(response.status).toBe(400);
+    expect(server.requests).toHaveLength(1);
+    expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
+    expect(rejected?.text).not.toHaveBeenCalled();
+    expect(rejected?.json).not.toHaveBeenCalled();
+    expect(response.bodyUsed).toBe(false);
   });
 
   it("settles the reservation with reported token usage", async () => {

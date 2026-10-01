@@ -121,6 +121,13 @@ export interface FakeOpenAiReply {
   usage?: { prompt_tokens: number; completion_tokens: number };
   /** HTTP status — 4xx/5xx exercises the error path. */
   status?: number;
+  /** Explicit OpenAI-compatible HTTP error, not assistant message content. */
+  error?: string | {
+    message: string;
+    param?: string;
+    code?: string;
+    type?: string;
+  };
 }
 
 /**
@@ -158,7 +165,7 @@ export async function routeFakeOpenAi(
     await route.fulfill({
       status: scripted.status ?? 200,
       contentType: "application/json",
-      body: JSON.stringify(body),
+      body: JSON.stringify(scripted.error === undefined ? body : { error: scripted.error }),
     });
   });
   return { requests };

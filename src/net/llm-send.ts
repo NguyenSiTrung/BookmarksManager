@@ -14,7 +14,7 @@ import {
 } from "../llm/budget";
 import { resolveLlmDestination } from "../llm/providers";
 import { resolveProviderPricing } from "../llm/pricing";
-import { ChatCompletionRequest } from "../llm/wire";
+import { ChatCompletionRequest, TokenBound } from "../llm/wire";
 import { LLM_CONSENT_SCOPES } from "../schemas/provider";
 import { readCredential } from "../security/credentials";
 import { db } from "../db/database";
@@ -71,8 +71,10 @@ export interface LlmSendInput {
   readonly scope: ConsentScope;
   /** The outbound body; must strict-parse as `ChatCompletionRequest`. */
   readonly request: unknown;
-  /** Conservative token bounds for the budget reservation. */
+  /** Positive safe-integer token bounds for the budget reservation. */
   readonly maxInputTokens: number;
+  /** Gate-owned generation ceiling; a lower request.max_tokens tightens it
+   * in both the reservation and every serialized attempt. */
   readonly maxOutputTokens: number;
   /** `automatic` runs under the budget rules only; `manual` may carry the
    *  user's unknown-cost confirmation. */
@@ -200,7 +202,7 @@ export async function settleLlmUsage(
  *
  * Gate order (all before any network activity): registered scope → stored
  * provider record → destination re-resolved and canonical → closed wire
- * schema + configured-model pin → current versioned consent at the exact
+ * schema + configured-model pin + token bounds → current versioned consent at the exact
  * origin → Chrome host permission → stored credential (when auth requires
  * one) → stale-reservation sweep + budget reservation persisted as
  * `active`, all inside one `rw` transaction. Only then does `fetch`
@@ -264,6 +266,22 @@ export async function sendLlmConsented(
       "Request model does not match the provider's configured model.",
     );
   }
+  if (
+    !TokenBound.safeParse(input.maxInputTokens).success ||
+    !TokenBound.safeParse(input.maxOutputTokens).success
+  ) {
+    throw new LlmGateError(
+      "request_not_allowed",
+      "Request token bounds must be positive safe integers.",
+    );
+  }
+  const maxOutputTokens = Math.min(
+    parsed.data.max_tokens ?? input.maxOutputTokens,
+    input.maxOutputTokens,
+  );
+  // Validate the caller's closed payload before adding a gate-owned control.
+  // Never mutate the caller or allow another limit key to evade this ceiling.
+  const request = { ...parsed.data, max_tokens: maxOutputTokens };
 
   if (!(await hasConsentAtOrigin(input.scope, destination.origin))) {
     throw new LlmGateError(
@@ -336,7 +354,7 @@ export async function sendLlmConsented(
         providerId: record.providerId,
         model: destination.model,
         maxInputTokens: input.maxInputTokens,
-        maxOutputTokens: input.maxOutputTokens,
+        maxOutputTokens,
         ...(pricing !== undefined ? { pricing } : {}),
         kind: input.kind,
         ...(record.monthlyBudgetUsd !== undefined
@@ -381,7 +399,7 @@ export async function sendLlmConsented(
   } else if (destination.auth === "api-key") {
     headers["api-key"] = key!;
   }
-  const body = JSON.stringify(parsed.data);
+  const body = JSON.stringify(request);
 
   let attempt = 0;
   let sentAttempts = 0;
@@ -441,7 +459,7 @@ export async function sendLlmConsented(
         sentAt: now().toISOString(),
         destination: destination.origin,
         feature: input.scope,
-        fieldNames: Object.keys(parsed.data),
+        fieldNames: Object.keys(request),
       });
       return { response, reservation };
     } catch (cause) {
