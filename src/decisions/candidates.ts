@@ -1,4 +1,3 @@
-import { groupDuplicates } from "../duplicates/group";
 import type { DuplicateCandidate } from "../duplicates/group";
 import { extractDomain } from "../search/index";
 import type { SearchHit } from "../search/index";
@@ -9,6 +8,16 @@ import type {
   FolderNode,
 } from "../sync/tree";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
+import { planNearDuplicates } from "./near-duplicate-plan";
+
+// The near-duplicate planner owns these bounds; re-exported here so callers
+// keep importing the selector's public surface from this module.
+export {
+  NEAR_DUPLICATE_COMPARISON_LIMIT,
+  NEAR_DUPLICATE_PAIR_LIMIT,
+  NEAR_DUPLICATE_TITLE_THRESHOLD,
+} from "./near-duplicate-plan";
+export type { NearDuplicatePlan } from "./near-duplicate-plan";
 
 /**
  * Candidate pre-filters for Jev decision requests (spec FR3, plan §9.1/§9.4).
@@ -54,14 +63,6 @@ export const RERANK_CANDIDATE_LIMIT = 30;
  * their own description text.
  */
 export const NONE_FOLDER_OPTION = "none";
-
-/**
- * Jaccard similarity two title token sets must reach (inclusive) before a
- * same-domain pair is worth a Jev score question. 0.5 means "the majority of
- * the combined vocabulary is shared" — loose enough to catch reworded dupes,
- * strict enough to skip merely-same-topic pages.
- */
-export const NEAR_DUPLICATE_TITLE_THRESHOLD = 0.5;
 
 /**
  * The bookmark a decision is about, reduced to the metadata the selectors
@@ -304,74 +305,27 @@ export function misfiledCandidates(
  *  - their titles reach {@link NEAR_DUPLICATE_TITLE_THRESHOLD} — Jaccard
  *    over lowercase word-token sets, or 1.0 when the normalized title
  *    strings are identical, and
- *  - the pair does NOT appear inside any `groupDuplicates` output. Because
- *    exclusion runs the real detector, every exact-URL or normalized-URL
- *    duplicate pair is dropped with the same semantics the local scan uses.
+ *  - the pair is not locally settled: the same raw URL (an exact group) or
+ *    the same `normalizeUrl` key (a normalized group) as `groupDuplicates`
+ *    would emit.
  *
- * Output is deterministic: pairs sort by similarity (desc) then `(a.id,
- * b.id)`, and each pair's `a` is the lexicographically smaller id.
+ * This is the compatible wrapper over {@link planNearDuplicates}: it returns
+ * the planned pairs only, dropping the plan's work accounting. Output is
+ * deterministic — similarity desc, then canonical `(a.id, b.id)`, with each
+ * pair's `a` the lexicographically smaller id — and bounded by
+ * {@link NEAR_DUPLICATE_PAIR_LIMIT} (500). Parity with the historical
+ * behavior holds only up to that cap: a library whose qualifying pairs exceed
+ * it returns the top 500 even when the exhaustive scan ran (e.g. 316
+ * identical-title, distinct-URL bookmarks = 49,770 comparisons, under the
+ * comparison limit, but only 500 pairs returned where the pre-hardening
+ * implementation returned all 49,770). Whether output or work was limited is
+ * reported by the plan's `truncated` flag — this wrapper discards it; Task 5
+ * persists it on the scan job.
  */
 export function nearDuplicatePairs(
   bookmarks: readonly NearDuplicateSource[],
 ): NearDuplicatePair[] {
-  // Every unordered pair inside an emitted duplicate group is already
-  // answered locally — collect them for exclusion.
-  const caught = new Set<string>();
-  for (const group of groupDuplicates(bookmarks)) {
-    const ids = group.items.map((item) => item.id);
-    for (let i = 0; i < ids.length; i++) {
-      const a = ids[i];
-      if (a === undefined) continue;
-      for (let j = i + 1; j < ids.length; j++) {
-        const b = ids[j];
-        if (b === undefined) continue;
-        caught.add(pairKey(a, b));
-      }
-    }
-  }
-
-  // "Same domain" is a precondition — bucket once, then compare within.
-  const byDomain = new Map<string, NearDuplicateSource[]>();
-  for (const item of bookmarks) {
-    const domain = extractDomain(item.url);
-    if (domain === "") continue;
-    const bucket = byDomain.get(domain);
-    if (bucket === undefined) {
-      byDomain.set(domain, [item]);
-    } else {
-      bucket.push(item);
-    }
-  }
-
-  const pairs: NearDuplicatePair[] = [];
-  for (const [domain, bucket] of byDomain) {
-    for (let i = 0; i < bucket.length; i++) {
-      const first = bucket[i];
-      if (first === undefined) continue;
-      for (let j = i + 1; j < bucket.length; j++) {
-        const second = bucket[j];
-        if (second === undefined) continue;
-        if (caught.has(pairKey(first.id, second.id))) continue;
-        const similarity = titleSimilarity(first.title, second.title);
-        if (similarity < NEAR_DUPLICATE_TITLE_THRESHOLD) continue;
-        const [a, b] =
-          first.id <= second.id ? [first, second] : [second, first];
-        pairs.push({
-          a: toSide(a, domain),
-          b: toSide(b, domain),
-          titleSimilarity: similarity,
-        });
-      }
-    }
-  }
-
-  pairs.sort(
-    (x, y) =>
-      y.titleSimilarity - x.titleSimilarity ||
-      compareStrings(x.a.id, y.a.id) ||
-      compareStrings(x.b.id, y.b.id),
-  );
-  return pairs;
+  return planNearDuplicates(bookmarks).pairs;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,35 +442,6 @@ function toFolderCandidate(
 /** Sortable, separator-safe rendering of a path for tie-breaking. */
 function pathKey(path: readonly string[]): string {
   return path.join("\u001f");
-}
-
-/**
- * Orientation-free id pair key — the exclusion-set membership test.
- * JSON encoding keeps the two ids unambiguous without magic separators.
- */
-function pairKey(x: string, y: string): string {
-  const [a, b] = x <= y ? [x, y] : [y, x];
-  return JSON.stringify([a, b]);
-}
-
-function toSide(item: NearDuplicateSource, domain: string): NearDuplicateSide {
-  return { id: item.id, title: item.title, url: item.url, domain };
-}
-
-/**
- * Title similarity for the near-dupe precondition: 1.0 when the normalized
- * titles are identical (covers tokenless titles like "!!!"), otherwise
- * Jaccard over lowercase word-token sets; 0 when a side has no tokens.
- */
-function titleSimilarity(a: string, b: string): number {
-  const na = a.trim().toLowerCase().replace(/\s+/g, " ");
-  const nb = b.trim().toLowerCase().replace(/\s+/g, " ");
-  if (na === nb) return 1;
-  const ta = tokenSet(a);
-  const tb = tokenSet(b);
-  if (ta.size === 0 || tb.size === 0) return 0;
-  const shared = overlap(ta, tb);
-  return shared / (ta.size + tb.size - shared);
 }
 
 /** Code-unit compare — deterministic across locales. */

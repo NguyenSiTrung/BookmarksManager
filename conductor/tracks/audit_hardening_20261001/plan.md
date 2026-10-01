@@ -728,7 +728,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(decisions): bound popup suggestion retention`,
     isolated decisions E2E, append original Bead context, close `f7c`.
 
-- [ ] Task 4: Bounded deterministic near-duplicate candidate planning
+- [x] Task 4: Bounded deterministic near-duplicate candidate planning
   <!-- files: src/decisions/candidates.ts, src/decisions/near-duplicate-plan.ts, tests/unit/decisions-candidates.test.ts, tests/unit/near-duplicate-plan.test.ts, tests/unit/decisions-perf.test.ts -->
   - **Reuse `BookmarksManager-w6y`; covers candidate work in I06.**
     Keep `nearDuplicatePairs(bookmarks)` as a compatible wrapper; create:

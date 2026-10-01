@@ -584,3 +584,20 @@ Selected applicable patterns from `conductor/patterns.md`:
   effect syncs the external index and realizes the documented `null` →
   "Indexing…" contract. Isolated search E2E is batched into the Phase 5
   gate.
+- I06 candidates: near-duplicate planning is now bounded and deterministic.
+  `NEAR_DUPLICATE_PAIR_LIMIT = 500`, `NEAR_DUPLICATE_COMPARISON_LIMIT =
+  50_000`; exclusion is O(1) raw-or-normalized URL equality (no intra-group
+  pair enumeration); above the comparison budget the planner generates
+  candidates from an inverted title token index in sorted domain/token/ID
+  order, caps attempts (including filtered/duplicate attempts) before
+  scoring, sorts the selected pairs by similarity then canonical ids, and
+  sets `truncated` true — a bounded shortlist, never a claimed global
+  top-K. `nearDuplicatePairs` stays a compatible wrapper whose doc now
+  states parity only up to the 500-pair cap (truncation is surfaced only by
+  `planNearDuplicates`; Task 5 persists it). Review `6b315db7` PASS with a
+  300-fixture differential against HEAD showing zero differences; fix round
+  corrected the wrapper doc and added `chrome://` raw-URL, mixed-similarity,
+  and identical-title normalized fixtures (all mutation-killed); delta
+  re-check PASS with no source drift. Perf: 10k/5×2000-domain library =
+  50 000 comparisons, 500 pairs, ~176–228 ms (budget 500 ms); analyze-on-save
+  gate median ~81 ms (budget 1500 ms).

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   FOLDER_CANDIDATE_LIMIT,
+  NEAR_DUPLICATE_COMPARISON_LIMIT,
+  NEAR_DUPLICATE_PAIR_LIMIT,
   NEAR_DUPLICATE_TITLE_THRESHOLD,
   NONE_FOLDER_OPTION,
   RERANK_CANDIDATE_LIMIT,
@@ -11,6 +13,7 @@ import {
   rerankCandidates,
   tagCandidates,
 } from "../../src/decisions/candidates";
+import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
 import { tagNameKey } from "../../src/schemas/meta";
 import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
 import { buildSearchHandle, runQuery } from "../../src/search/run";
@@ -473,6 +476,87 @@ describe("nearDuplicatePairs", () => {
     expect(out.map((p) => `${p.a.id}+${p.b.id}`)).toEqual(["z1+z2", "m+n"]);
     // …and pair orientation is canonical (z1 before z2 by id, not input).
     expect(out[0]?.a.id).toBe("z1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nearDuplicatePairs — bounded planner regressions (audit-hardening Task 4)
+// ---------------------------------------------------------------------------
+
+describe("nearDuplicatePairs bounded planning", () => {
+  const pad = (n: number): string => String(n).padStart(5, "0");
+  const near = (id: string, title: string, url: string) => ({
+    id,
+    title,
+    url,
+  });
+
+  /** 5k same-domain bookmarks sharing three title tokens. */
+  const dominant = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `d${pad(i)}`,
+      title: `common shared title ${i}`,
+      url: `https://example.com/page/${i}`,
+    }));
+
+  it("keeps the wrapper under the pair cap on a dominant-domain library", () => {
+    const out = nearDuplicatePairs(dominant(5_000));
+    expect(out.length).toBeLessThanOrEqual(NEAR_DUPLICATE_PAIR_LIMIT);
+  });
+
+  it("caps the planner's work, not just its output", () => {
+    const plan = planNearDuplicates(dominant(5_000));
+    expect(plan.comparisons).toBeLessThanOrEqual(
+      NEAR_DUPLICATE_COMPARISON_LIMIT,
+    );
+    expect(plan.truncated).toBe(true);
+  });
+
+  it("is input-order independent on a large common-token fixture", () => {
+    const fixture = dominant(5_000);
+    expect(nearDuplicatePairs([...fixture].reverse())).toEqual(
+      nearDuplicatePairs(fixture),
+    );
+  });
+
+  it("excludes a normalized-duplicate library without enumerating pairs", () => {
+    // Identical titles: absent the normalized-URL exclusion every pair would
+    // qualify, so this fixture pins the exclusion path itself, not just the
+    // comparison bound.
+    const fixture = Array.from({ length: 5_000 }, (_, i) => ({
+      id: `n${pad(i)}`,
+      title: "Identical normalized page",
+      url: `https://example.com/dup?utm_source=${i}`,
+    }));
+    expect(nearDuplicatePairs(fixture)).toEqual([]);
+  });
+
+  it("excludes pairs sharing a raw URL with no normalized key", () => {
+    // `chrome://foo` has domain "foo" but no normalized key, so the raw-URL
+    // (exact-group) branch is the only exclusion that can apply.
+    const out = nearDuplicatePairs([
+      near("r1", "Identical scheme page", "chrome://foo/page"),
+      near("r2", "Identical scheme page", "chrome://foo/page"),
+      near("r3", "Identical scheme page", "chrome://foo/other-page"),
+    ]);
+    expect(out.map((p) => `${p.a.id}+${p.b.id}`)).toEqual([
+      "r1+r3",
+      "r2+r3",
+    ]);
+  });
+
+  it("still matches the historical snapshot on a small library", () => {
+    const small = [
+      near("a", "Rust tutorial guide", "https://example.com/a"),
+      near("b", "Rust tutorial handbook", "https://example.com/b"),
+      near("c", "Rust cookbook", "https://example.com/c"),
+      near("d", "Rust tutorial", "https://example.com/d"),
+    ];
+    expect(nearDuplicatePairs(small).map((p) => `${p.a.id}+${p.b.id}`)).toEqual([
+      "a+d",
+      "b+d",
+      "a+b",
+    ]);
   });
 });
 

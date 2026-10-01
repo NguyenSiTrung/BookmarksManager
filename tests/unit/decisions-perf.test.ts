@@ -14,6 +14,11 @@ import { db } from "../../src/db/database";
 import { productionHandlers } from "../../src/entrypoints/background";
 import { resetJevClientPools } from "../../src/jev/client";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
+import {
+  NEAR_DUPLICATE_COMPARISON_LIMIT,
+  NEAR_DUPLICATE_PAIR_LIMIT,
+  planNearDuplicates,
+} from "../../src/decisions/near-duplicate-plan";
 import { sendConsented } from "../../src/net/send";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import type { TagDef } from "../../src/schemas/meta";
@@ -298,5 +303,60 @@ describe("analyze-on-save performance", () => {
     // (the egress gate and the only sentLog writer) never ran — zero rows,
     // by design. That path is owned by the `src/net/send` tests.
     expect(await db.sentLog.count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Near-duplicate planning performance (audit-hardening Task 4 / I06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wall-clock tripwire for the bounded planner on the same 10k library the
+ * save gate seeds: 5 domains of 2000 bookmarks each means the exhaustive
+ * pairwise scan would attempt ~10M comparisons. The planner must cap that
+ * work at {@link NEAR_DUPLICATE_COMPARISON_LIMIT}, cap output at
+ * {@link NEAR_DUPLICATE_PAIR_LIMIT}, flag truncation, and stay deterministic.
+ */
+const PLAN_BUDGET_MS = 500;
+
+/** Flatten a seeded tree back to its bookmark leaves. */
+function collectLeaves(nodes: readonly Folder[]): Leaf[] {
+  const out: Leaf[] = [];
+  const stack: Array<Folder | Leaf> = [...nodes];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if ("children" in node) {
+      stack.push(...node.children);
+    } else {
+      out.push(node);
+    }
+  }
+  return out;
+}
+
+describe("near-duplicate planning performance", () => {
+  it("bounds planning work on the seeded 10k library", () => {
+    const bookmarks = collectLeaves(seedTree());
+    expect(bookmarks).toHaveLength(LIBRARY_SIZE);
+
+    const start = performance.now();
+    const plan = planNearDuplicates(bookmarks);
+    const elapsed = performance.now() - start;
+
+    expect(plan.comparisons).toBeLessThanOrEqual(
+      NEAR_DUPLICATE_COMPARISON_LIMIT,
+    );
+    expect(plan.pairs.length).toBeLessThanOrEqual(NEAR_DUPLICATE_PAIR_LIMIT);
+    expect(plan.truncated).toBe(true);
+
+    // Determinism control: reversing the 10k input yields the same plan.
+    expect(planNearDuplicates([...bookmarks].reverse())).toEqual(plan);
+
+    console.log(
+      `[perf] near-duplicate plan over ${bookmarks.length} bookmarks: ` +
+        `${plan.comparisons} comparisons, ${plan.pairs.length} pairs, ` +
+        `first pass ${elapsed.toFixed(1)}ms (budget ${PLAN_BUDGET_MS}ms)`,
+    );
+    expect(elapsed).toBeLessThan(PLAN_BUDGET_MS);
   });
 });
