@@ -145,3 +145,22 @@
   partial progress/status fencing complete. Cost if wrong: direct callers
   must supply a current generation after ownership is claimed; legacy zero
   semantics remain explicitly tested. No new network or schema abstraction.
+
+## Revision 10 — 2026-10-01 — B11 actual paid-send fencing and browser drift
+
+- **Trigger:** Review P1: runner-entry checks miss later escalation, pair
+  iterations and transport queue/preflight/retry waits. Fail-fast split
+  requests may release ownership before sibling work settles.
+- **Change:** Expand ownership across existing analysis/duplicate/escalation
+  and Jev client/gate modules and focused tests. Propagate captured job
+  authority to each attempt; retain paused-batch draining and already-sent
+  accounting, but refuse canceled/superseded new work. Drain siblings before
+  owner release, without a new framework or debug protocol.
+- **Gate evidence:** 153 files / 2,933 tests and lint/types/build/compliance
+  passed. Browser: 17 passed, one failed. Popup's raw forbidden word `notes`
+  also matches static category instructions saying “release notes.”
+- **Ruling:** Add that existing browser spec to ownership; keep structural
+  no-notes-field assertions and actual secret/query marker checks, remove
+  only the ambiguous plain-word prohibition. Cost if wrong: a hypothetical
+  free-text note must be detected by a unique marker instead of a common
+  English word. No product privacy boundary is relaxed.

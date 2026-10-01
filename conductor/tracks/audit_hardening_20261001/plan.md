@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — B11 restructure callback owner fencing -->
+<!-- Last Revised: 2026-10-01 — B11 per-attempt paid-work authority -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -477,7 +477,7 @@ implementation work.
 <!-- execution: parallel -->
 
 - [~] Task 1: Single-owner scan runners and guarded progress
-  <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, src/restructure/assign.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts -->
+  <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, src/restructure/assign.ts, src/decisions/pipeline.ts, src/decisions/duplicates.ts, src/llm/escalate.ts, src/jev/client.ts, src/net/send.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts, tests/unit/decisions-pipeline.test.ts, tests/unit/decisions-duplicates.test.ts, tests/unit/llm-escalate.test.ts, tests/unit/jev-client.test.ts, tests/unit/network-gate.test.ts, tests/e2e/decisions.spec.ts -->
   - Covers **B11**. Create a worker-local coordinator for all production
     `runPersistedJob` entry paths; one MV3 worker owns production scans.
     ```ts
@@ -509,6 +509,11 @@ implementation work.
     Pass the captured owner generation through the actual restructure
     assignment callback, so a held superseded response cannot merge stale
     assignments after progress/status fencing has rejected that owner.
+    Carry captured authority through actual analysis, duplicate-pair and
+    escalation callbacks to every transport attempt, including queued,
+    preflight and retry waits. Drain sibling wire batches before releasing
+    ownership on rejection. Same-owner paused batches may drain; canceled
+    or superseded owners must start no new paid request.
   - [ ] Verify green: rerun named tests with repeated pause/resume/cancel,
     batch failures, both analysis and restructure jobs, and worker restart.
     Preserve documented at-least-once uncommitted-batch crash behavior.
