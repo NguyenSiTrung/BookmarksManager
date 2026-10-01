@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — Phase 2 per-attempt privacy admission ownership -->
+<!-- Last Revised: 2026-10-01 — Phase 2 per-attempt admission and summary re-disclosure -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -287,7 +287,7 @@ implementation work.
     relevant isolated LLM E2E, notes/learnings, close this task.
 
 - [~] Task 2: Minimized summary payload and accurate disclosures
-  <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/e2e/provider.spec.ts -->
+  <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, src/messages/summaries.ts, src/entrypoints/sidepanel/SummaryDialog.tsx, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/summary-messages.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/components/summary-dialog.test.tsx, tests/e2e/provider.spec.ts, tests/e2e/llm.spec.ts -->
   - Covers **B06**. Preserve the public summary functions; build a minimized
     outbound payload separately from the original extraction used locally.
   - [ ] Red: add a summary with synthetic query/fragment secret markers,
@@ -309,6 +309,12 @@ implementation work.
     origin-scoped consent and reacquisition behavior.
     The consent version is owned by `src/consent/records.ts`; update the
     provider browser test's expected current grant version in the same task.
+    Add a read-only summary consent preflight to the existing total message
+    protocol. The dialog displays both exact recipients and per-scope field
+    disclosures before an affirmative send. Echo the displayed origins and
+    consent version; the worker re-resolves and checks them before granting.
+    Remove unconditional stale-grant refresh. Preflight/dismissal authorizes
+    neither extraction nor egress; stale/missing approval refuses safely.
   - [ ] Verify green: rerun named tests, stale/current consent cases,
     `npm run check:manifest`, `npm run check:store`, `npm run check:site`,
     and isolated LLM E2E. Do not send a raw URL just to preserve matching.

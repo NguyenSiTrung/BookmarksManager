@@ -41,3 +41,19 @@
 - **Ruling:** Enforce B05 at each actual attempt rather than disable retries
   or consider fallback checks sufficient. If incorrect, the extra admission
   read adds latency or refusals, but cannot silently skip the origin gates.
+
+## Revision 4 — 2026-10-01 — Plan
+
+- **Trigger:** B06 review found unconditional summary grant writes silently
+  upgrade stale versions. The Summary dialog auto-sends on open and has no
+  production consumer of the clarified per-recipient disclosure constants.
+- **Current task:** Phase 2 Task 2 review remediation.
+- **Change:** Extend ownership to the summary message protocol, dialog,
+  their tests, and existing LLM browser test. Add a read-only recipient/version
+  preflight, disclosure and affirmative send; validate echoed origin/version
+  against freshly resolved destinations before recording current consent.
+- **Ruling:** Make renewed summary consent explicit rather than label the
+  unchanged automatic grant a re-disclosure. Existing current grants remain
+  compatible, but opening/dismissing the dialog never authorizes egress.
+  If incorrect, the extra affirmative step adds friction; it cannot silently
+  send page text to an undisclosed recipient.
