@@ -148,6 +148,8 @@ async function waitForSuggestRequest(): Promise<SentBookmark> {
 interface DecisionSeed {
   bookmarkId: string;
   confidence?: number;
+  /** Review status; defaults to `pending`. */
+  status?: "pending" | "unsure";
 }
 
 /** Validate + persist one decision row, inside act so live queries flush. */
@@ -163,7 +165,7 @@ function baseRow(seed: DecisionSeed): Record<string, unknown> {
     id: crypto.randomUUID(),
     bookmarkIds: [seed.bookmarkId],
     confidence: seed.confidence ?? 0.9,
-    status: "pending",
+    status: seed.status ?? "pending",
     source: {
       engine: "jev",
       providerId: "typesafe",
@@ -402,6 +404,28 @@ describe("PopupApp — save suggestions", () => {
       screen.getByRole("button", { name: "Add suggested tag focus" }),
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Remove tag focus" })).toBeNull();
+  });
+
+  it("renders tag chips for an unsure-band draft (one weak tag must not hide the rest)", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+    const { id } = await waitForSuggestRequest();
+
+    // The pipeline's tags confidence is the MINIMUM margin over the selected
+    // tags, so {rust: 0.99, async: 0.6} persists as `unsure` (confidence 0.2).
+    // Both tags cleared the per-tag `noul >= 0.5` selection bar, so both must
+    // still be offered — the review status must not gate the popup's chips.
+    await putTagsDecision({
+      bookmarkId: id,
+      tags: ["rust", "async"],
+      confidence: 0.2,
+      status: "unsure",
+    });
+
+    await screen.findByRole("button", { name: "Add suggested tag rust" });
+    expect(
+      screen.getByRole("button", { name: "Add suggested tag async" }),
+    ).toBeTruthy();
   });
 
   it("offers a suggested category that applies only on click", async () => {

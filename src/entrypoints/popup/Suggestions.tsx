@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { MOVE_PRESELECT_THRESHOLD } from "../../decisions/policy";
-import { listPending } from "../../decisions/store";
+import { listReviewable } from "../../decisions/store";
 import type { DecisionRow } from "../../decisions/store";
 import type { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
@@ -69,11 +69,20 @@ interface TagSuggestion {
   label: string;
 }
 
-/** Pending decision rows correlated to this popup's synthetic bookmark id. */
+/**
+ * Rows correlated to this popup's synthetic bookmark id. Reads the same
+ * `pending` + `unsure` set the review surface shows (`listReviewable`), NOT
+ * `pending` alone: a multi-tag draft's confidence is the MINIMUM over its
+ * selected tags, so one tag the model scored in `[0.5, 0.75)` drags the whole
+ * row to `unsure` — filtering to `pending` would hide every tag, including
+ * strong ones. The popup is proposal-only (each chip is opt-in), so the
+ * review status must not gate chip visibility; the row's tags are already the
+ * per-tag `noul >= 0.5` selection.
+ */
 function useSuggestionRows(bookmarkId: string): DecisionRow[] {
   return useLiveQuery(
     () =>
-      listPending()
+      listReviewable()
         .then((all) =>
           all.filter((row) => row.bookmarkIds.includes(bookmarkId)),
         )
