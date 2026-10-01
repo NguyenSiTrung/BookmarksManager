@@ -8,6 +8,7 @@ import {
   revertDecision,
 } from "../decisions/apply";
 import { normalizeBlocklistEntry } from "../decisions/minimize";
+import { prunePopupDecisions } from "../decisions/store";
 import {
   DECISION_BLOCKLIST_KEY,
   readBlocklist,
@@ -70,13 +71,15 @@ import { seedStarterTags } from "../db/starter-tags";
  * "Save link" context-menu items (`src/sync/context-menu.ts`), runs one
  * metadata reconcile for deletions missed while the service worker was
  * suspended, and resumes any `running`/`pending` decision jobs from Dexie so a
- * library scan survives an MV3 worker restart (FR7). It performs no network
- * requests at startup. `chrome` is the lazy-slice house pattern so test stubs
- * work; only `runtime.onMessage` is needed here — the sync modules (including
- * the context-menu slice) declare their own slices. Of the provider protocol,
- * only TEST_PROVIDER can produce egress, and only via the consented gate in
- * `src/net/send.ts`; of the decisions protocol, egress is confined to the
- * analyze/save-suggest/rerank/job handlers, each behind the same gate.
+ * library scan survives an MV3 worker restart (FR7), then reaps any legacy
+ * synthetic popup backlog beyond the retention bound (improvement I05). It
+ * performs no network requests at startup. `chrome` is the lazy-slice house
+ * pattern so test stubs work; only `runtime.onMessage` is needed here — the
+ * sync modules (including the context-menu slice) declare their own slices. Of
+ * the provider protocol, only TEST_PROVIDER can produce egress, and only via
+ * the consented gate in `src/net/send.ts`; of the decisions protocol, egress
+ * is confined to the analyze/save-suggest/rerank/job handlers, each behind the
+ * same gate.
  */
 declare const chrome: {
   runtime: {
@@ -348,6 +351,13 @@ export interface ProductionHandlersDeps {
    * provider.
    */
   readonly relaunchJob?: (jobId: string) => Promise<void>;
+  /**
+   * Best-effort retention sweep run after each save-suggest succeeds
+   * (improvement I05). Defaults to the real {@link prunePopupDecisions};
+   * injectable so the fail-soft contract — a sweep that rejects must never
+   * break popup saving — is pinned without stubbing the storage layer.
+   */
+  readonly prunePopup?: () => Promise<number>;
 }
 
 /**
@@ -361,6 +371,7 @@ export function productionHandlers(
   deps: ProductionHandlersDeps = {},
 ): DecisionsHandlers {
   const relaunchJob = deps.relaunchJob ?? runPersistedJob;
+  const prunePopup = deps.prunePopup ?? prunePopupDecisions;
   return {
     async analyzeById(bookmarkId) {
       const provider = await requireActiveProvider();
@@ -386,7 +397,7 @@ export function productionHandlers(
       // Save-suggest also asks for a folder placement (plan §9.1/FR10) — and
       // always under the proposal-only settings, so the user's auto-apply
       // toggles can never fire against the synthetic `popup:` id.
-      return analyzeBookmark({
+      const result = await analyzeBookmark({
         bookmark,
         context: { ...context, settings: SAVE_SUGGEST_SETTINGS },
         providerId: provider.providerId,
@@ -394,6 +405,17 @@ export function productionHandlers(
         checks: ["categorize", "tags", "placement"],
         userBlocklist,
       });
+      // Bound the synthetic backlog AFTER this save's rows are committed
+      // (improvement I05). This is also the "next-save" legacy sweep for rows
+      // an older build left behind. Fail-soft by contract: a sweep failure must
+      // never turn a successful save-suggest into an error — the reply (the
+      // chips) still stands, and the next save/startup retries the cleanup.
+      try {
+        await prunePopup();
+      } catch {
+        // Best-effort retention; the popup save is already persisted.
+      }
+      return result;
     },
     async rerank(query) {
       const provider = await requireActiveProvider();
@@ -533,6 +555,13 @@ export default defineBackground(() => {
   // takes down the message handlers.
   void resumeJobs(productionResumeDeps()).catch(() => {
     // Best-effort; the next worker start retries.
+  });
+  // Improvement I05: reap a legacy synthetic popup backlog left by earlier
+  // builds that had no retention bound. Fire-and-forget like the reconcile
+  // above — a sweep failure must never take down the worker, and the next
+  // start (or save-suggest) retries.
+  void prunePopupDecisions().catch(() => {
+    // Best-effort; the next worker start or save-suggest retries.
   });
 
   const decisionsHandlers = productionHandlers();

@@ -584,6 +584,20 @@ Selected applicable patterns from `conductor/patterns.md`:
   effect syncs the external index and realizes the documented `null` →
   "Indexing…" contract. Isolated search E2E is batched into the Phase 5
   gate.
+- I05 popup retention (`BookmarksManager-f7c`): `POPUP_DECISION_LIMIT = 300`
+  plus `prunePopupDecisions()` — one `rw` transaction that prunes only rows
+  whose `bookmarkIds` are all `popup:`-prefixed and whose status is
+  `pending`/`unsure`, oldest-first by `createdAt` with an ascending-id
+  tie-break, keeps the newest 300, and returns the deleted count. The
+  post-save sweep runs after synthetic rows commit and is fail-soft; startup
+  runs a fire-and-forget sweep with an attached `.catch`. Review `fce2a990`
+  PASS; the fix round pinned the id tie-break (frozen scan order, since the
+  id is the primary key), atomicity (a real `bulkDelete` then throw rolls
+  back; a `currentTransaction.mode === "readwrite"` probe inside the sweep),
+  and the startup catch (`defineBackground().main()` plus an
+  `unhandledRejection` probe with a control rejection) — all three
+  mutations killed. Delta re-check PASS, drift-free. Isolated decisions E2E
+  is batched into the Phase 5 gate.
 - I06 candidates: near-duplicate planning is now bounded and deterministic.
   `NEAR_DUPLICATE_PAIR_LIMIT = 500`, `NEAR_DUPLICATE_COMPARISON_LIMIT =
   50_000`; exclusion is O(1) raw-or-normalized URL equality (no intra-group

@@ -19,6 +19,10 @@ import {
 } from "vitest";
 import { grantConsent } from "../../src/consent/records";
 import { db } from "../../src/db/database";
+import {
+  POPUP_DECISION_LIMIT,
+  prunePopupDecisions,
+} from "../../src/decisions/store";
 import { App as PopupApp } from "../../src/entrypoints/popup/App";
 import { Decision } from "../../src/schemas/decision";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
@@ -193,6 +197,36 @@ function putCategoryDecision(
     ...baseRow(seed),
     kind: "set_category",
     category: seed.category,
+  });
+}
+
+/** One older synthetic popup row, as a previous worker session left it. */
+function legacyPopupRow(n: number): Record<string, unknown> {
+  const id = `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+  return {
+    id,
+    bookmarkIds: [`popup:${id}`],
+    confidence: 0.9,
+    status: "pending",
+    source: {
+      engine: "jev",
+      providerId: "typesafe",
+      model: "jev-1.13.0",
+      questionSetVersion: "1",
+    },
+    createdAt: new Date(Date.UTC(2020, 0, 1) + n * 1_000).toISOString(),
+    kind: "add_tags",
+    tags: ["legacy"],
+  };
+}
+
+/** Seed a backlog of older synthetic rows, inside act for live queries. */
+async function seedPopupBacklog(count: number): Promise<void> {
+  const rows = Array.from({ length: count }, (_, n) =>
+    Decision.parse(legacyPopupRow(n)),
+  );
+  await act(async () => {
+    await db.decisions.bulkPut(rows);
   });
 }
 
@@ -491,5 +525,51 @@ describe("PopupApp — save suggestions", () => {
     });
     expect(screen.queryByTestId("save-suggestions")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps concurrent popup opens' suggestions independent", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    render(<PopupApp />);
+    render(<PopupApp />);
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+
+    const firstId = (
+      sendMessage.mock.calls[0]?.[0] as { bookmark: { id: string } }
+    ).bookmark.id;
+    const secondId = (
+      sendMessage.mock.calls[1]?.[0] as { bookmark: { id: string } }
+    ).bookmark.id;
+    expect(firstId).toMatch(/^popup:/);
+    expect(secondId).toMatch(/^popup:/);
+    expect(firstId).not.toBe(secondId);
+
+    // Rows for each open render only in the popup that owns the synthetic id.
+    await putTagsDecision({ bookmarkId: firstId, tags: ["reading"] });
+    await putTagsDecision({ bookmarkId: secondId, tags: ["focus"] });
+    await screen.findByRole("button", { name: "Add suggested tag reading" });
+    await screen.findByRole("button", { name: "Add suggested tag focus" });
+  });
+
+  it("keeps this popup's newest suggestion after a retention sweep trims older rows", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+    const { id } = await waitForSuggestRequest();
+    await putTagsDecision({ bookmarkId: id, tags: ["reading"] });
+    await screen.findByRole("button", { name: "Add suggested tag reading" });
+
+    // A backlog of older synthetic rows far beyond the retention bound.
+    await seedPopupBacklog(POPUP_DECISION_LIMIT + 5);
+    let pruned = 0;
+    await act(async () => {
+      pruned = await prunePopupDecisions();
+    });
+    expect(pruned).toBeGreaterThan(0);
+
+    // This popup's row is the newest and survives; its chip still renders.
+    expect(
+      await screen.findByRole("button", {
+        name: "Add suggested tag reading",
+      }),
+    ).toBeTruthy();
   });
 });

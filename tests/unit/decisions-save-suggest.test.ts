@@ -12,13 +12,16 @@ import {
 import { grantConsent } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { approveDecision } from "../../src/decisions/apply";
+import { POPUP_DECISION_LIMIT } from "../../src/decisions/store";
 import {
   DECISION_SETTINGS_KEY,
+  default as backgroundDefinition,
   productionHandlers,
 } from "../../src/entrypoints/background";
 import { resetJevClientPools } from "../../src/jev/client";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import { sendConsented } from "../../src/net/send";
+import { Decision } from "../../src/schemas/decision";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import type { TagDef } from "../../src/schemas/meta";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -268,5 +271,259 @@ describe("saveSuggest auto-apply suppression", () => {
     const meta = await db.bookmarkMeta.get("bm-1");
     expect(meta?.category).toBe("docs");
     expect(meta?.tags.sort()).toEqual(["async", "rust"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Popup retention (I05): synthetic `popup:` rows are bounded after each save
+// and by a fail-soft startup/next-save legacy sweep, without ever breaking
+// popup saving.
+// ---------------------------------------------------------------------------
+
+/** Far enough in the past that freshly persisted popup rows sort newer. */
+const LEGACY_EPOCH = Date.UTC(2020, 0, 1);
+
+function syntheticUuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+}
+
+/** One older synthetic popup row, as an earlier worker session left it. */
+function legacyPopupRow(n: number): Decision {
+  return Decision.parse({
+    id: syntheticUuid(n),
+    bookmarkIds: [`popup:${syntheticUuid(n)}`],
+    confidence: 0.9,
+    status: "pending",
+    source: {
+      engine: "jev",
+      providerId: "typesafe",
+      model: "jev-1.13.0",
+      questionSetVersion: "1",
+    },
+    createdAt: new Date(LEGACY_EPOCH + n * 1_000).toISOString(),
+    kind: "add_tags",
+    tags: ["legacy"],
+  });
+}
+
+async function seedPopupBacklog(count: number): Promise<void> {
+  await db.decisions.bulkPut(
+    Array.from({ length: count }, (_, n) => legacyPopupRow(n)),
+  );
+}
+
+function saveSuggest(id: string) {
+  return {
+    type: "SAVE_SUGGEST" as const,
+    bookmark: { id, title: PAGE_TITLE, url: PAGE_URL },
+  };
+}
+
+/** Queue one successful ≥threshold answer for the save-suggest checks. */
+function queueSaveSuggestAnswer(): void {
+  server.queue({
+    kind: "answer",
+    model: "jev-1.13.0",
+    answerOverrides: SAVE_SUGGEST_ANSWERS,
+  });
+}
+
+describe("saveSuggest popup retention", () => {
+  it("sweeps legacy synthetic popup rows down to the bound after a save", async () => {
+    queueSaveSuggestAnswer();
+    await seedPopupBacklog(POPUP_DECISION_LIMIT + 5);
+
+    const result = await handleDecisionsMessage(
+      saveSuggest(POPUP_ID),
+      sender,
+      productionHandlers(),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      code: "analyze_ok",
+      result: { sent: true },
+    });
+    const rows = await db.decisions.toArray();
+    const synthetic = rows.filter((row) =>
+      row.bookmarkIds.every((id) => id.startsWith("popup:")),
+    );
+    expect(synthetic).toHaveLength(POPUP_DECISION_LIMIT);
+    // The three just-persisted rows survive the sweep.
+    expect(rows.filter((row) => row.bookmarkIds.includes(POPUP_ID))).toHaveLength(
+      3,
+    );
+  });
+
+  it("preserves real rows while sweeping the popup backlog", async () => {
+    queueSaveSuggestAnswer();
+    await seedPopupBacklog(POPUP_DECISION_LIMIT + 5);
+    await db.decisions.put(
+      Decision.parse({
+        ...legacyPopupRow(900),
+        id: syntheticUuid(901),
+        bookmarkIds: ["bm-1"],
+        createdAt: new Date(Date.UTC(2021, 0, 1)).toISOString(),
+      }),
+    );
+
+    await handleDecisionsMessage(
+      saveSuggest(POPUP_ID),
+      sender,
+      productionHandlers(),
+    );
+
+    expect(await db.decisions.get(syntheticUuid(901))).toBeDefined();
+  });
+
+  it("still saves popup suggestions when the retention sweep rejects", async () => {
+    queueSaveSuggestAnswer();
+    const prunePopup = vi.fn(async () => {
+      throw new Error("retention sweep failed");
+    });
+
+    const result = await handleDecisionsMessage(
+      saveSuggest(POPUP_ID),
+      sender,
+      productionHandlers({ prunePopup }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      code: "analyze_ok",
+      result: { sent: true },
+    });
+    expect(prunePopup).toHaveBeenCalledTimes(1);
+    expect(await db.decisions.count()).toBe(3);
+  });
+
+  it("keeps concurrent popup opens' rows independent under the same bound", async () => {
+    queueSaveSuggestAnswer();
+    queueSaveSuggestAnswer();
+    const [a, b] = await Promise.all([
+      handleDecisionsMessage(
+        saveSuggest("popup:concurrent-a"),
+        sender,
+        productionHandlers(),
+      ),
+      handleDecisionsMessage(
+        saveSuggest("popup:concurrent-b"),
+        sender,
+        productionHandlers(),
+      ),
+    ]);
+
+    expect(a).toMatchObject({ ok: true, code: "analyze_ok" });
+    expect(b).toMatchObject({ ok: true, code: "analyze_ok" });
+    const rows = await db.decisions.toArray();
+    expect(rows).toHaveLength(6);
+    expect(
+      rows.filter((row) => row.bookmarkIds.includes("popup:concurrent-a")),
+    ).toHaveLength(3);
+    expect(
+      rows.filter((row) => row.bookmarkIds.includes("popup:concurrent-b")),
+    ).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Worker startup (I05): the legacy sweep runs fire-and-forget and is total —
+// a rejected sweep must neither surface as an unhandled rejection nor stop
+// the rest of the worker wiring (the message-handler registration below it).
+// ---------------------------------------------------------------------------
+
+describe("background startup popup sweep", () => {
+  /** Minimal `chrome` stub: the sync slices only need additive surfaces. */
+  function installWorkerChrome(): { listeners: number } {
+    const stub = {
+      listeners: 0,
+      bookmarks: {
+        onCreated: { addListener: vi.fn() },
+        onChanged: { addListener: vi.fn() },
+        onMoved: { addListener: vi.fn() },
+        onRemoved: { addListener: vi.fn() },
+        onChildrenReordered: { addListener: vi.fn() },
+        getTree: vi.fn(async () => []),
+      },
+      runtime: {
+        onMessage: {
+          addListener: vi.fn(() => {
+            stub.listeners += 1;
+          }),
+        },
+        getURL: (path: string) => `chrome-extension://${EXTENSION_ID}/${path}`,
+      },
+    };
+    vi.stubGlobal("chrome", stub);
+    return stub;
+  }
+
+  it("runs the legacy sweep at startup without breaking worker registration", async () => {
+    const worker = installWorkerChrome();
+    await seedPopupBacklog(POPUP_DECISION_LIMIT + 5);
+
+    backgroundDefinition.main();
+
+    // Fire-and-forget: registration is synchronous and already complete...
+    expect(worker.listeners).toBeGreaterThanOrEqual(1);
+    // ...while the sweep is a bounded, best-effort background task. The real
+    // `prunePopupDecisions` is exercised (no store mock in this file), so the
+    // trimmed backlog is the proof it ran.
+    await vi.waitFor(async () => {
+      expect(await db.decisions.count()).toBe(POPUP_DECISION_LIMIT);
+    });
+  });
+
+  it("swallows a rejected startup sweep and still registers the handler", async () => {
+    const worker = installWorkerChrome();
+    // Make the REAL sweep reject: a failing transaction on the decisions
+    // table is the production failure mode (storage error / worker eviction).
+    // A `vi.mock` factory cannot stand in here — Vitest's mock wrappers
+    // install their own rejection plumbing, which would hide an unhandled
+    // rejection from the probe below.
+    const readWrite = vi.spyOn(db, "transaction").mockImplementationOnce(() => {
+      throw new Error("startup sweep failed");
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    // Vitest installs its own `unhandledRejection` listener, which takes the
+    // rejection first and fails the run asynchronously instead of recording
+    // it. Detach the ambient listeners for the duration of the probe so a
+    // rejection escaping `defineBackground` is observable right here.
+    const ambient = process.listeners("unhandledRejection");
+    process.removeAllListeners("unhandledRejection");
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      backgroundDefinition.main();
+      expect(worker.listeners).toBeGreaterThanOrEqual(1);
+      // Let the sweep's microtasks/macrotasks settle without vi.waitFor
+      // (which installs its own error plumbing).
+      for (let i = 0; i < 5; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      // The real sweep did run (and failed) through this path.
+      expect(readWrite).toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+
+      // Control: a bare unhandled rejection IS visible through this probe, so
+      // the empty result above means "swallowed", not "unobservable".
+      void Promise.reject(new Error("control"));
+      for (let i = 0; i < 5; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(unhandled).toHaveLength(1);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      for (const listener of ambient) {
+        process.on("unhandledRejection", listener);
+      }
+      readWrite.mockRestore();
+    }
+
+    // ...and the worker finished wiring its message handler regardless.
+    expect(worker.listeners).toBeGreaterThanOrEqual(1);
   });
 });

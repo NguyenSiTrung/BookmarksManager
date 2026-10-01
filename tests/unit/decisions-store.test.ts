@@ -12,6 +12,7 @@ import {
 import { db } from "../../src/db/database";
 import {
   DecisionStoreError,
+  POPUP_DECISION_LIMIT,
   getDecision,
   isLegalTransition,
   listByStatus,
@@ -19,12 +20,15 @@ import {
   listPending,
   persistDecision,
   persistDecisionRationale,
+  prunePopupDecisions,
   transitionStatus,
 } from "../../src/decisions/store";
 import type { DecisionRow, DecisionStoreErrorCode } from "../../src/decisions/store";
 import { AuditEvent } from "../../src/schemas/audit";
 import { Decision } from "../../src/schemas/decision";
+import { UndoSnapshot } from "../../src/schemas/undo";
 import { decisionBase } from "../fixtures/base-records";
+import { validUndoSnapshot } from "../fixtures/undo";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
 /**
@@ -395,5 +399,280 @@ describe("persistDecisionRationale", () => {
       () => persistDecisionRationale(UUID2, "no row"),
       "not_found",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prunePopupDecisions (I05 — bound the synthetic popup save-suggest backlog)
+//
+// The popup persists each SAVE_SUGGEST round-trip as `popup:<uuid>` decision
+// rows. Nothing ever applied them (the apply path refuses a synthetic id), so
+// without a bound they accumulate forever. `prunePopupDecisions` keeps the
+// newest POPUP_DECISION_LIMIT eligible rows and only ever drops synthetic
+// rows in a safe-to-prune status; real, mixed, applied/auto-applied/approved/
+// rejected rows and the audit/undo tables are never touched.
+// ---------------------------------------------------------------------------
+
+/** Epoch (ms) that popup rows sort from — newest rows have larger `n`. */
+const POPUP_EPOCH = 1_700_000_000_000;
+
+/** A stable, valid, lexicographically ordered uuid for synthetic row `n`. */
+function syntheticUuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`;
+}
+
+/**
+ * A valid UUID whose DECISION-ID order is the exact REVERSE of its KEY order.
+ * The id carries the complement of `n` in its last group while the leading
+ * group varies with `n`, so as `n` grows the id sorts DOWN but the primary
+ * key sorts UP. Retention must follow the id: a sweep that leans on Dexie's
+ * primary-key scan order would drop the opposite rows.
+ */
+function mirrorUuid(n: number): string {
+  const head = n.toString(16).padStart(8, "0");
+  const tail = (16 ** 12 - 1 - n).toString(16).padStart(12, "0");
+  return `${head}-0000-4000-8000-${tail}`;
+}
+
+/** One synthetic `popup:` decision row; `n` drives both ids and sort order. */
+function popupRow(n: number, over: Partial<Decision> = {}): Decision {
+  return decision({
+    id: syntheticUuid(n),
+    bookmarkIds: [`popup:${syntheticUuid(n)}`],
+    createdAt: new Date(POPUP_EPOCH + n * 1_000).toISOString(),
+    ...over,
+  });
+}
+
+/** Resolve `value` as the Dexie `PromiseExtended` the table methods return. */
+function dexiePromise<T>(value: T): Promise<T> & {
+  timeout(ms: number, msg?: string): Promise<T>;
+} {
+  const promise = Promise.resolve(value) as Promise<T> & {
+    timeout(ms: number, msg?: string): Promise<T>;
+  };
+  promise.timeout = () => Promise.resolve(value);
+  return promise;
+}
+
+/**
+ * `db.decisions` viewed as a plain callable surface. The real Dexie `Table`
+ * overloads (including `toArray(thenShortcut)`) cannot be satisfied by a spy
+ * implementation, so the spies below target this narrow view instead.
+ */
+interface DecisionsTableSeam {
+  toArray(): Promise<unknown[]>;
+  bulkDelete(keys: readonly string[]): Promise<void>;
+}
+
+function decisionsSeam(): DecisionsTableSeam {
+  return db.decisions as unknown as DecisionsTableSeam;
+}
+
+describe("prunePopupDecisions", () => {
+  it("caps eligible synthetic popup rows at POPUP_DECISION_LIMIT, oldest first", async () => {
+    await db.decisions.bulkPut(
+      Array.from({ length: POPUP_DECISION_LIMIT + 5 }, (_, n) => popupRow(n)),
+    );
+
+    expect(await prunePopupDecisions()).toBe(5);
+
+    const remaining = await db.decisions.toArray();
+    expect(remaining).toHaveLength(POPUP_DECISION_LIMIT);
+    for (let n = 0; n < 5; n += 1) {
+      expect(await getDecision(syntheticUuid(n))).toBeUndefined();
+    }
+    for (const n of [5, POPUP_DECISION_LIMIT - 1, POPUP_DECISION_LIMIT + 4]) {
+      expect(await getDecision(syntheticUuid(n))).toBeDefined();
+    }
+  });
+
+  it("counts pending and unsure synthetic rows against the same limit", async () => {
+    await db.decisions.bulkPut(
+      Array.from({ length: POPUP_DECISION_LIMIT + 3 }, (_, n) =>
+        popupRow(n, { status: n % 2 === 0 ? "pending" : "unsure" }),
+      ),
+    );
+    expect(await prunePopupDecisions()).toBe(3);
+    const rows = await db.decisions.toArray();
+    expect(rows).toHaveLength(POPUP_DECISION_LIMIT);
+    expect(rows.every((row) => row.bookmarkIds[0]?.startsWith("popup:"))).toBe(
+      true,
+    );
+  });
+
+  it("breaks createdAt ties by decision id, deterministically", async () => {
+    const createdAt = new Date(POPUP_EPOCH).toISOString();
+    const rows = Array.from({ length: POPUP_DECISION_LIMIT + 2 }, (_, n) =>
+      popupRow(n, { createdAt }),
+    );
+    // Insert newest-first to prove the sweep orders by (createdAt, id), not
+    // by insertion order.
+    await db.decisions.bulkPut([...rows].reverse());
+
+    expect(await prunePopupDecisions()).toBe(2);
+    expect(await getDecision(syntheticUuid(0))).toBeUndefined();
+    expect(await getDecision(syntheticUuid(1))).toBeUndefined();
+    expect(await getDecision(syntheticUuid(2))).toBeDefined();
+    expect(
+      await getDecision(syntheticUuid(POPUP_DECISION_LIMIT + 1)),
+    ).toBeDefined();
+  });
+
+  it("preserves real, mixed, non-prunable, audit, and undo rows", async () => {
+    await db.decisions.bulkPut(
+      Array.from({ length: POPUP_DECISION_LIMIT + 5 }, (_, n) => popupRow(n)),
+    );
+
+    const preserved: Decision[] = [
+      popupRow(600, { status: "applied" }),
+      popupRow(601, { status: "auto_applied" }),
+      popupRow(602, { status: "approved" }),
+      popupRow(603, { status: "rejected" }),
+      popupRow(604, { status: "reverted" }),
+      // Mixed references (synthetic + real) are never synthetic-only.
+      decision({
+        id: syntheticUuid(610),
+        bookmarkIds: [`popup:${syntheticUuid(610)}`, "bm-001"],
+        createdAt: new Date(POPUP_EPOCH + 610_000).toISOString(),
+      }),
+      decision({
+        id: syntheticUuid(611),
+        bookmarkIds: ["bm-001"],
+        createdAt: new Date(POPUP_EPOCH + 611_000).toISOString(),
+      }),
+      decision({
+        id: syntheticUuid(612),
+        bookmarkIds: ["bm-001"],
+        status: "applied",
+        createdAt: new Date(POPUP_EPOCH + 612_000).toISOString(),
+      }),
+    ];
+    await db.decisions.bulkPut(preserved);
+
+    await db.audit.add(
+      AuditEvent.parse({
+        decisionId: syntheticUuid(600),
+        from: "pending",
+        to: "applied",
+        actor: "user",
+        changedAt: new Date(POPUP_EPOCH).toISOString(),
+      }),
+    );
+    await db.undo.add(UndoSnapshot.parse(validUndoSnapshot));
+
+    expect(await prunePopupDecisions()).toBe(5);
+    for (const row of preserved) {
+      expect(await getDecision(row.id)).toBeDefined();
+    }
+    expect(await db.audit.count()).toBe(1);
+    expect(await db.undo.count()).toBe(1);
+  });
+
+  it("is a no-op at or below the limit and writes nothing", async () => {
+    await db.decisions.bulkPut(
+      Array.from({ length: POPUP_DECISION_LIMIT }, (_, n) => popupRow(n)),
+    );
+    expect(await prunePopupDecisions()).toBe(0);
+    expect(await db.decisions.count()).toBe(POPUP_DECISION_LIMIT);
+  });
+
+  it("is a no-op on an empty decisions table", async () => {
+    expect(await prunePopupDecisions()).toBe(0);
+    expect(await db.decisions.count()).toBe(0);
+  });
+
+  it("orders equal-createdAt rows by decision id, not by Dexie key order", async () => {
+    const createdAt = new Date(POPUP_EPOCH).toISOString();
+    const limit = POPUP_DECISION_LIMIT;
+    // `limit + 2` eligible rows all sharing ONE createdAt, so retention is
+    // decided ENTIRELY by the id tie-break: the sweep keeps the newest
+    // POPUP_DECISION_LIMIT rows, i.e. it drops the two LOWEST decision ids.
+    // The ids are assigned in DESCENDING order as the rows are built, and the
+    // scan is frozen to that build order, so the two rows a scan-order sweep
+    // would delete are the TWO HIGHEST ids — the exact opposite pair.
+    const rows = Array.from({ length: limit + 2 }, (_, n) =>
+      popupRow(n, { createdAt, id: mirrorUuid(limit + 1 - n) }),
+    );
+    const sortedById = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    // Oldest by id => pruned; everything else survives.
+    const pruned = sortedById.slice(0, 2).map((r) => r.id);
+    const kept = sortedById.slice(2).map((r) => r.id);
+    // The pair a scan-order (no-tie-break) sweep would drop instead.
+    const wrongVictims = rows.slice(0, 2).map((r) => r.id);
+    expect(wrongVictims).not.toEqual(pruned);
+
+    await db.decisions.bulkPut(rows);
+    const toArraySpy = vi
+      .spyOn(decisionsSeam(), "toArray")
+      .mockImplementation(() => dexiePromise([...rows]));
+
+    expect(await prunePopupDecisions()).toBe(2);
+    toArraySpy.mockRestore();
+
+    const survivors = new Set((await db.decisions.toArray()).map((r) => r.id));
+    expect([...survivors].length).toBe(kept.length);
+    // The two LOWEST decision ids were dropped...
+    for (const id of pruned) expect(survivors.has(id)).toBe(false);
+    // ...while every higher-id row survived — including the two rows the scan
+    // lists FIRST, which a key/scan-order sweep would have deleted instead.
+    for (const id of kept) expect(survivors.has(id)).toBe(true);
+    for (const id of wrongVictims) expect(survivors.has(id)).toBe(true);
+  });
+
+  it("rolls back the whole sweep when a deletion fails mid-transaction", async () => {
+    const backlog = Array.from({ length: POPUP_DECISION_LIMIT + 5 }, (_, n) =>
+      popupRow(n),
+    );
+    await db.decisions.bulkPut(backlog);
+
+    // The REAL bulkDelete runs first (so rows genuinely leave the store),
+    // then the sweep's own delete step is failed. A non-transactional sweep
+    // would leave that partial deletion committed; only the surrounding `rw`
+    // transaction rolls it back.
+    const realBulkDelete = db.decisions.bulkDelete.bind(db.decisions);
+    const bulkDelete = vi
+      .spyOn(decisionsSeam(), "bulkDelete")
+      .mockImplementationOnce(async (ids: readonly string[]) => {
+        await realBulkDelete([...ids] as string[]);
+        throw new Error("bulkDelete exploded mid-sweep");
+      });
+
+    // The error surfaces instead of being swallowed...
+    await expect(prunePopupDecisions()).rejects.toThrow(
+      "bulkDelete exploded mid-sweep",
+    );
+    bulkDelete.mockRestore();
+
+    // ...and the partial deletion was rolled back: NO row was removed.
+    expect(await db.decisions.count()).toBe(POPUP_DECISION_LIMIT + 5);
+    expect(await getDecision(syntheticUuid(0))).toBeDefined();
+    expect(await getDecision(syntheticUuid(POPUP_DECISION_LIMIT + 4))).toBeDefined();
+  });
+
+  it("issues every read and write of one sweep inside a single rw transaction", async () => {
+    await db.decisions.bulkPut(
+      Array.from({ length: POPUP_DECISION_LIMIT + 5 }, (_, n) => popupRow(n)),
+    );
+
+    // Dexie exposes the ambient transaction on the Dexie constructor while
+    // one is open: a sweep that dropped `db.transaction(...)` would observe
+    // `undefined` here and could not roll anything back.
+    const ambient: (string | undefined)[] = [];
+    const toArray = vi
+      .spyOn(decisionsSeam(), "toArray")
+      .mockImplementation(() => {
+        const current = (
+          db.constructor as { currentTransaction?: { mode?: string } }
+        ).currentTransaction;
+        ambient.push(current?.mode);
+        return dexiePromise([]);
+      });
+
+    expect(await prunePopupDecisions()).toBe(0);
+    toArray.mockRestore();
+
+    expect(ambient).toHaveLength(1);
+    expect(ambient[0]).toBe("readwrite");
   });
 });

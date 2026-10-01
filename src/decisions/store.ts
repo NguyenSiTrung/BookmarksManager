@@ -241,6 +241,72 @@ export async function listReviewable(): Promise<DecisionRow[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Synthetic popup retention (improvement I05)
+// ---------------------------------------------------------------------------
+
+/** Prefix marking a save-suggest reference as synthetic (no Chrome node). */
+const POPUP_ID_PREFIX = "popup:";
+
+/**
+ * Upper bound on retained synthetic popup save-suggest rows. The popup writes
+ * one or more `popup:<uuid>` rows on every SAVE_SUGGEST; nothing can ever apply
+ * them (the guarded apply refuses a synthetic id), so without a bound they
+ * accumulate for the life of the profile. See {@link prunePopupDecisions}.
+ */
+export const POPUP_DECISION_LIMIT = 300;
+
+/**
+ * Statuses a synthetic popup row may be pruned from. The save-suggest flow
+ * forces every auto-apply toggle off, so synthetic rows only ever land
+ * `pending` or `unsure`; every other status is treated as user/audit
+ * significant and preserved.
+ */
+const PRUNABLE_POPUP_STATUSES: ReadonlySet<DecisionStatus> = new Set([
+  "pending",
+  "unsure",
+]);
+
+/** True when every reference is a synthetic `popup:` id (and there is one). */
+function isSyntheticPopupRow(row: DecisionRow): boolean {
+  return (
+    row.bookmarkIds.length > 0 &&
+    row.bookmarkIds.every((id) => id.startsWith(POPUP_ID_PREFIX))
+  );
+}
+
+/**
+ * Bound the synthetic popup save-suggest backlog to {@link POPUP_DECISION_LIMIT}
+ * rows. Deletes only the oldest ELIGIBLE rows — whose references are ALL
+ * synthetic `popup:` ids AND whose status is `pending`/`unsure` — beyond the
+ * limit, oldest-first by `createdAt` with ties broken ascending by decision id
+ * (so a sweep is fully deterministic). The read/decide/delete runs inside one
+ * `rw` transaction over `decisions`, so swallowed/legacy backlogs are reaped
+ * atomically and concurrent popup opens never see a half-swept table. Returns
+ * the number of rows removed.
+ *
+ * Never touched: real or mixed-reference rows, any row whose status is
+ * `approved`/`auto_applied`/`applied`/`rejected`/`reverted`, and the
+ * `audit`/`undo` tables entirely.
+ */
+export async function prunePopupDecisions(): Promise<number> {
+  return db.transaction("rw", db.decisions, async () => {
+    const rows = (await db.decisions.toArray()) as DecisionRow[];
+    const eligible = rows.filter(
+      (row) =>
+        isSyntheticPopupRow(row) && PRUNABLE_POPUP_STATUSES.has(row.status),
+    );
+    if (eligible.length <= POPUP_DECISION_LIMIT) return 0;
+    eligible.sort((a, b) => {
+      const byCreatedAt = a.createdAt.localeCompare(b.createdAt);
+      return byCreatedAt !== 0 ? byCreatedAt : a.id.localeCompare(b.id);
+    });
+    const victims = eligible.slice(0, eligible.length - POPUP_DECISION_LIMIT);
+    await db.decisions.bulkDelete(victims.map((row) => row.id));
+    return victims.length;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Status transitions + audit
 // ---------------------------------------------------------------------------
 

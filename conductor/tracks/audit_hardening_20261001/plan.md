@@ -699,7 +699,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `perf(search): reuse unchanged index documents`,
     isolated search E2E, notes/learnings, close this task.
 
-- [ ] Task 3: Bound synthetic popup decision retention
+- [x] Task 3: Bound synthetic popup decision retention
   <!-- files: src/decisions/store.ts, src/entrypoints/background.ts, tests/unit/decisions-store.test.ts, tests/unit/decisions-save-suggest.test.ts, tests/components/popup-suggestions.test.tsx -->
   - **Reuse `BookmarksManager-f7c`; covers I05.**
     ```ts
