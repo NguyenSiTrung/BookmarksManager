@@ -321,7 +321,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(privacy): minimize summary URLs and disclosures`,
     notes/learnings, close this task.
 
-- [x] Task 3: Resource-aware local summary identity
+- [x] Task 3: Resource-aware local summary identity (d8a69d4)
   <!-- files: src/decisions/summary-identity.ts, src/decisions/summaries.ts, tests/unit/summary-identity.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B07**. Create the pure local contract:
     ```ts
@@ -356,18 +356,18 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(summary): match resources before URL minimization`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 4: Automated checkpoint for privacy and identity
+- [x] Task 4: Automated checkpoint for privacy and identity
   <!-- files: -->
-  - [ ] Run Phase 2 tests, privacy/consent gates, build, store/site checks,
+  - [x] Run Phase 2 tests, privacy/consent gates, build, store/site checks,
     and isolated LLM E2E.
-  - [ ] Record blocked/allowed request counts and secret-marker assertions,
+  - [x] Record blocked/allowed request counts and secret-marker assertions,
     including changed-list fallback and separate identity tests.
-  - [ ] Close checkpoint/phase and continue without a manual gate.
+  - [x] Close checkpoint/phase and continue without a manual gate.
 
 ## Phase 3: LLM limits and accounting
 <!-- execution: sequential -->
 
-- [ ] Task 1: Enforce the reserved output allowance on the wire
+- [~] Task 1: Enforce the reserved output allowance on the wire
   <!-- files: src/net/llm-send.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
   - Covers **B08**. Existing `max_tokens` is the default OpenAI-compatible
     limit; the gate, not a caller-supplied policy, owns serialization.

@@ -300,6 +300,25 @@ Selected applicable patterns from `conductor/patterns.md`:
 - Inline review: existing current-blocklist/binding checks still precede
   sends; the small pure mapper preserves native URL syntax without relying
   on an egress-cleaned URL for identity.
+- Local commit: `d8a69d4`; task `BookmarksManager-lgd.2.3` closed.
+
+### Phase 2 Automated Checkpoint
+
+- B05–B07 complete with local commits `0bb1b8b`, `c779b2e`, `d8a69d4`.
+- Phase tests: seven files / 237 passed. Full latest applicable gate:
+  `npm run lint && npm run typecheck && npm run test -- --run --maxWorkers=1 && npm run build && npm run check:manifest && npm run check:bundle && npm run check:store && npm run check:site`,
+  152 files / 2,716 passed with no skips.
+- Browser command:
+  `xvfb-run -a npm run test:e2e -- tests/e2e/llm.spec.ts tests/e2e/provider.spec.ts`,
+  12 passed. Secret-marker assertions cover initial/fallback/repair/HTTP and
+  transport retries. Changed-list/native-reference refusals preserve prior
+  exposure and prevent additional affected sends.
+- Summary preflight/dismissal is zero-egress; stale grants do not auto-refresh.
+  Exact-origin/model/endpoint bindings survive separate cost confirmation.
+  Local semantic-query/hash-route mismatches never attach another resource's
+  summary; allowlisted tracking differences still work with minimized bodies.
+- No manual checks or remote synchronization; native prompts/live/eval
+  excluded. Continue automatically to Phase 3 output limits/accounting.
 
 ## Planning Validation
 
