@@ -15,10 +15,11 @@
 3. Run the narrowest relevant tests while developing. Before task completion, run the applicable slice of the CI gate — `lint` → `typecheck` → `test -- --run` → `build` → `check:manifest` → `check:bundle` → `check:store` (→ `xvfb-run -a test:e2e` when touching entrypoints or egress behavior; `check:site` when touching `site/`; `test:eval`/`test:live` are key-gated and never part of the local gate). Target **more than 80% test coverage** once the test suite and coverage reporting exist; investigate meaningful gaps rather than writing tests only for a number.
 4. Keep code, permissions, disclosures, consent versions, and store documentation synchronized whenever data flow changes.
 
-The CI workflow (`.github/workflows/ci.yml`) runs on every pull request and
-on pushes to `main` with workflow-level read-only `contents` permission and no
-secrets. A `quality` job runs lint → typecheck → unit tests → build →
-`check:manifest` → `check:bundle` → `check:site` and the Playwright suite under
+The CI workflow (`.github/workflows/ci.yml`) runs on every pull request and on
+published releases, but not on routine pushes to `main`, with workflow-level
+read-only `contents` permission and no secrets. A `quality` job runs lint →
+typecheck → unit tests → build → `check:manifest` → `check:bundle` →
+`check:site` and the Playwright suite under
 `xvfb-run -a`. A separate `release-checks` job (`needs: quality`) owns the
 release-strict `check:store` packaging gate and runs only for a published
 release or manual dispatch, so routine pull requests never run store

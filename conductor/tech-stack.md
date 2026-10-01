@@ -210,10 +210,10 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   release record), `npm run check:site` (static-site gate for `site/`), and
   `npm run zip` (reproducible `wxt zip` release archive).
 - GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on every pull
-  request and push to `main` with workflow-level `permissions: contents: read`
-  and no secrets. The `quality` job runs lint → typecheck → unit → build →
-  manifest check → bundle check → site check → headed Playwright under
-  `xvfb-run`. A separate `release-checks` job (`needs: quality`) owns the
+  request and on published releases, but not on routine pushes to `main`, with
+  workflow-level `permissions: contents: read` and no secrets. The `quality`
+  job runs lint → typecheck → unit → build → manifest check → bundle check →
+  site check → headed Playwright under `xvfb-run`. A separate `release-checks` job (`needs: quality`) owns the
   release-strict store-readiness gate and runs only for a published release or
   manual dispatch, so routine PRs never run store packaging. A second workflow
   (`.github/workflows/pages.yml`) gates `site/` via `check:site` and deploys

@@ -1,9 +1,9 @@
 name: CI
 
+# Runs on feature work (pull requests) and on published releases. Deliberately
+# NOT on pushes to `main`, so merges to main do not spend CI on every commit.
 on:
   pull_request:
-  push:
-    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
