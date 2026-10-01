@@ -75,6 +75,43 @@ export const RestructureJobPlan = z.strictObject({
 export type RestructureJobPlan = z.infer<typeof RestructureJobPlan>;
 
 /**
+ * Persisted near-duplicate work-plan format version. Bump whenever the plan's
+ * shape changes; a resume reads the stored pair IDs rather than re-planning,
+ * so an older row's semantics must stay decodable.
+ */
+export const NEAR_DUPLICATE_PLAN_VERSION = 1;
+
+/**
+ * One planned near-duplicate request, reduced to the two Chrome bookmark ids
+ * (canonically `a.id < b.id`). Titles, URLs, domains, and notes are NEVER
+ * persisted — a resume re-hydrates them from the live work set.
+ */
+export const NearDuplicatePlanPair = z.strictObject({
+  a: z.string().min(1),
+  b: z.string().min(1),
+});
+export type NearDuplicatePlanPair = z.infer<typeof NearDuplicatePlanPair>;
+
+/**
+ * The durable near-duplicate work plan a `library_scan` carries (Task 5,
+ * improvement I06). The runner slices THIS stored set — never a freshly
+ * recomputed one — so a restart (even with edited titles) resumes exactly the
+ * planned pair batches and can neither skip nor re-send a committed one.
+ * `pairs` holds IDs only; `pairLimit`/`comparisonLimit`/`version` record the
+ * planner bounds that produced it, and `truncated` marks it as a bounded
+ * shortlist rather than a globally exhaustive top-K.
+ */
+export const NearDuplicateJobPlan = z.strictObject({
+  version: z.number().int().min(1),
+  pairLimit: z.number().int().min(1),
+  comparisonLimit: z.number().int().min(1),
+  pairs: z.array(NearDuplicatePlanPair),
+  comparisons: z.number().int().min(0),
+  truncated: z.boolean(),
+});
+export type NearDuplicateJobPlan = z.infer<typeof NearDuplicateJobPlan>;
+
+/**
  * One `jobs` row. `id` is a caller-generated uuid (the job service owns it);
  * `bookmarkIds` is the explicit work set, while `cursor` is an opaque
  * resumption offset for very large scans — at least one of the two must be
@@ -103,6 +140,12 @@ export const Job = z
      * Required on a `restructure` job, rejected on any other kind.
      */
     restructure: RestructureJobPlan.optional(),
+    /**
+     * `library_scan` jobs only: the durable bounded near-duplicate work plan
+     * (pair IDs + planner limits/version + truncation). Optional so legacy
+     * rows stay valid; the runner acquires one for an uncommitted legacy scan.
+     */
+    nearDuplicatePlan: NearDuplicateJobPlan.optional(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     error: z.string().max(1_000).optional(),
@@ -141,6 +184,13 @@ export const Job = z
         code: "custom",
         path: ["restructure"],
         message: "only a restructure job may carry a plan",
+      });
+    }
+    if (job.kind !== "library_scan" && job.nearDuplicatePlan !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["nearDuplicatePlan"],
+        message: "only a library_scan may carry a near-duplicate plan",
       });
     }
   });

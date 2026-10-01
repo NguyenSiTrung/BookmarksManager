@@ -112,6 +112,66 @@ describe("production job handlers", () => {
     expect(await db.jobs.count()).toBe(0);
   });
 
+  it("JOB_START enqueues a library_scan with a bounded pair plan and pair-inclusive totals", async () => {
+    await seedProvider();
+    const native = installBookmarksFake({
+      bookmarksBar: [
+        { id: "a", title: "Async guide", url: "https://docs.guides.dev/guide-a" },
+        { id: "b", title: "Async guide", url: "https://docs.guides.dev/guide-b" },
+      ],
+      otherBookmarks: [],
+    });
+    vi.stubGlobal("chrome", { ...chrome, bookmarks: native });
+    // The fire-and-forget runner must not reach the network here.
+    vi.spyOn(network, "sendConsented").mockRejectedValue(new Error("no network"));
+
+    const job = await productionHandlers().startJob("library_scan", ["a", "b"]);
+
+    // 1 bookmark batch + 1 pair batch at the default batch size of 5.
+    expect(job.progress.totalBatches).toBe(2);
+    expect(job.nearDuplicatePlan?.pairs).toEqual([{ a: "a", b: "b" }]);
+    const stored = await getJob(job.id);
+    expect(stored?.nearDuplicatePlan?.truncated).toBe(false);
+    // Pair IDs only — no raw titles or URLs in the persisted plan.
+    const serialized = JSON.stringify(stored?.nearDuplicatePlan);
+    expect(serialized).toContain("\"a\"");
+    expect(serialized).not.toContain("Async guide");
+    expect(serialized).not.toContain("guides.dev");
+  });
+
+  it("JOB_START still enqueues a legacy row when plan resolution fails, and the runner acquires one", async () => {
+    await seedProvider();
+    const native = installBookmarksFake({
+      bookmarksBar: [
+        { id: "a", title: "Async guide", url: "https://docs.guides.dev/guide-a" },
+        { id: "b", title: "Async guide", url: "https://docs.guides.dev/guide-b" },
+      ],
+      otherBookmarks: [],
+    });
+    // The tree read throws (a transient Chrome API failure) — plan resolution
+    // is best-effort and must not block the start.
+    vi.spyOn(native, "getTree").mockRejectedValue(new Error("tree unavailable"));
+    vi.stubGlobal("chrome", { ...chrome, bookmarks: native });
+    // The fire-and-forget runner must not reach the network here.
+    vi.spyOn(network, "sendConsented").mockRejectedValue(new Error("no network"));
+
+    const job = await productionHandlers().startJob("library_scan", ["a", "b"]);
+    const stored = await getJob(job.id);
+    // Legacy row: no plan, bookmark-only batch total.
+    expect(stored?.nearDuplicatePlan).toBeUndefined();
+    expect(stored?.progress.totalBatches).toBe(1);
+
+    // The runner acquires exactly one plan on its first uncommitted run.
+    vi.restoreAllMocks();
+    await runPersistedJob(job.id);
+    const acquired = await getJob(job.id);
+    expect(acquired?.nearDuplicatePlan?.pairs).toEqual([{ a: "a", b: "b" }]);
+    // The acquired plan is durable and is not re-acquired on a later drive.
+    const plan = acquired?.nearDuplicatePlan;
+    await runPersistedJob(job.id);
+    expect((await getJob(job.id))?.nearDuplicatePlan).toEqual(plan);
+  });
+
   it("JOB_RESUME flips the row to running and relaunches the runner", async () => {
     await seedProvider();
     const enqueued = await enqueueJob({

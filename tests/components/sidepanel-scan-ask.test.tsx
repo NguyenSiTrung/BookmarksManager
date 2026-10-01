@@ -236,9 +236,10 @@ describe("side-panel scan + ask wiring", () => {
     await openMenu("Tools");
     await chooseMenuItem("Scan library…");
     const dialog = await screen.findByRole("dialog", { name: "Scan library" });
-    // The pre-start estimate covers the whole (3-bookmark) library.
+    // The pre-start estimate covers the whole (3-bookmark) library with no
+    // qualifying near-duplicate pairs, so the request count is 3.
     expect(
-      within(dialog).getByText(/3 bookmarks · at least 1 AI request/),
+      within(dialog).getByText(/3 bookmarks · at least 3 AI requests/),
     ).toBeTruthy();
 
     // Start sends ONE JOB_START with every bookmark id — after the live

@@ -1,10 +1,16 @@
 import type { AnalysisCheck } from "../decisions/pipeline";
+import {
+  NEAR_DUPLICATE_COMPARISON_LIMIT,
+  NEAR_DUPLICATE_PAIR_LIMIT,
+} from "../decisions/near-duplicate-plan";
+import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
 import { db } from "../db/database";
-import { Job, JobUsage } from "../schemas/job";
+import { Job, JobUsage, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
 import type {
   JobKind,
   JobProgress,
   JobStatus,
+  NearDuplicateJobPlan,
   RestructureJobPlan,
 } from "../schemas/job";
 import type { RestructureAssignment } from "../schemas/restructure";
@@ -152,6 +158,25 @@ function nowIso(now?: () => string): string {
   return (now ?? (() => new Date().toISOString()))();
 }
 
+/**
+ * Reduce a planner `NearDuplicatePlan` to the persisted, content-free job
+ * plan: canonically-ordered pair IDs plus the planner's limits, format
+ * version, and truncation state. Titles, URLs, domains, and notes never land
+ * here.
+ */
+export function toNearDuplicateJobPlan(
+  plan: NearDuplicatePlan,
+): NearDuplicateJobPlan {
+  return {
+    version: NEAR_DUPLICATE_PLAN_VERSION,
+    pairLimit: NEAR_DUPLICATE_PAIR_LIMIT,
+    comparisonLimit: NEAR_DUPLICATE_COMPARISON_LIMIT,
+    pairs: plan.pairs.map((pair) => ({ a: pair.a.id, b: pair.b.id })),
+    comparisons: plan.comparisons,
+    truncated: plan.truncated,
+  };
+}
+
 async function requireJob(id: string): Promise<PersistedJob> {
   const job = await db.jobs.get(id);
   if (job === undefined) {
@@ -178,15 +203,24 @@ export interface EnqueueJobOptions {
    * by the `Job` schema's superRefine.
    */
   readonly restructureProposal?: RestructureJobPlan["proposal"];
+  /**
+   * `library_scan` jobs only: the bounded near-duplicate work plan resolved at
+   * enqueue (pairs + planner accounting), reduced to the durable, content-free
+   * `nearDuplicatePlan` on the row. Rejected for other kinds. Omitting it
+   * leaves a legacy bookmark-only row (the runner acquires one plan on the
+   * first uncommitted run).
+   */
+  readonly nearDuplicatePlan?: NearDuplicatePlan;
 }
 
 /**
  * Create and persist a `pending` job. The resolved `batchSize` is stored on
  * the row (the single source of truth a resume slices by) and
- * `progress.totalBatches` is computed from the work set and that size; a
- * cursor-only job starts at zero batches (the runner fills it in once the work
- * set is resolved). The caller must pass a non-empty `bookmarkIds` or a
- * `cursor`, otherwise the row could not resume.
+ * `progress.totalBatches` is computed from the work set and that size — for a
+ * `library_scan` with a pair plan, that includes the pair batches, so the
+ * pre-run total is truthful. A cursor-only job starts at zero batches (the
+ * runner fills it in once the work set is resolved). The caller must pass a
+ * non-empty `bookmarkIds` or a `cursor`, otherwise the row could not resume.
  */
 export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJob> {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
@@ -202,10 +236,28 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
       "bookmarkIds must be non-empty when present.",
     );
   }
+  if (
+    options.nearDuplicatePlan !== undefined &&
+    options.kind !== "library_scan"
+  ) {
+    throw new JobQueueError(
+      "invalid_input",
+      "Only a library_scan may carry a near-duplicate plan.",
+    );
+  }
+  const nearDuplicatePlan =
+    options.nearDuplicatePlan === undefined
+      ? undefined
+      : toNearDuplicateJobPlan(options.nearDuplicatePlan);
+  const pairBatches =
+    nearDuplicatePlan === undefined
+      ? 0
+      : computeTotalBatches(nearDuplicatePlan.pairs.length, batchSize);
   const totalBatches =
     options.bookmarkIds === undefined
       ? 0
-      : computeTotalBatches(options.bookmarkIds.length, batchSize);
+      : computeTotalBatches(options.bookmarkIds.length, batchSize) +
+        pairBatches;
   const timestamp = nowIso(options.now);
   let job: PersistedJob;
   try {
@@ -228,6 +280,9 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
               assignments: [],
             },
           }),
+      ...(nearDuplicatePlan === undefined
+        ? {}
+        : { nearDuplicatePlan }),
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -242,6 +297,39 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
 export async function getJob(id: string): Promise<PersistedJob | undefined> {
   const job = await db.jobs.get(id);
   return job === undefined ? undefined : parseJob(job);
+}
+
+/**
+ * Attach the durable near-duplicate work plan to a legacy `library_scan` that
+ * was enqueued without one (Task 5). Acquires EXACTLY ONE plan: an existing
+ * `nearDuplicatePlan` is left untouched, and a non-library-scan row is a
+ * no-op, so two racing owners can never overwrite each other's work set. The
+ * caller (the runner) is responsible for rejecting an already-committed
+ * plan-less row before calling this — its committed offsets are ambiguous.
+ */
+export async function attachNearDuplicatePlan(
+  id: string,
+  plan: NearDuplicatePlan,
+  now?: () => string,
+  ownerGeneration?: number,
+): Promise<PersistedJob> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (ownerGeneration !== undefined && job.ownerGeneration !== ownerGeneration) {
+      return job;
+    }
+    if (job.status !== "running" && job.status !== "pending") return job;
+    if (job.kind !== "library_scan" || job.nearDuplicatePlan !== undefined) {
+      return job;
+    }
+    const updated = parseJob({
+      ...job,
+      nearDuplicatePlan: toNearDuplicateJobPlan(plan),
+      updatedAt: nowIso(now),
+    });
+    await db.jobs.put(updated);
+    return updated;
+  });
 }
 
 /**

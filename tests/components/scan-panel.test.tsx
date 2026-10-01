@@ -69,7 +69,10 @@ const SCAN_BOOKMARKS: readonly ScanBookmark[] = Array.from(
 const SCAN_IDS = SCAN_BOOKMARKS.map((bookmark) => bookmark.id);
 
 /** The estimate the launcher must show — computed by the same pure module. */
-const ESTIMATE = estimateJobCost({ bookmarks: SCAN_BOOKMARKS });
+const ESTIMATE = estimateJobCost({
+  bookmarks: SCAN_BOOKMARKS,
+  kind: "library_scan",
+});
 
 /** Pinned locale so comma grouping is deterministic in every environment. */
 const FORMAT = new Intl.NumberFormat("en-US");
@@ -208,14 +211,44 @@ describe("ScanPanel launcher", () => {
 
     const section = screen.getByRole("region", { name: "Library scan" });
     expect(section.textContent).toContain("12 bookmarks");
-    // The estimate comes from the same pure module, formatted en-US.
-    expect(section.textContent).toContain("at least 3 AI requests");
+    // The request count is pair-inclusive and comes from the same pure
+    // module, formatted en-US.
+    expect(section.textContent).toContain(
+      `at least ${ESTIMATE.requests} AI requests`,
+    );
     expect(section.textContent).toContain(
       `(~${FORMAT.format(ESTIMATE.inputTokens)} tokens, likely more)`,
     );
     expect(ESTIMATE.totalBatches).toBe(3);
+    expect(ESTIMATE.requests).toBe(12);
+    expect(ESTIMATE.truncated).toBe(false);
     // No live status card before anything starts.
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("discloses the bounded near-duplicate scope when the plan is truncated", () => {
+    // 33 identical-title, distinct-URL same-domain rows → the planner caps the
+    // shortlist at 500 pairs, so the pre-start estimate must say so.
+    const truncated: readonly ScanBookmark[] = Array.from(
+      { length: 33 },
+      (_value, index) => ({
+        id: `many-${index}`,
+        title: "Same Title",
+        url: `https://same.example/${index}`,
+      }),
+    );
+    const estimate = estimateJobCost({
+      bookmarks: truncated,
+      kind: "library_scan",
+    });
+    expect(estimate.truncated).toBe(true);
+
+    render(<ScanPanel bookmarks={truncated} />);
+    const section = screen.getByRole("region", { name: "Library scan" });
+    expect(section.textContent).toContain(
+      `at least ${estimate.requests} AI requests`,
+    );
+    expect(section.textContent).toContain("capped at 500 pairs");
   });
 
   it("Start sends JOB_START with the library_scan kind and the id set", async () => {

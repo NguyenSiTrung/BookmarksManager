@@ -1,5 +1,5 @@
-import { nearDuplicatePairs } from "../decisions/candidates";
-import type { NearDuplicatePair } from "../decisions/candidates";
+import type { NearDuplicatePair, NearDuplicateSide } from "../decisions/candidates";
+import { planNearDuplicates } from "../decisions/near-duplicate-plan";
 import { scanNearDuplicatePairs } from "../decisions/duplicates";
 import type { DuplicateScanResult } from "../decisions/duplicates";
 import { analyzeBookmark } from "../decisions/pipeline";
@@ -9,10 +9,12 @@ import type {
   AnalysisContext,
   AnalyzeBookmarkResult,
 } from "../decisions/pipeline";
+import { extractDomain } from "../search/index";
 import { db } from "../db/database";
-import type { Job } from "../schemas/job";
+import type { Job, NearDuplicateJobPlan } from "../schemas/job";
 import type { UsageRecord } from "../schemas/usage";
 import {
+  attachNearDuplicatePlan,
   bookmarkChecks,
   claimJobOwner,
   commitJobProgress,
@@ -45,11 +47,15 @@ import {
  * transition is attempted.
  *
  * A `library_scan` runs a SECOND phase after its per-bookmark batches: the
- * library-wide near-duplicate pair scan (FR7). The runner computes the pairs
- * (`nearDuplicatePairs`) and drives them in `batchSize`-sized pair batches
- * through an injected `JobScanDuplicatesFn`, under the same
- * snapshot-then-mutate commit discipline — so a resume slices the pairs
- * deterministically and never re-sends a committed pair batch. An
+ * library-wide near-duplicate pair scan (FR7). The runner drives the DURABLE
+ * pair work plan persisted on the row (`job.nearDuplicatePlan`, pair IDs
+ * only) in `batchSize`-sized pair batches through an injected
+ * `JobScanDuplicatesFn`, under the same snapshot-then-mutate commit
+ * discipline — so a resume slices the STORED pairs deterministically and can
+ * neither re-plan (editing titles between runs cannot shift the offsets) nor
+ * re-send a committed pair batch. A legacy `library_scan` enqueued without a
+ * plan acquires exactly one on its first uncommitted run; a legacy row that
+ * already committed a batch cannot be reinterpreted and fails typed. An
  * `analyze_selection` never runs this phase.
  *
  * The per-bookmark work is an injected `JobAnalyzeFn`; `createPipelineAnalyzer`
@@ -176,6 +182,46 @@ function redactFailure(cause: unknown): string {
     : `The job failed while analyzing a bookmark (${code}).`;
 }
 
+/** One planned pair side, re-hydrated from the live work set. */
+function toPairSide(bookmark: AnalysisBookmark): NearDuplicateSide {
+  return {
+    id: bookmark.id,
+    title: bookmark.title,
+    url: bookmark.url,
+    domain: extractDomain(bookmark.url),
+  };
+}
+
+/**
+ * Re-hydrate the persisted near-duplicate work plan (pair IDs only) into the
+ * scanner's `NearDuplicatePair`s, preserving the plan's order. Titles/URLs/
+ * domains come from the CURRENT work set for the planned IDs, so the pair
+ * SET and its slicing are frozen even when a title was edited since enqueue.
+ * A plan that references an id outside the work set is a caller error, never
+ * silently dropped (which would shift every later batch offset).
+ */
+function hydrateNearDuplicatePairs(
+  plan: NearDuplicateJobPlan,
+  bookmarks: readonly AnalysisBookmark[],
+): NearDuplicatePair[] {
+  const byId = new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark]));
+  return plan.pairs.map((pair) => {
+    const first = byId.get(pair.a);
+    const second = byId.get(pair.b);
+    if (first === undefined || second === undefined) {
+      throw new JobRunnerError(
+        "invalid_input",
+        "The stored near-duplicate plan references a bookmark outside the job's work set.",
+      );
+    }
+    return {
+      a: toPairSide(first),
+      b: toPairSide(second),
+      titleSimilarity: 0,
+    };
+  });
+}
+
 /**
  * Drives one persisted job through its batches. Construct with the analysis
  * dependency; call {@link JobRunner.run} per job.
@@ -260,15 +306,33 @@ export class JobRunner {
       );
     }
 
-    // The per-bookmark batches come first, then the library-wide near-duplicate
-    // pair batches (a `library_scan` only). Pairs are computed from the stable
-    // work set, so a resume slices them exactly as the original run did.
+    // The per-bookmark batches come first, then the library-wide
+    // near-duplicate pair batches (a `library_scan` only). A `library_scan`'s
+    // pairs come from the DURABLE plan persisted on the row (Task 5): a resume
+    // slices exactly the planned work set, so editing titles between runs can
+    // neither skip nor re-send a committed pair batch.
+    const runsPairs = jobRunsNearDuplicate(job.kind);
     const bookmarkBatchCount = computeTotalBatches(bookmarks.length, batchSize);
-    const pairs = jobRunsNearDuplicate(job.kind)
-      ? nearDuplicatePairs(bookmarks)
-      : [];
-    const pairBatchCount = computeTotalBatches(pairs.length, batchSize);
-    const totalBatches = bookmarkBatchCount + pairBatchCount;
+    const storedPlan = job.nearDuplicatePlan;
+    let pairs: readonly NearDuplicatePair[] = [];
+    if (runsPairs) {
+      if (storedPlan !== undefined) {
+        pairs = hydrateNearDuplicatePairs(storedPlan, bookmarks);
+      } else if (job.progress.committedBatches > 0) {
+        // A pre-Task-5 row already committed a batch without a stored plan:
+        // its committed offsets may be bookmark OR pair batches, so the pair
+        // work set cannot be reconstructed unambiguously. Fail typed rather
+        // than silently re-slicing (which could skip or re-send a batch).
+        throw new JobRunnerError(
+          "invalid_input",
+          "A committed library_scan has no stored near-duplicate plan to resume from.",
+        );
+      }
+    }
+    let pairBatchCount = runsPairs
+      ? computeTotalBatches(pairs.length, batchSize)
+      : 0;
+    let totalBatches = bookmarkBatchCount + pairBatchCount;
 
     let startBatch = job.progress.committedBatches;
     if (startBatch > totalBatches) {
@@ -283,6 +347,24 @@ export class JobRunner {
     if (claimed === undefined) return (await getJob(jobId)) ?? job;
     const ownerGeneration = options.ownerGeneration ?? claimed.ownerGeneration;
     if (claimed.ownerGeneration !== ownerGeneration || claimed.status !== "running") return claimed;
+
+    // A legacy uncommitted library_scan acquires its plan exactly once, now
+    // that an owner is claimed. The write is atomic and never overwrites an
+    // existing plan, so a racing owner cannot change the work set under us.
+    if (runsPairs && storedPlan === undefined) {
+      const acquired = await attachNearDuplicatePlan(
+        jobId,
+        planNearDuplicates(bookmarks),
+        this.#now,
+        ownerGeneration,
+      );
+      const persisted = acquired.nearDuplicatePlan;
+      if (persisted === undefined) return acquired;
+      pairs = hydrateNearDuplicatePairs(persisted, bookmarks);
+      pairBatchCount = computeTotalBatches(pairs.length, batchSize);
+      totalBatches = bookmarkBatchCount + pairBatchCount;
+    }
+
     job = await setJobStatus(
       jobId,
       "running",

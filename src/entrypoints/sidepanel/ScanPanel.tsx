@@ -26,13 +26,14 @@ import { sendDecisionMessage } from "./ReviewView";
  *
  * Design rules:
  *
- * - **Estimate before start.** The launcher renders `estimateJobCost`'s pure
+ * - **Estimate before start.** The launcher renders `estimateJobCost`'s
  *   lower bound — "N bookmarks · at least M AI requests (~T tokens, likely
- *   more)" — and Start is a distinct action (FR7). The "at least" covers two
- *   lower bounds: the token fold ignores the fixed question scaffolding the
- *   pipeline adds to every request, and a library scan also runs a
- *   near-duplicate pair phase whose request count is only known once the
- *   job row exists.
+ *   more)" — and Start is a distinct action (FR7). The request count includes
+ *   one call per bookmark plus one per planned near-duplicate pair (the same
+ *   bounded planner the worker enqueues), and a truncated pair plan adds an
+ *   explicit scope note. "At least" covers the token fold's omission of the
+ *   fixed question scaffolding the pipeline adds to every request and the
+ *   pair cap's bounded shortlist.
  * - **Dexie in, messages out.** The live card streams the latest
  *   `library_scan` row from the `jobs` table through `useLiveQuery` (with a
  *   `.catch` inside the querier — dexie-react-hooks rethrows observable
@@ -132,7 +133,10 @@ export function ScanPanel({
   className,
 }: ScanPanelProps) {
   /** Pure lower-bound estimate over the minimized `{title, url}` payloads. */
-  const estimate = useMemo(() => estimateJobCost({ bookmarks }), [bookmarks]);
+  const estimate = useMemo(
+    () => estimateJobCost({ bookmarks, kind: "library_scan" }),
+    [bookmarks],
+  );
   /**
    * The live row's read. `jobRead` is `undefined` ONLY until Dexie's first
    * emission lands; `job` collapses that away so every consumer below sees
@@ -321,11 +325,16 @@ export function ScanPanel({
             {count === 0
               ? "Nothing to scan — the library is empty."
               : `${count} bookmark${count === 1 ? "" : "s"} · at least ${
-                  estimate.totalBatches
-                } AI request${estimate.totalBatches === 1 ? "" : "s"} (~${NUMBER_FORMAT.format(
+                  estimate.requests
+                } AI request${estimate.requests === 1 ? "" : "s"} (~${NUMBER_FORMAT.format(
                   estimate.inputTokens,
                 )} tokens, likely more)`}
           </p>
+          {estimate.truncated && (
+            <p className="text-xs text-muted-foreground">
+              {`The near-duplicate check is capped at ${estimate.pairLimit} pairs, so the final request count and cost may be higher than this estimate.`}
+            </p>
+          )}
           <div>
             <button
               type="button"

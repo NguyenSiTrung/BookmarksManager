@@ -21,6 +21,8 @@ import type {
   AnalysisBookmark,
   AnalysisContext,
 } from "../decisions/pipeline";
+import { planNearDuplicates } from "../decisions/near-duplicate-plan";
+import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
 import { DecisionSettings } from "../decisions/policy";
 import { rerankSearch } from "../decisions/rerank";
 import {
@@ -240,6 +242,23 @@ async function resolveWorkSet(
 }
 
 /**
+ * Resolve a library scan's bounded near-duplicate work plan at enqueue time
+ * from the live tree (Task 5), so the persisted `totalBatches` and the
+ * pre-start estimate already cover the pair phase. Best-effort: a read
+ * failure falls back to no plan, and the runner acquires one on its first
+ * uncommitted run instead.
+ */
+async function resolveLibraryScanPlan(
+  bookmarkIds: readonly string[],
+): Promise<NearDuplicatePlan | undefined> {
+  try {
+    return planNearDuplicates(await resolveWorkSet(bookmarkIds));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Construct the job runner for `provider`, wiring BOTH the per-bookmark
  * pipeline analyzer and the near-duplicate pair scanner. The scanner is
  * mandatory: a `library_scan` fails closed without it, so leaving it out
@@ -441,7 +460,18 @@ export function productionHandlers(
       // explicit user start, which would strand a "Queued" row forever
       // with no error surfaced. The panel renders the refusal verbatim.
       await requireActiveProvider();
-      const job = await enqueueJob({ kind, bookmarkIds: [...bookmarkIds] });
+      const ids = [...bookmarkIds];
+      // Resolve a library scan's bounded pair plan now, so the persisted
+      // work set (and its truthful batch total) is durable from the start.
+      const plan =
+        kind === "library_scan"
+          ? await resolveLibraryScanPlan(ids)
+          : undefined;
+      const job = await enqueueJob({
+        kind,
+        bookmarkIds: ids,
+        ...(plan === undefined ? {} : { nearDuplicatePlan: plan }),
+      });
       // Fire-and-forget: the row is the source of truth, so the UI can show
       // progress immediately and a restart resumes from the committed batch.
       void runPersistedJob(job.id).catch(() => {

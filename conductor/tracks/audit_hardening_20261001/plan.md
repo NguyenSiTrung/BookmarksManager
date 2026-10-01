@@ -772,7 +772,7 @@ implementation work.
   - [ ] Coordinator gate/commit: `perf(decisions): bound near-duplicate planning`,
     notes/learnings, close `w6y`; do not close the cost-estimate Bead yet.
 
-- [ ] Task 5: Pair-inclusive scan estimates and durable work plans
+- [x] Task 5: Pair-inclusive scan estimates and durable work plans
   <!-- files: src/jobs/estimate.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, src/entrypoints/sidepanel/ScanPanel.tsx, tests/unit/jobs-estimate.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts, tests/components/scan-panel.test.tsx, tests/components/sidepanel-scan-ask.test.tsx -->
   <!-- depends: task3, task4 -->
   - **Reuse `BookmarksManager-2qk`; covers estimates/progress in I06.**

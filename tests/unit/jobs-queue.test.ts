@@ -2,9 +2,8 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../src/db/database";
 import { Job } from "../../src/schemas/job";
+import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
 import { UsageRecord } from "../../src/schemas/usage";
-import { estimateTokens } from "../../src/jev/budget";
-import { estimateJobCost } from "../../src/jobs/estimate";
 import {
   DEFAULT_BATCH_SIZE,
   JobQueueError,
@@ -131,6 +130,90 @@ describe("enqueueJob", () => {
         now,
       }),
     ).rejects.toBeInstanceOf(JobQueueError);
+  });
+});
+
+describe("enqueueJob near-duplicate plan", () => {
+  const bookmarks = [
+    { id: "bm-1", title: "Rust Async Guide", url: "https://docs.rs/async" },
+    {
+      id: "bm-2",
+      title: "Rust Async Guide",
+      url: "https://docs.rs/async-old",
+    },
+    { id: "bm-3", title: "Tokio Tutorial", url: "https://tokio.rs/tutorial" },
+    {
+      id: "bm-4",
+      title: "Tokio Tutorial",
+      url: "https://tokio.rs/tutorial-v1",
+    },
+  ];
+
+  it("persists the selected pair IDs and a pair-inclusive totalBatches", async () => {
+    const plan = planNearDuplicates(bookmarks);
+    const pairIds = plan.pairs.map((pair) => ({ a: pair.a.id, b: pair.b.id }));
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bookmarks.map((bookmark) => bookmark.id),
+      batchSize: 2,
+      nearDuplicatePlan: plan,
+      now,
+    });
+
+    // The exact spec expectation: queued totals include each selected pair.
+    expect(job.progress.totalBatches).toBe(
+      Math.ceil(bookmarks.length / job.batchSize) +
+        Math.ceil(plan.pairs.length / job.batchSize),
+    );
+    expect(job.nearDuplicatePlan?.pairs).toEqual(pairIds);
+    expect(job.nearDuplicatePlan?.truncated).toBe(plan.truncated);
+    expect(job.nearDuplicatePlan?.comparisons).toBe(plan.comparisons);
+    expect(job.nearDuplicatePlan?.version).toBe(1);
+    expect(job.nearDuplicatePlan?.pairLimit).toBe(500);
+    expect(job.nearDuplicatePlan?.comparisonLimit).toBe(50_000);
+    expect(Job.safeParse(job).success).toBe(true);
+    expect(await db.jobs.get(job.id)).toEqual(job);
+  });
+
+  it("persists only pair IDs, limits, and truncation — never raw metadata", async () => {
+    const plan = planNearDuplicates(bookmarks);
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bookmarks.map((bookmark) => bookmark.id),
+      nearDuplicatePlan: plan,
+      now,
+    });
+
+    const serialized = JSON.stringify(job.nearDuplicatePlan);
+    expect(serialized).toContain("bm-1");
+    // No raw titles, URLs, or notes ever land in the persisted plan.
+    expect(serialized).not.toContain("Rust Async Guide");
+    expect(serialized).not.toContain("docs.rs");
+    expect(serialized).not.toContain("https://");
+    expect(serialized).not.toContain("notes");
+  });
+
+  it("keeps an analyze_selection free of any pair plan", async () => {
+    await expect(
+      enqueueJob({
+        kind: "analyze_selection",
+        bookmarkIds: ["bm-1"],
+        nearDuplicatePlan: planNearDuplicates(bookmarks),
+        now,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+
+  it("leaves a legacy job without a plan valid and bookmark-only in totalBatches", async () => {
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: ["bm-1", "bm-2", "bm-3"],
+      batchSize: 2,
+      now,
+    });
+    expect(job.nearDuplicatePlan).toBeUndefined();
+    expect(job.progress.totalBatches).toBe(2);
+    expect(Job.safeParse(job).success).toBe(true);
   });
 });
 
@@ -288,42 +371,6 @@ describe("computeTotalBatches", () => {
     expect(computeTotalBatches(1, 5)).toBe(1);
     expect(computeTotalBatches(5, 5)).toBe(1);
     expect(computeTotalBatches(6, 5)).toBe(2);
-  });
-});
-
-describe("estimateJobCost", () => {
-  it("derives the estimate purely from estimateTokens over the batch payload", () => {
-    const bookmark = { title: "t", url: "https://x.co" };
-    const estimate = estimateJobCost({ bookmarks: [bookmark], batchSize: 1 });
-
-    // One bookmark, one batch — the payload is the minimized bookmark array.
-    const payload = [{ title: bookmark.title, url: bookmark.url }];
-    expect(estimate.totalBatches).toBe(1);
-    expect(estimate.batches).toHaveLength(1);
-    expect(estimate.batches[0]?.inputTokens).toBe(estimateTokens(payload));
-    expect(estimate.inputTokens).toBe(estimateTokens(payload));
-    // Exact derived value for this known input (see the assertion above).
-    expect(estimate.inputTokens).toBe(12);
-  });
-
-  it("sums per-batch estimates across batches", () => {
-    const bookmarks = [
-      { title: "a", url: "https://a.example" },
-      { title: "b", url: "https://b.example" },
-      { title: "c", url: "https://c.example" },
-    ];
-    const estimate = estimateJobCost({ bookmarks, batchSize: 2 });
-    expect(estimate.totalBatches).toBe(2);
-    expect(estimate.batches.map((batch) => batch.batchIndex)).toEqual([0, 1]);
-    const expected =
-      estimateTokens([bookmarks[0], bookmarks[1]]) +
-      estimateTokens([bookmarks[2]]);
-    expect(estimate.inputTokens).toBe(expected);
-  });
-
-  it("returns an empty estimate for no bookmarks", () => {
-    const estimate = estimateJobCost({ bookmarks: [] });
-    expect(estimate).toEqual({ totalBatches: 0, inputTokens: 0, batches: [] });
   });
 });
 

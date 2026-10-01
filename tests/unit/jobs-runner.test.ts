@@ -13,8 +13,9 @@ import {
   type JobAnalyzeFn,
   type JobScanDuplicatesFn,
 } from "../../src/jobs/runner";
-import { cancelJob, claimJobOwner, enqueueJob, pauseJob, resumeJob } from "../../src/jobs/queue";
+import { cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, resumeJob, setJobStatus } from "../../src/jobs/queue";
 import type { NearDuplicatePair } from "../../src/decisions/candidates";
+import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
 import { flattenTree } from "../../src/sync/tree";
 
 /**
@@ -678,6 +679,279 @@ describe("JobRunner library_scan pair phase", () => {
       committedBatches: 0,
       processedCount: 0,
     });
+  });
+
+  it("legacy uncommitted library_scan acquires exactly one durable plan", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 2,
+      now,
+    });
+    // Enqueued the legacy way: bookmark-only progress, no stored plan.
+    expect(job.nearDuplicatePlan).toBeUndefined();
+    expect(job.progress.totalBatches).toBe(2);
+
+    const { analyze } = makeAnalyzer();
+    const { scanDuplicates, calls } = makeScanner();
+    const finished = await new JobRunner({ analyze, scanDuplicates, now }).run(
+      job.id,
+      { bookmarks: bms, batchSize: 2 },
+    );
+
+    const stored = await db.jobs.get(job.id);
+    expect(stored?.nearDuplicatePlan?.pairs).toEqual([
+      { a: "bm-0", b: "bm-1" },
+      { a: "bm-2", b: "bm-3" },
+    ]);
+    expect(calls).toEqual([["bm-0|bm-1", "bm-2|bm-3"]]);
+    // 2 bookmark batches + 1 pair batch.
+    expect(finished.progress.totalBatches).toBe(3);
+    expect(finished.status).toBe("completed");
+    // The row is still a valid persisted job with the plan attached.
+    expect(JSON.stringify(stored?.nearDuplicatePlan)).not.toContain("Rust");
+  });
+
+  it("resumes the stored pair work set even when titles changed since enqueue", async () => {
+    const bms = pairBookmarks();
+    const plan = planNearDuplicates(bms);
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 1,
+      nearDuplicatePlan: plan,
+      now,
+    });
+
+    // Pause inside the first pair batch (4 bookmark batches + 1 pair batch).
+    const first = makeAnalyzer();
+    const firstScan = makeScanner({
+      onCall: async () => {
+        await pauseJob(job.id, now);
+      },
+    });
+    const stopped = await new JobRunner({
+      analyze: first.analyze,
+      scanDuplicates: firstScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: bms, batchSize: 1 });
+    expect(stopped.status).toBe("paused");
+    expect(stopped.progress.committedBatches).toBe(5);
+    expect(firstScan.calls).toEqual([["bm-0|bm-1"]]);
+
+    // The titles change so a RECOMPUTED plan would find NO pairs at all: the
+    // retitled sides share no token and the changed URLs also break the
+    // same-domain precondition. The stored plan is the durable work set: the
+    // resume must slice IT, never re-plan, so the committed bm-0|bm-1 batch is
+    // not re-sent and bm-2|bm-3 still runs. (Mutation guard: hydrating from
+    // `planNearDuplicates(bookmarks)` instead makes this resume complete after
+    // the bookmark batches with zero pair calls.)
+    const retitled = [
+      {
+        id: "bm-0",
+        title: "alpha heading",
+        url: "https://alpha.example/one",
+        parentId: "f-dev",
+      },
+      {
+        id: "bm-1",
+        title: "beta heading",
+        url: "https://beta.example/two",
+        parentId: "f-dev",
+      },
+      {
+        id: "bm-2",
+        title: "gamma heading",
+        url: "https://gamma.example/three",
+        parentId: "f-dev",
+      },
+      {
+        id: "bm-3",
+        title: "delta heading",
+        url: "https://delta.example/four",
+        parentId: "f-dev",
+      },
+    ];
+    // Pin the guard: the live recompute really would yield no pair work.
+    expect(planNearDuplicates(retitled).pairs).toEqual([]);
+    const second = makeAnalyzer();
+    const secondScan = makeScanner();
+    await resumeJob(job.id, now);
+    const finished = await new JobRunner({
+      analyze: second.analyze,
+      scanDuplicates: secondScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: retitled, batchSize: 1 });
+
+    expect(second.calls).toEqual([]);
+    expect(secondScan.calls).toEqual([["bm-2|bm-3"]]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress.totalBatches).toBe(6);
+  });
+
+  it("fails typed on a committed library_scan with no stored plan", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 1,
+      now,
+    });
+    // A pre-Task-5 row that already committed a batch: its committed offsets
+    // could be bookmark or pair batches, so the pair work set cannot be
+    // reinterpreted unambiguously.
+    await setJobStatus(job.id, "running", {
+      progress: { totalBatches: 4, committedBatches: 1, processedCount: 1 },
+    });
+    // Snapshot the row BEFORE the rejected run so we can prove the failure is
+    // side-effect free (no claim, no status write, no progress write).
+    const before = (await getJob(job.id))!;
+
+    const { analyze, calls } = makeAnalyzer();
+    const { scanDuplicates, calls: pairCalls } = makeScanner();
+    const error = await new JobRunner({ analyze, scanDuplicates, now })
+      .run(job.id, { bookmarks: bms, batchSize: 1 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(JobRunnerError);
+    expect((error as JobRunnerError).code).toBe("invalid_input");
+    expect(calls).toEqual([]);
+    expect(pairCalls).toEqual([]);
+    // The typed failure happens BEFORE the claim: the persisted row is byte
+    // identical (no owner generation bump, no updatedAt, no status change,
+    // no plan acquisition).
+    const after = (await getJob(job.id))!;
+    expect(after).toEqual(before);
+    expect(after.ownerGeneration).toBe(before.ownerGeneration);
+    expect(after.updatedAt).toBe(before.updatedAt);
+    expect(after.status).toBe("running");
+    expect(after.nearDuplicatePlan).toBeUndefined();
+  });
+
+  it("persists a truncated pair plan and resumes its STORED pairs after a title change", async () => {
+    // 40 identical-title, distinct-URL same-domain rows → 780 candidate pairs,
+    // capped by the planner to the 500-pair output limit, so the plan really
+    // is truncated. batchSize 50 keeps the batch count small (1 bookmark batch
+    // + 10 pair batches) so the test runs well under the default timeout,
+    // while the 500-pair plan keeps the truncation and the stored-vs-recomputed
+    // distinction sharp.
+    const many: AnalysisBookmark[] = Array.from(
+      { length: 40 },
+      (_value, index) => ({
+        id: `bm-${index}`,
+        title: "Shared heading",
+        url: `https://same.example/${index}`,
+        parentId: "f-dev",
+      }),
+    );
+    const plan = planNearDuplicates(many);
+    expect(plan.truncated).toBe(true);
+    expect(plan.pairs).toHaveLength(500);
+    const pairIds = plan.pairs.map((pair) => ({ a: pair.a.id, b: pair.b.id }));
+    const pairBatch = (index: number): string[] =>
+      pairIds
+        .slice(index * 50, (index + 1) * 50)
+        .map((pair) => `${pair.a}|${pair.b}`);
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: many.map((bookmark) => bookmark.id),
+      batchSize: 50,
+      nearDuplicatePlan: plan,
+      now,
+    });
+
+    // The durable plan carries the planner limits and the truncation state.
+    expect(job.nearDuplicatePlan?.truncated).toBe(true);
+    expect(job.nearDuplicatePlan?.pairLimit).toBe(500);
+    expect(job.nearDuplicatePlan?.comparisonLimit).toBe(50_000);
+    expect(job.nearDuplicatePlan?.pairs).toEqual(pairIds);
+    expect(job.progress.totalBatches).toBe(
+      Math.ceil(many.length / job.batchSize) +
+        Math.ceil(plan.pairs.length / job.batchSize),
+    );
+    // 1 bookmark batch (40 rows) + 10 pair batches (500 pairs) = 11.
+    expect(job.progress.totalBatches).toBe(11);
+
+    // Pause inside the first pair batch (batch index 1); it commits, then the
+    // boundary stops.
+    const first = makeAnalyzer();
+    const firstScan = makeScanner({
+      onCall: async () => {
+        await pauseJob(job.id, now);
+      },
+    });
+    const stopped = await new JobRunner({
+      analyze: first.analyze,
+      scanDuplicates: firstScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: many, batchSize: 50 });
+    expect(stopped.status).toBe("paused");
+    expect(stopped.progress.committedBatches).toBe(2);
+    // Exactly the first 50 stored pairs, in stored order.
+    expect(firstScan.calls).toEqual([pairBatch(0)]);
+
+    // Titles change so a RECOMPUTED plan would be empty (no shared tokens):
+    // the resume must slice the STORED pairs, never re-plan.
+    const retitled = many.map((bookmark, index) => ({
+      ...bookmark,
+      title: `bm${index} heading`,
+    }));
+    expect(planNearDuplicates(retitled).pairs).toEqual([]);
+    const second = makeAnalyzer();
+    const secondScan = makeScanner();
+    await resumeJob(job.id, now);
+    const finished = await new JobRunner({
+      analyze: second.analyze,
+      scanDuplicates: secondScan.scanDuplicates,
+      now,
+    }).run(job.id, { bookmarks: retitled, batchSize: 50 });
+
+    // The committed pair batch is not re-sent; the remaining 9 stored pair
+    // batches run in order.
+    expect(second.calls).toEqual([]);
+    expect(secondScan.calls).toEqual([
+      pairBatch(1),
+      pairBatch(2),
+      pairBatch(3),
+      pairBatch(4),
+      pairBatch(5),
+      pairBatch(6),
+      pairBatch(7),
+      pairBatch(8),
+      pairBatch(9),
+    ]);
+    expect(finished.status).toBe("completed");
+    expect(finished.progress).toEqual({
+      totalBatches: 11,
+      committedBatches: 11,
+      processedCount: 40,
+    });
+  });
+
+  it("fails typed when the stored plan references a bookmark outside the work set", async () => {
+    const bms = pairBookmarks();
+    const plan = planNearDuplicates(bms);
+    const first = plan.pairs[0]!;
+    plan.pairs[0] = { ...first, a: { ...first.a, id: "bm-ghost" } };
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 1,
+      nearDuplicatePlan: plan,
+      now,
+    });
+
+    const { analyze, calls } = makeAnalyzer();
+    const { scanDuplicates, calls: pairCalls } = makeScanner();
+    const error = await new JobRunner({ analyze, scanDuplicates, now })
+      .run(job.id, { bookmarks: bms, batchSize: 1 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(JobRunnerError);
+    expect((error as JobRunnerError).code).toBe("invalid_input");
+    expect(calls).toEqual([]);
+    expect(pairCalls).toEqual([]);
   });
 });
 

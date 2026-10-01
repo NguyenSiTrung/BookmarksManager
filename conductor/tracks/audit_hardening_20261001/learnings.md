@@ -598,6 +598,28 @@ Selected applicable patterns from `conductor/patterns.md`:
   `unhandledRejection` probe with a control rejection) — all three
   mutations killed. Delta re-check PASS, drift-free. Isolated decisions E2E
   is batched into the Phase 5 gate.
+- I06 estimates and durable plans (`BookmarksManager-2qk`):
+  `estimateJobCost` takes `kind` + ID-bearing bookmarks and reports
+  `requests` (bookmarks + planned pairs), `pairs`, `comparisons`,
+  `truncated`, `pairLimit`; the token fold stays a documented lower bound.
+  `enqueueJob` accepts a bounded plan, reduces it to content-free pair IDs +
+  planner limits/version/truncation on the optional `Job.nearDuplicatePlan`,
+  and seeds pair-inclusive `progress.totalBatches`. The runner executes the
+  STORED plan on resume (pair sides re-hydrated from the live work set, so
+  edited titles cannot shift offsets), acquires exactly one plan for a
+  legacy uncommitted `library_scan` via an atomic `attachNearDuplicatePlan`,
+  and fails typed BEFORE any status/work write for a committed plan-less
+  scan or a plan referencing an unknown bookmark. `background.startJob`
+  resolves the plan best-effort at enqueue (a tree-read failure falls back
+  to a plan-less legacy row); `ScanPanel` shows the pair-inclusive request
+  count and the 500-pair truncation notice before start. Review `26c9983a`
+  PASS with P2/P3 test gaps; two fix rounds closed them (stored-vs-recomputed
+  discrimination, no-write ordering, truncated persist/resume, background
+  fallback, and a 5 s timeout fixture reworked to 832 ms at batchSize 50);
+  delta re-check PASS with sources byte-identical. Migration edge: a
+  pre-Task-5 `library_scan` that already committed a batch without a plan
+  fails typed on resume (ambiguous offsets). Isolated decisions E2E is
+  batched into the Phase 5 gate.
 - I06 candidates: near-duplicate planning is now bounded and deterministic.
   `NEAR_DUPLICATE_PAIR_LIMIT = 500`, `NEAR_DUPLICATE_COMPARISON_LIMIT =
   50_000`; exclusion is O(1) raw-or-normalized URL equality (no intra-group
