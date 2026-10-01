@@ -117,3 +117,16 @@
   sensitive order rather than bypass current configuration checks.
   Cost if wrong: callers see a more precise typed refusal instead of the
   previous code; no additional egress is authorized.
+
+## Revision 8 — 2026-10-01 — Phase 3 browser checkpoint ownership
+
+- **Trigger:** B10 unit/review fixes and the existing browser suite passed,
+  but Phase 3's checkpoint explicitly requires omitted-usage and held-revoke
+  browser evidence, absent from that existing suite.
+- **Change:** Add the existing LLM browser spec/helper to Task 3 ownership.
+  Extend wire fakes only as needed for omitted usage and deferred responses;
+  retain default replies. Exercise real worker/protocol/accounting and assert
+  stored conservative amounts, wire limits and no post-revoke transport.
+- **Ruling:** Deliver those controls now rather than count Phase 6's future
+  integrated tests as present checkpoint evidence. Cost if wrong: two
+  overlapping regression surfaces; no product or permission change.

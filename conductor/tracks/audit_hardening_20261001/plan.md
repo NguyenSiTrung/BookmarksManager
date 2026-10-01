@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — B09 per-attempt accounting and consumer ownership -->
+<!-- Last Revised: 2026-10-01 — Phase 3 browser accounting checkpoint ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -434,7 +434,7 @@ implementation work.
     relevant LLM E2E, notes/learnings, close this task.
 
 - [~] Task 3: Preserve in-flight accounting through provider revoke
-  <!-- files: src/messages/llm-provider.ts, src/net/llm-send.ts, tests/unit/llm-provider-messages.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts -->
+  <!-- files: src/messages/llm-provider.ts, src/net/llm-send.ts, tests/unit/llm-provider-messages.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Covers **B10**. Consent removal remains first. Settlement uses the
     reservation snapshot, not the provider settings that revoke removes.
   - [ ] Red: hold a fake response after the request leaves, revoke the
@@ -459,6 +459,9 @@ implementation work.
     still follows its separate intentional wipe contract.
   - [ ] Verify green: rerun named tests for revoke failures, key deletion,
     late success/error, double settle, re-enable, and delete-all distinction.
+    Add isolated real-extension browser controls for omitted successful usage
+    and revoke while an actual routed response is held. Assert conservative
+    stored amounts, matching wire caps, zero new egress and one late usage row.
   - [ ] Coordinator gate/commit: `fix(llm): settle in-flight requests after revoke`,
     relevant LLM E2E, notes/learnings, close this task.
 
