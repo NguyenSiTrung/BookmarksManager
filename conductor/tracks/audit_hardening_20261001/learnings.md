@@ -272,6 +272,34 @@ Selected applicable patterns from `conductor/patterns.md`:
   extraction because toolbar `activeTab` is not automated. It separately
   opens/dismisses the production narrow dialog and proves zero provider
   requests. B07 resource identity is still the next dependent task.
+- Local commit: `c779b2e`; task `BookmarksManager-lgd.2.2` closed.
+
+### Phase 2 Task 3: Local resource identity
+
+- Added pure local-only `summaryResourceKey`/`sameSummaryResource`.
+  Permit HTTP(S) sendable resources and remove only decoded allowlisted
+  tracking keys (`utm`, `utm_*`, `gclid`, `fbclid`, `msclkid`).
+- Preserve remaining raw query data, order, repeated keys, percent/plus
+  spelling and all nonempty fragments, including ambiguous anchors. The
+  conservative fragment choice follows the approved plan rather than guess
+  which fragment is an application route.
+- Summary admission now compares local resource keys before independently
+  minimizing outbound URLs, including each later admission callback.
+  Keys are never persisted, logged, or sent.
+- Initial red: six pipeline mismatches incorrectly returned success.
+  Final previous-admission replay: 7 expected failures / 91 tests, including
+  a saved semantic-query change after the LLM response; implementation was
+  restored immediately and the full green gate ran afterward.
+- Pure controls: 27 tests. Summary pipeline: 64 tests. Combined phase:
+  7 files / 237 passing. Full gate: 152 files / 2,716 passing
+  (`--maxWorkers=1`), lint/typecheck/build/manifest/bundle/store/site passed.
+  Isolated LLM/provider E2E: 12 passed, no skips.
+- Mismatches produce zero initial LLM/Jev requests; the changed-reference
+  post-LLM case produces one LLM and zero Jev requests with no persistence.
+  Allowed tracking-only variations succeed and remain minimized on the wire.
+- Inline review: existing current-blocklist/binding checks still precede
+  sends; the small pure mapper preserves native URL syntax without relying
+  on an egress-cleaned URL for identity.
 
 ## Planning Validation
 

@@ -286,7 +286,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [x] Task 2: Minimized summary payload and accurate disclosures
+- [x] Task 2: Minimized summary payload and accurate disclosures (c779b2e)
   <!-- files: src/llm/summarize.ts, src/decisions/summaries.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/provider.ts, src/messages/summaries.ts, src/entrypoints/sidepanel/SummaryDialog.tsx, store/privacy-policy.md, store/privacy-practices.md, store/listing.md, store/reviewer-notes.md, site/privacy/index.html, tests/unit/llm-summarize.test.ts, tests/unit/summary-messages.test.ts, tests/unit/consent-snapshot.test.ts, tests/unit/consent.test.ts, tests/components/summary-dialog.test.tsx, tests/e2e/provider.spec.ts, tests/e2e/llm.spec.ts -->
   - Covers **B06**. Preserve the public summary functions; build a minimized
     outbound payload separately from the original extraction used locally.
@@ -321,7 +321,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(privacy): minimize summary URLs and disclosures`,
     notes/learnings, close this task.
 
-- [~] Task 3: Resource-aware local summary identity
+- [x] Task 3: Resource-aware local summary identity
   <!-- files: src/decisions/summary-identity.ts, src/decisions/summaries.ts, tests/unit/summary-identity.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B07**. Create the pure local contract:
     ```ts
@@ -329,7 +329,7 @@ implementation work.
     export function sameSummaryResource(saved: string, active: string): boolean;
     ```
     Keep these keys out of egress/storage/logs.
-  - [ ] Red: add query identity, tracking-only difference, port/origin/path,
+  - [x] Red: add query identity, tracking-only difference, port/origin/path,
     document-anchor, and application-hash-route cases.
     ```ts
     expect(sameSummaryResource(
@@ -343,17 +343,17 @@ implementation work.
     )).toBe(false);
     ```
     Also assert a mismatch produces zero LLM/Jev calls.
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/summary-identity.test.ts tests/unit/llm-summarize.test.ts`.
-  - [ ] Green: parse sendable URLs; canonicalize only normal URL syntax and
+  - [x] Green: parse sendable URLs; canonicalize only normal URL syntax and
     remove `utm`, `utm_*`, `gclid`, `fbclid`, `msclkid` tracking keys. Preserve
     all other query data, original ordering, and nonempty fragments
     conservatively, including `#/` and `#!` application routes. Do not guess
     that an ambiguous fragment is a harmless document anchor. Compare local
     keys before independently minimizing the outbound URL.
-  - [ ] Verify green: rerun tests for malformed/unsupported URLs,
+  - [x] Verify green: rerun tests for malformed/unsupported URLs,
     duplicated query keys, tracking controls, and provider zero-egress.
-  - [ ] Coordinator gate/commit: `fix(summary): match resources before URL minimization`,
+  - [x] Coordinator gate/commit: `fix(summary): match resources before URL minimization`,
     relevant LLM E2E, notes/learnings, close this task.
 
 - [ ] Task 4: Automated checkpoint for privacy and identity

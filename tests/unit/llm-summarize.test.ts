@@ -199,6 +199,60 @@ afterAll(() => {
 });
 
 describe("summarizeActiveBookmark", () => {
+  it.each([
+    ["semantic query", "https://a-site.com/watch?v=A", "https://a-site.com/watch?v=B"],
+    ["application route", "https://a-site.com/#/item/A", "https://a-site.com/#/item/B"],
+    ["hashbang route", "https://a-site.com/#!/item/A", "https://a-site.com/#!/item/B"],
+    ["ambiguous fragment", "https://a-site.com/article#item-A", "https://a-site.com/article#item-B"],
+    ["query ordering", "https://a-site.com/article?a=1&b=2", "https://a-site.com/article?b=2&a=1"],
+    ["duplicate query values", "https://a-site.com/article?id=A&id=B", "https://a-site.com/article?id=A&id=C"],
+  ])("refuses a mismatched %s resource with zero provider requests", async (_case, saved, active) => {
+    await seedProvider();
+    await bookmarksApi.update(BOOKMARK_ID, { url: saved });
+    tabsGet.mockResolvedValue({ id: TAB_ID, url: active, incognito: false });
+    const jevTransport = jevTransportFor("supported");
+
+    expect(await run(jevTransport)).toMatchObject({ ok: false, stage: "match", code: "mismatch" });
+    expect(server.requests).toHaveLength(0);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it("permits allowlisted tracking differences while keeping semantic query identity local", async () => {
+    await seedProvider();
+    await bookmarksApi.update(BOOKMARK_ID, { url: "https://a-site.com/watch?v=A&utm_source=saved#same" });
+    tabsGet.mockResolvedValue({
+      id: TAB_ID, url: "https://a-site.com/watch?v=A&fbclid=active#same", incognito: false,
+    });
+    const jevTransport = jevTransportFor("supported");
+
+    expect(await run(jevTransport)).toMatchObject({ ok: true, summary: "A page about a caching layer." });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).toHaveBeenCalledTimes(1);
+    const wire = JSON.stringify(server.requests.map((request) => request.body));
+    expect(wire).toContain("https://a-site.com/watch");
+    expect(wire).not.toContain("v=A");
+    expect(wire).not.toContain("fbclid");
+    expect(wire).not.toContain("#same");
+  });
+
+  it("rechecks local resource identity before Jev if the saved query changes after the LLM response", async () => {
+    await seedProvider();
+    await bookmarksApi.update(BOOKMARK_ID, { url: "https://a-site.com/watch?v=A" });
+    tabsGet.mockResolvedValue({ id: TAB_ID, url: "https://a-site.com/watch?v=A", incognito: false });
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      const response = await server.fetch(url, init);
+      await bookmarksApi.update(BOOKMARK_ID, { url: "https://a-site.com/watch?v=B" });
+      return response;
+    });
+    const jevTransport = jevTransportFor("supported");
+
+    expect(await run(jevTransport)).toMatchObject({ ok: false, code: "mismatch" });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
   it.each(["llm_summary", "jev_summary_verify"] as const)(
     "does not extract or send when %s consent is stale or missing",
     async (scope) => {

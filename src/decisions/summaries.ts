@@ -1,5 +1,6 @@
 import { get } from "../sync/chrome-bookmarks";
-import { cleanUrl, minimizeBookmark } from "./minimize";
+import { minimizeBookmark } from "./minimize";
+import { sameSummaryResource } from "./summary-identity";
 import { readBlocklist } from "./blocklist";
 import { extractActivePage, type PageExtract } from "../extract/page";
 import { summarizePage } from "../llm/summarize";
@@ -148,7 +149,7 @@ async function admitSummary(bookmarkId: string, extract: PageExtract) {
       "unsendable", "This page or its saved bookmark is blocked from summary sending.",
     );
   }
-  if (cleanUrl(node.url) !== cleanUrl(extract.url)) {
+  if (!sameSummaryResource(node.url, extract.url)) {
     throw new SummaryAdmissionError(
       "mismatch", "The active page's URL does not match this bookmark.",
     );
