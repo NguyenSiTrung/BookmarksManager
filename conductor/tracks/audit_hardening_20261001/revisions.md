@@ -76,3 +76,18 @@
   classification exception. If incorrect, fallback may require refinement
   for another provider; error bodies still cannot become logged, persisted
   content or surfaced exception text.
+
+## Revision 6 — 2026-10-01 — Plan / browser fixture
+
+- **Trigger:** The B08 full unit gate passed 2,814 tests, but browser fallback
+  failed: its fake returned raw unstructured text, not the validated error
+  envelope required by the explicitly approved classification contract.
+  Four browser tests passed, one failed and five did not run.
+- **Current task:** Phase 3 Task 1 integration gate.
+- **Change:** Add the existing LLM browser spec to Task 1 ownership. Emit an
+  OpenAI-compatible structured capability error with `param: response_format`,
+  preserving the three-tier behavior assertion. Add the actual 1,500-token
+  proposal allowance assertion to every tier's wire request.
+- **Ruling:** Align the fake with the approved validated contract, rather
+  than reintroduce raw-text classification. If incorrect, a text-only provider
+  cannot automatically fall back; it still fails visibly with no cap removal.

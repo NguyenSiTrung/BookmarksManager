@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — B08 bounded LLM error classification approved -->
+<!-- Last Revised: 2026-10-01 — B08 bounded classification and wire fixture alignment -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -368,7 +368,7 @@ implementation work.
 <!-- execution: sequential -->
 
 - [~] Task 1: Enforce the reserved output allowance on the wire
-  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts -->
+  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/wire.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-wire.test.ts, tests/unit/llm-structured.test.ts, tests/e2e/llm.spec.ts -->
   - Covers **B08**. Existing `max_tokens` is the default OpenAI-compatible
     limit; the gate, not a caller-supplied policy, owns serialization.
   - [ ] Red: extend the existing happy-path `send` fixture to assert its
