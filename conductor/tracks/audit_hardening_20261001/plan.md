@@ -433,7 +433,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(llm): account conservatively for missing usage`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [x] Task 3: Preserve in-flight accounting through provider revoke
+- [x] Task 3: Preserve in-flight accounting through provider revoke (f4dc035)
   <!-- files: src/messages/llm-provider.ts, src/net/llm-send.ts, tests/unit/llm-provider-messages.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Covers **B10**. Consent removal remains first. Settlement uses the
     reservation snapshot, not the provider settings that revoke removes.
@@ -465,18 +465,18 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(llm): settle in-flight requests after revoke`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [~] Task 4: Automated checkpoint for LLM limits and accounting
+- [x] Task 4: Automated checkpoint for LLM limits and accounting
   <!-- files: -->
-  - [ ] Run Phase 3 tests, the applicable full local gate, and isolated LLM
+  - [x] Run Phase 3 tests, the applicable full local gate, and isolated LLM
     E2E with bounded requests, omitted usage, and held revoke responses.
-  - [ ] Record reserved/committed amounts and reported/estimated/unknown
+  - [x] Record reserved/committed amounts and reported/estimated/unknown
     controls. Clearly separate a provider ignoring its cap from accounting.
-  - [ ] Close checkpoint/phase and continue without a manual gate.
+  - [x] Close checkpoint/phase and continue without a manual gate.
 
 ## Phase 4: Workflow and UI correctness
 <!-- execution: parallel -->
 
-- [ ] Task 1: Single-owner scan runners and guarded progress
+- [~] Task 1: Single-owner scan runners and guarded progress
   <!-- files: src/jobs/coordinator.ts, src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts, tests/unit/job-coordinator.test.ts, tests/unit/jobs-queue.test.ts, tests/unit/jobs-runner.test.ts, tests/unit/background-jobs.test.ts -->
   - Covers **B11**. Create a worker-local coordinator for all production
     `runPersistedJob` entry paths; one MV3 worker owns production scans.

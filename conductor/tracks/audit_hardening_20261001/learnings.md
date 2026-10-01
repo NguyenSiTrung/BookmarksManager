@@ -426,6 +426,30 @@ Selected applicable patterns from `conductor/patterns.md`:
   Existing React act warnings remain non-fatal. Native permission prompts
   and key-gated live/eval remain excluded; temporary install-time grants
   may cause permission-removal partial failures without authorizing egress.
+- Local commit: `f4dc035`; task `BookmarksManager-lgd.3.3` closed.
+
+### Phase 3 Automated Checkpoint
+
+- B08/B09/B10 complete: `a43400f`, `305f43c`, `f4dc035`.
+  Six phase files / 315 tests passed together. The unchanged native,
+  message/schema and feature boundaries also passed the full suite.
+- Latest fresh full command:
+  `npm run lint && npm run typecheck && npm run test -- --run --maxWorkers=1 && npm run build && npm run check:manifest && npm run check:bundle && npm run check:store`,
+  152 files / 2,908 tests and all gates passed.
+  Browser command:
+  `xvfb-run -a npm run test:e2e -- tests/e2e/llm.spec.ts tests/e2e/provider.spec.ts`,
+  14 passed, including omitted usage and a held revoked response.
+- Wire limits match effective reserved allowances on retries/tiers/repairs.
+  Invalid/unsupported limits fail visibly. Provider-reported overruns are
+  charged honestly, not claimed impossible by client-side caps.
+- Missing/partial dimensions, valid reported zero/cost, unknown manual
+  exposure, automatic unpriced refusal, TTL retention, successful retry
+  exposure, UTC month transitions and duplicate settlement are permanent
+  regressions. Revoke blocks new sends while retaining late accounting.
+- No skips in final gates; non-fatal React act warnings remain.
+  Native permission prompts, live/eval provider calls and exactly-once
+  billing after browser failure are not claimed. No manual gate or remote
+  synchronization. Continue automatically to Phase 4.
 
 ## Planning Validation
 
