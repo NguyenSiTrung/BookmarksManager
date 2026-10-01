@@ -198,8 +198,10 @@ async function openItemMenu(name: string): Promise<void> {
 
 /** Opens a folder row's kebab menu. */
 async function openFolderMenu(name: string): Promise<void> {
+  // Await the row: the tree refresh is coalesced (I02, 50 ms window), so a
+  // rename can land a tick after its toast resolves.
   fireEvent.pointerDown(
-    screen.getByRole("button", { name: `Folder actions for ${name}` }),
+    await screen.findByRole("button", { name: `Folder actions for ${name}` }),
   );
   await screen.findByRole("menuitem", { name: "New folder inside" });
 }

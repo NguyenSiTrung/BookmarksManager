@@ -151,6 +151,9 @@ test("popup search replaces the form and Enter opens a new tab", async () => {
     const popup = await openSurface(context, id, "popup");
     await waitForPopupReady(popup);
 
+    // Search sits behind the header toggle (95d8468): the icon opens the
+    // search row, and a non-empty query replaces the save form.
+    await popup.getByRole("button", { name: "Search bookmarks" }).click();
     const input = popup.getByRole("combobox", { name: "Search bookmarks" });
     await input.click();
     await input.fill("popup find");
@@ -169,8 +172,9 @@ test("popup search replaces the form and Enter opens a new tab", async () => {
     await expect(tab).toHaveURL(targetUrl);
     await tab.close();
 
-    // Clearing restores the form.
+    // Clearing and closing the row restores the form.
     await input.fill("");
+    await input.press("Escape");
     await expect(popup.getByLabel("Title")).toBeVisible();
     await expect(list).toHaveCount(0);
   } finally {
@@ -224,9 +228,11 @@ test("all search surfaces send no external requests", async () => {
     await sidepanel.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
 
-    // 3. Popup search: type, see results, clear — form intact.
+    // 3. Popup search: open the header toggle, type, see results, then clear
+    //    and close the row — the form comes back intact.
     const popup = await openSurface(context, id, "popup");
     await waitForPopupReady(popup);
+    await popup.getByRole("button", { name: "Search bookmarks" }).click();
     const popupInput = popup.getByRole("combobox", {
       name: "Search bookmarks",
     });
@@ -234,7 +240,8 @@ test("all search surfaces send no external requests", async () => {
     await expect(
       popup.getByRole("option", { name: /Egress search target/ }),
     ).toBeVisible({ timeout: 15_000 });
-    await popupInput.fill("");
+    await popupInput.press("Escape");
+    await popupInput.press("Escape");
     await expect(popup.getByLabel("Title")).toBeVisible();
     await popup.close();
     await sidepanel.close();
