@@ -27,3 +27,17 @@
   and update the current-version browser expectation, rather than add a
   second version source. If incorrect, this causes unnecessary consent
   reacquisition, but cannot silently authorize obsolete grants.
+
+## Revision 3 — 2026-10-01 — Plan
+
+- **Trigger:** Phase 2 Task 1 review reproduced an ownership/design gap:
+  `sendLlmConsented` internally retries after 429/transport failures, without
+  returning through feature-local structured-send admission. A changed
+  blocklist could therefore permit a second affected LLM disclosure.
+- **Current task:** Phase 2 Task 1 review remediation.
+- **Change:** Add the existing LLM client/gate and their tests to Task 1
+  ownership. Carry admission to the existing transport-attempt boundary.
+  Later tasks sharing these files remain behind sequential phase boundaries.
+- **Ruling:** Enforce B05 at each actual attempt rather than disable retries
+  or consider fallback checks sufficient. If incorrect, the extra admission
+  read adds latency or refusals, but cannot silently skip the origin gates.

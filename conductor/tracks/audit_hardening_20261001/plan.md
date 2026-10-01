@@ -1,6 +1,6 @@
 # Audit Hardening Implementation Plan
 
-<!-- Last Revised: 2026-10-01 — Phase 2 consent and summary admission ownership -->
+<!-- Last Revised: 2026-10-01 — Phase 2 per-attempt privacy admission ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -248,7 +248,7 @@ implementation work.
 <!-- execution: sequential -->
 
 - [~] Task 1: Enforce current blocklist for explanation and summary egress
-  <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
+  <!-- files: src/llm/explain.ts, src/llm/summarize.ts, src/llm/client.ts, src/net/llm-send.ts, src/decisions/summaries.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts -->
   - Covers **B05**. Reuse `readBlocklist()` and `minimizeBookmark`; refuse
     blocked multi-bookmark explanations instead of sending partial derived
     state. Re-read before subsequent repair/fallback sends and the Jev hop.
@@ -277,6 +277,10 @@ implementation work.
     results and the existing per-origin transport gates.
     `summarizePage` owns the summary structured-send wrapper, so its options
     carry the orchestrator's admission callback into fallback/repair sends.
+    Thread feature admission through the existing client/gate options and
+    run it before every actual transport attempt, including internal HTTP
+    and transport retries. Refused retries must not create a second request
+    or persist a rationale/summary; existing origin gates remain mandatory.
   - [ ] Verify green: rerun named tests with blocked/allowed positive
     controls, subdomain matching, and list changes between hops.
   - [ ] Coordinator gate/commit: `fix(privacy): honor blocklists in LLM features`,
