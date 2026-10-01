@@ -635,10 +635,19 @@ async function testProvider(message: {
         );
       }
       const latencyMs = Math.max(0, Date.now() - started);
-      const next = LlmProviderRecord.parse({ ...record, tier });
-      await db.metadata.put({
-        key: `llmProvider:${record.providerId}`,
-        value: next,
+      await db.transaction("rw", db.metadata, async () => {
+        const current = await readLlmProvider(record.providerId);
+        // A late probe owns only its tested configuration, never a revoked
+        // or replaced row. Compare validated snapshots conservatively (even
+        // budget edits invalidate the probe), and keep check + write under
+        // the metadata transaction so delete/re-enable cannot interleave.
+        if (current === null || JSON.stringify(current) !== JSON.stringify(record)) {
+          return;
+        }
+        await db.metadata.put({
+          key: `llmProvider:${record.providerId}`,
+          value: LlmProviderRecord.parse({ ...current, tier }),
+        });
       });
       const result: LlmTestResult = {
         model: parsed.data.model,
@@ -688,8 +697,11 @@ async function testProvider(message: {
  * fails the gate still blocks every request because no current consent row
  * remains. `revokeConsentsAtOrigin` sweeps every scope the origin holds
  * (llm_test plus any feature scopes), then the host permission is released,
- * then the record/reservations/active pointer, and the stored credential
- * only when `deleteKey` is set.
+ * then the record/active pointer, and the stored credential only when
+ * `deleteKey` is set. Accounting survives ordinary revoke: an already-sent
+ * response must settle against its reservation's model/pricing snapshot,
+ * and orphaned paid exposure must not vanish on revoke/re-enable. Only the
+ * explicit delete-all reset intentionally drops this history.
  */
 async function revokeProvider(message: {
   providerId: string;
@@ -730,17 +742,12 @@ async function revokeProvider(message: {
     await db.transaction(
       "rw",
       db.metadata,
-      db.llmReservations,
       async () => {
         await db.metadata.delete(`llmProvider:${record.providerId}`);
         const pointer = await db.metadata.get("llmActiveProvider");
         if (pointer?.value === record.providerId) {
           await db.metadata.delete("llmActiveProvider");
         }
-        await db.llmReservations
-          .where("providerId")
-          .equals(record.providerId)
-          .delete();
       },
     );
   } catch {

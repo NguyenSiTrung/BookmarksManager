@@ -387,6 +387,45 @@ Selected applicable patterns from `conductor/patterns.md`:
   Crash-orphaned active exposure is intentionally retained rather than freed;
   no exactly-once external billing guarantee is claimed.
 - B10 ordinary revoke still needs to preserve these active snapshots.
+- Local commit: `305f43c`; task `BookmarksManager-lgd.3.2` closed.
+
+### Phase 3 Task 3: Reservation lifetime through revoke
+
+- Ordinary revoke removes consent first, then permission/settings/pointer/key,
+  but never usage or reservation snapshots. No existing separate terminal
+  retention policy exists, so no new pruning policy was invented.
+  Explicit delete-all still intentionally drops all extension-owned data.
+- Held success/error/malformed/abort responses settle from admitted bounds,
+  model and pricing once after settings/key removal. Re-enable cannot erase
+  prior reserved exposure; new egress refuses even during held cleanup.
+- Review caught a late synthetic Test connection overwriting deleted or
+  re-enabled settings, including restoring an old unlimited cap. Fresh
+  validated-record equality and tier save now share one metadata transaction.
+  Absent/changed records are not recreated or overwritten.
+- Initial red: 11 failures / 213 tests; stale-probe red: four / 218;
+  removing only atomicity reproduced two boundary failures (51 unrelated
+  tests excluded in that focused mutation run). Restored immediately.
+  Final named: 220 passed; adjacent: 17 files / 594 passed.
+- Core scoped re-review: P1 addressed, Spec/Quality PASS.
+  Revision 8 adds required Phase 3 browser accounting controls to the
+  existing LLM spec/helper rather than count future Phase 6 evidence.
+- Browser omitted usage: 64/16 bounds at $2/$4 per million commit
+  $0.000192 estimated, matching wire cap 16. Held revoked response reports
+  10/5 and commits $0.00004 from the original pricing; settings/key/consents
+  remain absent, new intents send nothing, duplicate settlement is inert.
+- Both browser regressions failed on successful historical builds/launches:
+  pre-B09 `a43400f` charged zero; pre-B10 `305f43c` lost late usage.
+  Agent-owned git-archive snapshots were used, never resetting main.
+- Browser duplicate checks execute bundled existing production settlement
+  in a separate extension context using installed Vite in memory; no shipped
+  debug protocol, dependency, fixture DB rewrite or build artifact.
+  Test-only resolver failures were corrected, not labeled product red.
+- Browser controls review: Spec/Quality PASS. Fresh complete gate:
+  lint/types, 152 files / 2,908 tests (`--maxWorkers=1`), build,
+  manifest/bundle/store and 14 isolated LLM/provider E2E passed, no skips.
+  Existing React act warnings remain non-fatal. Native permission prompts
+  and key-gated live/eval remain excluded; temporary install-time grants
+  may cause permission-removal partial failures without authorizing egress.
 
 ## Planning Validation
 

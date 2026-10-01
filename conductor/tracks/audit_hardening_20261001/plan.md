@@ -399,7 +399,7 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(llm): enforce reserved output limits`,
     relevant isolated LLM E2E, notes/learnings, close this task.
 
-- [x] Task 2: Conservative missing and partial usage settlement
+- [x] Task 2: Conservative missing and partial usage settlement (305f43c)
   <!-- files: src/llm/client.ts, src/llm/budget.ts, src/net/llm-send.ts, tests/unit/llm-client.test.ts, tests/unit/llm-budget.test.ts, tests/unit/llm-gate.test.ts, tests/unit/llm-structured.test.ts, tests/unit/llm-explain.test.ts, tests/unit/llm-summarize.test.ts -->
   - Covers **B09**. Extend `ActualUsage` so absent input/output token counts
     remain absent, rather than becoming zero. Preserve `settleLlmUsage`.
@@ -433,11 +433,11 @@ implementation work.
   - [x] Coordinator gate/commit: `fix(llm): account conservatively for missing usage`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [~] Task 3: Preserve in-flight accounting through provider revoke
+- [x] Task 3: Preserve in-flight accounting through provider revoke
   <!-- files: src/messages/llm-provider.ts, src/net/llm-send.ts, tests/unit/llm-provider-messages.test.ts, tests/unit/llm-client.test.ts, tests/unit/llm-gate.test.ts, tests/e2e/llm.spec.ts, tests/e2e/helpers/llm.ts -->
   - Covers **B10**. Consent removal remains first. Settlement uses the
     reservation snapshot, not the provider settings that revoke removes.
-  - [ ] Red: hold a fake response after the request leaves, revoke the
+  - [x] Red: hold a fake response after the request leaves, revoke the
     provider, then release its successful response. Assert a new send is
     blocked, the old usage is stored once, and duplicate settlement is inert.
     ```ts
@@ -450,22 +450,22 @@ implementation work.
     ```
     Add these deferred-response helpers to the existing test file; no
     production test-only protocol is introduced.
-  - [ ] Verify red:
+  - [x] Verify red:
     `npx vitest run tests/unit/llm-provider-messages.test.ts tests/unit/llm-client.test.ts tests/unit/llm-gate.test.ts`.
-  - [ ] Green: revoke grants/settings/key as before but retain active
+  - [x] Green: revoke grants/settings/key as before but retain active
     reservations until terminal reconciliation. Prune only accounted terminal
     rows under the existing retention policy; preserve unknown paid exposure
     from Task 2. Ordinary revoke must not erase usage; explicit delete-all
     still follows its separate intentional wipe contract.
-  - [ ] Verify green: rerun named tests for revoke failures, key deletion,
+  - [x] Verify green: rerun named tests for revoke failures, key deletion,
     late success/error, double settle, re-enable, and delete-all distinction.
     Add isolated real-extension browser controls for omitted successful usage
     and revoke while an actual routed response is held. Assert conservative
     stored amounts, matching wire caps, zero new egress and one late usage row.
-  - [ ] Coordinator gate/commit: `fix(llm): settle in-flight requests after revoke`,
+  - [x] Coordinator gate/commit: `fix(llm): settle in-flight requests after revoke`,
     relevant LLM E2E, notes/learnings, close this task.
 
-- [ ] Task 4: Automated checkpoint for LLM limits and accounting
+- [~] Task 4: Automated checkpoint for LLM limits and accounting
   <!-- files: -->
   - [ ] Run Phase 3 tests, the applicable full local gate, and isolated LLM
     E2E with bounded requests, omitted usage, and held revoke responses.

@@ -13,7 +13,10 @@ import {
   launchLlmExtension,
   routeFakeOpenAi,
   sendLlmMessage,
+  settleLlmUsageAgain,
 } from "./helpers/llm";
+import type { FakeOpenAiReply } from "./helpers/llm";
+import type { BudgetReservation, LlmUsageRow } from "../../src/llm/budget";
 import {
   grantDecisionsConsent,
   routeFakeDecisions,
@@ -49,6 +52,9 @@ declare const chrome: {
   };
   tabs: {
     query(query: { url: string }): Promise<Array<{ id?: number }>>;
+  };
+  storage: {
+    local: { get(key: string): Promise<Record<string, unknown>> };
   };
 };
 
@@ -108,6 +114,169 @@ test("Options setup enables the provider and Test connection hits only its origi
 
   await ext.context.close();
   ext.dispose();
+});
+
+const ACCOUNTING_ORIGIN = "https://llm-accounting.test";
+const ACCOUNTING_PROVIDER = `custom:${ACCOUNTING_ORIGIN}/v1`;
+const ACCOUNTING_MODEL = "accounting-model";
+
+test("accounting: omitted successful usage commits conservative estimated exposure once", async () => {
+  test.setTimeout(120_000);
+  const ext = await launchLlmExtension({ extraHostPatterns: [`${ACCOUNTING_ORIGIN}/*`] });
+  try {
+    const wire = await routeFakeOpenAi(ext.context, {
+      model: ACCOUNTING_MODEL,
+      content: '{"ok":true}',
+      usage: null,
+    }, ACCOUNTING_ORIGIN);
+    const page = await openSurface(ext.context, ext.id, "options");
+    await enableCustom(page, {
+      baseUrl: `${ACCOUNTING_ORIGIN}/v1`,
+      key: "sk-synthetic-accounting",
+      model: ACCOUNTING_MODEL,
+      budgetCap: "1",
+      inputPrice: "2",
+      outputPrice: "4",
+    });
+    const reply = await sendLlmMessage(page, { type: "LLM_TEST", providerId: ACCOUNTING_PROVIDER });
+    expect(reply).toMatchObject({ ok: true, code: "test_ok" });
+    expect(reply).not.toHaveProperty("result.usage");
+    expect(wire.requests).toHaveLength(1);
+    expect(wire.requests[0]).toMatchObject({
+      method: "POST",
+      url: `${ACCOUNTING_ORIGIN}/v1/chat/completions`,
+      postData: { model: ACCOUNTING_MODEL, max_tokens: 16 },
+    });
+    const reservations = await readStoreRows<BudgetReservation>(page, "llmReservations");
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]).toMatchObject({
+      maxInputTokens: 64,
+      maxOutputTokens: 16,
+      reservedUsd: 0.000192,
+      status: "settled",
+      pricing: { inputPerMillion: 2, outputPerMillion: 4 },
+    });
+    // Independently derived: (64 * $2 + 16 * $4) / million.
+    const rows = await readStoreRows<LlmUsageRow>(page, "llmUsage");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      providerId: ACCOUNTING_PROVIDER,
+      model: ACCOUNTING_MODEL,
+      configuredModel: ACCOUNTING_MODEL,
+      feature: "llm_test",
+      inputTokens: 64,
+      outputTokens: 16,
+      estimatedCostUsd: 0.000192,
+    });
+    // Estimated provenance is represented by estimatedCostUsd, not costUsd.
+    expect(rows[0]).not.toHaveProperty("costUsd");
+    expect(await sendLlmMessage(page, { type: "LLM_BUDGET_SNAPSHOT", providerId: ACCOUNTING_PROVIDER }))
+      .toMatchObject({ ok: true, snapshot: {
+        requestCount: 1, reportedCostUsd: 0, estimatedCostUsd: 0.000192,
+        unknownCostRequests: 0, reservedUsd: 0, committedUsd: 0.000192,
+      } });
+    await settleLlmUsageAgain(page, reservations[0]!.id);
+    expect(await readStoreRows<LlmUsageRow>(page, "llmUsage")).toEqual(rows);
+    expect(wire.requests).toHaveLength(1);
+  } finally {
+    try {
+      await ext.context.close();
+    } finally {
+      ext.dispose();
+    }
+  }
+});
+
+test("accounting: held real probe settles once after trusted revoke and key removal", async () => {
+  test.setTimeout(120_000);
+  const ext = await launchLlmExtension({ extraHostPatterns: [`${ACCOUNTING_ORIGIN}/*`] });
+  let release!: (reply: FakeOpenAiReply) => void;
+  const held = new Promise<FakeOpenAiReply>((resolve) => { release = resolve; });
+  const completion: FakeOpenAiReply = {
+    model: ACCOUNTING_MODEL,
+    content: '{"ok":true}',
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
+  };
+  let pending: Promise<unknown> | undefined;
+  try {
+    const wire = await routeFakeOpenAi(ext.context, () => held, ACCOUNTING_ORIGIN);
+    const page = await openSurface(ext.context, ext.id, "options");
+    await enableCustom(page, {
+      baseUrl: `${ACCOUNTING_ORIGIN}/v1`,
+      key: "sk-synthetic-held",
+      model: ACCOUNTING_MODEL,
+      budgetCap: "1",
+      inputPrice: "2",
+      outputPrice: "4",
+    });
+    const panel = await openSurface(ext.context, ext.id, "sidepanel");
+    await createBookmark(panel, { title: "Synthetic accounting fixture", url: "https://accounting-fixture.test/" });
+    pending = sendLlmMessage(page, { type: "LLM_TEST", providerId: ACCOUNTING_PROVIDER });
+    // This is the actual worker fetch, not a deferred client/gate mock.
+    await expect.poll(() => wire.requests.length).toBe(1);
+    expect(wire.requests[0]?.postData).toMatchObject({ model: ACCOUNTING_MODEL, max_tokens: 16 });
+    const [reservation] = await readStoreRows<BudgetReservation>(page, "llmReservations");
+    expect(reservation).toMatchObject({
+      status: "active", reservedUsd: 0.000192,
+      pricing: { inputPerMillion: 2, outputPerMillion: 4 },
+    });
+    expect(await readStoreRows(page, "llmUsage")).toHaveLength(0);
+    const revoked = await sendLlmMessage(page, {
+      type: "LLM_REVOKE", providerId: ACCOUNTING_PROVIDER, deleteKey: true,
+    }) as { ok: boolean; code?: string };
+    // Install-time permissions cannot always be released; consent/settings/key
+    // removal and the genuine gate refusal are still mandatory.
+    expect(revoked.ok || revoked.code === "revoke_failed").toBe(true);
+    const assertRevoked = async () => {
+      const metadata = await readStoreRows<{ key: string }>(page, "metadata");
+      expect(metadata.some((row) => row.key === `llmProvider:${ACCOUNTING_PROVIDER}`)).toBe(false);
+      expect(metadata.some((row) => row.key === "llmActiveProvider")).toBe(false);
+      expect(await readStoreRows(page, "consents")).toHaveLength(0);
+      expect(await page.evaluate(async (id) => {
+        const key = `credential:${id}`;
+        return Object.hasOwn(await chrome.storage.local.get(key), key);
+      }, ACCOUNTING_PROVIDER)).toBe(false);
+    };
+    await assertRevoked();
+    expect(await sendLlmMessage(page, { type: "LLM_TEST", providerId: ACCOUNTING_PROVIDER }))
+      .toMatchObject({ ok: false, code: "not_configured" });
+    expect(await sendLlmMessage(panel, { type: "RESTRUCTURE_START", providerId: ACCOUNTING_PROVIDER }))
+      .toMatchObject({ ok: false, code: "no_provider" });
+    expect(wire.requests).toHaveLength(1);
+    release(completion);
+    expect(await pending).toMatchObject({ ok: true, code: "test_ok" });
+    const rows = await readStoreRows<LlmUsageRow>(page, "llmUsage");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      providerId: ACCOUNTING_PROVIDER,
+      model: ACCOUNTING_MODEL,
+      configuredModel: ACCOUNTING_MODEL,
+      feature: "llm_test",
+      inputTokens: 10,
+      outputTokens: 5,
+      estimatedCostUsd: 0.00004, // Original rates: (10 * $2 + 5 * $4)/million.
+    });
+    expect(rows[0]).not.toHaveProperty("costUsd");
+    await assertRevoked(); // Also exercises the late LLM_TEST tier-write guard.
+    expect(await readStoreRows<BudgetReservation>(page, "llmReservations"))
+      .toMatchObject([{ id: reservation!.id, status: "settled" }]);
+    await settleLlmUsageAgain(page, reservation!.id);
+    expect(await readStoreRows<LlmUsageRow>(page, "llmUsage")).toEqual(rows);
+    expect(wire.requests).toHaveLength(1);
+  } finally {
+    // Promise resolution is idempotent; drain the wire and message before close
+    // even when an assertion fails while the response is held.
+    release(completion);
+    try {
+      await pending?.catch(() => undefined);
+    } finally {
+      try {
+        await ext.context.close();
+      } finally {
+        ext.dispose();
+      }
+    }
+  }
 });
 
 test("restructure: propose → assign → preview → apply → undo", async () => {

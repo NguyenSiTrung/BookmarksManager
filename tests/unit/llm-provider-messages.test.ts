@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import Dexie from "dexie";
 import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -20,6 +21,10 @@ import {
   saveCredential,
 } from "../../src/security/credentials";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
+import { createLlmClient } from "../../src/llm/client";
+import type { BudgetReservation } from "../../src/llm/budget";
+import { settleLlmUsage } from "../../src/net/llm-send";
+import { deleteAllExtensionData } from "../../src/security/delete-all";
 import { makeOpenAiServer } from "../mock-servers/openai";
 
 vi.stubGlobal("crypto", webcrypto);
@@ -37,6 +42,7 @@ let storageStore: Record<string, unknown>;
 let storageSet: {
   set: (items: Record<string, unknown>) => Promise<void>;
 };
+let storageRemove: ReturnType<typeof vi.fn>;
 
 function installChromeStub() {
   storageStore = {};
@@ -47,6 +53,10 @@ function installChromeStub() {
       Object.assign(storageStore, items);
     },
   };
+  storageRemove = vi.fn(async (keys: string | string[]) => {
+    for (const k of Array.isArray(keys) ? keys : [keys])
+      delete storageStore[k];
+  });
   vi.stubGlobal("chrome", {
     storage: {
       local: {
@@ -64,9 +74,9 @@ function installChromeStub() {
           return out;
         },
         set: (items: Record<string, unknown>) => storageSet.set(items),
-        async remove(keys: string | string[]) {
-          for (const k of Array.isArray(keys) ? keys : [keys])
-            delete storageStore[k];
+        remove: storageRemove,
+        async clear() {
+          for (const k of Object.keys(storageStore)) delete storageStore[k];
         },
       },
     },
@@ -99,6 +109,87 @@ async function seedEnabledProvider() {
   await saveCredential(PROVIDER_ID, "sk-test-1234");
   await grantConsentAtOrigin("llm_test", ORIGIN);
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Hold the actual wire boundary, not the gate or accounting implementation. */
+function heldCompletion() {
+  const invoked = deferred<void>();
+  const response = deferred<Response>();
+  const fetchImpl = vi.fn<typeof fetch>(async () => {
+    invoked.resolve();
+    return response.promise;
+  });
+  const client = createLlmClient(PROVIDER_ID, {
+    scope: "llm_explain",
+    kind: "manual",
+    maxInputTokens: 100,
+    maxOutputTokens: 50,
+    fetchImpl,
+  });
+  const request = {
+    model: MODEL,
+    messages: [{ role: "user", content: "Synthetic connectivity fixture" }],
+  };
+  return { client, request, fetchImpl, invoked: invoked.promise, response };
+}
+
+async function seedExplainProvider() {
+  await seedEnabledProvider();
+  await saveLlmProvider(storedRecord({
+    provider: {
+      ...PRESET_SETTINGS,
+      pricing: { inputPerMillion: 2, outputPerMillion: 4 },
+    },
+    monthlyBudgetUsd: 1,
+  }));
+  await grantConsentAtOrigin("llm_explain", ORIGIN);
+}
+
+function completionResponse() {
+  return Response.json({
+    id: "synthetic-completion",
+    object: "chat.completion",
+    created: 0,
+    model: MODEL,
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
+  });
+}
+
+function reservationRow(
+  id: string,
+  overrides: Partial<BudgetReservation> = {},
+): BudgetReservation {
+  return {
+    id,
+    providerId: PROVIDER_ID,
+    model: MODEL,
+    month: "2026-09",
+    reservedUsd: 0.0004,
+    maxInputTokens: 100,
+    maxOutputTokens: 50,
+    pricing: { inputPerMillion: 2, outputPerMillion: 4 },
+    kind: "manual",
+    status: "active",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const REVOKE = {
+  type: "LLM_REVOKE",
+  providerId: PROVIDER_ID,
+  deleteKey: true,
+};
 
 async function call(
   message: unknown,
@@ -477,6 +568,135 @@ describe("LLM_PROVIDER_STATUS", () => {
 });
 
 describe("LLM_TEST", () => {
+  async function startHeldProbe() {
+    await seedExplainProvider();
+    await saveLlmProvider(storedRecord({
+      provider: { ...PRESET_SETTINGS, pricing: { inputPerMillion: 2, outputPerMillion: 4 } },
+      monthlyBudgetUnlimited: true,
+    }));
+    const held = heldCompletion();
+    vi.stubGlobal("fetch", held.fetchImpl);
+    const pending = call({ type: "LLM_TEST", providerId: PROVIDER_ID });
+    await held.invoked;
+    const [reservation] = await db.llmReservations.toArray();
+    expect(reservation).toMatchObject({ status: "active", maxInputTokens: 64, maxOutputTokens: 16 });
+    return { ...held, pending, reservationId: reservation!.id };
+  }
+
+  async function finishHeldProbe(held: Awaited<ReturnType<typeof startHeldProbe>>) {
+    held.response.resolve(completionResponse());
+    expect(await held.pending).toMatchObject({ ok: true, code: "test_ok", result: { model: MODEL, tier: "json_schema" } });
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      providerId: PROVIDER_ID,
+      feature: "llm_test",
+      model: MODEL,
+      configuredModel: MODEL,
+      inputTokens: 10,
+      outputTokens: 5,
+      estimatedCostUsd: 0.00004,
+    }]);
+    await Promise.all([
+      settleLlmUsage(held.reservationId, "llm_test", { reportedCostUsd: 99 }),
+      settleLlmUsage(held.reservationId, "llm_test", { reportedCostUsd: 99 }),
+    ]);
+    expect(await db.llmUsage.count()).toBe(1);
+    expect((await db.llmReservations.get(held.reservationId))?.status).toBe("settled");
+  }
+
+  it("does not recreate revoked settings when a real connection probe completes late", async () => {
+    const held = await startHeldProbe();
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    await finishHeldProbe(held);
+    expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
+    expect(await db.metadata.get("llmActiveProvider")).toBeUndefined();
+    expect(await db.consents.count()).toBe(0);
+    expect(await readCredential(PROVIDER_ID)).toBeNull();
+    await expectFailure({ type: "LLM_TEST", providerId: PROVIDER_ID }, "not_configured");
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace re-enabled cap, model, prices or key with a late probe's old unlimited record", async () => {
+    const held = await startHeldProbe();
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    expect(await call({
+      type: "LLM_CONFIGURE",
+      settings: { ...PRESET_SETTINGS, model: "gpt-4o", pricing: { inputPerMillion: 100, outputPerMillion: 200 } },
+      key: "sk-synthetic-current-key",
+      monthlyBudgetUsd: 0.001,
+    })).toMatchObject({ ok: true });
+    const current = await readLlmProvider(PROVIDER_ID);
+    const consents = await db.consents.toArray();
+    const storage = { ...storageStore };
+    await finishHeldProbe(held);
+    expect(await readLlmProvider(PROVIDER_ID)).toEqual(current);
+    expect((await readActiveLlmProvider())?.providerId).toBe(PROVIDER_ID);
+    expect((await readLlmProvider(PROVIDER_ID))?.provider).toMatchObject({
+      model: "gpt-4o",
+      pricing: { inputPerMillion: 100, outputPerMillion: 200 },
+    });
+    expect((await readLlmProvider(PROVIDER_ID))?.monthlyBudgetUsd).toBe(0.001);
+    expect((await readLlmProvider(PROVIDER_ID))?.monthlyBudgetUnlimited).toBeUndefined();
+    expect(await db.consents.toArray()).toEqual(consents);
+    expect(storageStore).toEqual(storage);
+    expect(await readCredential(PROVIDER_ID)).toBe("sk-synthetic-current-key");
+    // Fresh grants/key exist, so the current cap (not missing consent) must refuse.
+    await expectFailure({ type: "LLM_TEST", providerId: PROVIDER_ID }, "budget_exceeded");
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { label: "budget-only update", pricing: undefined },
+    { label: "budget and pricing update", pricing: { inputPerMillion: 100, outputPerMillion: 200 } },
+  ])("preserves a concurrent $label during a real connection probe", async ({ pricing }) => {
+    const held = await startHeldProbe();
+    expect(await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "capped", usd: 0 },
+      ...(pricing === undefined ? {} : { pricing }),
+    })).toMatchObject({ ok: true });
+    const current = await readLlmProvider(PROVIDER_ID);
+    const consents = await db.consents.toArray();
+    const storage = { ...storageStore };
+    await finishHeldProbe(held);
+    expect(await readLlmProvider(PROVIDER_ID)).toEqual(current);
+    expect((await readActiveLlmProvider())?.providerId).toBe(PROVIDER_ID);
+    expect(await db.consents.toArray()).toEqual(consents);
+    expect(storageStore).toEqual(storage);
+    expect(await readCredential(PROVIDER_ID)).toBe("sk-test-1234");
+    await expectFailure({ type: "LLM_TEST", providerId: PROVIDER_ID }, "budget_exceeded");
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["delete", "replace"] as const)("serializes tier persistence with a $0 queued between the fresh check and save", async (operation) => {
+    const held = await startHeldProbe();
+    const replacement = storedRecord({
+      provider: { ...PRESET_SETTINGS, model: "gpt-4o" },
+      monthlyBudgetUsd: 0,
+      configuredAt: "2026-10-01T00:00:00.000Z",
+    });
+    const put = db.metadata.put.bind(db.metadata);
+    let queued: Promise<unknown> | undefined;
+    vi.spyOn(db.metadata, "put").mockImplementation((row, key) => {
+      if (row.key === `llmProvider:${PROVIDER_ID}` &&
+          typeof row.value === "object" && row.value !== null && "tier" in row.value) {
+        // Queue an independent context's real metadata write exactly at the
+        // check/save boundary. No gate, read, transaction or write is mocked
+        // away: the spy only schedules the competing mutation.
+        queued = Dexie.ignoreTransaction(() =>
+          operation === "delete"
+            ? db.metadata.delete(`llmProvider:${PROVIDER_ID}`)
+            : put({ key: `llmProvider:${PROVIDER_ID}`, value: replacement }),
+        );
+      }
+      return put(row, key);
+    });
+    await finishHeldProbe(held);
+    expect(queued).toBeDefined();
+    await queued;
+    expect(await readLlmProvider(PROVIDER_ID)).toEqual(operation === "delete" ? null : replacement);
+  });
+
   it("sends a synthetic ping, reports model/latency/tier, persists the tier", async () => {
     await seedEnabledProvider();
     const server = makeOpenAiServer();
@@ -576,6 +796,252 @@ describe("LLM_TEST", () => {
 });
 
 describe("LLM_REVOKE", () => {
+  it("settles a held successful response once after settings and credential removal", async () => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    const inFlight = held.client.send(held.request);
+    await held.invoked;
+    const [reservation] = await db.llmReservations.toArray();
+    expect(reservation).toMatchObject({ status: "active", reservedUsd: 0.0004 });
+
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
+    expect(await readActiveLlmProvider()).toBeNull();
+    expect(await readCredential(PROVIDER_ID)).toBeNull();
+    expect(await db.consents.count()).toBe(0);
+    await expect(held.client.send(held.request)).rejects.toMatchObject({ code: "no_provider" });
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+
+    held.response.resolve(completionResponse());
+    await inFlight;
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      providerId: PROVIDER_ID,
+      feature: "llm_explain",
+      model: MODEL,
+      configuredModel: MODEL,
+      inputTokens: 10,
+      outputTokens: 5,
+      estimatedCostUsd: 0.00004,
+    }]);
+    expect((await db.llmReservations.get(reservation!.id))?.status).toBe("settled");
+    await Promise.all([
+      settleLlmUsage(reservation!.id, "llm_explain", { reportedCostUsd: 99 }),
+      settleLlmUsage(reservation!.id, "llm_explain", { reportedCostUsd: 99 }),
+    ]);
+    expect(await db.llmUsage.count()).toBe(1);
+    expect((await db.llmUsage.toArray())[0]?.costUsd).toBeUndefined();
+  });
+
+  it.each([
+    { label: "HTTP error with reported usage", response: () => Response.json({ usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.02 } }, { status: 400 }), error: { status: 400 }, tokens: [3, 2], cost: { costUsd: 0.02 } },
+    { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+    { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+    { label: "aborted transport", response: () => null, error: { code: "timeout" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+  ])("accounts for a late $label without allowing another attempt", async ({ response, error, tokens, cost }) => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    // Attach rejection handling before releasing the held transport.
+    const outcome = held.client.send(held.request).catch((cause: unknown) => cause);
+    await held.invoked;
+    const [reservation] = await db.llmReservations.toArray();
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    const wire = response();
+    if (wire === null) held.response.reject(new DOMException("Synthetic abort", "AbortError"));
+    else held.response.resolve(wire);
+    expect(await outcome).toMatchObject(error);
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      inputTokens: tokens[0],
+      outputTokens: tokens[1],
+      ...cost,
+    }]);
+    await settleLlmUsage(reservation!.id, "llm_explain", { reportedCostUsd: 99 });
+    expect(await db.llmUsage.count()).toBe(1);
+    await expect(held.client.send(held.request)).rejects.toMatchObject({ code: "no_provider" });
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves old active and unknown exposure, terminal rows, unrelated providers, and existing usage", async () => {
+    await seedEnabledProvider();
+    const unknown = reservationRow("unknown", { reservedUsd: null });
+    delete unknown.pricing;
+    const reservations = [
+      reservationRow("active"),
+      unknown,
+      reservationRow("settled", { status: "settled", settledAt: "2026-09-02T00:00:00.000Z" }),
+      reservationRow("released", { status: "released", settledAt: "2026-09-02T00:00:00.000Z" }),
+      reservationRow("other", { providerId: "preset:openrouter" }),
+    ];
+    await db.llmReservations.bulkPut(reservations);
+    await saveLlmProvider(storedRecord({
+      providerId: "preset:openrouter",
+      provider: { kind: "preset", preset: "openrouter" },
+    }));
+    await grantConsentAtOrigin("llm_explain", "https://openrouter.ai");
+    await db.llmUsage.add({
+      providerId: PROVIDER_ID,
+      feature: "llm_explain",
+      model: MODEL,
+      configuredModel: MODEL,
+      inputTokens: 7,
+      outputTokens: 3,
+      costUsd: 0.1,
+      recordedAt: "2026-09-02T00:00:00.000Z",
+    });
+    const usage = await db.llmUsage.toArray();
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    expect(await db.llmReservations.toArray()).toEqual(
+      [...reservations].sort((a, b) => a.id.localeCompare(b.id)),
+    );
+    expect(await db.llmUsage.toArray()).toEqual(usage);
+    expect((await readActiveLlmProvider())?.providerId).toBe("preset:openrouter");
+    expect(await hasConsentAtOrigin("llm_explain", "https://openrouter.ai")).toBe(true);
+    // Unpriced paid exposure must remain unknown, not become a free request.
+    await settleLlmUsage("unknown", "llm_explain", {});
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[1]?.costUsd).toBeUndefined();
+    expect(rows[1]?.estimatedCostUsd).toBeUndefined();
+  });
+
+  it("serializes concurrent settlement with revoke and makes the late client settlement inert", async () => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    const inFlight = held.client.send(held.request);
+    await held.invoked;
+    const [reservation] = await db.llmReservations.toArray();
+    const [revoked] = await Promise.all([
+      call(REVOKE),
+      settleLlmUsage(reservation!.id, "llm_explain", { inputTokens: 10, outputTokens: 5 }),
+      settleLlmUsage(reservation!.id, "llm_explain", { inputTokens: 10, outputTokens: 5 }),
+    ]);
+    expect(revoked).toMatchObject({ ok: true });
+    held.response.resolve(completionResponse());
+    await inFlight;
+    expect(await db.llmUsage.count()).toBe(1);
+    expect((await db.llmReservations.get(reservation!.id))?.status).toBe("settled");
+  });
+
+  it("keeps the original model and pricing snapshot when re-enabled before a late response", async () => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    const inFlight = held.client.send(held.request);
+    await held.invoked;
+    expect(await call(REVOKE)).toMatchObject({ ok: true });
+    expect(await call({
+      type: "LLM_CONFIGURE",
+      settings: { ...PRESET_SETTINGS, model: "gpt-4o", pricing: { inputPerMillion: 100, outputPerMillion: 200 } },
+      key: "sk-synthetic-reenabled",
+      // New request costs 0.02; only the retained 0.0004 exposure blocks it.
+      monthlyBudgetUsd: 0.0203,
+    })).toMatchObject({ ok: true });
+    expect(await call({ type: "LLM_BUDGET_SNAPSHOT" })).toMatchObject({
+      ok: true,
+      snapshot: { reservedUsd: 0.0004, requestCount: 0 },
+    });
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
+    await expect(held.client.send({ ...held.request, model: "gpt-4o" })).rejects.toMatchObject({ code: "budget_exceeded" });
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+    held.response.resolve(completionResponse());
+    await inFlight;
+    expect(await db.llmUsage.toArray()).toMatchObject([{
+      model: MODEL,
+      configuredModel: MODEL,
+      estimatedCostUsd: 0.00004,
+    }]);
+    expect((await readLlmProvider(PROVIDER_ID))?.provider).toMatchObject({ model: "gpt-4o" });
+  });
+
+  it("does not change permission, settings, keys or reservations if consent removal fails", async () => {
+    await seedEnabledProvider();
+    await db.llmReservations.put(reservationRow("active"));
+    const metadata = await db.metadata.toArray();
+    const storage = { ...storageStore };
+    vi.spyOn(db.consents, "delete").mockRejectedValue(new Error("Synthetic consent storage failure"));
+    await expectFailure(REVOKE, "revoke_failed");
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(await db.metadata.toArray()).toEqual(metadata);
+    expect(storageStore).toEqual(storage);
+    expect(await hasConsentAtOrigin("llm_test", ORIGIN)).toBe(true);
+    expect(await db.llmReservations.toArray()).toEqual([reservationRow("active")]);
+  });
+
+  it("blocks new egress as soon as consent is removed, before later revoke steps finish", async () => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    const inFlight = held.client.send(held.request);
+    await held.invoked;
+    const removalStarted = deferred<void>();
+    const permissionRemoved = deferred<boolean>();
+    removeSpy.mockImplementation(async () => {
+      removalStarted.resolve();
+      return permissionRemoved.promise;
+    });
+    const revoked = call(REVOKE);
+    await removalStarted.promise;
+    expect(await hasConsentAtOrigin("llm_explain", ORIGIN)).toBe(false);
+    expect(await readLlmProvider(PROVIDER_ID)).not.toBeNull();
+    expect(await readCredential(PROVIDER_ID)).not.toBeNull();
+    await expect(held.client.send(held.request)).rejects.toMatchObject({ code: "no_consent" });
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+    permissionRemoved.resolve(true);
+    expect(await revoked).toMatchObject({ ok: true });
+    held.response.resolve(completionResponse());
+    await inFlight;
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it.each(["permission", "key"] as const)("fails closed on $0 removal failure while retaining in-flight accounting", async (failure) => {
+    await seedExplainProvider();
+    const held = heldCompletion();
+    const inFlight = held.client.send(held.request);
+    await held.invoked;
+    if (failure === "permission") removeSpy.mockResolvedValue(false);
+    else storageRemove.mockRejectedValue(new Error("Synthetic key storage failure"));
+    await expectFailure(REVOKE, "revoke_failed");
+    expect(await hasConsentAtOrigin("llm_explain", ORIGIN)).toBe(false);
+    expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
+    if (failure === "key") expect(await readCredential(PROVIDER_ID)).not.toBeNull();
+    await expect(held.client.send(held.request)).rejects.toMatchObject({ code: "no_provider" });
+    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+    held.response.resolve(completionResponse());
+    await inFlight;
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it("allows explicit delete-all to wipe the accounting ordinary revoke preserves", async () => {
+    await seedEnabledProvider();
+    await db.llmReservations.put(reservationRow("active"));
+    await db.llmUsage.add({
+      providerId: PROVIDER_ID,
+      feature: "llm_explain",
+      model: MODEL,
+      configuredModel: MODEL,
+      inputTokens: 10,
+      outputTokens: 5,
+      costUsd: 0.01,
+      recordedAt: "2026-09-02T00:00:00.000Z",
+    });
+    expect(await call({ ...REVOKE, deleteKey: false })).toMatchObject({ ok: true });
+    expect(await db.llmReservations.count()).toBe(1);
+    expect(await db.llmUsage.count()).toBe(1);
+    expect(await readCredential(PROVIDER_ID)).not.toBeNull();
+    const held = heldCompletion();
+    vi.stubGlobal("fetch", held.fetchImpl);
+    const result = await deleteAllExtensionData({ releaseGraceMs: 0, databaseTimeoutMs: 1000 });
+    expect(result.databaseDeleted).toBe(true);
+    expect(db.isOpen()).toBe(false);
+    expect(storageStore).toEqual({});
+    await db.open();
+    expect(await db.llmReservations.count()).toBe(0);
+    expect(await db.llmUsage.count()).toBe(0);
+    expect(await db.metadata.count()).toBe(0);
+    expect(await db.consents.count()).toBe(0);
+    await settleLlmUsage("active", "llm_explain", { reportedCostUsd: 99 });
+    expect(await db.llmUsage.count()).toBe(0);
+    expect(held.fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("removes consent first, then permission, record, and key on request", async () => {
     await seedEnabledProvider();
     await grantConsentAtOrigin("llm_explain", ORIGIN);

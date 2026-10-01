@@ -117,8 +117,8 @@ export interface FakeOpenAiReply {
   content?: string;
   /** Model id the fake claims answered; default "gpt-4o-mini-2024-07-18". */
   model?: string;
-  /** Reported token usage. */
-  usage?: { prompt_tokens: number; completion_tokens: number };
+  /** Reported token usage; null omits the envelope, undefined keeps defaults. */
+  usage?: { prompt_tokens: number; completion_tokens: number } | null;
   /** HTTP status — 4xx/5xx exercises the error path. */
   status?: number;
   /** Explicit OpenAI-compatible HTTP error, not assistant message content. */
@@ -133,18 +133,20 @@ export interface FakeOpenAiReply {
 /**
  * Route every request to the OpenAI origin and answer with a schema-valid
  * chat.completions response. `reply` may be a constant or a per-request
- * callback (receives the parsed request body + 1-based call index).
+ * callback (receives the parsed request body + 1-based call index). An async
+ * callback may hold the response AFTER the actual worker request is captured.
  */
 export async function routeFakeOpenAi(
   context: BrowserContext,
-  reply: FakeOpenAiReply | ((body: unknown, call: number) => FakeOpenAiReply) = {},
+  reply: FakeOpenAiReply | ((body: unknown, call: number) => FakeOpenAiReply | Promise<FakeOpenAiReply>) = {},
   origin: string = OPENAI_ORIGIN,
 ): Promise<LlmRouteLog> {
   const requests: CapturedProviderRequest[] = [];
   await context.route(`${origin}/**`, async (route) => {
     requests.push(captureRequest(route.request()));
-    const scripted =
-      typeof reply === "function" ? reply(route.request().postDataJSON(), requests.length) : reply;
+    const scripted = await (
+      typeof reply === "function" ? reply(route.request().postDataJSON(), requests.length) : reply
+    );
     const body = {
       id: `chatcmpl-e2e-${requests.length}`,
       object: "chat.completion",
@@ -160,7 +162,9 @@ export async function routeFakeOpenAi(
           finish_reason: "stop",
         },
       ],
-      usage: scripted.usage ?? { prompt_tokens: 40, completion_tokens: 12 },
+      ...(scripted.usage === null ? {} : {
+        usage: scripted.usage ?? { prompt_tokens: 40, completion_tokens: 12 },
+      }),
     };
     await route.fulfill({
       status: scripted.status ?? 200,
@@ -199,6 +203,47 @@ export async function sendLlmMessage(
   message: unknown,
 ): Promise<unknown> {
   return page.evaluate((payload) => chrome.runtime.sendMessage(payload), message);
+}
+
+/**
+ * Run the real settlement implementation against the browser's real database
+ * from a second extension context. Test-only in-memory bundling avoids adding
+ * a production debug message/export to the worker or changing its build.
+ */
+export async function settleLlmUsageAgain(page: Page, reservationId: string): Promise<void> {
+  const { build } = await import("vite");
+  const bundle = await build({
+    configFile: false,
+    logLevel: "error",
+    plugins: [{
+      name: "accounting-probe",
+      resolveId: (id) => id === "accounting-probe" || id === path.resolve("accounting-probe")
+        ? "\0accounting-probe" : undefined,
+      load: (id) => id === "\0accounting-probe"
+        ? `export { settleLlmUsage } from ${JSON.stringify(path.resolve("src/net/llm-send.ts"))};
+           export { db } from ${JSON.stringify(path.resolve("src/db/database.ts"))};`
+        : undefined,
+    }],
+    build: {
+      write: false,
+      lib: { entry: "accounting-probe", name: "__accountingProbe", formats: ["iife"] },
+    },
+  });
+  const output = (Array.isArray(bundle) ? bundle : [bundle])
+    .flatMap((result) => "output" in result ? result.output : []);
+  const code = output.find((item) => item.type === "chunk")?.code;
+  if (code === undefined) throw new Error("Accounting probe bundle was not generated.");
+  await page.evaluate(`${code}
+    (async () => {
+      try {
+        await Promise.all([1, 2].map(() => __accountingProbe.settleLlmUsage(
+          ${JSON.stringify(reservationId)}, "llm_test", { reportedCostUsd: 99 }
+        )));
+      } finally {
+        __accountingProbe.db.close();
+        delete globalThis.__accountingProbe;
+      }
+    })()`);
 }
 
 /**
