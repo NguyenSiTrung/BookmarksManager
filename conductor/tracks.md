@@ -40,7 +40,7 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Audit Hardening
+## [~] Track: Audit Hardening
 
 *Link: [./conductor/tracks/audit_hardening_20261001/](./conductor/tracks/audit_hardening_20261001/)*
 

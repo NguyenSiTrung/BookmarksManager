@@ -72,6 +72,7 @@ export interface ImportMeta {
   tags?: readonly string[];
   category?: Category;
   notes?: string;
+  summary?: string;
 }
 
 /** A bookmark row: `kind` discriminates it from {@link ImportFolder}. */
@@ -236,6 +237,7 @@ function toImportMeta(meta: BookmarkMeta | undefined): ImportMeta | undefined {
   if (meta.tags.length > 0) out.tags = meta.tags;
   if (meta.category !== undefined) out.category = meta.category;
   if (meta.notes !== undefined) out.notes = meta.notes;
+  if (meta.summary !== undefined) out.summary = meta.summary;
   return Object.keys(out).length === 0 ? undefined : out;
 }
 

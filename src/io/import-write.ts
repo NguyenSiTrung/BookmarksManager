@@ -127,7 +127,8 @@ function hasMeta(meta: ImportMeta): boolean {
   return (
     (meta.tags !== undefined && meta.tags.length > 0) ||
     meta.category !== undefined ||
-    (meta.notes !== undefined && meta.notes !== "")
+    (meta.notes !== undefined && meta.notes !== "") ||
+    meta.summary !== undefined
   );
 }
 
@@ -148,6 +149,7 @@ async function writeMeta(
       ...(meta.tags === undefined ? {} : { tags: meta.tags }),
       ...(meta.category === undefined ? {} : { category: meta.category }),
       ...(meta.notes === undefined ? {} : { notes: meta.notes }),
+      ...(meta.summary === undefined ? {} : { summary: meta.summary }),
     });
   } catch (cause) {
     summary.failures.push({

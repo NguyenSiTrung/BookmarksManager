@@ -111,7 +111,7 @@ implementation work.
 ## Phase 1: Data safety
 <!-- execution: parallel -->
 
-- [ ] Task 1: Non-destructive restructure compensation and resumable undo
+- [~] Task 1: Non-destructive restructure compensation and resumable undo
   <!-- files: src/restructure/apply.ts, src/undo/restore.ts, tests/unit/restructure-apply.test.ts, tests/unit/undo.test.ts -->
   - Covers **B01**. Preserve `applyRestructurePlan(jobId, acceptedBookmarkIds?)`
     and `UndoResult`; add no unsafe bypass of mutation guards.
@@ -178,11 +178,11 @@ implementation work.
   - [ ] Coordinator gate/commit: `fix(undo): retain summaries during restore`,
     notes/learnings, close this task.
 
-- [ ] Task 3: Preserve summaries through the JSON import pipeline
+- [x] Task 3: Preserve summaries through the JSON import pipeline
   <!-- files: src/io/import-plan.ts, src/io/import-write.ts, tests/unit/io-import.test.ts -->
   - Covers **B03**. Extend `ImportMeta` with optional `summary?: string`;
     `fromEnvelope`, `planImport`, and `writeImport` retain existing interfaces.
-  - [ ] Red: import a v1 JSON bookmark with only a summary, then a full
+  - [x] Red: import a v1 JSON bookmark with only a summary, then a full
     tags/category/notes/summary row. Assert the new ID's stored summary and
     successful import counts; old exports, CSV, and HTML remain compatible.
     ```ts
@@ -199,16 +199,16 @@ implementation work.
     expect((await db.bookmarkMeta.toArray())
       .some((row) => row.summary === "Saved summary.")).toBe(true);
     ```
-  - [ ] Verify red: `npx vitest run tests/unit/io-import.test.ts`.
-  - [ ] Green: carry summary in `toImportMeta`, include it in `hasMeta`, and
+  - [x] Verify red: `npx vitest run tests/unit/io-import.test.ts`.
+  - [x] Green: carry summary in `toImportMeta`, include it in `hasMeta`, and
     conditionally spread it into `writeMeta`. Keep fields absent for formats
     that cannot represent summaries; reuse export/parser validation.
-  - [ ] Verify green: rerun import tests, including invalid summary fixtures,
+  - [x] Verify green: rerun import tests, including invalid summary fixtures,
     duplicate skipping, remapping, and a genuine export/parse/import round trip.
-  - [ ] Coordinator gate/commit: `fix(io): restore summaries from JSON backups`,
+  - [x] Coordinator gate/commit: `fix(io): restore summaries from JSON backups`,
     notes/learnings, close this task.
 
-- [ ] Task 4: Race-safe startup metadata reconciliation
+- [~] Task 4: Race-safe startup metadata reconciliation
   <!-- files: src/sync/reconcile.ts, tests/unit/sync-reconcile.test.ts -->
   - Covers **B04**. Preserve `reconcileMetadata(): Promise<number>`.
   - [ ] Red: defer `getTree`, create a bookmark and summary metadata after

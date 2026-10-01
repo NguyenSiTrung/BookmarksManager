@@ -11,10 +11,10 @@ import {
   vi,
 } from "vitest";
 import { db } from "../../src/db/database";
-import { createTag, getMeta, listTags } from "../../src/db/meta";
+import { createTag, getMeta, listMeta, listTags, putMeta } from "../../src/db/meta";
 import { normalizeUrl } from "../../src/duplicates/normalize";
 import { exportCsv, parseCsv } from "../../src/io/csv";
-import { parseExport } from "../../src/io/export-json";
+import { buildExport, parseExport, serializeExport } from "../../src/io/export-json";
 import {
   collectNormalizedUrls,
   fromCsvRows,
@@ -616,6 +616,82 @@ describe("writeImport — destination and structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("writeImport — JSON metadata restore", () => {
+  it.each([
+    { tags: [], summary: "Verified summary only." },
+    {
+      tags: ["reading"],
+      category: "paper" as const,
+      notes: "Local notes.",
+      summary: "Verified full summary.",
+    },
+  ])("round-trips summary metadata through a real JSON backup: %j", async (fields) => {
+    await putMeta("existing", fields);
+    const exported = buildExport({
+      tree: await fake.getTree(),
+      meta: await listMeta(),
+      tags: await listTags(),
+    });
+    expect(exported.ok).toBe(true);
+    if (!exported.ok) throw new Error("export failed");
+    const serialized = serializeExport(exported.data);
+    if (!serialized.ok) throw new Error("serialization failed");
+    const parsed = parseExport(serialized.data);
+    if (!parsed.ok) throw new Error("backup failed to parse");
+    const plan = planImport({
+      items: fromEnvelope(parsed.data),
+      existingUrls: new Set(),
+    });
+    const result = await writeImport(plan, { now: IMPORT_NOW });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("import failed");
+    expect(result.summary.bookmarksCreated).toBe(1);
+    expect(result.summary.failures).toEqual([]);
+    const created = findByTitle(await subtree(result.summary.importRootId), "Existing");
+    expect(created).toBeDefined();
+    expect(created?.id).not.toBe("existing");
+    expect(await getMeta(created!.id)).toMatchObject(fields);
+    expect(await getMeta("existing")).toMatchObject(fields);
+  });
+
+  it("keeps summary duplicates out of the planned import", async () => {
+    const parsed = parseExport({
+      version: 1,
+      exportedAt: "2026-09-30T00:00:00.000Z",
+      tree: [{ id: "old", title: "Duplicate", url: EXISTING_URL }],
+      tags: [],
+      meta: [{
+        id: "old", tags: [], summary: "Duplicate summary.",
+        updatedAt: "2026-09-30T00:00:00.000Z",
+      }],
+    });
+    if (!parsed.ok) throw new Error("fixture failed to parse");
+    const plan = planImport({
+      items: fromEnvelope(parsed.data),
+      existingUrls: collectNormalizedUrls(await fake.getTree()),
+    });
+    const result = await writeImport(plan);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("import failed");
+    expect(result.summary).toMatchObject({
+      bookmarksCreated: 0, duplicatesSkipped: 1, failures: [],
+    });
+    expect(await db.bookmarkMeta.count()).toBe(0);
+  });
+
+  it.each(["", "s".repeat(2_001), 42])("rejects invalid JSON summary metadata", (summary) => {
+    const parsed = parseExport({
+      version: 1,
+      exportedAt: "2026-09-30T00:00:00.000Z",
+      tree: [{ id: "old", title: "Invalid", url: "https://ref.dev/" }],
+      tags: [],
+      meta: [{
+        id: "old", tags: [], summary,
+        updatedAt: "2026-09-30T00:00:00.000Z",
+      }],
+    });
+    expect(parsed).toMatchObject({ ok: false, code: "invalid_envelope" });
+  });
+
   it("restores tags, categories and notes on bookmarks AND folders", async () => {
     const parsed = parseExport(envelopeJson());
     expect(parsed.ok).toBe(true);

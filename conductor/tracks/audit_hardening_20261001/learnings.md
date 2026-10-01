@@ -101,8 +101,33 @@ Selected applicable patterns from `conductor/patterns.md`:
 
 ## Implementation Learnings
 
-No implementation tasks have started. Append verified discoveries and
-fresh validation evidence as tasks complete.
+### Session setup
+
+- User explicitly selected implementation directly on `main`.
+- Loaded 93 project patterns. The approved track already supplies the design
+  and plan; no new design or manual verification gate was added.
+- Baseline `npm run test -- --run`: 151 files, 2,532 passing and 3 timing
+  failures (two sidepanel actions and search index construction). Both files
+  passed in isolation with `--maxWorkers=1` (20 tests). Subsequent full
+  one-worker verification passed; no assertions or time budgets were weakened.
+- `npx playwright install chromium` succeeded. Fresh-profile, wire-fake
+  browser tests now execute application assertions. The manifest-copy
+  workaround still does not test native optional permission prompts.
+
+### Phase 1 Task 3: JSON summary round trips
+
+- Added `summary` to `ImportMeta`, the JSON adapter, writer admission, and
+  `putMeta` payload. Other formats still omit fields they cannot express.
+- Red: `npx vitest run tests/unit/io-import.test.ts`, 2 expected failures,
+  34 passing. Summary-only metadata disappeared; full metadata lost summary.
+- Green: the same command, 36 passing. Real export → serialize → parse →
+  plan → write preserves summary-only/full rows under fresh native IDs.
+  Invalid summaries and skipped duplicates remain rejected/skipped.
+- Applicable gate: lint, typecheck, 151 files / 2,563 tests
+  (`npm run test -- --run --maxWorkers=1`), build, manifest, bundle and store
+  checks passed. Isolated core-manager/LLM browser run: 16 passed, no skips.
+- Pattern: fields in the export schema must also cross the normalized
+  import adapter, metadata-presence predicate, and replacement writer.
 
 ## Planning Validation
 

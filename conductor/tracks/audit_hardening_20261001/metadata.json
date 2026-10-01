@@ -1,7 +1,7 @@
 {
   "track_id": "audit_hardening_20261001",
   "type": "bug",
-  "status": "new",
+  "status": "in_progress",
   "priority": "high",
   "depends_on": [],
   "estimated_hours": null,
