@@ -538,8 +538,8 @@ describe("intent dispatch", () => {
   });
 });
 
-describe("job resume on worker startup", () => {
-  it("resumes running and pending jobs, but NOT paused or terminal ones", async () => {
+describe("job recovery on cold worker startup", () => {
+  it("pauses running and pending jobs without driving them; preserves paused and terminal rows", async () => {
     const running = await enqueueJob({
       kind: "analyze_selection",
       bookmarkIds: ["bm-1"],
@@ -547,7 +547,7 @@ describe("job resume on worker startup", () => {
     });
     await setJobStatus(running.id, "running", {}, () => NOW);
     // A job evicted between `enqueueJob` and the first `setJobStatus("running")`
-    // is still `pending` — an interrupted job, so it must resume.
+    // is still `pending` — it must also require an explicit Resume.
     const pending = await enqueueJob({
       kind: "analyze_selection",
       bookmarkIds: ["bm-2"],
@@ -570,26 +570,14 @@ describe("job resume on worker startup", () => {
     await setJobStatus(completed.id, "running", {}, () => NOW);
     await setJobStatus(completed.id, "completed", {}, () => NOW);
 
-    const resumed: string[] = [];
-    await resumeJobs({
-      async resolveWorkSet(job) {
-        return (job.bookmarkIds ?? []).map((id) => ({
-          id,
-          title: `t-${id}`,
-          url: `https://example.com/${id}`,
-        }));
-      },
-      async runJob(job) {
-        resumed.push(job.id);
-      },
-    });
-
-    expect(resumed.sort()).toEqual([running.id, pending.id].sort());
-    expect(resumed).not.toContain(paused.id);
-    expect(resumed).not.toContain(completed.id);
+    await resumeJobs();
+    expect((await db.jobs.get(running.id))?.status).toBe("paused");
+    expect((await db.jobs.get(pending.id))?.status).toBe("paused");
+    expect((await db.jobs.get(paused.id))?.status).toBe("paused");
+    expect((await db.jobs.get(completed.id))?.status).toBe("completed");
   });
 
-  it("never lets one job's failure stop the others or reject", async () => {
+  it("pauses interrupted jobs without resolving native work sets", async () => {
     const first = await enqueueJob({
       kind: "analyze_selection",
       bookmarkIds: ["bm-1"],
@@ -603,36 +591,19 @@ describe("job resume on worker startup", () => {
     });
     await setJobStatus(second.id, "running", {}, () => NOW);
 
-    const seen: string[] = [];
-    await expect(
-      resumeJobs({
-        async resolveWorkSet() {
-          throw new Error("cannot resolve");
-        },
-        async runJob(job) {
-          seen.push(job.id);
-        },
-      }),
-    ).resolves.toBeUndefined();
-    expect(seen).toEqual([]);
+    await expect(resumeJobs()).resolves.toBeUndefined();
+    expect((await db.jobs.get(first.id))?.status).toBe("paused");
+    expect((await db.jobs.get(second.id))?.status).toBe("paused");
   });
 
-  it("skips a job whose work set resolves empty", async () => {
+  it("requires explicit Resume even when a saved work set is now empty", async () => {
     const only = await enqueueJob({
       kind: "analyze_selection",
       bookmarkIds: ["bm-1"],
       now: () => NOW,
     });
     await setJobStatus(only.id, "running", {}, () => NOW);
-    const seen: string[] = [];
-    await resumeJobs({
-      async resolveWorkSet() {
-        return [];
-      },
-      async runJob(job) {
-        seen.push(job.id);
-      },
-    });
-    expect(seen).toEqual([]);
+    await resumeJobs();
+    expect((await db.jobs.get(only.id))?.status).toBe("paused");
   });
 });

@@ -148,15 +148,16 @@ export const DECISIONS_PURPOSES = [
  * user-started; nothing runs on install, on a timer, or in the background.
  */
 export const DECISIONS_TRIGGERS = [
-  "saving a bookmark",
+  "focusing Tags or clicking Suggest in the popup",
   "clicking Analyze",
   "starting a library scan",
+  "clicking Resume",
   "running an Ask search",
 ] as const;
 
 /** The user-started-only guarantee, stated in full for the disclosure. */
 export const DECISIONS_TRIGGER_NOTE =
-  "only when you start them — never on install, on a timer, or in the background";
+  "only when you start them — never on install, on a timer, or in the background; interrupted jobs pause on cold startup until you click Resume";
 
 /** What the `jev_decisions` request is made of — disclosed before consent. */
 export const DECISIONS_DESCRIPTION =
@@ -265,7 +266,7 @@ export const LLM_SCOPE_DISCLOSURES = {
       "Jev answer",
     ],
     trigger:
-      "only inside a Save, Analyze, or library scan you started, when the Jev answer fell in the low-confidence band and your monthly budget allows it",
+      "only after focusing Tags or clicking Suggest in the popup, clicking Analyze, starting a library scan, or clicking Resume, when the Jev answer fell in the low-confidence band and your monthly budget allows it",
     credentialUse: LLM_CREDENTIAL_USE,
   },
   [LLM_RESTRUCTURE_SCOPE]: {

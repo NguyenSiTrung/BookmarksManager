@@ -224,9 +224,11 @@ The bookmark-data flow is shipped behind a separate, per-provider
   (`https://api.typesafe.ai`, `https://openrouter.ai`, or the configured
   custom origin), the purpose
   (categorize, tag, folder pre-select, near-duplicate check, misfiled scan,
-  search re-rank), the triggers (saving a bookmark, clicking Analyze,
-  starting a library scan, running an Ask search — user-started only, never
-  on install, on a timer, or in the background), and links the provider's
+  search re-rank), the triggers (focusing Tags or clicking Suggest in the
+  popup, clicking Analyze, starting a library scan, clicking Resume, running
+  an Ask search — user-started only, never on install, on a timer, or in the
+  background; interrupted jobs pause on cold startup until you click Resume),
+  and links the provider's
   privacy policy and this extension's privacy policy.
 - The agree checkbox starts unchecked and Enable is a separate action. The
   consent is versioned (`consentVersion`, currently 4); older records stay

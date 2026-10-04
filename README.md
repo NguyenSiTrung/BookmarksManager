@@ -40,6 +40,9 @@ the background. Your native Chrome bookmarks stay the source of truth.
   notes never leave the device. A confidence policy decides what may
   auto-apply (off by default); everything else lands in a review queue with
   approve/reject/undo and an audit log.
+- Popup suggestions run only after Tags focus or Suggest. Cold startup pauses
+  interrupted scans and restructure jobs without sending anything; click
+  Resume to continue from the last committed batch.
 
 **Optional LLM layer** (OpenAI-compatible preset or custom endpoint)
 

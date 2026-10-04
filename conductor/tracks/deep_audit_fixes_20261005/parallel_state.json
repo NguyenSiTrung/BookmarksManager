@@ -27,36 +27,35 @@
       "targeted_tests": 118
     }
   ],
+  "active_workers": [
+    {
+      "task_index": 2,
+      "beads_task": "BookmarksManager-3op.1.3",
+      "worker_id": "6d776b66-6a20-4f42-aac1-06489c9bcd52",
+      "status": "completed",
+      "brief": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task3-brief.md",
+      "report": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task3-report.md"
+    },
+    {
+      "task_index": 5,
+      "beads_task": "BookmarksManager-3op.1.6",
+      "worker_id": "coordinator",
+      "status": "completed",
+      "brief": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task6-brief.md",
+      "report": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task6-report.md"
+    }
+  ],
   "file_locks": {
-    "src/net/send.ts": "task2",
-    "src/net/llm-send.ts": "task2",
-    "src/llm/client.ts": "task2",
-    "src/llm/prompt-contracts.ts": "task2",
-    "src/llm/explain.ts": "task4",
-    "src/llm/escalate.ts": "task2",
-    "src/llm/summarize.ts": "task2",
-    "src/llm/structured.ts": "task2",
-    "src/restructure/propose.ts": "task4",
-    "src/messages/llm-provider.ts": "task2",
-    "tests/unit/blocklist-egress.test.ts": "task2",
-    "src/consent/records.ts": "task4",
-    "src/consent/disclosure.ts": "task4",
-    "src/schemas/feature-consent.ts": "task4",
-    "src/ui/components/FeatureConsentDialog.tsx": "task4",
-    "src/messages/llm-features.ts": "task4",
-    "src/messages/restructure.ts": "task4",
-    "src/entrypoints/sidepanel/ReviewView.tsx": "task4",
-    "src/entrypoints/sidepanel/RestructureView.tsx": "task4",
-    "tests/e2e/llm.spec.ts": "task4",
-    "src/extract/limits.ts": "task7",
-    "src/extract/page.ts": "task7",
-    "src/extract/readability.ts": "task7",
-    "src/entrypoints/extract.ts": "task7",
-    "src/decisions/summaries.ts": "task7",
-    "tests/unit/page-extraction.test.ts": "task7",
-    "tests/unit/llm-summarize.test.ts": "task7",
-    "tests/unit/summary-messages.test.ts": "task7"
+    "src/net/send.ts": "task3",
+    "src/net/llm-send.ts": "task3",
+    "src/net/sent-log.ts": "task3",
+    "src/db/database.ts": "task3",
+    "src/entrypoints/options/SentLog.tsx": "task3",
+    "src/entrypoints/background.ts": "task6",
+    "src/jobs/queue.ts": "task6",
+    "src/consent/disclosure.ts": "task6",
+    "tests/e2e/decisions.spec.ts": "task6"
   },
-  "completed_workers": 3,
-  "total_workers": 3
+  "completed_workers": 5,
+  "total_workers": 5
 }

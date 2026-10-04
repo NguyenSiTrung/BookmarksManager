@@ -123,9 +123,11 @@ every request goes only to the origin you configured.
   sent under any scope; page text leaves the device only under the
   `llm_summary` / `jev_summary_verify` scopes (a bounded excerpt, after an
   explicit Summarize click) described below. It runs only on a user-started action —
-  saving a bookmark, clicking Analyze, starting a library scan, or running an
-  Ask search — and only when you start them — never on install, on a timer, or
-  in the background. To whom: exactly one provider origin you chose —
+  focusing Tags or clicking Suggest in the popup, clicking Analyze, starting
+  a library scan, clicking Resume, or running an Ask search — and only when
+  you start them — never on install, on a timer, or in the background;
+  interrupted jobs pause on cold startup until you click Resume.
+  To whom: exactly one provider origin you chose —
   `https://api.typesafe.ai` (TypeSafe), `https://openrouter.ai` (OpenRouter),
   or the custom System One-compatible endpoint you configured.
   Links: the provider's privacy policy (`https://typesafe.ai/legal/privacy-policy`
@@ -155,8 +157,9 @@ every request goes only to the origin you configured.
     the disclosure, or "Explain" on a pending decision with current consent —
     opening or dismissing the disclosure does not send.
   - Automatic second opinions (`llm_escalate`): decision state, question,
-    allowed options, Jev probabilities, Jev answer — only inside a Save,
-    Analyze, or library scan you started, within the spending ceiling you
+    allowed options, Jev probabilities, Jev answer — only after focusing Tags
+    or clicking Suggest in the popup, clicking Analyze, starting a library
+    scan, or clicking Resume, within the spending ceiling you
     chose (a monthly cap or an explicit "no cap"); never applies changes.
   - Restructure proposals (`llm_restructure`): folder paths, category
     counts, tag counts, domains, representative titles (capped) — only when
@@ -197,7 +200,7 @@ every request goes only to the origin you configured.
   bookmark title, cleaned URL, domain, and folder path; tag names and
   descriptions; candidate folder paths; candidate bookmarks; the
   near-duplicate partner; and the Ask search query. Nothing is sent until you
-  enable `jev_decisions` and start a save, Analyze, library scan, or Ask
+  enable `jev_decisions` and choose Tags focus or Suggest, Analyze, library scan, Resume, or Ask
   search. The separately consented `llm_summary` and `jev_summary_verify`
   scopes also send the titles and cleaned URLs listed above, only after
   an explicit Summarize action; explanations/second opinions can carry the

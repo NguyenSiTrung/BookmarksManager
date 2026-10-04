@@ -363,3 +363,10 @@ claim that any audit finding has been fixed or reproduced.
   including aligned real Jev sibling draining. Initial snapshot execution had
   no generated `.wxt/tsconfig.json` and collected zero tests; preparing types
   resolved that harness issue without modifying repository working files.
+- **P07 local commit:** `f0406bd`, with Git note; mapped Bead closed.
+- **P06 completion:** Atomic cold-start pause, invalidated interrupted
+  authority, explicit recovery barrier and committed-progress Resume verified.
+  Main Jev and second-opinion disclosures plus duplicate policy summaries now
+  identify Tags focus/Suggest and Resume. Rendered disclosure regression is
+  meaningful RED/GREEN; independent fix review passed. No recipient/field
+  expansion or relaxation, so unchanged version-4 scopes stay version 4.

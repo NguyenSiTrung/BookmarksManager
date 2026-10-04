@@ -46,8 +46,8 @@ import {
  *     no-match bar, Ask-off sends nothing);
  *  5. a paused scan across a full browser restart stays paused until the
  *     user resumes — the resume relaunches the persisted job live;
- *  6. a running scan interrupted mid-batch auto-resumes on restart from the
- *     committed batch only (no batch is ever re-sent).
+ *  6. a running scan interrupted mid-batch pauses on cold restart and sends
+ *     nothing until explicit Resume, then uses committed progress.
  *
  * Legs 5–6 restart the browser by relaunching on the same persistent profile
  * (`restartableProvider`) — a browser restart subsumes an MV3 worker
@@ -458,6 +458,9 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   });
   await sp2.waitForTimeout(1_000);
   expect(route2.requests).toHaveLength(0);
+  const logsBeforeResume = await sentLogRows(sp2);
+  await sp2.waitForTimeout(250);
+  expect(await sentLogRows(sp2)).toEqual(logsBeforeResume);
 
   // Resume drives the persisted job live again — through the real
   // JOB_RESUME → relaunch path. The relaunched runner re-enters the batch
@@ -475,13 +478,18 @@ test("a paused scan stays paused across a restart; Resume relaunches it live", a
   await expect(dialog2.getByText(/3 bookmarks processed \(100%\)/)).toBeVisible();
   await expect(dialog2.getByText(/3 bookmarks processed/)).toBeVisible();
   expect(route2.requests).toHaveLength(3);
-  expect(await sentLogRows(sp2)).toHaveLength(3);
+  // Chromium may fail the first resumed transport at the loopback DNS sink
+  // before Playwright sees it. Preserve that paid attempt, not just successes.
+  const resumedLogs = (await sentLogRows(sp2)).slice(logsBeforeResume.length);
+  expect(resumedLogs.filter((row) => row.outcome === "ok")).toHaveLength(3);
+  expect(resumedLogs.every((row) =>
+    row.outcome === "ok" || row.outcome === "transport")).toBe(true);
 
   await ext2.context.close();
   provider.dispose();
 });
 
-test("a restart auto-resumes a running scan from the committed batch only", async () => {
+test("a cold restart pauses a running scan without egress; explicit Resume uses committed progress", async () => {
   test.setTimeout(180_000);
   const provider = restartableProvider();
   const script: FakeDecisionsScript = {
@@ -516,8 +524,7 @@ test("a restart auto-resumes a running scan from the committed batch only", asyn
   await expect.poll(() => route1.requests.length).toBe(6);
   await ext1.context.close();
 
-  // Context 2: the boot-time resume pass drives the still-running row —
-  // batch 2 ONLY. The committed batch is never re-sent.
+  // Context 2: startup pauses interrupted work without resolving or sending.
   const ext2 = await provider.launch();
   expect(ext2.id).toBe(ext1.id);
   const route2 = await routeFakeDecisions(ext2.context, script, {
@@ -525,30 +532,37 @@ test("a restart auto-resumes a running scan from the committed batch only", asyn
   });
   const sp2 = await openSurface(ext2.context, ext2.id, "sidepanel");
   await waitForSidePanelReady(sp2);
-  // Auto-resume re-enters batch 2 sequentially: one analysis held at the
-  // closed valve...
-  await expect
-    .poll(() => route2.requests.length, { timeout: 30_000 })
-    .toBe(1);
-  // Device artifact: the persisted row relaunched from the committed batch —
-  // batch 1's commit survived the restart, and batch 2 (its first analysis
-  // still held at the valve) has not committed.
+  const dialog2 = await openScanDialog(sp2);
+  await expect(dialog2.getByText("Scan: Paused")).toBeVisible({
+    timeout: 30_000,
+  });
+  await sp2.waitForTimeout(1_000);
+  expect(route2.requests).toHaveLength(0);
+  const logsBeforeResume = await sentLogRows(sp2);
+  await sp2.waitForTimeout(250);
+  expect(await sentLogRows(sp2)).toEqual(logsBeforeResume);
+  // The committed first batch survives; the interrupted batch is not run.
   const scanJob = (await jobRows(sp2)).find(
     (row) => row.kind === "library_scan",
   );
-  expect(scanJob?.status).toBe("running");
+  expect(scanJob?.status).toBe("paused");
   expect(scanJob?.progress.committedBatches).toBe(1);
   expect(scanJob?.progress.processedCount).toBe(5);
+  await dialog2.getByRole("button", { name: "Resume" }).click();
+  await expect.poll(() => route2.requests.length, { timeout: 30_000 }).toBe(1);
   route2.release();
   // ...then the rest flow through to completion.
-  const dialog2 = await openScanDialog(sp2);
   await expect(dialog2.getByText("Scan: Completed")).toBeVisible({
     timeout: 60_000,
   });
   await expect(dialog2.getByText(/8 bookmarks processed/)).toBeVisible();
   expect(route2.requests).toHaveLength(3);
-  // 5 rows from the committed batch + 3 from the resumed batch.
-  expect(await sentLogRows(sp2)).toHaveLength(8);
+  // The restart harness retains transport failures before the routed success.
+  // Exactly three successful rows belong to resumed batch 2, not batch 1.
+  const resumedLogs = (await sentLogRows(sp2)).slice(logsBeforeResume.length);
+  expect(resumedLogs.filter((row) => row.outcome === "ok")).toHaveLength(3);
+  expect(resumedLogs.every((row) =>
+    row.outcome === "ok" || row.outcome === "transport")).toBe(true);
 
   await ext2.context.close();
   provider.dispose();

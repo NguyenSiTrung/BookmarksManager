@@ -30,6 +30,7 @@ import {
   claimJobOwner,
   enqueueJob,
   getJob,
+  pauseInterruptedJobs,
   pauseJob,
   resumeJob,
   setJobStatus,
@@ -72,8 +73,8 @@ import { seedStarterTags } from "../db/starter-tags";
  * `bookmarks-changed` to open pages), rebuilds the right-click "Save page"/
  * "Save link" context-menu items (`src/sync/context-menu.ts`), runs one
  * metadata reconcile for deletions missed while the service worker was
- * suspended, and resumes any `running`/`pending` decision jobs from Dexie so a
- * library scan survives an MV3 worker restart (FR7), then reaps any legacy
+ * suspended, and pauses interrupted `running`/`pending` jobs in Dexie until an
+ * explicit Resume action (FR7), then reaps any legacy
  * synthetic popup backlog beyond the retention bound (improvement I05). It
  * performs no network requests at startup. `chrome` is the lazy-slice house
  * pattern so test stubs work; only `runtime.onMessage` is needed here — the
@@ -358,8 +359,8 @@ const SAVE_SUGGEST_SETTINGS: DecisionSettings = {
 };
 
 /**
- * Injectable seams for the production handlers (the `ResumeJobsDeps`
- * pattern): defaults are the real thing, tests substitute fakes.
+ * Injectable seams for the production handlers: defaults are the real thing,
+ * tests substitute fakes.
  */
 export interface ProductionHandlersDeps {
   /**
@@ -507,52 +508,22 @@ export function productionHandlers(
 }
 
 // ---------------------------------------------------------------------------
-// Job resume on startup
+// Local job recovery on startup
 // ---------------------------------------------------------------------------
 
-/** The pieces of startup resume that touch Jev, injected so it is testable. */
-export interface ResumeJobsDeps {
-  /** Resolve a job's persisted work set against the live tree. */
-  resolveWorkSet(job: Job): Promise<readonly AnalysisBookmark[]>;
-  /** Run (or resume) one job. */
-  runJob(job: Job, bookmarks: readonly AnalysisBookmark[]): Promise<unknown>;
-}
-
 /**
- * Resume every interrupted job from Dexie — a worker restart leaves a job
- * `running` (evicted mid-flight) or `pending` (evicted between `enqueueJob`
- * and the first `setJobStatus("running")`); the runner continues either from
- * the last committed batch. A `paused` job is NOT resumed: it only reaches
- * that status via an explicit user action, and restarting it would silently
- * resume egress/cost the user halted — it stays paused until the user resumes
- * it. Terminal jobs are ignored, a job whose work set resolves empty is
- * skipped, and any per-job failure is swallowed so one broken job can never
- * stop the others (or reject — the caller runs this fire-and-forget).
+ * Recover interrupted jobs without provider/native reads or egress. Both
+ * `running` and the enqueue-to-drive `pending` window require explicit Resume.
+ * Existing paused/terminal jobs stay unchanged; committed batches remain the
+ * resume boundary. Same-session eviction recovery is a separate keepalive
+ * path, not authorization to send on a cold start.
  */
-export async function resumeJobs(deps: ResumeJobsDeps): Promise<void> {
-  let jobs: Job[];
+export async function resumeJobs(): Promise<void> {
   try {
-    jobs = await db.jobs.where("status").anyOf("running", "pending").toArray();
+    await pauseInterruptedJobs();
   } catch {
-    return;
+    // Recovery failure never falls back to driving the jobs.
   }
-  for (const job of jobs) {
-    try {
-      const bookmarks = await deps.resolveWorkSet(job);
-      if (bookmarks.length === 0) continue;
-      await deps.runJob(job, bookmarks);
-    } catch {
-      // Best-effort: the next worker start retries.
-    }
-  }
-}
-
-/** Production resume dependencies: the real work-set resolver + job runner. */
-function productionResumeDeps(): ResumeJobsDeps {
-  return {
-    resolveWorkSet: (job) => resolveWorkSet(job.bookmarkIds ?? []),
-    runJob: (job) => runPersistedJob(job.id),
-  };
 }
 
 export default defineBackground(() => {
@@ -580,12 +551,9 @@ export default defineBackground(() => {
   void seedStarterTags().catch(() => {
     // Best-effort; see seedStarterTags' own total catch.
   });
-  // FR7: resume decision jobs left mid-flight by an MV3 worker restart.
-  // Fire-and-forget, like the reconcile above, so a resume failure never
-  // takes down the message handlers.
-  void resumeJobs(productionResumeDeps()).catch(() => {
-    // Best-effort; the next worker start retries.
-  });
+  // P06: startup is local-only. Explicit messages wait for recovery so an
+  // early Start/Resume cannot be paused by an older startup sweep.
+  const startupRecovery = resumeJobs();
   // Improvement I05: reap a legacy synthetic popup backlog left by earlier
   // builds that had no retention bound. Fire-and-forget like the reconcile
   // above — a sweep failure must never take down the worker, and the next
@@ -603,7 +571,8 @@ export default defineBackground(() => {
   // provider handler answers, unchanged. Both handlers are total (they never
   // throw), so sendResponse runs exactly once.
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    void handleDecisionsMessage(message, sender, decisionsHandlers).then(
+    void startupRecovery.then(() =>
+      handleDecisionsMessage(message, sender, decisionsHandlers)).then(
       (response) => {
         if (response !== undefined) {
           sendResponse(response);

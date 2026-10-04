@@ -1465,11 +1465,13 @@ describe("mounted shell — live provider state", () => {
       ),
     ).toBeTruthy();
 
-    openDetails(
-      within(escalation).getByRole("region", {
-        name: "Second opinion disclosure",
-      }),
-    );
+    const disclosure = within(escalation).getByRole("region", {
+      name: "Second opinion disclosure",
+    });
+    openDetails(disclosure);
+    expect(disclosure.textContent).toContain("focusing Tags or clicking Suggest in the popup");
+    expect(disclosure.textContent).toContain("clicking Resume");
+    expect(disclosure.textContent).not.toMatch(/\bSave\b/);
     fireEvent.click(
       await within(escalation).findByRole("checkbox", {
         name: /allow second opinions to be sent to/i,

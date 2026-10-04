@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, afterEach, afterAll, describe, expect, it, vi } 
 import { productionHandlers, resumeJobs, runPersistedJob } from "../../src/entrypoints/background";
 import { grantConsent, grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
-import { cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
+import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -519,37 +519,34 @@ describe("runPersistedJob guards", () => {
     }
   });
 
-  it("analyze_selection and restructure startup use committed progress, ignore paused/terminal rows and coalesce a manual drive", async () => {
+  it("cold startup pauses analyze_selection and restructure without egress; explicit Resume uses committed progress", async () => {
     for (const kind of ["analyze_selection", "restructure"] as const) {
       await resetEnv();
       const job = await seedWork(kind);
     await setJobStatus(job.id, "running", {
       progress: { totalBatches: 3, committedBatches: 1, processedCount: 1 },
     });
-    const entered = deferred();
-    const held = deferred();
     const requests: string[] = [];
-    vi.spyOn(network, "sendConsented").mockImplementation(async (_scope, _provider, _model, request) => {
-      requests.push(((request as SystemOneRequest).state as { bookmark: { title: string } }).bookmark.title);
-      if (requests.length === 1) { entered.release(); await held.promise; }
-      return providerResponse(request as SystemOneRequest);
+    const wire = installWire(async (request) => {
+      requests.push((request.state as { bookmark: { title: string } }).bookmark.title);
+      return providerResponse(request);
     });
-    const startup = resumeJobs({
-      resolveWorkSet: async () => [{ id: "b1", title: "B1", url: "https://b1.example/" }],
-      runJob: (row) => runPersistedJob(row.id),
-    });
-    await entered.promise;
-    const manual = runPersistedJob(job.id);
-    held.release();
-    await Promise.all([startup, manual]);
+    await resumeJobs();
+    expect((await getJob(job.id))?.status, kind).toBe("paused");
+    expect((await getJob(job.id))?.progress.committedBatches, kind).toBe(1);
+    expect(wire, kind).not.toHaveBeenCalled();
+    expect(await db.sentLog.count(), kind).toBe(0);
+    await runPersistedJob(job.id);
+    expect(wire, kind).not.toHaveBeenCalled();
+
+    await productionHandlers().resumeJob(job.id);
+    await runPersistedJob(job.id);
     expect(requests).toEqual(["B3", "B4"]);
+    expect((await getJob(job.id))?.status).toBe("completed");
     expect((await getJob(job.id))?.progress.committedBatches).toBe(3);
     const paused = await seedWork(kind);
     await pauseJob(paused.id);
-    await resumeJobs({
-      resolveWorkSet: async () => { throw new Error("terminal and paused jobs must not resolve"); },
-      runJob: async () => { throw new Error("must not drive"); },
-    });
+    await resumeJobs();
     expect((await getJob(paused.id))?.status, kind).toBe("paused");
     expect(requests, kind).toEqual(["B3", "B4"]);
     }
@@ -570,6 +567,16 @@ describe("runPersistedJob guards", () => {
       providerResponse(request as SystemOneRequest));
     await runPersistedJob(next.id);
     expect((await getJob(next.id))?.status).toBe("completed");
+  });
+
+  it("cold-start pause invalidates an interrupted owner's queued outbound authority", async () => {
+    const job = await seedWork("analyze_selection");
+    const interruptedOwner = (await claimJobOwner(job.id))!;
+    await resumeJobs();
+    await expect(assertJobAuthority(interruptedOwner)).rejects.toMatchObject({
+      code: "illegal_transition",
+    });
+    expect((await getJob(job.id))?.status).toBe("paused");
   });
 
   it("analyze_selection and restructure release a paused failing batch before two waiting resumes retry its uncommitted offset", async () => {

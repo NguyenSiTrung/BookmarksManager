@@ -431,6 +431,33 @@ export function pauseJob(id: string, now?: () => string): Promise<PersistedJob> 
   return setJobStatus(id, "paused", {}, now);
 }
 
+/**
+ * Cold-start recovery is local only. Preserve committed progress and invalidate
+ * the interrupted owner's queued callbacks; ordinary user Pause may drain its
+ * current batch, but an owner from the previous worker may not dispatch again.
+ */
+export async function pauseInterruptedJobs(now?: () => string): Promise<void> {
+  await db.transaction("rw", db.jobs, async () => {
+    const jobs = await db.jobs.where("status").anyOf("running", "pending").toArray();
+    for (const row of jobs) {
+      let job: PersistedJob;
+      try {
+        job = parseJob(row);
+      } catch {
+        // An invalid legacy row must not prevent valid jobs from being paused.
+        continue;
+      }
+      await db.jobs.put({
+        ...job,
+        status: "paused",
+        ownerGeneration: job.ownerGeneration + 1,
+        controlRevision: job.controlRevision + 1,
+        updatedAt: nowIso(now),
+      });
+    }
+  });
+}
+
 /** Resume a paused job. */
 export async function resumeJob(
   id: string,

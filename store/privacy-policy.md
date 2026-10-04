@@ -139,9 +139,11 @@ until you enable it.
   policy — review it before enabling).
 - **Why:** to categorize, tag, folder pre-select, run a near-duplicate check,
   run a misfiled scan, and search re-rank.
-- **When:** only on a user-started action — saving a bookmark, clicking
-  Analyze, starting a library scan, or running an Ask search — and only when
-  you start them — never on install, on a timer, or in the background.
+- **When:** only on a user-started action — focusing Tags or clicking Suggest
+  in the popup, clicking Analyze, starting a library scan, clicking Resume,
+  or running an Ask search — and only when you start them — never on install,
+  on a timer, or in the background; interrupted jobs pause on cold startup
+  until you click Resume.
 - **Links:** the provider's privacy policy above and this extension's privacy
   policy (https://nguyensitrung.github.io/BookmarksManager/privacy/).
 
@@ -174,8 +176,9 @@ message body are never sent under any scope.
   the disclosure does not send.
 - **Automatic second opinions** (`llm_escalate`) — sends the decision state,
   the question, the allowed options, the Jev probabilities, and the Jev
-  answer for a second opinion on a low-confidence decision. Runs only inside
-  a Save, Analyze, or library scan you started, within the spending ceiling
+  answer for a second opinion on a low-confidence decision. Runs only after
+  focusing Tags or clicking Suggest in the popup, clicking Analyze, starting
+  a library scan, or clicking Resume, within the spending ceiling
   you chose — a monthly cap, or an explicit "no cap"; it never applies
   changes by itself.
 - **Restructure proposals** (`llm_restructure`) — sends folder paths,
@@ -279,7 +282,7 @@ origins listed above. The consent gate, encrypted key storage, the synthetic
 Test connection, and the bookmark-data decision flow are all in place — the
 build makes no remote requests except the synthetic test request on an
 explicit Test connection click, a `jev_decisions` request on a user-started
-save, Analyze, library scan, or Ask search, and the separately consented LLM
+Tags focus or Suggest, Analyze, library scan, Resume, or Ask search, and the separately consented LLM
 features above (including both Summarize hops). None send until you configure
 a provider and start the corresponding action.
 
