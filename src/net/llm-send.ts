@@ -1,4 +1,6 @@
 import { beginSentLog } from "./sent-log";
+import { classifyAbort } from "./abort";
+import { parseRetryAfter, retryDelay } from "../jev/retry";
 import {
   hasConsentAtOrigin,
   type ConsentScope,
@@ -54,6 +56,7 @@ export type LlmGateCode =
   | "confirmation_required"
   | "budget_exceeded"
   | "timeout"
+  | "aborted"
   | "transport";
 
 export class LlmGateError extends Error {
@@ -114,8 +117,8 @@ export interface LlmSendResult {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_RETRIES = 1;
-/** Retry-After is honored but bounded — a hostile header cannot stall the gate. */
-const MAX_RETRY_AFTER_MS = 5_000;
+/** Both jitter and Retry-After retain the gate's existing 5-second ceiling. */
+const MAX_RETRY_WAIT_MS = 5_000;
 
 /**
  * Historical stale threshold, retained for compatibility. Age alone cannot
@@ -296,22 +299,6 @@ async function hasOriginPermission(permissionPattern: string): Promise<boolean> 
   }
 }
 
-function isAbortError(cause: unknown): boolean {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    (cause as { name?: unknown }).name === "AbortError"
-  );
-}
-
-function retryAfterMs(response: Response): number {
-  const raw = response.headers.get("retry-after");
-  if (raw === null) return 0;
-  const seconds = Number.parseInt(raw, 10);
-  if (!Number.isFinite(seconds) || seconds < 0) return 0;
-  return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -385,6 +372,7 @@ async function sendLlmRequest(
   input: LlmSendInput,
   options?: LlmSendOptions,
   session?: SendSession,
+  retryIndex = 0,
 ): Promise<LlmSendResult> {
   const now = options?.now ?? (() => new Date());
 
@@ -571,6 +559,7 @@ async function sendLlmRequest(
     { ...input, request, maxInputTokens: reservation.maxInputTokens, maxOutputTokens },
     { ...options, retries: retries - 1 },
     session,
+    retryIndex + 1,
   );
   try {
     await options?.beforeSend?.();
@@ -584,7 +573,7 @@ async function sendLlmRequest(
     : timeoutSignal;
   if (signal.aborted) {
     await db.llmReservations.put(releaseBudget(reservation, now()));
-    throw new LlmGateError("timeout", "Outbound LLM request was aborted before dispatch.");
+    throw new LlmGateError(classifyAbort(signal)!, "Outbound LLM request was aborted before dispatch.");
   }
   // No awaited bookkeeping between final feature admission and fetch.
   const finishLog = beginSentLog({
@@ -606,23 +595,23 @@ async function sendLlmRequest(
   } catch (cause) {
     // Capture at transport failure, not after awaited settlement: a deadline
     // expiring during bookkeeping must not relabel an earlier socket failure.
-    const abortedAtFailure = signal.aborted;
+    const abortCode = classifyAbort(signal, cause);
     await settleLlmUsage(reservation.id, input.scope, {}, now());
     if (cause instanceof LlmGateError) {
       await finishLog("transport");
       throw cause;
     }
-    if (isAbortError(cause)) {
+    if (abortCode !== undefined) {
       await finishLog("timeout");
-      throw new LlmGateError("timeout", "Outbound LLM request timed out or was aborted.");
+      throw new LlmGateError(abortCode, abortCode === "timeout"
+        ? "Outbound LLM request timed out." : "Outbound LLM request was aborted.");
     }
     if (retries > 0) {
       await finishLog("retried");
+      await sleep(retryDelay(retryIndex, { maxMs: MAX_RETRY_WAIT_MS }));
       return retry();
     }
-    // Audit native deadline signals honestly; Phase 2 owns TimeoutError's
-    // existing public error classification and retry behavior.
-    await finishLog(abortedAtFailure ? "timeout" : "transport");
+    await finishLog("transport");
     throw new LlmGateError("transport", "Outbound LLM request failed in transport.");
   }
 
@@ -643,7 +632,10 @@ async function sendLlmRequest(
     }
     await settleLlmUsage(reservation.id, input.scope, usage, now());
     await finishLog("retried");
-    const wait = retryAfterMs(response);
+    const wait = retryDelay(retryIndex, {
+      retryAfterMs: parseRetryAfter(response.headers.get("retry-after"), now().getTime()),
+      maxMs: MAX_RETRY_WAIT_MS,
+    });
     if (wait > 0) await sleep(wait);
     return retry();
   }

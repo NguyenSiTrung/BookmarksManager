@@ -478,6 +478,15 @@ describe("answer cross-checks", () => {
 });
 
 describe("retries", () => {
+  it("propagates caller abort without retrying", async () => {
+    const transport = makeTransport(() => {
+      throw new NetworkGateError("aborted", "Outbound request was aborted.");
+    });
+    await expect(client(transport, { maxRetries: 2 }).run(requestOf({ q: noulQuestion() })))
+      .rejects.toMatchObject({ code: "aborted" });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a retryable 503 and succeeds", async () => {
     const transport = makeTransport((req) =>
       transport.mock.calls.length === 1
@@ -593,11 +602,13 @@ describe("retries", () => {
 
   it("times out a hanging send and reports timeout", async () => {
     const aborted = vi.fn();
+    let reason: unknown;
     const transport = vi.fn<JevTransport>(
       (_s, _p, _m, _r, options) =>
         new Promise<Response>((_resolve, reject) => {
           options?.signal?.addEventListener("abort", () => {
             aborted();
+            reason = options.signal?.reason;
             reject(new DOMException("aborted", "AbortError"));
           });
         }),
@@ -606,6 +617,7 @@ describe("retries", () => {
       .run(requestOf({ q: noulQuestion() }))
       .catch((caught: unknown) => caught);
     expect((error as JevClientError).code).toBe("timeout");
+    expect(reason).toMatchObject({ name: "TimeoutError" });
     expect(aborted).toHaveBeenCalled();
     expect(transport).toHaveBeenCalledTimes(1);
   });

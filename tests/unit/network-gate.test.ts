@@ -409,7 +409,7 @@ describe("sendConsentedTest gate", () => {
         vi.spyOn(db.sentLog, operation).mockRejectedValue(new Error("private bookkeeping failure"));
         const response = new Response("private response", { status: 401 });
         if (outcome === "http") fetchSpy.mockResolvedValue(response);
-        else fetchSpy.mockRejectedValue(outcome === "timeout" ? new DOMException("private abort", "AbortError") : new TypeError("private socket"));
+        else fetchSpy.mockRejectedValue(outcome === "timeout" ? new DOMException("private deadline", "TimeoutError") : new TypeError("private socket"));
         const result = sendConsentedTest("typesafe", "jev-latest");
         if (outcome === "http") expect(await result).toBe(response);
         else await expect(result).rejects.toMatchObject({ code: outcome });
@@ -434,7 +434,7 @@ describe("sendConsentedTest gate", () => {
       return Promise.reject(controller.signal.reason);
     });
     await expect(sendConsented("jev_test", "typesafe", "jev-latest", makeSyntheticRequest("jev-latest"),
-      { signal: controller.signal })).rejects.toMatchObject({ code: "transport" });
+      { signal: controller.signal })).rejects.toMatchObject({ code: "timeout" });
     expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
   });
 
@@ -550,7 +550,7 @@ describe("scoped sendConsented gate", () => {
     expect(Object.keys(body).sort()).toEqual(["model", "questions", "state"]);
   });
 
-  it("maps a mid-flight fetch abort to timeout and records the dispatched attempt", async () => {
+  it("maps a mid-flight fetch abort to aborted and records the dispatched attempt", async () => {
     await grantTestConsent("typesafe");
     fetchSpy.mockImplementation((_url: string, init?: RequestInit) => {
       return new Promise((_resolve, reject) => {
@@ -575,11 +575,11 @@ describe("scoped sendConsented gate", () => {
     controller.abort();
     const error = await pending.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkGateError);
-    expect((error as NetworkGateError).code).toBe("timeout");
+    expect((error as NetworkGateError).code).toBe("aborted");
     expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
   });
 
-  it("maps an abort raised during the gate's async checks to timeout", async () => {
+  it("maps an abort raised during the gate's async checks to aborted", async () => {
     await grantTestConsent("typesafe");
     const controller = new AbortController();
     const pending = sendConsented(
@@ -592,13 +592,13 @@ describe("scoped sendConsented gate", () => {
     controller.abort();
     const error = await pending.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkGateError);
-    expect((error as NetworkGateError).code).toBe("timeout");
+    expect((error as NetworkGateError).code).toBe("aborted");
     // Aborted before fetch — nothing left the extension.
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(await db.sentLog.count()).toBe(0);
   });
 
-  it("refuses a pre-aborted signal as timeout without calling fetch", async () => {
+  it("refuses a pre-aborted signal as aborted without calling fetch", async () => {
     await grantTestConsent("typesafe");
     const controller = new AbortController();
     controller.abort();
@@ -610,7 +610,7 @@ describe("scoped sendConsented gate", () => {
       { signal: controller.signal },
     ).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkGateError);
-    expect((error as NetworkGateError).code).toBe("timeout");
+    expect((error as NetworkGateError).code).toBe("aborted");
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(await db.sentLog.count()).toBe(0);
   });

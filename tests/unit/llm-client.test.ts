@@ -118,6 +118,29 @@ afterAll(() => {
 });
 
 describe("createLlmClient", () => {
+  it.each([
+    ["AbortError", "aborted"],
+    ["TimeoutError", "timeout"],
+  ])("preserves a gate %s through the client without retrying", async (name, code) => {
+    const controller = new AbortController();
+    let requests = 0;
+    const fetchImpl: typeof fetch = async () => {
+      requests += 1;
+      controller.abort(new DOMException("BODY_SECRET", name));
+      throw new DOMException("PROMPT_SECRET", "AbortError");
+    };
+    const sender = createLlmClient(PROVIDER_ID, {
+      scope: "llm_explain", kind: "manual", maxInputTokens: 100,
+      maxOutputTokens: 50, signal: controller.signal, fetchImpl,
+    });
+    const error: unknown = await sender.send(REQUEST).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code });
+    expectRedacted(error);
+    expect(requests).toBe(1);
+    expect(await db.llmUsage.count()).toBe(1);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
+  });
+
   it("carries feature admission through an internal retry and accounts prior exposure", async () => {
     for (const failure of ["429", "transport"] as const) {
       await db.llmReservations.clear();

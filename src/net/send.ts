@@ -10,6 +10,7 @@ import { LOOPBACK_HOSTS } from "../schemas/llm";
 import { SummaryVerificationState } from "../schemas/summary-verification";
 import { readProviderKey } from "../security/keys";
 import { beginSentLog } from "./sent-log";
+import { classifyAbort } from "./abort";
 
 // Wire schemas elsewhere accept provider extensions. Egress must reject
 // unknown fields, not silently strip them before sending.
@@ -58,6 +59,7 @@ export type NetworkGateErrorCode =
   | "no_permission"
   | "no_key"
   | "timeout"
+  | "aborted"
   | "transport";
 
 /**
@@ -297,14 +299,6 @@ async function hasOriginPermission(permissionPattern: string): Promise<boolean> 
   }
 }
 
-function isAbortError(cause: unknown): boolean {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    (cause as { name?: unknown }).name === "AbortError"
-  );
-}
-
 /**
  * Send a scoped, consented request to a provider destination.
  *
@@ -319,7 +313,8 @@ function isAbortError(cause: unknown): boolean {
  * `Authorization: Bearer <key>` plus `Content-Type: application/json`.
  *
  * `options.signal` is forwarded to `fetch`; an aborted (or pre-aborted) send
- * maps to `timeout`; only a pre-dispatch abort writes no log row. Resolves with the raw `Response`
+ * maps to `aborted`, or `timeout` for a TimeoutError reason; only a
+ * pre-dispatch abort writes no log row. Resolves with the raw `Response`
  * for any HTTP status; throws `NetworkGateError` for every pre-flight
  * refusal and transport failure, and propagates `ProviderKeyError` (already
  * redacted) as-is. A `sentLog` audit row — time, origin, feature, and
@@ -408,7 +403,7 @@ export async function sendConsented(
   const signal = options?.signal;
   if (signal?.aborted === true) {
     throw new NetworkGateError(
-      "timeout",
+      classifyAbort(signal)!,
       `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted before it left.`,
     );
   }
@@ -435,16 +430,15 @@ export async function sendConsented(
       body,
     });
   } catch (cause) {
-    if (isAbortError(cause)) {
+    const abortCode = classifyAbort(signal, cause);
+    if (abortCode !== undefined) {
       await finishLog("timeout");
       throw new NetworkGateError(
-        "timeout",
+        abortCode,
         `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted.`,
       );
     }
-    // Native deadline signals may reject with TimeoutError; audit the signal
-    // without changing the existing public error/retry policy.
-    await finishLog(signal?.aborted ? "timeout" : "transport");
+    await finishLog("transport");
     throw new NetworkGateError(
       "transport",
       `Outbound ${scopeEntry.scope} request for provider "${providerId}" failed in transport.`,

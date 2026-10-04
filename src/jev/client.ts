@@ -374,7 +374,9 @@ export function createJevClient(options: JevClientOptions): JevClient {
       // including injected transports that do not run the real final gate.
       await beforeSend();
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = setTimeout(() => controller.abort(
+        new DOMException("Outbound Jev request timed out.", "TimeoutError"),
+      ), timeoutMs);
       let failure: ClassifiedFailure;
       let admissionRefused = false;
       try {
