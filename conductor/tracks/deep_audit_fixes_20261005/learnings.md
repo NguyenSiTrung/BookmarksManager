@@ -90,3 +90,16 @@ claim that any audit finding has been fixed or reproduced.
   `npm run check:store`, `npm run check:site`, and `git diff --check` passed.
   Existing React `act` warnings remain. E2E was not required for this
   planner-only repair; live/eval and native permission prompts were not run.
+- **Local commit:** `c229c43` (with a task summary in Git notes).
+
+## 2026-10-04 — Task 1 preflight
+
+- The runtime has no `xd://lsp` tool. Local symbol searches identified all
+  `readBlocklist` consumers; maintain its array-returning signature and throw
+  a typed, content-free refusal on unreadable/malformed persisted data.
+- The decisions message layer already relays typed service codes. Summary
+  admission already returns typed `unsendable` on a failed blocklist read.
+  Explain needs an explicit mapping for the new reader refusal in
+  `src/messages/llm-features.ts`; its ownership is added to task 1 before
+  implementation. Task 4 already depends on task 1, so no concurrent writer
+  is introduced. Scope-specific payload validation remains task 2.

@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-05 — initial draft -->
+<!-- Last Revised: 2026-10-04 — task 1 error-mapping ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -82,8 +82,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 1: Privacy and consent enforcement
 <!-- execution: parallel -->
 
-- [ ] Task 1: P01 + P02 — fail-closed blocklist and restructure synopsis
-  <!-- files: src/decisions/blocklist.ts, src/net/send.ts, src/net/llm-send.ts, src/restructure/synopsis.ts, src/messages/restructure.ts -->
+- [~] Task 1: P01 + P02 — fail-closed blocklist and restructure synopsis
+  <!-- files: src/decisions/blocklist.ts, src/net/send.ts, src/net/llm-send.ts, src/restructure/synopsis.ts, src/messages/restructure.ts, src/messages/llm-features.ts -->
   - Tests: throwing `db.metadata.get` and a non-array row make every sender
     (pipeline, explain, summaries, both gates) refuse with a typed error and
     send zero requests; unset still yields `[]`; restructure synopsis omits a
