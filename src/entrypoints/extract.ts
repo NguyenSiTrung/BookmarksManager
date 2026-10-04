@@ -14,5 +14,9 @@ import { runReadabilityExtract } from "../extract/readability";
  * the worker the page yielded nothing usable.
  */
 export default defineUnlistedScript(() => {
-  return runReadabilityExtract(document);
+  // Capture from this document, not the worker's earlier tabs.get snapshot.
+  const url = location.href;
+  const documentIdentity = performance.timeOrigin;
+  const page = runReadabilityExtract(document);
+  return page === null ? null : { ...page, url, documentIdentity };
 });

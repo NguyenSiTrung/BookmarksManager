@@ -230,3 +230,31 @@ claim that any audit finding has been fixed or reproduced.
   extraction/summary/Jev-client run passed 118 tests across four files; scoped
   lint and typecheck passed. Other two review gaps remain with the resumed
   task 4 worker.
+
+## 2026-10-04 — P03/P04/P08 post-review combined validation
+
+- Independent follow-up review confirmed all three findings closed, with no
+  new high-confidence actionable finding in remediation. P04 added 101 real
+  dispatch regressions for held native/preflight reads, active/model/origin/
+  consent changes, affirmative/cost retries and all subsequent-attempt paths,
+  including the omitted 51st source host. Complete source URLs stay local.
+- Fresh complete gate passed: lint, typecheck, **164 files / 2810 unit and
+  component tests**, build, manifest, bundle, store, site, and **43 browser
+  tests / one intentional store screenshot skip**. Existing React `act`
+  warnings remain. No live/eval/paid requests or remote synchronization.
+  Full output: `/tmp/droid-terminal-9pdhsn/1ed17915-67c7-4c20-9f98-891e9ed09b2f.log`.
+- Original performance budgets passed unchanged: search build 447 ms,
+  near-duplicate planning 311.4 ms, analyze-on-save maximum 294.4 ms.
+- Commit ordering: P08's pure shared limits and injected-result fixture land
+  first, then P03's canonical guards/transport changes, then P04's disclosure
+  and per-attempt authority. Partial-index staging preserves separate task
+  boundaries without modifying the combined verified working tree.
+- **P08 completed:** Actual document URL/time origin/Chrome document id are
+  rechecked before egress; in-page output is capped and oversize worker shapes
+  refuse. Summary admission now reaches both real gates after asynchronous
+  preflight. Three late-Jev refusal regressions complement initial navigation
+  and same-URL document-replacement regressions.
+- **P08 staged snapshot:** Exported the exact index into a fresh temporary
+  tree, leaving working files untouched. Its five relevant test files passed
+  **263/263**, including original pre-P03 blocklist controls. This validates
+  the standalone commit, not just the combined working-tree gate.

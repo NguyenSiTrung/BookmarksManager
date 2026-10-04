@@ -2,7 +2,7 @@ import { get } from "../sync/chrome-bookmarks";
 import { minimizeBookmark } from "./minimize";
 import { sameSummaryResource } from "./summary-identity";
 import { readBlocklist } from "./blocklist";
-import { extractActivePage, type PageExtract } from "../extract/page";
+import { extractActivePage, verifyExtractedDocument, type PageExtract } from "../extract/page";
 import { summarizePage } from "../llm/summarize";
 import { verifySummaryRun } from "../jev/tasks/verify-summary";
 import { createJevClient, type JevTransport } from "../jev/client";
@@ -71,6 +71,7 @@ export type SummarizeOutcome =
         | "no_tab"
         | "incognito"
         | "restricted_url"
+        | "mismatch"
         | "injection"
         | "empty";
       readonly message: string;
@@ -129,7 +130,13 @@ class SummaryAdmissionError extends Error {
 }
 
 /** Admit both the captured page and the current saved bookmark before egress. */
-async function admitSummary(bookmarkId: string, extract: PageExtract) {
+async function admitSummary(bookmarkId: string, extract: PageExtract, tabId?: number) {
+  if (tabId !== undefined && extract.documentIdentity !== undefined) {
+    const document = await verifyExtractedDocument(tabId, extract);
+    if (!document.ok) {
+      throw new SummaryAdmissionError("mismatch", "The captured page document changed before sending.");
+    }
+  }
   let node;
   try {
     node = (await get(bookmarkId))[0];
@@ -264,7 +271,7 @@ export async function summarizeExtracted(
   // Bookmark + URL match — the page must BE the saved bookmark.
   let minimized;
   try {
-    minimized = await admitSummary(input.bookmarkId, extract);
+    minimized = await admitSummary(input.bookmarkId, extract, input.tabId);
   } catch (cause) {
     return {
       ok: false,
@@ -275,7 +282,7 @@ export async function summarizeExtracted(
     };
   }
   const beforeSend = async () => {
-    await admitSummary(input.bookmarkId, extract);
+    await admitSummary(input.bookmarkId, extract, input.tabId);
     const current = await authorizeSummary({
       ...input, consentApproval: authorized.consent.approval,
     }, false);
@@ -315,11 +322,10 @@ export async function summarizeExtracted(
       providerId: jev.providerId,
       model: jev.model,
       scope: JEV_SUMMARY_VERIFY_SCOPE,
-      transport: async (...args) => {
-        // Runs after queueing and on retries as well as the first Jev hop.
-        await beforeSend();
-        return transport(...args);
-      },
+      transport,
+      // The client reruns this after slots/retry waits and forwards it to
+      // the real gate after its asynchronous consent/permission/key checks.
+      beforeSend,
     });
     const state = SummaryVerificationState.parse({
       bookmark: minimized,

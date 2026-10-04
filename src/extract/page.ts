@@ -1,4 +1,7 @@
 import { z } from "../schemas/z";
+import { PAGE_EXTRACT_LIMITS } from "./limits";
+
+export { PAGE_EXTRACT_LIMITS } from "./limits";
 
 /**
  * The worker-side half of spec FR9: given a tabId resolved inside an
@@ -14,24 +17,17 @@ import { z } from "../schemas/z";
  *   about:, and the Chrome Web Store all refuse;
  * - the injected file is the extension's own unlisted script (no static
  *   content scripts, no caller-supplied functions);
- * - every returned string is truncated to {@link PAGE_EXTRACT_LIMITS}
- *   before it can reach a prompt — the excerpt never persists.
+ * - strings are capped in-page and rejected above {@link PAGE_EXTRACT_LIMITS}
+ *   at this boundary; the excerpt and document identity never persist.
  */
-
-/** Deterministic caps applied AFTER schema validation, before any use. */
-export const PAGE_EXTRACT_LIMITS = {
-  title: 300,
-  description: 1000,
-  siteName: 200,
-  byline: 200,
-  heading: 200,
-  headings: 50,
-  excerpt: 20_000,
-} as const;
 
 /** Bounded, page-facing representation — the only shape callers receive. */
 export interface PageExtract {
   url: string;
+  /** Captured in the isolated document, not inferred from a stale tab URL. */
+  documentIdentity?: number;
+  /** Chrome's document id when returned by executeScript. Local-only. */
+  documentId?: string;
   title: string;
   excerpt: string;
   description?: string;
@@ -51,6 +47,8 @@ export type PageExtractErrorCode =
   | "restricted_url"
   /** `chrome.scripting.executeScript` threw or rejected. */
   | "injection"
+  /** The tab navigated during extraction; never pair its old URL with new text. */
+  | "mismatch"
   /** The script returned nothing usable (Readability found no article). */
   | "empty";
 
@@ -69,18 +67,25 @@ export type PageExtractResult = PageExtractSuccess | PageExtractFailure;
 
 /** The injected script's return shape — hostile until this schema passes. */
 const ScriptResult = z.strictObject({
-  title: z.string(),
-  excerpt: z.string(),
-  description: z.string().optional(),
-  siteName: z.string().optional(),
-  byline: z.string().optional(),
-  headings: z.array(z.string()),
+  url: z.string().min(1).max(8_192),
+  documentIdentity: z.number().positive(),
+  title: z.string().max(PAGE_EXTRACT_LIMITS.title),
+  excerpt: z.string().max(PAGE_EXTRACT_LIMITS.excerpt),
+  description: z.string().max(PAGE_EXTRACT_LIMITS.description).optional(),
+  siteName: z.string().max(PAGE_EXTRACT_LIMITS.siteName).optional(),
+  byline: z.string().max(PAGE_EXTRACT_LIMITS.byline).optional(),
+  headings: z.array(z.string().max(PAGE_EXTRACT_LIMITS.heading)).max(PAGE_EXTRACT_LIMITS.headings),
+});
+const ScriptIdentity = z.object({
+  url: z.string().min(1).max(8_192),
+  documentIdentity: z.number().positive(),
 });
 
 interface ChromeTabLike {
   id?: number;
   incognito?: boolean;
   url?: string;
+  pendingUrl?: string;
 }
 
 interface ChromeTabsSlice {
@@ -89,12 +94,15 @@ interface ChromeTabsSlice {
 
 interface InjectionResult {
   result?: unknown;
+  documentId?: string;
+  frameId?: number;
 }
 
 interface ChromeScriptingSlice {
   executeScript(injection: {
-    target: { tabId: number };
+    target: { tabId: number; documentIds?: string[] };
     files?: string[];
+    func?: () => { url: string; documentIdentity: number };
     world?: string;
   }): Promise<InjectionResult[]>;
 }
@@ -136,14 +144,57 @@ function truncate(text: string, cap: number): string {
   return text.length <= cap ? text : text.slice(0, cap);
 }
 
+/** Content-free probe of the captured document before each provider attempt.
+ * Chrome's document target also refuses a replaced/closed document. */
+export async function verifyExtractedDocument(
+  tabId: number,
+  extract: PageExtract,
+): Promise<{ ok: true } | PageExtractFailure> {
+  try {
+    const get = chrome.tabs?.get;
+    const execute = chrome.scripting?.executeScript;
+    if (typeof get !== "function" || typeof execute !== "function") {
+      return failure("unavailable", "The captured document could not be rechecked.");
+    }
+    const tab = await get.call(chrome.tabs, tabId);
+    if (
+      tab.incognito === true || tab.url !== extract.url ||
+      (tab.pendingUrl !== undefined && tab.pendingUrl !== "")
+    ) {
+      return failure("mismatch", "The active document changed after extraction.");
+    }
+    const results = await execute.call(chrome.scripting, {
+      target: {
+        tabId,
+        ...(extract.documentId !== undefined ? { documentIds: [extract.documentId] } : {}),
+      },
+      world: "ISOLATED",
+      // Self-contained, bundled code. No page text is read on this probe.
+      func: () => ({ url: location.href, documentIdentity: performance.timeOrigin }),
+    });
+    const identity = ScriptIdentity.safeParse(results[0]?.result);
+    if (
+      !identity.success || identity.data.url !== extract.url ||
+      identity.data.documentIdentity !== extract.documentIdentity ||
+      (results[0]?.frameId !== undefined && results[0].frameId !== 0) ||
+      (extract.documentId !== undefined && results[0]?.documentId !== extract.documentId)
+    ) {
+      return failure("mismatch", "The captured document is no longer active.");
+    }
+    return { ok: true };
+  } catch {
+    return failure("mismatch", "The captured document could not be verified.");
+  }
+}
+
 /**
  * Extract a bounded representation of the page in `tabId`.
  *
  * Order matters: the tab is fetched (absent → `no_tab`), incognito and
  * non-http(s)/restricted URLs refuse BEFORE `chrome.scripting` runs, the
- * injected script's return crosses a Zod boundary, and only then do the
- * deterministic caps apply. `extract` carries the tab's own URL so callers
- * can match it against the bookmark being summarized.
+ * injected script's capped return crosses a Zod boundary, and the tab is
+ * rechecked. `extract` carries the captured document URL and identity so
+ * callers cannot match new page text to an earlier tab URL.
  */
 export async function extractActivePage(
   tabId: number,
@@ -158,11 +209,8 @@ export async function extractActivePage(
       );
     }
     tab = await get.call(chrome.tabs, tabId);
-  } catch (cause) {
-    return failure(
-      "no_tab",
-      cause instanceof Error ? cause.message : String(cause),
-    );
+  } catch {
+    return failure("no_tab", "The requested tab could not be read.");
   }
 
   if (tab.incognito === true) {
@@ -192,11 +240,8 @@ export async function extractActivePage(
       files: ["extract.js"],
       world: "ISOLATED",
     });
-  } catch (cause) {
-    return failure(
-      "injection",
-      cause instanceof Error ? cause.message : String(cause),
-    );
+  } catch {
+    return failure("injection", "The page could not be extracted.");
   }
 
   const parsed = ScriptResult.safeParse(results?.[0]?.result);
@@ -208,8 +253,31 @@ export async function extractActivePage(
   }
 
   const data = parsed.data;
+  let current: ChromeTabLike;
+  try {
+    const get = chrome.tabs?.get;
+    if (typeof get !== "function") {
+      return failure("unavailable", "chrome.tabs is not available in this context.");
+    }
+    current = await get.call(chrome.tabs, tabId);
+  } catch {
+    return failure("no_tab", "The requested tab could not be rechecked.");
+  }
+  if (current.incognito === true) {
+    return failure("incognito", "Page text is never extracted from incognito tabs.");
+  }
+  if (
+    data.url !== tab.url || current.url !== data.url ||
+    (current.pendingUrl !== undefined && current.pendingUrl !== "")
+  ) {
+    return failure("mismatch", "The active document changed during extraction.");
+  }
+  if (results[0]?.frameId !== undefined && results[0].frameId !== 0) {
+    return failure("mismatch", "The result did not come from the active main document.");
+  }
   const extract: PageExtract = {
-    url: tab.url ?? "",
+    url: data.url,
+    documentIdentity: data.documentIdentity,
     title: truncate(data.title.trim(), PAGE_EXTRACT_LIMITS.title),
     excerpt: truncate(data.excerpt, PAGE_EXTRACT_LIMITS.excerpt),
     headings: data.headings
@@ -217,6 +285,10 @@ export async function extractActivePage(
       .map((h) => truncate(h.trim(), PAGE_EXTRACT_LIMITS.heading))
       .filter((h) => h !== ""),
   };
+  const documentId = results[0]?.documentId;
+  if (typeof documentId === "string" && documentId.length > 0 && documentId.length <= 100) {
+    extract.documentId = documentId;
+  }
   if (data.description !== undefined) {
     extract.description = truncate(
       data.description.trim(),

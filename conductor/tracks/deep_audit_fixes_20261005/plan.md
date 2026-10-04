@@ -128,7 +128,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     (`DECISIONS_TRIGGER_NOTE`) matches.
   - Fix: pause-on-cold-start in `resumeJobs`; Resume control already exists
     or is added to the scan panel; update disclosure and README wording.
-- [~] Task 7: P08 — extraction identity and in-page caps
+- [x] Task 7: P08 — extraction identity and in-page caps
   <!-- files: src/extract/limits.ts, src/extract/page.ts, src/extract/readability.ts, src/entrypoints/extract.ts, src/decisions/summaries.ts -->
   <!-- depends: task1 -->
   - Tests: tab navigates between `tabs.get` and injection → rejected; page

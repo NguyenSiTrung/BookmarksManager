@@ -76,6 +76,8 @@ function installChromeStub(bookmarks: unknown) {
   executeScript = vi.fn(async () => [
     {
       result: {
+        url: PAGE_URL,
+        documentIdentity: 1000,
         title: PAGE_EXTRACT.title,
         excerpt: PAGE_EXTRACT.excerpt,
         headings: PAGE_EXTRACT.headings,
@@ -333,12 +335,14 @@ describe("handleSummarizeMessage", () => {
     const consentApproval = await preflightApproval();
     executeScript.mockImplementationOnce(async () => {
       await seedProvider("gpt-4o-mini-2024-07-18");
-      return [{ result: { title: PAGE_EXTRACT.title, excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings } }];
+      return [{ result: { url: PAGE_URL, documentIdentity: 1000, title: PAGE_EXTRACT.title, excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings } }];
     });
     expect(await handleSummarizeMessage({
       type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval,
     }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent" });
-    expect(executeScript).toHaveBeenCalledOnce();
+    expect(executeScript.mock.calls.filter(([injection]) =>
+      (injection as { files?: string[] }).files?.includes("extract.js"),
+    )).toHaveLength(1);
     expect(wireRequests).toHaveLength(0);
     expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
   });
@@ -463,7 +467,9 @@ describe("handleSummarizeMessage", () => {
     }, TRUSTED)).toMatchObject({ ok: true, code: "summary_ok" });
     expect(await hasConsentAtOrigin("llm_summary", LLM_ORIGIN)).toBe(true);
     expect(await hasConsentAtOrigin("jev_summary_verify", JEV_ORIGIN)).toBe(true);
-    expect(executeScript).toHaveBeenCalledOnce();
+    expect(executeScript.mock.calls.filter(([injection]) =>
+      (injection as { files?: string[] }).files?.includes("extract.js"),
+    )).toHaveLength(1);
     expect(wireRequests).toHaveLength(2);
   });
 

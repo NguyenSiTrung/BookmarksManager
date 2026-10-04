@@ -85,6 +85,7 @@ beforeEach(async () => {
     tabs: { get: async () => ({ id: 42, url: EXTRACT.url, incognito: false }) },
     scripting: { executeScript: async () => [{ result: {
       title: EXTRACT.title, excerpt: EXTRACT.excerpt, headings: EXTRACT.headings,
+      url: EXTRACT.url, documentIdentity: 1000,
     } }] },
     storage: { local: {
       get: async (keys?: string | string[] | null) => {

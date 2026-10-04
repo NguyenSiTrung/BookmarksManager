@@ -65,7 +65,12 @@ function installChromeStub(
 ) {
   const store: Record<string, unknown> = {};
   tabsGet = vi.fn(async () => tab);
-  executeScript = vi.fn(async () => [{ result: scriptResult }]);
+  executeScript = vi.fn(async () => [{
+    // Return the actual document URL, including local identity-bearing query.
+    result: typeof scriptResult === "object" && scriptResult !== null
+      ? { ...scriptResult, url: (await (tabsGet as () => Promise<{ url?: string }>)()).url, documentIdentity: 1000 }
+      : scriptResult,
+  }]);
   chromeStub = {
     bookmarks,
     tabs: { get: tabsGet },
@@ -201,6 +206,120 @@ afterAll(() => {
 });
 
 describe("summarizeActiveBookmark", () => {
+  it("refuses same-URL document replacement before the first provider dispatch", async () => {
+    await seedProvider();
+    const jevTransport = jevTransportFor("supported");
+    executeScript.mockImplementation(async (injection: { func?: unknown }) => [{
+      result: {
+        url: PAGE_URL,
+        documentIdentity: injection.func === undefined ? 1000 : 2000,
+        title: PAGE_EXTRACT.title,
+        excerpt: PAGE_EXTRACT.excerpt,
+        headings: PAGE_EXTRACT.headings,
+      },
+    }]);
+    expect(await run(jevTransport)).toMatchObject({ ok: false, code: "mismatch" });
+    expect(server.requests).toHaveLength(0);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it("rechecks the captured document before verification after the LLM response", async () => {
+    await seedProvider();
+    let identity = 1000;
+    executeScript.mockImplementation(async () => [{
+      result: {
+        url: PAGE_URL, documentIdentity: identity,
+        title: PAGE_EXTRACT.title, excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings,
+      },
+    }]);
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      const response = await server.fetch(url, init);
+      identity = 2000;
+      return response;
+    });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({ ok: false, code: "mismatch" });
+    expect(server.requests).toHaveLength(1);
+    expect(jevTransport).not.toHaveBeenCalled();
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
+  it("rejects a page newly blocklisted during injection before either provider hop", async () => {
+    await seedProvider();
+    executeScript.mockImplementationOnce(async () => {
+      await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
+      return [{
+        result: { url: PAGE_URL, documentIdentity: 1000, title: PAGE_EXTRACT.title, excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings },
+      }];
+    });
+    const jevTransport = jevTransportFor("supported");
+    expect(await run(jevTransport)).toMatchObject({ ok: false, stage: "match", code: "unsendable" });
+    expect(server.requests).toHaveLength(0);
+    expect(jevTransport).not.toHaveBeenCalled();
+  });
+
+  it.each(["document", "grant", "provider"] as const)(
+    "rechecks summary %s authority after held Jev gate permission preflight",
+    async (change) => {
+      await seedProvider();
+      await saveProviderKey("typesafe", "jev-synthetic-key-1234");
+      let llmCompleted = false;
+      let enter = () => {};
+      let resume = () => {};
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const held = new Promise<void>((resolve) => { resume = resolve; });
+      chromeStub.permissions = {
+        contains: async (permission: { origins?: string[] }) => {
+          if (llmCompleted && permission.origins?.some((origin) => origin.includes("api.typesafe.ai"))) {
+            enter();
+            await held;
+          }
+          return true;
+        },
+      };
+      const jevWire = jevTransportFor("supported");
+      vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (String(url).startsWith(JEV_ORIGIN)) {
+          const request = SystemOneRequest.parse(JSON.parse(String(init?.body)));
+          return jevWire("jev_summary_verify", "typesafe", request.model, request);
+        }
+        const response = await server.fetch(url, init);
+        llmCompleted = true;
+        return response;
+      });
+      const pending = summarizeActiveBookmark({
+        tabId: TAB_ID, bookmarkId: BOOKMARK_ID, unknownCostConfirmed: true,
+      });
+      await entered;
+      try {
+        if (change === "document") {
+          executeScript.mockResolvedValue([{
+            result: {
+              url: PAGE_URL, documentIdentity: 2000, title: PAGE_EXTRACT.title,
+              excerpt: PAGE_EXTRACT.excerpt, headings: PAGE_EXTRACT.headings,
+            },
+          }]);
+        } else if (change === "grant") {
+          await db.consents.delete(["jev_summary_verify", JEV_ORIGIN]);
+        } else {
+          await db.metadata.put({
+            key: "typesafe",
+            value: { preset: "typesafe", model: "jev-1.13.0", keySuffix: "1234" },
+          });
+        }
+      } finally {
+        resume();
+      }
+      expect(await pending).toMatchObject({
+        ok: false, stage: "verify", code: change === "document" ? "mismatch" : "no_consent",
+      });
+      expect(server.requests).toHaveLength(1);
+      expect(jevWire).not.toHaveBeenCalled();
+      expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+    },
+  );
+
   it("refuses mismatched resources with zero provider requests", async () => {
     for (const [label, saved, active] of [
       ["semantic query", "https://a-site.com/watch?v=A", "https://a-site.com/watch?v=B"],
@@ -297,6 +416,8 @@ describe("summarizeActiveBookmark", () => {
       tabsGet.mockResolvedValue({ id: TAB_ID, url: rawUrl, incognito: false });
       executeScript.mockResolvedValue([{
         result: {
+          url: rawUrl,
+          documentIdentity: 1000,
           title: PAGE_EXTRACT.title,
           excerpt: PAGE_EXTRACT.excerpt,
           headings: PAGE_EXTRACT.headings,
@@ -694,7 +815,9 @@ describe("summarizeActiveBookmark", () => {
     expect(outcome.summary).toBe("A page about a caching layer.");
     const meta = await getMeta(BOOKMARK_ID);
     expect(meta?.summary).toBe("A page about a caching layer.");
-    expect(executeScript).toHaveBeenCalledOnce();
+    expect(executeScript.mock.calls.filter(([injection]) =>
+      (injection as { files?: string[] }).files?.includes("extract.js"),
+    )).toHaveLength(1);
     expect(server.requests).toHaveLength(1);
   });
 
@@ -725,6 +848,8 @@ describe("summarizeActiveBookmark", () => {
     executeScript = vi.fn(async () => [
       {
         result: {
+          url: "https://different-site.com/",
+          documentIdentity: 1000,
           title: "Elsewhere",
           excerpt: "Different page.",
           headings: [],
