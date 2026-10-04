@@ -19,20 +19,19 @@ describe("icons", () => {
     expect(exports.length).toBeGreaterThanOrEqual(12);
   });
 
-  it.each(exports.map(([name]) => name))(
-    "%s renders an aria-hidden, unfocusable svg",
-    (name) => {
+  it("every icon renders an aria-hidden, unfocusable svg", () => {
+    for (const name of exports.map(([n]) => n)) {
       const Icon = icons[name as keyof typeof icons];
       const { container } = render(<Icon />);
       const svg = container.querySelector("svg");
-      expect(svg).not.toBeNull();
-      expect(svg?.getAttribute("aria-hidden")).toBe("true");
-      expect(svg?.getAttribute("focusable")).toBe("false");
-      expect(svg?.getAttribute("viewBox")).toBe("0 0 24 24");
-      expect(svg?.getAttribute("fill")).toBe("none");
-      expect(svg?.getAttribute("stroke-width")).toBe("2");
-    },
-  );
+      expect(svg, name).not.toBeNull();
+      expect(svg?.getAttribute("aria-hidden"), name).toBe("true");
+      expect(svg?.getAttribute("focusable"), name).toBe("false");
+      expect(svg?.getAttribute("viewBox"), name).toBe("0 0 24 24");
+      expect(svg?.getAttribute("fill"), name).toBe("none");
+      expect(svg?.getAttribute("stroke-width"), name).toBe("2");
+    }
+  });
 
   it("honors a className override for sizing", () => {
     const Icon = icons.CheckIcon;

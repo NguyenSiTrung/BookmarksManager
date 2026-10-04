@@ -199,9 +199,16 @@ describe("disclosure", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("switches the disclosure and model allowlist with the provider choice", async () => {
+  it("swaps the allowlist, pinned default, and disclosure with the provider choice", async () => {
     render(<ProviderSetup />);
     await screen.findByRole("button", { name: /enable/i });
+    // TypeSafe: only allowlisted models, pinned-release default, no alias warning.
+    expect(
+      Array.from(modelSelect().options).map((option) => option.value),
+    ).toEqual([...PRESET_MODELS.typesafe]);
+    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.typesafe);
+    expect(screen.queryByText(/moving alias/i)).toBeNull();
+    // OpenRouter: allowlist, pinned default, and disclosure all switch.
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
     // findBy keeps the async status refresh inside act.
     const disclosure = await screen.findByRole("region", {
@@ -213,34 +220,11 @@ describe("disclosure", () => {
     expect(
       Array.from(modelSelect().options).map((option) => option.value),
     ).toEqual([...PRESET_MODELS.openrouter]);
+    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.openrouter);
     const link = within(disclosure).getByRole("link", {
       name: /privacy policy/i,
     }) as HTMLAnchorElement;
     expect(link.href).toBe("https://openrouter.ai/privacy");
-  });
-
-  it("offers only allowlisted models for the selected preset", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
-    expect(
-      Array.from(modelSelect().options).map((option) => option.value),
-    ).toEqual([...PRESET_MODELS.typesafe]);
-  });
-
-  it("defaults the model picker to the pinned release model, not an alias", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
-    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.typesafe);
-    expect(screen.queryByText(/moving alias/i)).toBeNull();
-  });
-
-  it("defaults to the pinned release model after switching providers", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    // findBy keeps the async status refresh inside act.
-    await screen.findByRole("region", { name: /data disclosure/i });
-    expect(modelSelect().value).toBe(DEFAULT_PROVIDER_MODEL.openrouter);
   });
 });
 
@@ -368,14 +352,14 @@ describe("enable flow", () => {
 });
 
 describe("persisted state and revocation", () => {
-  it("restores the selected model and masked suffix on load", async () => {
+  it("restores the selected model and masked suffix on load — and across remounts", async () => {
     statusByPreset.typesafe = {
       enabled: true,
       consentGranted: true,
       model: "jev-1.13.0",
       keySuffix: "9abc",
     };
-    render(<ProviderSetup />);
+    const first = render(<ProviderSetup />);
     const panel = await screen.findByRole("group", {
       name: /enabled provider/i,
     });
@@ -385,24 +369,14 @@ describe("persisted state and revocation", () => {
     // The setup form is replaced, not pre-filled.
     expect(screen.queryByLabelText(/api key/i)).toBeNull();
     expect(screen.getByRole("button", { name: /revoke/i })).toBeTruthy();
-  });
-
-  it("keeps the persisted view across remounts (reload)", async () => {
-    statusByPreset.typesafe = {
-      enabled: true,
-      consentGranted: true,
-      model: "jev-1.13.0",
-      keySuffix: "9abc",
-    };
-    const first = render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /revoke/i });
+    // The persisted view survives a remount (reload).
     first.unmount();
     render(<ProviderSetup />);
-    const panel = await screen.findByRole("group", {
+    const remounted = await screen.findByRole("group", {
       name: /enabled provider/i,
     });
-    expect(panel.textContent).toContain("jev-1.13.0");
-    expect(panel.textContent).toContain("9abc");
+    expect(remounted.textContent).toContain("jev-1.13.0");
+    expect(remounted.textContent).toContain("9abc");
   });
 
   it("revokes consent and deletes the key by default", async () => {
@@ -528,7 +502,7 @@ describe("persisted state and revocation", () => {
 });
 
 describe("model alias warning", () => {
-  it("warns under the picker while a moving alias is selected", async () => {
+  it("warns under the picker for moving aliases, never for pinned ids, on both presets", async () => {
     render(<ProviderSetup />);
     await screen.findByRole("button", { name: /enable/i });
     // The picker defaults to the pinned release id — the warning appears
@@ -541,38 +515,23 @@ describe("model alias warning", () => {
     expect(warning.textContent).toContain("jev-latest");
     expect(warning.id).toBeTruthy();
     expect(modelSelect().getAttribute("aria-describedby")).toBe(warning.id);
-    // Mount plus a picker render must never emit TEST_PROVIDER.
-    expect(nonStatusCalls()).toEqual([]);
-  });
-
-  it("shows the warning for the jev-preview alias too", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
+    // The jev-preview moving alias warns the same way.
     fireEvent.change(modelSelect(), { target: { value: "jev-preview" } });
-    const warning = await screen.findByText(/moving alias/i);
-    expect(warning.textContent).toContain("jev-preview");
-    expect(modelSelect().getAttribute("aria-describedby")).toBe(warning.id);
-  });
-
-  it("shows no warning for the pinned version id jev-1.13.0", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
+    const preview = await screen.findByText(/moving alias/i);
+    expect(preview.textContent).toContain("jev-preview");
+    expect(modelSelect().getAttribute("aria-describedby")).toBe(preview.id);
+    // The pinned version id shows the pinned note instead.
     fireEvent.change(modelSelect(), { target: { value: "jev-1.13.0" } });
     expect(screen.queryByText(/moving alias/i)).toBeNull();
-    // The pinned release model shows the pinned note instead.
     expect(modelSelect().getAttribute("aria-describedby")).toBe(
       "provider-model-pinned-note",
     );
-  });
-
-  it("warns for OpenRouter's moving alias but not its pinned ids", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
+    // OpenRouter: same rule — moving alias warns, pinned ids don't.
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
     await screen.findByRole("region", { name: /data disclosure/i });
     fireEvent.change(modelSelect(), { target: { value: "jev-latest" } });
-    const warning = await screen.findByText(/moving alias/i);
-    expect(warning.textContent).toContain("jev-latest");
+    const orWarning = await screen.findByText(/moving alias/i);
+    expect(orWarning.textContent).toContain("jev-latest");
     for (const pinned of ["jev-1.13", "typesafe/jev-1.13"]) {
       fireEvent.change(modelSelect(), { target: { value: pinned } });
       expect(screen.queryByText(/moving alias/i)).toBeNull();
@@ -589,45 +548,41 @@ describe("model alias warning", () => {
 });
 
 describe("provider data notes and privacy link", () => {
-  it("shows TypeSafe's data note and a privacy link opened safely in a new tab", async () => {
+  it("renders each preset's data note verbatim and opens its privacy link safely in a new tab", async () => {
     render(<ProviderSetup />);
-    const disclosure = await screen.findByRole("region", {
+    const tsDisclosure = await screen.findByRole("region", {
       name: /typesafe data disclosure/i,
     });
-    const view = within(disclosure);
+    const tsView = within(tsDisclosure);
     // The §8.5 step-7 provider data note is rendered verbatim.
     expect(
-      view.getByText(/not trained on customer requests/i),
+      tsView.getByText(/not trained on customer requests/i),
     ).toBeTruthy();
-    const link = view.getByRole("link", {
+    const tsLink = tsView.getByRole("link", {
       name: /privacy policy/i,
     }) as HTMLAnchorElement;
     // Canonical URL verified at implementation time (/privacy 308-redirects
     // to /legal/privacy-policy).
-    expect(link.href).toBe("https://typesafe.ai/legal/privacy-policy");
-    expect(link.target).toBe("_blank");
-    expect(link.rel).toContain("noopener");
-    expect(link.rel).toContain("noreferrer");
-  });
-
-  it("shows OpenRouter's data note and privacy link after switching providers", async () => {
-    render(<ProviderSetup />);
-    await screen.findByRole("button", { name: /enable/i });
+    expect(tsLink.href).toBe("https://typesafe.ai/legal/privacy-policy");
+    expect(tsLink.target).toBe("_blank");
+    expect(tsLink.rel).toContain("noopener");
+    expect(tsLink.rel).toContain("noreferrer");
+    // OpenRouter's note and link replace TypeSafe's on switch.
     fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    const disclosure = await screen.findByRole("region", {
+    const orDisclosure = await screen.findByRole("region", {
       name: /openrouter data disclosure/i,
     });
-    const view = within(disclosure);
+    const orView = within(orDisclosure);
     expect(
-      view.getByText(/forwards Jev requests to TypeSafe/i),
+      orView.getByText(/forwards Jev requests to TypeSafe/i),
     ).toBeTruthy();
-    const link = view.getByRole("link", {
+    const orLink = orView.getByRole("link", {
       name: /privacy policy/i,
     }) as HTMLAnchorElement;
-    expect(link.href).toBe("https://openrouter.ai/privacy");
-    expect(link.target).toBe("_blank");
-    expect(link.rel).toContain("noopener");
-    expect(link.rel).toContain("noreferrer");
+    expect(orLink.href).toBe("https://openrouter.ai/privacy");
+    expect(orLink.target).toBe("_blank");
+    expect(orLink.rel).toContain("noopener");
+    expect(orLink.rel).toContain("noreferrer");
   });
 
   it("shows the custom disclosure — resolved origin, no privacy-policy link", async () => {

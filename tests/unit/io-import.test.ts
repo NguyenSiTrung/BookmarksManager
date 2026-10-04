@@ -69,7 +69,9 @@ beforeAll(async () => {
   await db.open();
 });
 
-beforeEach(async () => {
+async function resetEnv() {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   fake = installBookmarksFake({
     otherBookmarks: [
       { id: "existing", title: "Existing", url: EXISTING_URL },
@@ -77,7 +79,9 @@ beforeEach(async () => {
   });
   await db.bookmarkMeta.clear();
   await db.tags.clear();
-});
+}
+
+beforeEach(resetEnv);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -227,18 +231,15 @@ describe("planImport — preview counts", () => {
     expect(plan.items).toHaveLength(3);
   });
 
-  it("returns an all-zero plan for an empty import", () => {
-    const plan = planImport({ items: [], existingUrls: new Set() });
-    expect(plan).toEqual({
+  it("returns an all-zero plan for an empty import, and is pure", async () => {
+    expect(planImport({ items: [], existingUrls: new Set() })).toEqual({
       folders: 0,
       bookmarks: 0,
       duplicatesSkipped: 0,
       invalid: 0,
       items: [],
     });
-  });
-
-  it("is pure — planning writes nothing to chrome or the database", async () => {
+    // Planning writes nothing to chrome or the database.
     const createSpy = vi.spyOn(fake, "create");
     planImport({
       items: [dir("F", [bm("a", "https://a.example/")])],
@@ -282,7 +283,7 @@ describe("planImport — duplicate skip by normalized URL", () => {
     expect(plan.items).toEqual(items);
   });
 
-  it("skips a repeated URL inside the import itself (second occurrence)", () => {
+  it("skips a repeated URL inside the import and keeps folders left empty by skips", () => {
     // Once a URL is kept it is "in the library" for the rest of the file —
     // importing a twin of it would create the very duplicate the preview
     // promised to avoid.
@@ -296,36 +297,30 @@ describe("planImport — duplicate skip by normalized URL", () => {
     expect(plan.bookmarks).toBe(1);
     expect(plan.duplicatesSkipped).toBe(1);
     expect(asFolder(plan.items[1]).children).toEqual([]);
-  });
-
-  it("keeps folders whose children were all skipped", () => {
-    const plan = planImport({
+    const empty = planImport({
       items: [dir("F", [bm("dup", EXISTING_URL)])],
       existingUrls: new Set([normalizeUrl(EXISTING_URL) as string]),
     });
-    expect(plan.folders).toBe(1);
-    expect(plan.bookmarks).toBe(0);
-    expect(plan.duplicatesSkipped).toBe(1);
-    expect(plan.items).toEqual([dir("F", [])]);
+    expect(empty.folders).toBe(1);
+    expect(empty.bookmarks).toBe(0);
+    expect(empty.duplicatesSkipped).toBe(1);
+    expect(empty.items).toEqual([dir("F", [])]);
   });
 
-  it("never treats non-http(s) unblocked URLs as duplicates", () => {
+  it("never treats non-http(s) URLs as duplicates and drops blocked/empty URLs into invalid", () => {
     // ftp: has no normalized form (normalizeUrl → null), so it can neither
     // match the library nor collide with a twin inside the file.
-    const plan = planImport({
+    const ftp = planImport({
       items: [
         bm("ftp1", "ftp://f.example/x"),
         bm("ftp2", "ftp://f.example/x"),
       ],
       existingUrls: new Set(),
     });
-    expect(plan.bookmarks).toBe(2);
-    expect(plan.duplicatesSkipped).toBe(0);
-    expect(plan.items).toHaveLength(2);
-  });
-
-  it("drops blocked-scheme and empty URLs into the invalid count", () => {
-    const plan = planImport({
+    expect(ftp.bookmarks).toBe(2);
+    expect(ftp.duplicatesSkipped).toBe(0);
+    expect(ftp.items).toHaveLength(2);
+    const blocked = planImport({
       items: [
         bm("j", "javascript:alert(1)"),
         bm("j2", "java\tscript:alert(1)"), // control-char obfuscation
@@ -336,9 +331,9 @@ describe("planImport — duplicate skip by normalized URL", () => {
       existingUrls: new Set(),
       invalid: 1,
     });
-    expect(plan.invalid).toBe(6);
-    expect(plan.bookmarks).toBe(0);
-    expect(plan.items).toEqual([]);
+    expect(blocked.invalid).toBe(6);
+    expect(blocked.bookmarks).toBe(0);
+    expect(blocked.items).toEqual([]);
   });
 });
 
@@ -475,14 +470,11 @@ describe("collectNormalizedUrls", () => {
 // ---------------------------------------------------------------------------
 
 describe("writeImport — destination and structure", () => {
-  it("formats the import root title as Imported <YYYY-MM-DD HH:mm>", () => {
+  it("formats the import root title and creates it under Other bookmarks", async () => {
     expect(importRootTitle(IMPORT_NOW)).toBe(IMPORT_TITLE);
     expect(importRootTitle(new Date(2026, 0, 2, 3, 4))).toBe(
       "Imported 2026-01-02 03:04",
     );
-  });
-
-  it("creates the dated folder under Other bookmarks and reports its id", async () => {
     const res = await writeImport([], { now: IMPORT_NOW });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -531,7 +523,7 @@ describe("writeImport — destination and structure", () => {
     expect(res.summary.bookmarksCreated).toBe(4);
   });
 
-  it("skips planned duplicates so they never reach the tree", async () => {
+  it("skips planned duplicates, while a raw items array writes everything verbatim", async () => {
     const plan = planImport({
       items: [
         bm("dup", "https://www.existing.example/page?utm_campaign=z"),
@@ -549,19 +541,17 @@ describe("writeImport — destination and structure", () => {
     });
     const root = await subtree(res.summary.importRootId);
     expect(root.children?.map((c) => c.title)).toEqual(["new"]);
-  });
-
-  it("a raw items array writes everything verbatim (no dedupe)", async () => {
-    const res = await writeImport(
+    // Raw input skips the planner — twins land verbatim (no dedupe).
+    const raw = await writeImport(
       [bm("x", "https://x.example/"), bm("x2", "https://x.example/")],
       { now: IMPORT_NOW },
     );
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.summary.bookmarksCreated).toBe(2);
-    expect(res.summary.duplicatesSkipped).toBe(0);
-    const root = await subtree(res.summary.importRootId);
-    expect(root.children).toHaveLength(2);
+    expect(raw.ok).toBe(true);
+    if (!raw.ok) return;
+    expect(raw.summary.bookmarksCreated).toBe(2);
+    expect(raw.summary.duplicatesSkipped).toBe(0);
+    const rawRoot = await subtree(raw.summary.importRootId);
+    expect(rawRoot.children).toHaveLength(2);
   });
 
   it("refuses blocked-scheme and empty URLs even in a raw items array", async () => {
@@ -616,15 +606,17 @@ describe("writeImport — destination and structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("writeImport — JSON metadata restore", () => {
-  it.each([
-    { tags: [], summary: "Verified summary only." },
-    {
-      tags: ["reading"],
-      category: "paper" as const,
-      notes: "Local notes.",
-      summary: "Verified full summary.",
-    },
-  ])("round-trips summary metadata through a real JSON backup: %j", async (fields) => {
+  it("round-trips summary metadata through a real JSON backup", async () => {
+    for (const fields of [
+      { tags: [], summary: "Verified summary only." },
+      {
+        tags: ["reading"],
+        category: "paper" as const,
+        notes: "Local notes.",
+        summary: "Verified full summary.",
+      },
+    ]) {
+    await resetEnv();
     await putMeta("existing", fields);
     const exported = buildExport({
       tree: await fake.getTree(),
@@ -651,6 +643,7 @@ describe("writeImport — JSON metadata restore", () => {
     expect(created?.id).not.toBe("existing");
     expect(await getMeta(created!.id)).toMatchObject(fields);
     expect(await getMeta("existing")).toMatchObject(fields);
+    }
   });
 
   it("keeps summary duplicates out of the planned import", async () => {
@@ -678,18 +671,20 @@ describe("writeImport — JSON metadata restore", () => {
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
 
-  it.each(["", "s".repeat(2_001), 42])("rejects invalid JSON summary metadata", (summary) => {
-    const parsed = parseExport({
-      version: 1,
-      exportedAt: "2026-09-30T00:00:00.000Z",
-      tree: [{ id: "old", title: "Invalid", url: "https://ref.dev/" }],
-      tags: [],
-      meta: [{
-        id: "old", tags: [], summary,
-        updatedAt: "2026-09-30T00:00:00.000Z",
-      }],
-    });
-    expect(parsed).toMatchObject({ ok: false, code: "invalid_envelope" });
+  it("rejects invalid JSON summary metadata", () => {
+    for (const summary of ["", "s".repeat(2_001), 42]) {
+      const parsed = parseExport({
+        version: 1,
+        exportedAt: "2026-09-30T00:00:00.000Z",
+        tree: [{ id: "old", title: "Invalid", url: "https://ref.dev/" }],
+        tags: [],
+        meta: [{
+          id: "old", tags: [], summary,
+          updatedAt: "2026-09-30T00:00:00.000Z",
+        }],
+      });
+      expect(parsed, JSON.stringify(summary)).toMatchObject({ ok: false, code: "invalid_envelope" });
+    }
   });
 
   it("restores tags, categories and notes on bookmarks AND folders", async () => {
@@ -862,9 +857,9 @@ describe("writeImport — Netscape restore", () => {
 // ---------------------------------------------------------------------------
 
 describe("writeImport — summary and partial failures", () => {
-  it("collects a per-item failure and keeps writing siblings", async () => {
+  it("collects per-item and folder failures — siblings keep writing, descendants are recorded skipped", async () => {
     const original = fake.create.bind(fake);
-    vi.spyOn(fake, "create").mockImplementation((details) =>
+    const flaky = vi.spyOn(fake, "create").mockImplementation((details) =>
       details.title === "BOOM"
         ? Promise.reject(new Error("simulated create failure"))
         : original(details),
@@ -889,16 +884,14 @@ describe("writeImport — summary and partial failures", () => {
     ]);
     const root = await subtree(res.summary.importRootId);
     expect(root.children?.map((c) => c.title)).toEqual(["ok1", "ok2"]);
-  });
-
-  it("records a failed folder's descendants as skipped too", async () => {
-    const original = fake.create.bind(fake);
+    flaky.mockRestore();
+    // A failed folder cascades: every descendant is recorded as skipped.
     vi.spyOn(fake, "create").mockImplementation((details) =>
       details.title === "BADFOLDER"
         ? Promise.reject(new Error("simulated folder failure"))
         : original(details),
     );
-    const res = await writeImport(
+    const bad = await writeImport(
       [
         dir("BADFOLDER", [
           bm("c1", "https://c1.example/"),
@@ -908,11 +901,11 @@ describe("writeImport — summary and partial failures", () => {
       ],
       { now: IMPORT_NOW },
     );
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.summary.foldersCreated).toBe(0);
-    expect(res.summary.bookmarksCreated).toBe(1);
-    expect(res.summary.failures).toEqual([
+    expect(bad.ok).toBe(true);
+    if (!bad.ok) return;
+    expect(bad.summary.foldersCreated).toBe(0);
+    expect(bad.summary.bookmarksCreated).toBe(1);
+    expect(bad.summary.failures).toEqual([
       {
         kind: "folder",
         title: "BADFOLDER",
@@ -924,23 +917,20 @@ describe("writeImport — summary and partial failures", () => {
     ]);
   });
 
-  it("records a meta failure without losing the created node", async () => {
-    const res = await writeImport(
+  it("records meta and tag-definition failures without losing created nodes", async () => {
+    const meta = await writeImport(
       [bm("M", "https://m.example/", { notes: "n".repeat(10_001) })],
       { now: IMPORT_NOW },
     );
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.summary.bookmarksCreated).toBe(1);
-    expect(res.summary.failures).toEqual([
+    expect(meta.ok).toBe(true);
+    if (!meta.ok) return;
+    expect(meta.summary.bookmarksCreated).toBe(1);
+    expect(meta.summary.failures).toEqual([
       { kind: "meta", title: "M", message: expect.any(String) },
     ]);
-    const root = await subtree(res.summary.importRootId);
+    const root = await subtree(meta.summary.importRootId);
     expect(root.children?.[0]?.title).toBe("M");
     expect(await getMeta(root.children?.[0]?.id ?? "")).toBeUndefined();
-  });
-
-  it("collects a tag-definition failure without aborting the import", async () => {
     // A def that cannot satisfy TagDef (name > 64 chars) — unreachable through
     // parseExport, so the failure path is exercised with a cast fixture.
     const badDef = {
@@ -949,15 +939,15 @@ describe("writeImport — summary and partial failures", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     } as TagDef;
-    const res = await writeImport([bm("a", "https://a.example/")], {
+    const tagged = await writeImport([bm("a", "https://a.example/")], {
       now: IMPORT_NOW,
       tagDefs: [badDef],
     });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.summary.tagsCreated).toBe(0);
-    expect(res.summary.bookmarksCreated).toBe(1);
-    expect(res.summary.failures).toEqual([
+    expect(tagged.ok).toBe(true);
+    if (!tagged.ok) return;
+    expect(tagged.summary.tagsCreated).toBe(0);
+    expect(tagged.summary.bookmarksCreated).toBe(1);
+    expect(tagged.summary.failures).toEqual([
       { kind: "tag", title: "x".repeat(65), message: expect.any(String) },
     ]);
   });

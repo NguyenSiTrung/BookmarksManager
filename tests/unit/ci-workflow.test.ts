@@ -45,10 +45,12 @@ function jobNames(): string[] {
 const WRITE_PERMISSION = /\bwrite(-all)?\b/;
 
 describe("ci workflow routing", () => {
-  it("runs on pull requests and pushes to main", () => {
+  it("runs on pull requests, releases, and dispatch — never on pushes to main", () => {
     expect(workflow).toMatch(/^on:\s*$/m);
     expect(workflow).toMatch(/pull_request:/);
-    expect(workflow).toMatch(/push:\s*\n\s*branches:\s*\[main\]/);
+    expect(workflow).toMatch(/workflow_dispatch:/);
+    // Deliberately absent: merges to main do not spend CI on every commit.
+    expect(workflow).not.toMatch(/push:/);
   });
 
   it("requests only read-only repository contents permission", () => {

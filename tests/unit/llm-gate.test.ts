@@ -152,14 +152,10 @@ afterAll(() => {
 });
 
 describe("sendLlmConsented gate order", () => {
-  it("refuses unregistered scopes before touching anything", async () => {
-    const { result, fetch } = send({ scope: "jev_test" });
-    await expectGateBlock(result, "unregistered_scope");
-    expect(containsSpy).not.toHaveBeenCalled();
-    expect(fetch.requests).toHaveLength(0);
-  });
-
-  it("refuses when no provider record exists", async () => {
+  it("refuses unregistered scopes and missing providers before touching anything", async () => {
+    const { result: scoped, fetch: scopedFetch } = send({ scope: "jev_test" });
+    await expectGateBlock(scoped, "unregistered_scope");
+    expect(scopedFetch.requests).toHaveLength(0);
     const { result, fetch } = send();
     await expectGateBlock(result, "no_provider");
     expect(containsSpy).not.toHaveBeenCalled();
@@ -174,59 +170,49 @@ describe("sendLlmConsented gate order", () => {
     expect(fetch.requests).toHaveLength(0);
   });
 
-  it.each(LLM_CONSENT_SCOPES)(
-    "keeps the cheap request guard before permission/key reads for %s",
-    async (scope) => {
-      const credentials = await import("../../src/security/credentials");
-      readCredentialSpy = vi.spyOn(credentials, "readCredential");
-      await saveLlmProvider(providerRecord());
+  it("keeps the cheap request guard before permission/key reads for every consent scope", async () => {
+    const credentials = await import("../../src/security/credentials");
+    readCredentialSpy = vi.spyOn(credentials, "readCredential");
+    await saveLlmProvider(providerRecord());
+    for (const scope of LLM_CONSENT_SCOPES) {
       const { result, fetch } = send({
         scope,
         request: { ...validRequest(), max_output_tokens: 25 },
       });
       await expectGateBlock(result, "request_not_allowed");
-      expect(containsSpy).not.toHaveBeenCalled();
-      expect(readCredentialSpy).not.toHaveBeenCalled();
-      expect(await db.llmReservations.count()).toBe(0);
       expect(fetch.requests).toHaveLength(0);
-    },
-  );
+    }
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readCredentialSpy).not.toHaveBeenCalled();
+    expect(await db.llmReservations.count()).toBe(0);
+  });
 
-  it.each(["maxInputTokens", "maxOutputTokens"])(
-    "refuses invalid %s before permission/key reads or reservation",
-    async (bound) => {
-      const credentials = await import("../../src/security/credentials");
-      readCredentialSpy = vi.spyOn(credentials, "readCredential");
-      await saveLlmProvider(providerRecord());
+  it("refuses invalid maxInputTokens/maxOutputTokens before permission/key reads or reservation", async () => {
+    const credentials = await import("../../src/security/credentials");
+    readCredentialSpy = vi.spyOn(credentials, "readCredential");
+    await saveLlmProvider(providerRecord());
+    for (const bound of ["maxInputTokens", "maxOutputTokens"] as const) {
       for (const value of [0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null, undefined]) {
         const { result, fetch } = send({ [bound]: value });
         await expectGateBlock(result, "request_not_allowed");
         expect(fetch.requests).toHaveLength(0);
       }
-      expect(containsSpy).not.toHaveBeenCalled();
-      expect(readCredentialSpy).not.toHaveBeenCalled();
-      expect(await db.llmReservations.count()).toBe(0);
-    },
-  );
+    }
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readCredentialSpy).not.toHaveBeenCalled();
+    expect(await db.llmReservations.count()).toBe(0);
+  });
 
-  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "25", null])(
-    "refuses invalid caller max_tokens %s without egress",
-    async (max_tokens) => {
-      await saveLlmProvider(providerRecord());
+  it("refuses invalid caller max_tokens and alternate max-token fields without egress", async () => {
+    await saveLlmProvider(providerRecord());
+    for (const max_tokens of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "25", null]) {
       const { result, fetch } = send({
         request: { ...validRequest(), max_tokens },
       });
       await expectGateBlock(result, "request_not_allowed");
-      expect(containsSpy).not.toHaveBeenCalled();
-      expect(await db.llmReservations.count()).toBe(0);
       expect(fetch.requests).toHaveLength(0);
-    },
-  );
-
-  it.each(["max_completion_tokens", "max_output_tokens", "max_new_tokens"])(
-    "refuses alternate %s even when it matches max_tokens",
-    async (field) => {
-      await saveLlmProvider(providerRecord());
+    }
+    for (const field of ["max_completion_tokens", "max_output_tokens", "max_new_tokens"] as const) {
       for (const alternate of [25, 1000]) {
         const { result, fetch } = send({
           request: { ...validRequest(), max_tokens: 25, [field]: alternate },
@@ -234,10 +220,10 @@ describe("sendLlmConsented gate order", () => {
         await expectGateBlock(result, "request_not_allowed");
         expect(fetch.requests).toHaveLength(0);
       }
-      expect(containsSpy).not.toHaveBeenCalled();
-      expect(await db.llmReservations.count()).toBe(0);
-    },
-  );
+    }
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(await db.llmReservations.count()).toBe(0);
+  });
 
   it("refuses a model other than the configured one", async () => {
     await saveLlmProvider(providerRecord());
@@ -247,31 +233,27 @@ describe("sendLlmConsented gate order", () => {
     expect(fetch.requests).toHaveLength(0);
   });
 
-  it("refuses without consent — before permission or credential reads", async () => {
+  it("refuses without consent and on a stale-version row — before permission or credential reads", async () => {
     const credentials = await import("../../src/security/credentials");
     readCredentialSpy = vi.spyOn(credentials, "readCredential");
     await saveLlmProvider(providerRecord());
     const { result, fetch } = send();
     await expectGateBlock(result, "no_consent");
-    expect(containsSpy).not.toHaveBeenCalled();
-    expect(readCredentialSpy).not.toHaveBeenCalled();
-    expect(fetch.requests).toHaveLength(0);
-  });
-
-  it("refuses a stale-version consent row", async () => {
-    await saveLlmProvider(providerRecord());
     await db.consents.put({
       scope: "llm_test",
       origin: ORIGIN,
       consentVersion: CONSENT_VERSION - 1,
       acceptedAt: "2020-01-01T00:00:00.000Z",
     } as ConsentRecord);
-    const { result, fetch } = send();
-    await expectGateBlock(result, "no_consent");
+    const { result: stale, fetch: staleFetch } = send();
+    await expectGateBlock(stale, "no_consent");
+    expect(containsSpy).not.toHaveBeenCalled();
+    expect(readCredentialSpy).not.toHaveBeenCalled();
     expect(fetch.requests).toHaveLength(0);
+    expect(staleFetch.requests).toHaveLength(0);
   });
 
-  it("refuses without host permission — before the credential read", async () => {
+  it("refuses missing host permission then missing credential — before the reservation", async () => {
     const credentials = await import("../../src/security/credentials");
     readCredentialSpy = vi.spyOn(credentials, "readCredential");
     await saveLlmProvider(providerRecord());
@@ -281,15 +263,11 @@ describe("sendLlmConsented gate order", () => {
     await expectGateBlock(result, "no_permission");
     expect(readCredentialSpy).not.toHaveBeenCalled();
     expect(fetch.requests).toHaveLength(0);
-  });
-
-  it("refuses without a stored credential — before the reservation", async () => {
-    await saveLlmProvider(providerRecord());
-    await grantConsentAtOrigin("llm_test", ORIGIN);
-    const { result, fetch } = send();
-    await expectGateBlock(result, "no_key");
+    containsSpy.mockResolvedValue(true);
+    const { result: noKey, fetch: noKeyFetch } = send();
+    await expectGateBlock(noKey, "no_key");
     expect(await db.llmReservations.count()).toBe(0);
-    expect(fetch.requests).toHaveLength(0);
+    expect(noKeyFetch.requests).toHaveLength(0);
   });
 });
 
@@ -312,9 +290,10 @@ describe("sendLlmConsented happy path", () => {
     expect(await db.llmUsage.count()).toBe(0);
   });
 
-  it.each(["missing", "reported overrun", "transport"] as const)(
-    "charges prior %s exposure before budget admission can allow a retry",
-    async (failure) => {
+  it("charges prior exposure before budget admission can allow a retry", async () => {
+    for (const failure of ["missing", "reported overrun", "transport"] as const) {
+      await db.llmUsage.clear();
+      await db.llmReservations.clear();
       await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
       const server = makeOpenAiServer({
         failures: [failure === "transport"
@@ -335,12 +314,16 @@ describe("sendLlmConsented happy path", () => {
         expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
       }
       expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
-    },
-  );
+    }
+  });
 
-  it.each(["consent", "permission", "origin"] as const)(
-    "reruns current %s admission before a paid retry",
-    async (change) => {
+  it("reruns current consent, permission and origin admission before a paid retry", async () => {
+    for (const change of ["consent", "permission", "origin"] as const) {
+      await db.llmUsage.clear();
+      await db.llmReservations.clear();
+      await grantConsentAtOrigin("llm_test", ORIGIN);
+      containsSpy.mockResolvedValue(true);
+      await saveLlmProvider(providerRecord());
       const server = makeOpenAiServer({ failures: [{ status: 503 }] });
       const fetchImpl: typeof fetch = async (...args) => {
         const response = await server.fetch(...args);
@@ -356,8 +339,8 @@ describe("sendLlmConsented happy path", () => {
       expect(await db.llmUsage.toArray()).toMatchObject([{
         estimatedCostUsd: expect.closeTo(0.000045, 12),
       }]);
-    },
-  );
+    }
+  });
 
   it("uses a fresh matching capped reservation for each admitted retry", async () => {
     const server = makeOpenAiServer({ failures: [{ status: 503 }] });
@@ -380,9 +363,12 @@ describe("sendLlmConsented happy path", () => {
     }]);
   });
 
-  it.each(["429", "transport"] as const)(
-    "settles prior %s exposure when admission stops an internal retry",
-    async (failure) => {
+  it("settles prior exposure when admission stops an internal retry", async () => {
+    for (const failure of ["429", "transport"] as const) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
+      await db.metadata.delete("decisions:blocklist");
+      await saveLlmProvider(providerRecord());
       const server = makeOpenAiServer({
         failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
       });
@@ -415,8 +401,8 @@ describe("sendLlmConsented happy path", () => {
       const next = send();
       await expectGateBlock(next.result, "budget_exceeded");
       expect(next.fetch.requests).toHaveLength(0);
-    },
-  );
+    }
+  });
 
   it("accounts for every prior attempt when admission refuses the third attempt", async () => {
     const server = makeOpenAiServer({
@@ -476,9 +462,8 @@ describe("sendLlmConsented happy path", () => {
     expect(usage[0]?.estimatedCostUsd).toBeUndefined();
   });
 
-  it.each(["429", "transport"] as const)(
-    "preserves the internal %s retry with an allowed feature callback",
-    async (failure) => {
+  it("preserves the internal retry with an allowed feature callback", async () => {
+    for (const failure of ["429", "transport"] as const) {
       const server = makeOpenAiServer({
         failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
       });
@@ -490,8 +475,8 @@ describe("sendLlmConsented happy path", () => {
       const { response } = await send({}, { fetchImpl: server.fetch, beforeSend }).result;
       expect(response.status).toBe(200);
       expect(server.requests).toHaveLength(2);
-    },
-  );
+    }
+  });
 
   it("sends exactly one gated POST with bearer auth, no cookies, no redirects", async () => {
     const { result, fetch } = send({ maxOutputTokens: 50 });
@@ -521,12 +506,13 @@ describe("sendLlmConsented happy path", () => {
     expect(JSON.stringify(log[0])).not.toContain("hello");
   });
 
-  it.each([
-    [1, 1, 0.0000156],
-    [25, 25, 0.00003],
-    [50, 50, 0.000045],
-    [1000, 50, 0.000045],
-  ])("clamps caller max_tokens %s to %s on the wire and in the reservation", async (caller, expected, cost) => {
+  it("clamps caller max_tokens on the wire and in the reservation", async () => {
+    for (const [caller, expected, cost] of [
+      [1, 1, 0.0000156],
+      [25, 25, 0.00003],
+      [50, 50, 0.000045],
+      [1000, 50, 0.000045],
+    ] as const) {
     const request = { ...validRequest(), max_tokens: caller };
     const { result, fetch } = send({ request });
     const { reservation } = await result;
@@ -536,6 +522,7 @@ describe("sendLlmConsented happy path", () => {
     expect(fetch.requests).toHaveLength(1);
     expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: expected });
     expect(request.max_tokens).toBe(caller);
+    }
   });
 
   it("uses the tighter limit when admitting a request against the monthly cap", async () => {
@@ -549,21 +536,19 @@ describe("sendLlmConsented happy path", () => {
     expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 25 });
   });
 
-  it.each(LLM_CONSENT_SCOPES)(
-    "adds the gate-owned cap after request validation for %s",
-    async (scope) => {
+  it("adds the gate-owned cap after request validation for every consent scope", async () => {
+    for (const scope of LLM_CONSENT_SCOPES) {
       await grantConsentAtOrigin(scope, ORIGIN);
       const { result, fetch } = send({ scope });
       const { reservation } = await result;
       expect(reservation.maxOutputTokens).toBe(50);
       expect(fetch.requests).toHaveLength(1);
       expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 50 });
-    },
-  );
+    }
+  });
 
-  it.each(["429", "503", "transport"] as const)(
-    "preserves the clamped cap through every actual %s retry",
-    async (failure) => {
+  it("preserves the clamped cap through every actual retry", async () => {
+    for (const failure of ["429", "503", "transport"] as const) {
       const server = makeOpenAiServer({
         failures: [failure === "transport"
           ? { throw: new TypeError("reset") }
@@ -578,8 +563,8 @@ describe("sendLlmConsented happy path", () => {
         { ...validRequest(), max_tokens: 25 },
         { ...validRequest(), max_tokens: 25 },
       ]);
-    },
-  );
+    }
+  });
 
   it("settles clamped prior exposure when admission prevents the next retry", async () => {
     const server = makeOpenAiServer({ failures: [{ status: 429 }] });

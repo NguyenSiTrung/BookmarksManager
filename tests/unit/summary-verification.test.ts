@@ -148,9 +148,8 @@ describe("verifySummary task", () => {
     );
   });
 
-  it.each(["unsupported", "uncertain"] as const)(
-    "run() passes the %s verdict through",
-    async (verdict) => {
+  it("run() passes the unsupported and uncertain verdicts through", async () => {
+    for (const verdict of ["unsupported", "uncertain"] as const) {
       const client = fakeClient({
         verdict: {
           type: "choice",
@@ -160,7 +159,7 @@ describe("verifySummary task", () => {
         },
       });
       const result = await verifySummaryRun(client, STATE);
-      expect(result.verdict).toBe(verdict);
-    },
-  );
+      expect(result.verdict, verdict).toBe(verdict);
+    }
+  });
 });

@@ -171,131 +171,132 @@ describe("EvalCorpus acceptance", () => {
 });
 
 describe("EvalCorpus rejection", () => {
-  it.each([
-    ["empty version", { version: "not-semver" }],
-    ["unknown top-level key", { unexpected: true }],
-    ["missing questionSetVersions key", { questionSetVersions: {} }],
-  ])("rejects %s", (_label, patch) => {
-    expect(EvalCorpus.safeParse({ ...miniCorpus, ...patch }).success).toBe(
-      false,
-    );
+  it("rejects malformed top-level envelopes", () => {
+    for (const [label, patch] of [
+      ["empty version", { version: "not-semver" }],
+      ["unknown top-level key", { unexpected: true }],
+      ["missing questionSetVersions key", { questionSetVersions: {} }],
+    ] as const) {
+      expect(EvalCorpus.safeParse({ ...miniCorpus, ...patch }).success, label).toBe(false);
+    }
   });
 
-  it("rejects duplicate bookmark ids", () => {
-    const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
-      ...miniCorpus.bookmarks,
-      { ...miniCorpus.bookmarks[0] },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+  it("rejects duplicate bookmark and case ids", () => {
+    expect(
+      EvalCorpus.safeParse(
+        corpusWith(miniCorpus.cases as EvalCase[], [
+          ...miniCorpus.bookmarks,
+          { ...miniCorpus.bookmarks[0] },
+        ]),
+      ).success,
+      "duplicate bookmark ids",
+    ).toBe(false);
+    expect(
+      EvalCorpus.safeParse(
+        corpusWith([
+          ...(miniCorpus.cases as EvalCase[]),
+          { ...(miniCorpus.cases[0] as EvalCase) },
+        ]),
+      ).success,
+      "duplicate case ids",
+    ).toBe(false);
   });
 
-  it("rejects duplicate case ids", () => {
-    const corpus = corpusWith([
-      ...(miniCorpus.cases as EvalCase[]),
-      { ...(miniCorpus.cases[0] as EvalCase) },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+  it("rejects unknown bookmark references in categorize, near_duplicate, and rerank cases", () => {
+    for (const [kind, patch] of [
+      ["categorize", { bookmark: "bm_missing" }],
+      ["near_duplicate", { a: "bm_docs", b: "bm_missing" }],
+      ["rerank", { candidates: ["bm_docs", "bm_missing"] }],
+    ] as const) {
+      const base = (miniCorpus.cases as EvalCase[]).find(
+        (c) => c.kind === kind,
+      ) as unknown as Record<string, unknown>;
+      const corpus = corpusWith([{ ...base, ...patch } as EvalCase]);
+      expect(EvalCorpus.safeParse(corpus).success, kind).toBe(false);
+    }
   });
 
-  it.each([
-    ["categorize", { bookmark: "bm_missing" }],
-    ["near_duplicate", { a: "bm_docs", b: "bm_missing" }],
-    ["rerank", { candidates: ["bm_docs", "bm_missing"] }],
-  ])("rejects unknown bookmark reference in %s", (kind, patch) => {
-    const base = (miniCorpus.cases as EvalCase[]).find(
-      (c) => c.kind === kind,
-    ) as unknown as Record<string, unknown>;
-    const corpus = corpusWith([{ ...base, ...patch } as EvalCase]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+  it("rejects bookmarks with private, local, file, or credentialed URLs", () => {
+    for (const url of [
+      "https://10.0.0.5/internal",
+      "https://127.0.0.1:8080/",
+      "https://192.168.1.10/nas",
+      "https://printer.local/status",
+      "https://nas/",
+      "file:///home/user/notes.txt",
+      "data:text/plain,hello",
+      "http://[::1]:3000/",
+      "https://user:hunter2@example.com/",
+      "https://user@example.com/",
+    ]) {
+      const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
+        { id: "bm_bad", title: "bad", url },
+        ...miniCorpus.bookmarks,
+      ]);
+      expect(EvalCorpus.safeParse(corpus).success, url).toBe(false);
+    }
   });
 
-  it.each([
-    ["private IPv4", "https://10.0.0.5/internal"],
-    ["loopback IPv4", "https://127.0.0.1:8080/"],
-    ["RFC1918", "https://192.168.1.10/nas"],
-    ["intranet TLD", "https://printer.local/status"],
-    ["dotless host", "https://nas/"],
-    ["file URL", "file:///home/user/notes.txt"],
-    ["hostless scheme", "data:text/plain,hello"],
-    ["IPv6 loopback", "http://[::1]:3000/"],
-    ["credentials", "https://user:hunter2@example.com/"],
-    ["credential user only", "https://user@example.com/"],
-  ])("rejects a bookmark whose url is %s", (_label, url) => {
-    const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
-      { id: "bm_bad", title: "bad", url },
-      ...miniCorpus.bookmarks,
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+  it("rejects bookmarks with notes, unknown keys, or invalid ids", () => {
+    for (const [label, patch] of [
+      ["a notes field", { notes: "private note" }],
+      ["an unknown key", { starred: true }],
+      ["a missing id", { id: "" }],
+      ["a non-lower-case id", { id: "BM_Upper" }],
+    ] as const) {
+      const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
+        { ...miniCorpus.bookmarks[0], ...patch },
+        ...miniCorpus.bookmarks.slice(1),
+      ]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
   });
 
-  it.each([
-    ["a notes field", { notes: "private note" }],
-    ["an unknown key", { starred: true }],
-    ["a missing id", { id: "" }],
-    ["a non-lower-case id", { id: "BM_Upper" }],
-  ])("rejects a bookmark with %s", (_label, patch) => {
-    const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
-      { ...miniCorpus.bookmarks[0], ...patch },
-      ...miniCorpus.bookmarks.slice(1),
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+  it("rejects mislabeled sensitive, malformed, or excluded bookmarks", () => {
+    for (const [label, bookmark] of [
+      [
+        "sensitive but not excluded",
+        { id: "bm_x", title: "Bank", url: "https://www.chase.com/" },
+      ],
+      [
+        "malformed but not excluded",
+        { id: "bm_x", title: "Broken", url: "ht!tp://[" },
+      ],
+      [
+        "ordinary but marked excluded",
+        {
+          id: "bm_x",
+          title: "Docs",
+          url: "https://example.com/",
+          excluded: true,
+        },
+      ],
+    ] as const) {
+      const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
+        bookmark,
+        ...miniCorpus.bookmarks,
+      ]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
   });
 
-  it.each([
-    [
-      "sensitive but not excluded",
-      { id: "bm_x", title: "Bank", url: "https://www.chase.com/" },
-    ],
-    [
-      "malformed but not excluded",
-      { id: "bm_x", title: "Broken", url: "ht!tp://[" },
-    ],
-    [
-      "ordinary but marked excluded",
-      {
-        id: "bm_x",
-        title: "Docs",
-        url: "https://example.com/",
-        excluded: true,
-      },
-    ],
-  ])("rejects a bookmark %s", (_label, bookmark) => {
-    const corpus = corpusWith(miniCorpus.cases as EvalCase[], [
-      bookmark,
-      ...miniCorpus.bookmarks,
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects a near-duplicate pair referencing one bookmark", () => {
-    const corpus = corpusWith([
-      {
+  it("rejects self-referencing pairs, non-candidate expected tags, and duplicate tag option keys", () => {
+    for (const [label, case_] of [
+      ["near-duplicate pair referencing one bookmark", {
         kind: "near_duplicate",
         id: "case_self",
         a: "bm_docs",
         b: "bm_docs",
         expect: { same_content: 4 },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects an expected tag that is not a candidate", () => {
-    const corpus = corpusWith([
-      {
+      }],
+      ["expected tag that is not a candidate", {
         kind: "tags",
         id: "case_tags",
         bookmark: "bm_docs",
         tags: [{ name: "rust" }],
         expect: { tags: ["kubernetes"] },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects duplicate tag option keys (nameKey ?? name)", () => {
-    const corpus = corpusWith([
-      {
+      }],
+      ["duplicate tag option keys", {
         kind: "tags",
         id: "case_tags",
         bookmark: "bm_docs",
@@ -304,130 +305,120 @@ describe("EvalCorpus rejection", () => {
           { name: "rust" },
         ],
         expect: { tags: [] },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+      }],
+    ] as const) {
+      const corpus = corpusWith([case_ as EvalCase]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
   });
 
-  it.each([
-    ["expected folder not a candidate", { expect: { folder: "f99" } }],
-    ["a candidate id reserved as none", {
-      folders: [
-        { id: NONE_FOLDER_ID, path: ["Nowhere"] },
-        { id: "f10", path: ["Dev"] },
-      ],
-    }],
-    ["duplicate folder ids", {
-      folders: [
-        { id: "f10", path: ["Dev"] },
-        { id: "f10", path: ["Also dev"] },
-      ],
-    }],
-    ["a current marker", {
-      folders: [
-        { id: "f10", path: ["Dev"], current: true },
-        { id: "f20", path: ["Hobbies"] },
-      ],
-    }],
-  ])("rejects a placement case with %s", (_label, patch) => {
-    const corpus = corpusWith([
-      {
-        kind: "placement",
-        id: "case_place",
-        bookmark: "bm_docs",
+  it("rejects placement cases with an invalid expected folder, reserved id, duplicate ids, or a current marker", () => {
+    for (const [label, patch] of [
+      ["expected folder not a candidate", { expect: { folder: "f99" } }],
+      ["a candidate id reserved as none", {
+        folders: [
+          { id: NONE_FOLDER_ID, path: ["Nowhere"] },
+          { id: "f10", path: ["Dev"] },
+        ],
+      }],
+      ["duplicate folder ids", {
+        folders: [
+          { id: "f10", path: ["Dev"] },
+          { id: "f10", path: ["Also dev"] },
+        ],
+      }],
+      ["a current marker", {
+        folders: [
+          { id: "f10", path: ["Dev"], current: true },
+          { id: "f20", path: ["Hobbies"] },
+        ],
+      }],
+    ] as const) {
+      const corpus = corpusWith([
+        {
+          kind: "placement",
+          id: "case_place",
+          bookmark: "bm_docs",
+          folders: [
+            { id: "f10", path: ["Dev"] },
+            { id: "f20", path: ["Hobbies"] },
+          ],
+          expect: { folder: "f10" },
+          ...patch,
+        } as unknown as EvalCase,
+      ]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
+  });
+
+  it("rejects misfiled cases with no, multiple, or mismatched current candidates", () => {
+    for (const [label, patch] of [
+      ["no current candidate", {
         folders: [
           { id: "f10", path: ["Dev"] },
           { id: "f20", path: ["Hobbies"] },
         ],
-        expect: { folder: "f10" },
-        ...patch,
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+      }],
+      ["two current candidates", {
+        folders: [
+          { id: "f10", path: ["Dev"], current: true },
+          { id: "f20", path: ["Hobbies"], current: true },
+        ],
+      }],
+      ["current path ≠ folderPath", {
+        folders: [
+          { id: "f10", path: ["Dev"] },
+          { id: "f20", path: ["Elsewhere"], current: true },
+        ],
+      }],
+    ] as const) {
+      const corpus = corpusWith([
+        {
+          kind: "misfiled",
+          id: "case_mis",
+          bookmark: "bm_video",
+          folderPath: ["Bookmarks bar", "Hobbies"],
+          expect: { folder: "f10" },
+          ...patch,
+        } as unknown as EvalCase,
+      ]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
   });
 
-  it.each([
-    ["no current candidate", {
-      folders: [
-        { id: "f10", path: ["Dev"] },
-        { id: "f20", path: ["Hobbies"] },
-      ],
-    }],
-    ["two current candidates", {
-      folders: [
-        { id: "f10", path: ["Dev"], current: true },
-        { id: "f20", path: ["Hobbies"], current: true },
-      ],
-    }],
-    ["current path ≠ folderPath", {
-      folders: [
-        { id: "f10", path: ["Dev"] },
-        { id: "f20", path: ["Elsewhere"], current: true },
-      ],
-    }],
-  ])("rejects a misfiled case with %s", (_label, patch) => {
-    const corpus = corpusWith([
-      {
-        kind: "misfiled",
-        id: "case_mis",
-        bookmark: "bm_video",
-        folderPath: ["Bookmarks bar", "Hobbies"],
-        expect: { folder: "f10" },
-        ...patch,
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects a rerank expected match that is not a candidate", () => {
-    const corpus = corpusWith([
-      {
+  it("rejects non-candidate or excluded rerank matches, out-of-range levels, and unknown case kinds", () => {
+    for (const [label, case_] of [
+      ["rerank expected match that is not a candidate", {
         kind: "rerank",
         id: "case_rerank",
         query: "rust",
         candidates: ["bm_docs"],
         expect: { matches: ["bm_video"] },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects an excluded bookmark as a rerank expected match", () => {
-    const corpus = corpusWith([
-      {
+      }],
+      ["excluded bookmark as a rerank expected match", {
         kind: "rerank",
         id: "case_rerank",
         query: "bank",
         candidates: ["bm_docs", "bm_bank"],
         expect: { matches: ["bm_bank"] },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects an out-of-range same_content level", () => {
-    const corpus = corpusWith([
-      {
+      }],
+      ["out-of-range same_content level", {
         kind: "near_duplicate",
         id: "case_dup",
         a: "bm_docs",
         b: "bm_video",
         expect: { same_content: 5 },
-      },
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
-  });
-
-  it("rejects a case with an unknown discriminator", () => {
-    const corpus = corpusWith([
-      {
+      }],
+      ["unknown case discriminator", {
         kind: "summarize",
         id: "case_future",
         bookmark: "bm_docs",
         expect: {},
-      } as unknown as EvalCase,
-    ]);
-    expect(EvalCorpus.safeParse(corpus).success).toBe(false);
+      } as unknown as EvalCase],
+    ] as const) {
+      const corpus = corpusWith([case_ as EvalCase]);
+      expect(EvalCorpus.safeParse(corpus).success, label).toBe(false);
+    }
   });
 });
 

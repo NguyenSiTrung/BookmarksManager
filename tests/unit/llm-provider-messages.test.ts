@@ -212,12 +212,14 @@ async function expectFailure(
   return result;
 }
 
-beforeEach(async () => {
+async function resetEnv() {
   installChromeStub();
   vi.restoreAllMocks();
   await db.delete();
   await db.open();
-});
+}
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
@@ -225,37 +227,11 @@ afterAll(() => {
 });
 
 describe("dispatch and trust boundary", () => {
-  it("returns undefined for messages outside the LLM provider protocol", async () => {
+  it("ignores non-protocol messages and refuses malformed ones", async () => {
     expect(await call({ type: "PROVIDER_STATUS", preset: "openai" })).toBeUndefined();
     expect(await call({ type: "something-else" })).toBeUndefined();
     expect(await call("a string")).toBeUndefined();
     expect(await call(null)).toBeUndefined();
-  });
-
-  it("refuses senders that are not the Options page", async () => {
-    await expectFailure(
-      { type: "LLM_PROVIDER_STATUS" },
-      "untrusted_sender",
-      { url: "https://evil.example.com/page" },
-    );
-    await expectFailure(
-      { type: "LLM_PROVIDER_STATUS" },
-      "untrusted_sender",
-      {},
-    );
-  });
-
-  it("accepts the Options page when its URL carries a panel hash", async () => {
-    // The redesigned shell writes `#<panel>` and Chrome reports that URL
-    // verbatim in `sender.url` — including after a reload of a hashed page.
-    const result = await call(
-      { type: "LLM_PROVIDER_STATUS" },
-      { url: `${OPTIONS_URL}#permissions` },
-    );
-    expect(result).toMatchObject({ ok: true });
-  });
-
-  it("refuses malformed LLM protocol messages", async () => {
     await expectFailure({ type: "LLM_CONFIGURE" }, "malformed_message");
     await expectFailure(
       { type: "LLM_TEST", providerId: 42 },
@@ -272,6 +248,26 @@ describe("dispatch and trust boundary", () => {
       },
       "malformed_message",
     );
+  });
+
+  it("gates senders: refuses non-Options URLs, accepts an Options URL carrying a panel hash", async () => {
+    await expectFailure(
+      { type: "LLM_PROVIDER_STATUS" },
+      "untrusted_sender",
+      { url: "https://evil.example.com/page" },
+    );
+    await expectFailure(
+      { type: "LLM_PROVIDER_STATUS" },
+      "untrusted_sender",
+      {},
+    );
+    // The redesigned shell writes `#<panel>` and Chrome reports that URL
+    // verbatim in `sender.url` — including after a reload of a hashed page.
+    const result = await call(
+      { type: "LLM_PROVIDER_STATUS" },
+      { url: `${OPTIONS_URL}#permissions` },
+    );
+    expect(result).toMatchObject({ ok: true });
   });
 });
 
@@ -546,21 +542,18 @@ describe("LLM_PROVIDER_STATUS", () => {
     expect(JSON.stringify(result)).not.toContain("sk-test");
   });
 
-  it("flips enabled off when consent is revoked underneath", async () => {
+  it("flips enabled off when consent is revoked or the host permission is gone", async () => {
     await seedEnabledProvider();
     await db.consents.clear();
-    const result = await call({ type: "LLM_PROVIDER_STATUS" });
-    expect(result).toMatchObject({
+    const revoked = await call({ type: "LLM_PROVIDER_STATUS" });
+    expect(revoked).toMatchObject({
       ok: true,
       status: { configured: true, enabled: false, consentGranted: false },
     });
-  });
-
-  it("flips enabled off when the host permission is gone", async () => {
     await seedEnabledProvider();
     containsSpy.mockResolvedValue(false);
-    const result = await call({ type: "LLM_PROVIDER_STATUS" });
-    expect(result).toMatchObject({
+    const unpermitted = await call({ type: "LLM_PROVIDER_STATUS" });
+    expect(unpermitted).toMatchObject({
       ok: true,
       status: { permissionGranted: false, enabled: false },
     });
@@ -644,10 +637,13 @@ describe("LLM_TEST", () => {
     expect(held.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    { label: "budget-only update", pricing: undefined },
-    { label: "budget and pricing update", pricing: { inputPerMillion: 100, outputPerMillion: 200 } },
-  ])("preserves a concurrent $label during a real connection probe", async ({ pricing }) => {
+  it("preserves a concurrent budget or pricing update during a real connection probe", async () => {
+    for (const pricing of [
+      undefined,
+      { inputPerMillion: 100, outputPerMillion: 200 },
+    ] as const) {
+    await resetEnv();
+    const label = pricing === undefined ? "budget-only update" : "budget and pricing update";
     const held = await startHeldProbe();
     expect(await call({
       type: "LLM_BUDGET_SET",
@@ -665,10 +661,13 @@ describe("LLM_TEST", () => {
     expect(storageStore).toEqual(storage);
     expect(await readCredential(PROVIDER_ID)).toBe("sk-test-1234");
     await expectFailure({ type: "LLM_TEST", providerId: PROVIDER_ID }, "budget_exceeded");
-    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(held.fetchImpl, label).toHaveBeenCalledTimes(1);
+    }
   });
 
-  it.each(["delete", "replace"] as const)("serializes tier persistence with a $0 queued between the fresh check and save", async (operation) => {
+  it("serializes tier persistence with a delete or replace queued between the fresh check and save", async () => {
+    for (const operation of ["delete", "replace"] as const) {
+    await resetEnv();
     const held = await startHeldProbe();
     const replacement = storedRecord({
       provider: { ...PRESET_SETTINGS, model: "gpt-4o" },
@@ -695,6 +694,7 @@ describe("LLM_TEST", () => {
     expect(queued).toBeDefined();
     await queued;
     expect(await readLlmProvider(PROVIDER_ID)).toEqual(operation === "delete" ? null : replacement);
+    }
   });
 
   it("sends a synthetic ping, reports model/latency/tier, persists the tier", async () => {
@@ -770,16 +770,13 @@ describe("LLM_TEST", () => {
     expect(result.code).toBe("http_error");
   });
 
-  it("refuses test when the provider is not fully enabled", async () => {
+  it("refuses when the provider is not fully enabled or not configured", async () => {
     await seedEnabledProvider();
     await db.consents.clear();
     const server = makeOpenAiServer();
     vi.stubGlobal("fetch", server.fetch);
     await expectFailure({ type: "LLM_TEST" }, "not_enabled");
     expect(server.requests).toHaveLength(0);
-  });
-
-  it("reports not_configured for a missing provider", async () => {
     await expectFailure(
       { type: "LLM_TEST", providerId: "preset:openrouter" },
       "not_configured",
@@ -832,12 +829,14 @@ describe("LLM_REVOKE", () => {
     expect((await db.llmUsage.toArray())[0]?.costUsd).toBeUndefined();
   });
 
-  it.each([
-    { label: "HTTP error with reported usage", response: () => Response.json({ usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.02 } }, { status: 400 }), error: { status: 400 }, tokens: [3, 2], cost: { costUsd: 0.02 } },
-    { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-    { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-    { label: "aborted transport", response: () => null, error: { code: "timeout" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-  ])("accounts for a late $label without allowing another attempt", async ({ response, error, tokens, cost }) => {
+  it("accounts for a late attempt outcome without allowing another attempt", async () => {
+    for (const { label, response, error, tokens, cost } of [
+      { label: "HTTP error with reported usage", response: () => Response.json({ usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.02 } }, { status: 400 }), error: { status: 400 }, tokens: [3, 2], cost: { costUsd: 0.02 } },
+      { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+      { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+      { label: "aborted transport", response: () => null, error: { code: "timeout" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+    ] as const) {
+    await resetEnv();
     await seedExplainProvider();
     const held = heldCompletion();
     // Attach rejection handling before releasing the held transport.
@@ -857,7 +856,8 @@ describe("LLM_REVOKE", () => {
     await settleLlmUsage(reservation!.id, "llm_explain", { reportedCostUsd: 99 });
     expect(await db.llmUsage.count()).toBe(1);
     await expect(held.client.send(held.request)).rejects.toMatchObject({ code: "no_provider" });
-    expect(held.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(held.fetchImpl, label).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("preserves old active and unknown exposure, terminal rows, unrelated providers, and existing usage", async () => {
@@ -991,7 +991,9 @@ describe("LLM_REVOKE", () => {
     expect(await db.llmUsage.count()).toBe(1);
   });
 
-  it.each(["permission", "key"] as const)("fails closed on $0 removal failure while retaining in-flight accounting", async (failure) => {
+  it("fails closed on permission or key removal failure while retaining in-flight accounting", async () => {
+    for (const failure of ["permission", "key"] as const) {
+    await resetEnv();
     await seedExplainProvider();
     const held = heldCompletion();
     const inFlight = held.client.send(held.request);
@@ -1007,6 +1009,7 @@ describe("LLM_REVOKE", () => {
     held.response.resolve(completionResponse());
     await inFlight;
     expect(await db.llmUsage.count()).toBe(1);
+    }
   });
 
   it("allows explicit delete-all to wipe the accounting ordinary revoke preserves", async () => {
@@ -1061,7 +1064,7 @@ describe("LLM_REVOKE", () => {
     expect(await readCredential(PROVIDER_ID)).toBeNull();
   });
 
-  it("keeps the stored credential when deleteKey is false", async () => {
+  it("keeps the stored credential when deleteKey is false, and reports not_configured for unknown ids", async () => {
     await seedEnabledProvider();
     const result = await call({
       type: "LLM_REVOKE",
@@ -1071,6 +1074,10 @@ describe("LLM_REVOKE", () => {
     expect(result).toMatchObject({ ok: true });
     expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
     expect(await readCredential(PROVIDER_ID)).not.toBeNull();
+    await expectFailure(
+      { type: "LLM_REVOKE", providerId: "preset:openrouter", deleteKey: true },
+      "not_configured",
+    );
   });
 
   it("still revokes consent when permission removal fails", async () => {
@@ -1083,13 +1090,6 @@ describe("LLM_REVOKE", () => {
     expect(result.message).toContain("permission");
     // Consent already gone — the gate still blocks every send.
     expect(await db.consents.count()).toBe(0);
-  });
-
-  it("reports not_configured for an unknown provider id", async () => {
-    await expectFailure(
-      { type: "LLM_REVOKE", providerId: "preset:openrouter", deleteKey: true },
-      "not_configured",
-    );
   });
 });
 

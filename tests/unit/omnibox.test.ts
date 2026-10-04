@@ -287,20 +287,22 @@ describe("registerOmnibox", () => {
     expect(d.load).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    ["currentTab", "current"],
-    ["newForegroundTab", "foreground"],
-    ["newBackgroundTab", "background"],
-  ] as const)("maps disposition %s → %s", async (disposition, expected) => {
-    const d = deps();
-    registerOmnibox(omnibox.api, d);
-    omnibox.fireStarted();
-    await omnibox.fireChanged("fish");
-    await omnibox.fireEntered("https://fish.example/?a=1&b='2'", disposition);
-    expect(d.open).toHaveBeenCalledWith(
-      "https://fish.example/?a=1&b='2'",
-      expected,
-    );
+  it("maps omnibox dispositions to open dispositions", async () => {
+    for (const [disposition, expected] of [
+      ["currentTab", "current"],
+      ["newForegroundTab", "foreground"],
+      ["newBackgroundTab", "background"],
+    ] as const) {
+      const d = deps();
+      registerOmnibox(omnibox.api, d);
+      omnibox.fireStarted();
+      await omnibox.fireChanged("fish");
+      await omnibox.fireEntered("https://fish.example/?a=1&b='2'", disposition);
+      expect(d.open, disposition).toHaveBeenCalledWith(
+        "https://fish.example/?a=1&b='2'",
+        expected,
+      );
+    }
   });
 
   it("free text opens the top openable hit", async () => {

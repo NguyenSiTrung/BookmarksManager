@@ -144,41 +144,26 @@ const intoSlot = (parentId?: string, index?: number): DropTargetData => ({
 });
 
 describe("resolveDrop", () => {
-  it("moves a bookmark INTO a folder", () => {
+  it("computes move and reorder plans for bookmarks and folders", () => {
     expect(
       resolveDrop(pureTree, payload(["b1"], "bookmark"), intoFolder("f11", "10", 2)),
+      "bookmark into folder",
     ).toEqual({ ok: true, parentId: "f11", mode: "into" });
-  });
-
-  it("reorders a bookmark to a slot's index", () => {
     expect(
       resolveDrop(pureTree, payload(["b5"], "bookmark"), intoSlot("2", 0)),
+      "bookmark reordered to slot",
     ).toEqual({ ok: true, parentId: "2", index: 0, mode: "reorder" });
-  });
-
-  it("reorders a folder among its siblings", () => {
     expect(
       resolveDrop(pureTree, payload(["f11"], "folder"), intoFolder("f10", "10", 1)),
+      "folder reordered among siblings",
     ).toEqual({ ok: true, parentId: "10", index: 1, mode: "reorder" });
-  });
-
-  it("moves a folder INTO a non-sibling folder", () => {
     expect(
       resolveDrop(pureTree, payload(["f11"], "folder"), intoFolder("f12", "f10", 0)),
+      "folder into non-sibling",
     ).toEqual({ ok: true, parentId: "f12", mode: "into" });
   });
 
-  it("rejects the synthetic root \"0\" as a target", () => {
-    const result = resolveDrop(
-      pureTree,
-      payload(["b1"], "bookmark"),
-      intoFolder("0"),
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/root/i);
-  });
-
-  it("accepts a fixed root \"1\"–\"3\" row as a destination", () => {
+  it("accepts the fixed roots as destinations for rows and folders", () => {
     // Chrome treats the built-in roots as ordinary parents and "move to the
     // Bookmarks bar" is a primary workflow; a root is never a MOVE SUBJECT
     // (the drag handle is disabled on root rows) but it IS a destination.
@@ -188,61 +173,54 @@ describe("resolveDrop", () => {
         payload(["b1"], "bookmark"),
         intoFolder(rootId),
       );
-      expect(result.ok).toBe(true);
+      expect(result.ok, rootId).toBe(true);
     }
-  });
-
-  it("accepts a fixed root as a folder-into destination too", () => {
-    const result = resolveDrop(
+    const folderInto = resolveDrop(
       pureTree,
       payload(["f11"], "folder"),
       intoFolder("1"),
     );
-    expect(result.ok).toBe(true);
+    expect(folderInto.ok).toBe(true);
   });
 
-  it("rejects a managed folder as a target", () => {
-    const result = resolveDrop(
+  it("rejects invalid targets: synthetic root, managed, self, descendant, leaf, and orphan slots", () => {
+    const root = resolveDrop(
+      pureTree,
+      payload(["b1"], "bookmark"),
+      intoFolder("0"),
+    );
+    expect(root.ok, "synthetic root").toBe(false);
+    if (!root.ok) expect(root.reason).toMatch(/root/i);
+    const managed = resolveDrop(
       pureTree,
       payload(["b1"], "bookmark"),
       intoFolder("m1", "1", 1),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/managed/i);
-  });
-
-  it("rejects dropping a folder onto itself", () => {
-    const result = resolveDrop(
+    expect(managed.ok, "managed folder").toBe(false);
+    if (!managed.ok) expect(managed.reason).toMatch(/managed/i);
+    const self = resolveDrop(
       pureTree,
       payload(["f10"], "folder"),
       intoFolder("f10", "10", 1),
     );
-    expect(result.ok).toBe(false);
-  });
-
-  it("rejects dropping a folder into its own descendant", () => {
-    const result = resolveDrop(
+    expect(self.ok, "folder onto itself").toBe(false);
+    const descendant = resolveDrop(
       pureTree,
       payload(["f10"], "folder"),
       intoFolder("f12", "f10", 0),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/subtree/i);
-  });
-
-  it("rejects a leaf bookmark used as a folder target", () => {
-    const result = resolveDrop(
+    expect(descendant.ok, "own descendant").toBe(false);
+    if (!descendant.ok) expect(descendant.reason).toMatch(/subtree/i);
+    const leaf = resolveDrop(
       pureTree,
       payload(["b1"], "bookmark"),
       intoFolder("b1"),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/bookmark/i);
-  });
-
-  it("rejects a slot with no parent", () => {
+    expect(leaf.ok, "leaf as folder").toBe(false);
+    if (!leaf.ok) expect(leaf.reason).toMatch(/bookmark/i);
     expect(
       resolveDrop(pureTree, payload(["b1"], "bookmark"), intoSlot(undefined, 0)).ok,
+      "slot with no parent",
     ).toBe(false);
   });
 });

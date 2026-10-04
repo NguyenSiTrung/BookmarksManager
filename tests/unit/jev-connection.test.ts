@@ -108,15 +108,15 @@ describe("testJevConnection", () => {
     expect(error.message).not.toContain("unknown field");
   });
 
-  it.each([429, 503, 529])(
-    "maps retryable HTTP %i to retry-later guidance without retrying",
-    async (status) => {
+  it("maps retryable HTTP statuses to retry-later guidance without retrying", async () => {
+    for (const status of [429, 503, 529]) {
       // maxRetries: 0 — a test connection never retries; the retryable
       // status collapses to retry_later after the single attempt.
+      send.mockClear();
       await expectConnectionFailure(jsonResponse({}, status), "retry_later");
-      expect(send).toHaveBeenCalledTimes(1);
-    },
-  );
+      expect(send, String(status)).toHaveBeenCalledTimes(1);
+    }
+  });
 
   it("maps other non-2xx statuses to http_error naming only the status", async () => {
     const error = await expectConnectionFailure(
@@ -182,24 +182,24 @@ describe("testJevConnection", () => {
     );
   });
 
-  it.each(["no_consent", "no_permission", "no_key"] as const)(
-    "wraps a thrown NetworkGateError keeping its %s code and redacted message",
-    async (code) => {
+  it("wraps a thrown NetworkGateError keeping its code and redacted message", async () => {
+    for (const code of ["no_consent", "no_permission", "no_key"] as const) {
       const gateError = new NetworkGateError(
         code,
         `redacted gate refusal: ${code}`,
       );
+      send.mockReset();
       send.mockRejectedValue(gateError);
 
       const error = await testJevConnection("typesafe", "jev-latest").catch(
         (caught: unknown) => caught,
       );
 
-      expect(error).toBeInstanceOf(JevConnectionError);
-      expect((error as JevConnectionError).code).toBe(code);
-      expect((error as JevConnectionError).message).toBe(gateError.message);
-    },
-  );
+      expect(error, code).toBeInstanceOf(JevConnectionError);
+      expect((error as JevConnectionError).code, code).toBe(code);
+      expect((error as JevConnectionError).message, code).toBe(gateError.message);
+    }
+  });
 
   it("propagates ProviderKeyError from the send layer unwrapped", async () => {
     const keyError = new ProviderKeyError(

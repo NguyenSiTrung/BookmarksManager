@@ -27,18 +27,27 @@ beforeAll(async () => {
   await db.open();
 });
 
-beforeEach(async () => {
+const resetEnv = async () => {
   await db.bookmarkMeta.clear();
   await db.tags.clear();
-});
+};
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
 });
 
 describe("getMeta", () => {
-  it("returns undefined for an unknown id", async () => {
+  it("treats missing and schema-invalid rows as absent", async () => {
     expect(await getMeta("no-such-id")).toBeUndefined();
+    // Bypass the repo: a row whose tag entry is not a valid nameKey.
+    await db.bookmarkMeta.put({
+      id: "bad",
+      tags: ["Not A Key"],
+      updatedAt: ISO,
+    });
+    expect(await getMeta("bad")).toBeUndefined();
   });
 
   it("returns a stored row, validated and normalized", async () => {
@@ -57,15 +66,6 @@ describe("getMeta", () => {
     expect(Number.isNaN(Date.parse(meta!.updatedAt))).toBe(false);
   });
 
-  it("treats a schema-invalid stored row as absent", async () => {
-    // Bypass the repo: a row whose tag entry is not a valid nameKey.
-    await db.bookmarkMeta.put({
-      id: "bad",
-      tags: ["Not A Key"],
-      updatedAt: ISO,
-    });
-    expect(await getMeta("bad")).toBeUndefined();
-  });
 });
 
 describe("putMeta", () => {
@@ -97,13 +97,10 @@ describe("putMeta", () => {
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
 
-  it("stores no row for an all-empty put on a fresh id", async () => {
+  it("stores no row when the put normalizes to nothing", async () => {
     // "   " normalizes to an empty nameKey and is dropped, leaving nothing.
     expect(await putMeta("bm-1", { tags: ["   "] })).toBeUndefined();
     expect(await db.bookmarkMeta.count()).toBe(0);
-  });
-
-  it("stores an empty-string notes value as no-notes", async () => {
     expect(await putMeta("bm-1", { notes: "" })).toBeUndefined();
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
@@ -115,19 +112,16 @@ describe("putMeta", () => {
     expect(meta?.tags).toEqual(["typescript", "reading list"]);
   });
 
-  it("does not mutate the caller's field object or tag array", async () => {
+  it("keeps caller objects and stored rows decoupled", async () => {
     const tags = Object.freeze(["A", "B"]);
     const fields = { tags, notes: "n" } as const;
     const meta = await putMeta("bm-1", fields);
     expect([...tags]).toEqual(["A", "B"]);
     expect(fields.notes).toBe("n");
     expect(meta?.tags).toEqual(["a", "b"]);
-  });
-
-  it("returns objects decoupled from storage", async () => {
-    const meta = await putMeta("bm-1", { tags: ["a"] });
+    // Writes a fresh array — mutating the returned object never leaks back.
     meta!.tags.push("caller-pollution");
-    expect((await getMeta("bm-1"))?.tags).toEqual(["a"]);
+    expect((await getMeta("bm-1"))?.tags).toEqual(["a", "b"]);
   });
 
   it("rejects a field set that violates the schema", async () => {
@@ -161,15 +155,18 @@ describe("patchMeta", () => {
     });
   });
 
-  it("clears category and notes on null", async () => {
+  it("clears fields on null and empty values", async () => {
     await putMeta("bm-1", { category: "docs", notes: "x", tags: ["t"] });
     const meta = await patchMeta("bm-1", { category: null, notes: null });
     expect(meta).toMatchObject({ tags: ["t"] });
     expect(meta?.category).toBeUndefined();
     expect(meta?.notes).toBeUndefined();
+    // Clearing the last remaining field deletes the row (lazy rows).
+    expect(await patchMeta("bm-1", { tags: [] })).toBeUndefined();
+    expect(await db.bookmarkMeta.get("bm-1")).toBeUndefined();
   });
 
-  it("clears the tag list on an empty array", async () => {
+  it("clears the tag list on an empty array while keeping notes", async () => {
     await putMeta("bm-1", { tags: ["a"], notes: "x" });
     const meta = await patchMeta("bm-1", { tags: [] });
     expect(meta?.tags).toEqual([]);
@@ -184,13 +181,10 @@ describe("patchMeta", () => {
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
 
-  it("treats empty-string notes as a clear", async () => {
+  it("treats clearing the last field and patching a missing row as absence", async () => {
     await putMeta("bm-1", { notes: "x" });
     expect(await patchMeta("bm-1", { notes: "" })).toBeUndefined();
     expect(await db.bookmarkMeta.count()).toBe(0);
-  });
-
-  it("keeps a missing row absent on an empty patch", async () => {
     expect(await patchMeta("bm-1", {})).toBeUndefined();
     expect(await db.bookmarkMeta.count()).toBe(0);
   });
@@ -230,9 +224,10 @@ describe("getMetaByIds", () => {
     expect(metas.map((m) => m.id)).toEqual(["b", "a"]);
   });
 
-  it("collapses duplicate ids", async () => {
+  it("collapses duplicate ids and returns [] for empty input", async () => {
     await putMeta("a", { notes: "1" });
     expect(await getMetaByIds(["a", "a", "a"])).toHaveLength(1);
+    expect(await getMetaByIds([])).toEqual([]);
   });
 
   it("drops schema-invalid rows", async () => {
@@ -246,9 +241,6 @@ describe("getMetaByIds", () => {
     expect(metas.map((m) => m.id)).toEqual(["good"]);
   });
 
-  it("returns [] for empty input", async () => {
-    expect(await getMetaByIds([])).toEqual([]);
-  });
 });
 
 describe("listMeta / index reads", () => {
@@ -298,12 +290,9 @@ describe("deleteMetaByIds", () => {
     expect((await getMeta("c"))?.notes).toBe("3");
   });
 
-  it("counts only rows that actually existed", async () => {
+  it("counts only rows that actually existed and returns 0 for empty input", async () => {
     await putMeta("a", { notes: "1" });
     expect(await deleteMetaByIds(["a", "ghost"])).toBe(1);
-  });
-
-  it("returns 0 for empty input", async () => {
     expect(await deleteMetaByIds([])).toBe(0);
   });
 });
@@ -343,23 +332,16 @@ describe("createTag", () => {
     expect(await db.tags.count()).toBe(1);
   });
 
-  it("rejects empty and whitespace-only names", async () => {
-    await expect(createTag("")).rejects.toMatchObject({
-      code: "invalid_tag",
-    });
-    await expect(createTag("   ")).rejects.toMatchObject({
-      code: "invalid_tag",
-    });
-    expect(await db.tags.count()).toBe(0);
-  });
-
-  it("rejects names >64 chars and descriptions >300", async () => {
-    await expect(createTag("n".repeat(65))).rejects.toMatchObject({
-      code: "invalid_tag",
-    });
+  it("rejects empty, whitespace-only, and over-limit names and descriptions", async () => {
+    for (const name of ["", "   ", "n".repeat(65)]) {
+      await expect(createTag(name), JSON.stringify(name)).rejects.toMatchObject({
+        code: "invalid_tag",
+      });
+    }
     await expect(
       createTag("ok", { description: "d".repeat(301) }),
     ).rejects.toMatchObject({ code: "invalid_tag" });
+    expect(await db.tags.count()).toBe(0);
   });
 });
 
@@ -371,19 +353,10 @@ describe("getTag / listTags", () => {
     expect(await getTag("bar")).toBeUndefined();
   });
 
-  it("listTags returns defs sorted by nameKey", async () => {
+  it("listTags returns defs sorted by nameKey, dropping schema-invalid rows", async () => {
     await createTag("Beta");
     await createTag("alpha");
     await createTag("Gamma");
-    expect((await listTags()).map((t) => t.nameKey)).toEqual([
-      "alpha",
-      "beta",
-      "gamma",
-    ]);
-  });
-
-  it("listTags drops schema-invalid stored defs", async () => {
-    await createTag("Good");
     // nameKey "WRONG" is not its own trim+lowercase form.
     await db.tags.put({
       name: "Bad",
@@ -391,7 +364,11 @@ describe("getTag / listTags", () => {
       createdAt: ISO,
       updatedAt: ISO,
     });
-    expect((await listTags()).map((t) => t.nameKey)).toEqual(["good"]);
+    expect((await listTags()).map((t) => t.nameKey)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
     expect(await getTag("WRONG")).toBeUndefined();
   });
 });
@@ -430,12 +407,9 @@ describe("updateTag / recolorTag", () => {
     expect((await recolorTag("foo", null))?.color).toBeUndefined();
   });
 
-  it("returns undefined for a missing tag", async () => {
+  it("refuses missing tags and schema-invalid patches without writing", async () => {
     expect(await updateTag("ghost", { color: "#fff" })).toBeUndefined();
     expect(await recolorTag("ghost", "#fff")).toBeUndefined();
-  });
-
-  it("rejects a patch that violates the schema and writes nothing", async () => {
     await createTag("Foo");
     await expect(
       updateTag("foo", { description: "d".repeat(301) }),
@@ -504,7 +478,7 @@ describe("renameTag", () => {
     expect((await getMeta("a"))?.tags).toEqual(["alpha"]);
   });
 
-  it("rejects an invalid new name", async () => {
+  it("refuses invalid names and missing tags", async () => {
     await createTag("Foo");
     await expect(renameTag("foo", "   ")).rejects.toMatchObject({
       code: "invalid_tag",
@@ -512,9 +486,6 @@ describe("renameTag", () => {
     await expect(renameTag("foo", "n".repeat(65))).rejects.toMatchObject({
       code: "invalid_tag",
     });
-  });
-
-  it("returns undefined for a missing tag", async () => {
     expect(await renameTag("ghost", "New")).toBeUndefined();
   });
 });
@@ -548,13 +519,10 @@ describe("deleteTag", () => {
     expect(meta?.category).toBe("docs");
   });
 
-  it("strips orphaned keys even when no def exists", async () => {
+  it("handles def-less and unreferenced keys", async () => {
     await putMeta("a", { tags: ["orphan"] });
     expect(await deleteTag("orphan")).toBe(1);
     expect(await db.bookmarkMeta.count()).toBe(0);
-  });
-
-  it("returns 0 when nothing references the key", async () => {
     expect(await deleteTag("ghost")).toBe(0);
     await createTag("Empty");
     expect(await deleteTag("empty")).toBe(0);
@@ -563,7 +531,7 @@ describe("deleteTag", () => {
 });
 
 describe("setBookmarkSummary", () => {
-  it("stores a verified summary on an existing row without touching other fields", async () => {
+  it("stores a verified summary on existing rows and lazy-creates fresh ones", async () => {
     await putMeta("bm-1", { tags: ["Docs"], category: "docs", notes: "kept" });
     const meta = await setBookmarkSummary("bm-1", "A verified summary.");
     expect(meta).toMatchObject({
@@ -574,11 +542,9 @@ describe("setBookmarkSummary", () => {
       summary: "A verified summary.",
     });
     expect((await getMeta("bm-1"))?.summary).toBe("A verified summary.");
-  });
-
-  it("lazily creates a row when the bookmark has no other metadata", async () => {
-    const meta = await setBookmarkSummary("bm-new", "Verified.");
-    expect(meta?.summary).toBe("Verified.");
+    // No other metadata yet: the summary itself materializes the row.
+    const created = await setBookmarkSummary("bm-new", "Verified.");
+    expect(created?.summary).toBe("Verified.");
     expect((await getMeta("bm-new"))?.summary).toBe("Verified.");
   });
 

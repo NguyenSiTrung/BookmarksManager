@@ -44,52 +44,51 @@ describe("named band constants", () => {
 });
 
 describe("add_tags / set_category bands", () => {
-  it.each(["add_tags", "set_category"] as const)(
-    "%s auto-applies at ≥ 0.85 only when its toggle is on",
-    (kind) => {
-      expect(evaluatePolicy({ kind, confidence: 0.85, settings: ON })).toBe(
+  it("add_tags/set_category auto-applies at ≥ 0.85 only when its toggle is on", () => {
+    for (const kind of ["add_tags", "set_category"] as const) {
+      expect(evaluatePolicy({ kind, confidence: 0.85, settings: ON }), kind).toBe(
         "auto_apply",
       );
-      expect(evaluatePolicy({ kind, confidence: 1, settings: ON })).toBe(
+      expect(evaluatePolicy({ kind, confidence: 1, settings: ON }), kind).toBe(
         "auto_apply",
       );
       // Inclusive lower edge: exactly 0.85 applies, anything below reviews.
       expect(
         evaluatePolicy({ kind, confidence: 0.85 - 1e-9, settings: ON }),
+        kind,
       ).toBe("review");
-    },
-  );
+    }
+  });
 
-  it.each(["add_tags", "set_category"] as const)(
-    "%s lands in review for [0.5, 0.85) and is unsure below 0.5",
-    (kind) => {
-      expect(evaluatePolicy({ kind, confidence: 0.5, settings: ON })).toBe(
+  it("add_tags/set_category lands in review for [0.5, 0.85) and is unsure below 0.5", () => {
+    for (const kind of ["add_tags", "set_category"] as const) {
+      expect(evaluatePolicy({ kind, confidence: 0.5, settings: ON }), kind).toBe(
         "review",
       );
-      expect(evaluatePolicy({ kind, confidence: 0.7, settings: ON })).toBe(
+      expect(evaluatePolicy({ kind, confidence: 0.7, settings: ON }), kind).toBe(
         "review",
       );
       expect(
         evaluatePolicy({ kind, confidence: 0.5 - 1e-9, settings: ON }),
+        kind,
       ).toBe("unsure");
-      expect(evaluatePolicy({ kind, confidence: 0, settings: ON })).toBe(
+      expect(evaluatePolicy({ kind, confidence: 0, settings: ON }), kind).toBe(
         "unsure",
       );
-    },
-  );
+    }
+  });
 
-  it.each(["add_tags", "set_category"] as const)(
-    "%s never auto-applies while its toggle is off, even at 1.0",
-    (kind) => {
+  it("add_tags/set_category never auto-applies while its toggle is off, even at 1.0", () => {
+    for (const kind of ["add_tags", "set_category"] as const) {
       const off = DecisionSettings.parse({});
       for (const confidence of [0.85, 0.9, 0.99, 1]) {
-        expect(evaluatePolicy({ kind, confidence, settings: off })).toBe(
+        expect(evaluatePolicy({ kind, confidence, settings: off }), kind).toBe(
           "review",
         );
-        expect(evaluatePolicy({ kind, confidence })).toBe("review");
+        expect(evaluatePolicy({ kind, confidence }), kind).toBe("review");
       }
-    },
-  );
+    }
+  });
 
   it("honours the toggles per kind, not globally", () => {
     const onlyTags = DecisionSettings.parse({ autoApply: { add_tags: true } });
@@ -162,19 +161,19 @@ describe("move bands", () => {
 });
 
 describe("never-auto-apply kinds", () => {
-  it.each(["merge_duplicates", "mark_dead", "rename"] as const)(
-    "%s reviews at ≥ 0.5 and is unsure below, at any confidence",
-    (kind) => {
+  it("merge_duplicates/mark_dead/rename review at ≥ 0.5 and are unsure below, at any confidence", () => {
+    for (const kind of ["merge_duplicates", "mark_dead", "rename"] as const) {
       for (const confidence of [0.5, 0.7, 0.85, 1]) {
-        expect(evaluatePolicy({ kind, confidence, settings: ON })).toBe(
+        expect(evaluatePolicy({ kind, confidence, settings: ON }), kind).toBe(
           "review",
         );
       }
       expect(
         evaluatePolicy({ kind, confidence: 0.5 - 1e-9, settings: ON }),
+        kind,
       ).toBe("unsure");
-    },
-  );
+    }
+  });
 
   it("create_folder always lands in review, whatever the confidence", () => {
     for (const confidence of [0, 0.4, 0.5, 0.9, 1]) {
@@ -186,14 +185,14 @@ describe("never-auto-apply kinds", () => {
 });
 
 describe("confidence input validation", () => {
-  it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])(
-    "throws RangeError for confidence = %f outside [0, 1]",
-    (confidence) => {
-      expect(() => evaluatePolicy({ kind: "add_tags", confidence })).toThrow(
-        RangeError,
-      );
-    },
-  );
+  it("throws RangeError for confidence outside [0, 1]", () => {
+    for (const confidence of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        () => evaluatePolicy({ kind: "add_tags", confidence }),
+        `confidence=${confidence}`,
+      ).toThrow(RangeError);
+    }
+  });
 });
 
 describe("isNoMatch (rerank bar)", () => {
@@ -235,14 +234,16 @@ describe("DecisionSettings schema", () => {
     ).toEqual({ autoApply: { add_tags: true, set_category: false } });
   });
 
-  it.each([
-    { autoApply: { delete_everything: true } },
-    { autoApply: { move: true } }, // move has no auto-apply toggle at all
-    { autoApply: { merge_duplicates: true } },
-    { autoApply: { add_tags: true }, unknownTopLevel: 1 },
-    { autoApply: { add_tags: "yes" } },
-  ])("rejects unknown kinds and keys: %j", (bad) => {
-    expect(DecisionSettings.safeParse(bad).success).toBe(false);
+  it("rejects unknown kinds and keys", () => {
+    for (const bad of [
+      { autoApply: { delete_everything: true } },
+      { autoApply: { move: true } }, // move has no auto-apply toggle at all
+      { autoApply: { merge_duplicates: true } },
+      { autoApply: { add_tags: true }, unknownTopLevel: 1 },
+      { autoApply: { add_tags: "yes" } },
+    ]) {
+      expect(DecisionSettings.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
   });
 });
 

@@ -71,7 +71,9 @@ beforeAll(async () => {
   await db.open();
 });
 
-beforeEach(async () => {
+async function resetEnv() {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   fake = installBookmarksFake({
     bookmarksBar: [
       {
@@ -113,7 +115,9 @@ beforeEach(async () => {
   await db.bookmarkMeta.clear();
   await db.tags.clear();
   await db.undo.clear();
-});
+}
+
+beforeEach(resetEnv);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -370,10 +374,12 @@ describe("listSnapshots / peekLatest", () => {
 // ---------------------------------------------------------------------------
 
 describe("undoLatest — delete", () => {
-  it.each([
-    { tags: [], summary: "Verified summary only." },
-    { tags: ["docs"], category: "paper" as const, notes: "Saved notes.", summary: "Verified with notes." },
-  ])("preserves summary metadata on a recreated ID: %j", async (fields) => {
+  it("preserves summary metadata on a recreated ID", async () => {
+    for (const fields of [
+      { tags: [], summary: "Verified summary only." },
+      { tags: ["docs"], category: "paper" as const, notes: "Saved notes.", summary: "Verified with notes." },
+    ]) {
+    await resetEnv();
     await putMeta("bm-b", fields);
     await putMeta("bm-c", { tags: ["untouched"], summary: "Unrelated summary." });
     const unrelated = await getMeta("bm-c");
@@ -388,6 +394,7 @@ describe("undoLatest — delete", () => {
     expect(await getMeta(newId!)).toMatchObject(fields);
     expect(await getMeta("bm-b")).toBeUndefined();
     expect(await getMeta("bm-c")).toEqual(unrelated);
+    }
   });
 
   it("re-creates a deleted leaf at its original parent+index and remaps its meta", async () => {
@@ -904,9 +911,9 @@ describe("undoLatest — restructure", () => {
     expect(await peekLatest()).toBeUndefined();
   });
 
-  it.each([false, true])(
-    "resumes partial recreation from a durable idMap (mapped node deleted before retry: %s)",
-    async (deleteMappedNode) => {
+  it("resumes partial recreation from a durable idMap with or without a mapped node deleted before retry", async () => {
+    for (const deleteMappedNode of [false, true]) {
+      await resetEnv();
       await putMeta("bm-b", { tags: ["b"], notes: "B note" });
       await putMeta("bm-c", { category: "docs" });
       const capture = await captureNodes(["bm-b", "bm-c"]);
@@ -942,8 +949,8 @@ describe("undoLatest — restructure", () => {
       expect(await getMeta(newB!)).toMatchObject({ tags: ["b"], notes: "B note" });
       expect(await getMeta(newC!)).toMatchObject({ category: "docs" });
       expect(await db.undo.get(rowId)).toBeUndefined();
-    },
-  );
+    }
+  });
 
   it("retries a recreated-node metadata failure without duplicating bookmarks", async () => {
     await putMeta("bm-b", { tags: ["docs"], notes: "saved note" });
@@ -1021,17 +1028,17 @@ describe("undoLatest — restructure", () => {
     expect(await db.undo.get(rowId)).toBeUndefined();
   });
 
-  it.each(["1", "managed", "bm-b"])(
-    "never cleans up a fixed root, managed folder, or bookmark recorded as a created folder (%s)",
-    async (id) => {
+  it("never cleans up a fixed root, managed folder, or bookmark recorded as a created folder", async () => {
+    for (const id of ["1", "managed", "bm-b"]) {
+      await resetEnv();
       await pushSnapshot({
         kind: "restructure", nodes: [], meta: [], createdFolderIds: [id],
       });
       const before = await fake.getTree();
       await undoLatest();
       expect(await fake.getTree()).toEqual(before);
-    },
-  );
+    }
+  });
 
   it("retains the snapshot when a missing bookmark's recorded parent is managed", async () => {
     await pushSnapshot({
@@ -1059,10 +1066,12 @@ describe("undoLatest — restructure", () => {
 // ---------------------------------------------------------------------------
 
 describe("undoLatest — merge", () => {
-  it.each([
-    { tags: [], summary: "Original summary only." },
-    { tags: ["kept"], category: "docs" as const, notes: "Kept notes.", summary: "Original full summary." },
-  ])("restores a surviving target summary alongside remapped loser metadata: %j", async (fields) => {
+  it("restores a surviving target summary alongside remapped loser metadata", async () => {
+    for (const fields of [
+      { tags: [], summary: "Original summary only." },
+      { tags: ["kept"], category: "docs" as const, notes: "Kept notes.", summary: "Original full summary." },
+    ]) {
+    await resetEnv();
     await putMeta("bm-k", fields);
     await putMeta("bm-l1", { tags: [], summary: "Loser summary." });
     const captured = await captureNodes(["bm-l1"]);
@@ -1077,6 +1086,7 @@ describe("undoLatest — merge", () => {
     if (!("notes" in fields)) expect((await getMeta("bm-k"))?.notes).toBeUndefined();
     expect((await getMeta(result.idMap["bm-l1"]!))?.summary).toBe("Loser summary.");
     expect(await getMeta("bm-l1")).toBeUndefined();
+    }
   });
 
   it("clears a merge-created summary when the captured target had none", async () => {

@@ -186,35 +186,41 @@ describe("reconcileBudget", () => {
   }
 
   // Zero-filling an absent dimension would undercharge each of these fixtures.
-  it.each([
-    { usage: {}, input: 1000, output: 500, cost: 0.00045 },
-    { usage: { inputTokens: 100 }, input: 100, output: 500, cost: 0.000315 },
-    { usage: { outputTokens: 50 }, input: 1000, output: 50, cost: 0.00018 },
-    { usage: { inputTokens: 0 }, input: 0, output: 500, cost: 0.0003 },
-    { usage: { outputTokens: 0 }, input: 1000, output: 0, cost: 0.00015 },
-    { usage: { inputTokens: 0, outputTokens: 0 }, input: 0, output: 0, cost: 0 },
-  ])("estimates missing dimensions from reservation bounds %#", ({ usage, input, output, cost }) => {
-    const settled = reconcileBudget(activeReservation(), usage, SEP_15);
-    expect(settled.usageRow).toMatchObject({
-      inputTokens: input, outputTokens: output, provenance: "estimated",
-    });
-    expect(settled.usageRow.estimatedCostUsd).toBeCloseTo(cost, 12);
-    expect(settled.usageRow.costUsd).toBeUndefined();
+  it("estimates missing dimensions from reservation bounds", () => {
+    for (const { usage, input, output, cost } of [
+      { usage: {}, input: 1000, output: 500, cost: 0.00045 },
+      { usage: { inputTokens: 100 }, input: 100, output: 500, cost: 0.000315 },
+      { usage: { outputTokens: 50 }, input: 1000, output: 50, cost: 0.00018 },
+      { usage: { inputTokens: 0 }, input: 0, output: 500, cost: 0.0003 },
+      { usage: { outputTokens: 0 }, input: 1000, output: 0, cost: 0.00015 },
+      { usage: { inputTokens: 0, outputTokens: 0 }, input: 0, output: 0, cost: 0 },
+    ]) {
+      const settled = reconcileBudget(activeReservation(), usage, SEP_15);
+      expect(settled.usageRow, JSON.stringify(usage)).toMatchObject({
+        inputTokens: input, outputTokens: output, provenance: "estimated",
+      });
+      expect(settled.usageRow.estimatedCostUsd, JSON.stringify(usage)).toBeCloseTo(cost, 12);
+      expect(settled.usageRow.costUsd, JSON.stringify(usage)).toBeUndefined();
+    }
   });
 
-  it.each([0, 0.0001, 2])("gives reported cost %s precedence even without token counts", (reportedCostUsd) => {
-    const settled = reconcileBudget(activeReservation(), { reportedCostUsd }, SEP_15);
-    expect(settled.usageRow).toMatchObject({
-      inputTokens: 1000, outputTokens: 500, costUsd: reportedCostUsd, provenance: "reported",
-    });
-    expect(settled.usageRow.estimatedCostUsd).toBeUndefined();
+  it("gives reported cost precedence even without token counts", () => {
+    for (const reportedCostUsd of [0, 0.0001, 2]) {
+      const settled = reconcileBudget(activeReservation(), { reportedCostUsd }, SEP_15);
+      expect(settled.usageRow, `cost ${reportedCostUsd}`).toMatchObject({
+        inputTokens: 1000, outputTokens: 500, costUsd: reportedCostUsd, provenance: "reported",
+      });
+      expect(settled.usageRow.estimatedCostUsd).toBeUndefined();
+    }
   });
 
-  it.each([null, -1, NaN, Infinity])("does not count invalid reported cost %s as free or negative spend", (reportedCostUsd) => {
-    const settled = reconcileBudget(activeReservation(), { reportedCostUsd } as unknown as ActualUsage, SEP_15);
-    expect(settled.usageRow.provenance).toBe("estimated");
-    expect(settled.usageRow.estimatedCostUsd).toBeCloseTo(0.00045, 12);
-    expect(settled.usageRow.costUsd).toBeUndefined();
+  it("does not count invalid reported costs as free or negative spend", () => {
+    for (const reportedCostUsd of [null, -1, NaN, Infinity]) {
+      const settled = reconcileBudget(activeReservation(), { reportedCostUsd } as unknown as ActualUsage, SEP_15);
+      expect(settled.usageRow.provenance, `cost ${reportedCostUsd}`).toBe("estimated");
+      expect(settled.usageRow.estimatedCostUsd).toBeCloseTo(0.00045, 12);
+      expect(settled.usageRow.costUsd).toBeUndefined();
+    }
   });
 
   it("records missing unpriced usage as unknown, not a monetary zero", () => {

@@ -57,62 +57,75 @@ describe("ChatCompletionRequest", () => {
     ]);
   });
 
-  it.each([1, 50, Number.MAX_SAFE_INTEGER])("accepts positive safe-integer max_tokens %s", (max_tokens) => {
-    expect(ChatCompletionRequest.parse({
-      model: "m",
-      messages: [{ role: "user", content: "x" }],
-      max_tokens,
-    }).max_tokens).toBe(max_tokens);
-  });
-
-  it.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1, "50", null])(
-    "rejects invalid max_tokens %s instead of coercing it",
-    (max_tokens) => {
-      expect(ChatCompletionRequest.safeParse({
-        model: "m", messages: [{ role: "user", content: "x" }], max_tokens,
-      }).success).toBe(false);
-    },
-  );
-
-  it.each(["max_completion_tokens", "max_output_tokens", "max_new_tokens"])(
-    "rejects alternate %s alone or alongside max_tokens",
-    (field) => {
-      for (const max_tokens of [undefined, 25]) {
-        expect(ChatCompletionRequest.safeParse({
+  it("accepts positive safe-integer max_tokens and rejects invalid ones without coercing", () => {
+    for (const max_tokens of [1, 50, Number.MAX_SAFE_INTEGER]) {
+      expect(
+        ChatCompletionRequest.parse({
           model: "m",
           messages: [{ role: "user", content: "x" }],
-          ...(max_tokens !== undefined ? { max_tokens } : {}),
-          [field]: 25,
-        }).success).toBe(false);
-      }
-    },
-  );
+          max_tokens,
+        }).max_tokens,
+        `max_tokens=${max_tokens}`,
+      ).toBe(max_tokens);
+    }
+    for (const max_tokens of [
+      0, -1, 1.5, NaN, Infinity, -Infinity,
+      Number.MAX_SAFE_INTEGER + 1, "50", null,
+    ]) {
+      expect(
+        ChatCompletionRequest.safeParse({
+          model: "m",
+          messages: [{ role: "user", content: "x" }],
+          max_tokens,
+        }).success,
+        `max_tokens=${String(max_tokens)}`,
+      ).toBe(false);
+    }
+  });
 
-  it.each([
-    ["empty messages", { model: "m", messages: [] }],
-    ["blank model", { model: "  ", messages: [{ role: "user", content: "x" }] }],
-    [
-      "negative max_tokens",
-      {
-        model: "m",
-        messages: [{ role: "user", content: "x" }],
-        max_tokens: -1,
-      },
-    ],
-    [
-      "unknown request key",
-      {
-        model: "m",
-        messages: [{ role: "user", content: "x" }],
-        extra: "nope",
-      },
-    ],
-    [
-      "unknown role",
-      { model: "m", messages: [{ role: "admin", content: "x" }] },
-    ],
-  ])("rejects %s", (_label, bad) => {
-    expect(() => ChatCompletionRequest.parse(bad)).toThrow();
+  it("rejects alternate token fields alone or alongside max_tokens", () => {
+    for (const field of ["max_completion_tokens", "max_output_tokens", "max_new_tokens"]) {
+      for (const max_tokens of [undefined, 25]) {
+        expect(
+          ChatCompletionRequest.safeParse({
+            model: "m",
+            messages: [{ role: "user", content: "x" }],
+            ...(max_tokens !== undefined ? { max_tokens } : {}),
+            [field]: 25,
+          }).success,
+          `${field} (max_tokens=${max_tokens})`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("rejects malformed requests", () => {
+    for (const [label, bad] of [
+      ["empty messages", { model: "m", messages: [] }],
+      ["blank model", { model: "  ", messages: [{ role: "user", content: "x" }] }],
+      [
+        "negative max_tokens",
+        {
+          model: "m",
+          messages: [{ role: "user", content: "x" }],
+          max_tokens: -1,
+        },
+      ],
+      [
+        "unknown request key",
+        {
+          model: "m",
+          messages: [{ role: "user", content: "x" }],
+          extra: "nope",
+        },
+      ],
+      [
+        "unknown role",
+        { model: "m", messages: [{ role: "admin", content: "x" }] },
+      ],
+    ] as const) {
+      expect(() => ChatCompletionRequest.parse(bad), label).toThrow();
+    }
   });
 });
 
@@ -202,14 +215,16 @@ describe("ChatCompletionResponse", () => {
     expect(firstText(res)).toBeNull();
   });
 
-  it.each([
-    ["missing model", { choices: [{ message: { role: "assistant", content: "x" } }] }],
-    ["empty choices", { model: "m", choices: [] }],
-    [
-      "missing message",
-      { model: "m", choices: [{ finish_reason: "stop" }] },
-    ],
-  ])("rejects %s", (_label, bad) => {
-    expect(() => ChatCompletionResponse.parse(bad)).toThrow();
+  it("rejects malformed responses", () => {
+    for (const [label, bad] of [
+      ["missing model", { choices: [{ message: { role: "assistant", content: "x" } }] }],
+      ["empty choices", { model: "m", choices: [] }],
+      [
+        "missing message",
+        { model: "m", choices: [{ finish_reason: "stop" }] },
+      ],
+    ] as const) {
+      expect(() => ChatCompletionResponse.parse(bad), label).toThrow();
+    }
   });
 });

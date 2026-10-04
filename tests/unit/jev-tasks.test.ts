@@ -113,7 +113,7 @@ describe("categorize", () => {
     });
   });
 
-  it("offers exactly the Category enum values as option keys", () => {
+  it("offers exactly the Category enum keys, exports its version, and conforms", () => {
     const question = task.decision.build(task.state, MODEL).questions[
       "category"
     ];
@@ -123,9 +123,6 @@ describe("categorize", () => {
         [...Category.options].sort(),
       );
     }
-  });
-
-  it("exports a questionSetVersion and a conforming state", () => {
     expect(categorizeVersion).toBe("categorize-v2");
     expect(task.questionSetVersion).toBe(categorizeVersion);
     expect(DecisionState.parse(task.state)).toEqual(task.state);
@@ -211,13 +208,10 @@ describe("tags", () => {
     });
   });
 
-  it("never puts nameKey or a URL into the state or questions", () => {
+  it("keeps nameKey/URLs out of state and rejects empty lists and duplicate keys", () => {
     expect(DecisionState.parse(task.state)).toEqual(task.state);
     const json = JSON.stringify(request);
     expect(json).not.toContain("nameKey");
-  });
-
-  it("rejects an empty candidate list and duplicate tag keys", () => {
     expect(() => tags({ bookmark: BOOKMARK, tags: [] })).toThrow(TypeError);
     expect(() =>
       tags({
@@ -289,16 +283,13 @@ describe("placement", () => {
     });
   });
 
-  it("makes option keys equal the candidate folder IDs, then `none`", () => {
+  it("makes option keys equal the candidate folder IDs, then `none`, and rejects bad inputs", () => {
     const question = request.questions["folder"];
     if (question?.type === "choice") {
       expect(Object.keys(question.criteria)).toEqual(["f_12", "f_31", "none"]);
     } else {
       expect.unreachable("folder is a choice question");
     }
-  });
-
-  it("rejects an empty folder list, a duplicate id, and a `none` id", () => {
     expect(() => placement({ bookmark: BOOKMARK, folders: [] })).toThrow(
       TypeError,
     );
@@ -509,15 +500,12 @@ describe("rerank", () => {
     });
   });
 
-  it("keeps candidate URLs out of the question text", () => {
+  it("keeps candidate URLs out of the question text and rejects empty inputs", () => {
     for (const question of Object.values(request.questions)) {
       const text = (question.instructions as { question: string }).question;
       expect(text).not.toContain("https://");
       expect(text).not.toContain("tokio.rs");
     }
-  });
-
-  it("rejects an empty query and an empty candidate list", () => {
     expect(() =>
       rerank({ query: "  ", candidates: [BOOKMARK] }),
     ).toThrow(TypeError);
@@ -634,18 +622,12 @@ describe("shared invariants", () => {
     }
   });
 
-  it("every built request and state conforms to the wire and DecisionState schemas", () => {
+  it("every built request and state conforms to the wire schema and never leaks notes", () => {
     for (const task of tasks) {
       const request = task.decision.build(task.state, MODEL);
-      expect(SystemOneRequest.safeParse(request).success).toBe(true);
-      expect(DecisionState.safeParse(task.state).success).toBe(true);
+      expect(SystemOneRequest.safeParse(request).success, task.questionSetVersion).toBe(true);
+      expect(DecisionState.safeParse(task.state).success, task.questionSetVersion).toBe(true);
       expect(() => checkGuards(request)).not.toThrow();
-    }
-  });
-
-  it("never includes notes or uncleaned URL parts", () => {
-    for (const task of tasks) {
-      const request = task.decision.build(task.state, MODEL);
       const json = JSON.stringify(request);
       expect(json).not.toContain('"notes"');
       // URL cleanliness in state is enforced by CleanedUrl via the
@@ -670,14 +652,19 @@ describe("guards at the candidate caps", () => {
     domain: "example.com",
   }));
 
-  it("30 tag nouls stay inside the guards and the 64k batch budget", () => {
-    const task = tags({ bookmark: BOOKMARK, tags: manyTags });
-    const request = task.decision.build(task.state, MODEL);
-    expect(Object.keys(request.questions)).toHaveLength(30);
-    expect(() => checkGuards(request)).not.toThrow();
-    expect(
-      estimateTokens(request.state) + estimateTokens(request.questions),
-    ).toBeLessThanOrEqual(MAX_BATCH_TOTAL_TOKENS);
+  it("30-question batches (tags and rerank) stay inside the guards and the 64k budget", () => {
+    for (const task of [
+      tags({ bookmark: BOOKMARK, tags: manyTags }),
+      rerank({ query: "rust async", candidates: manyBookmarks }),
+    ]) {
+      const request = task.decision.build(task.state, MODEL);
+      expect(Object.keys(request.questions), task.questionSetVersion).toHaveLength(30);
+      expect(() => checkGuards(request)).not.toThrow();
+      expect(
+        estimateTokens(request.state) + estimateTokens(request.questions),
+        task.questionSetVersion,
+      ).toBeLessThanOrEqual(MAX_BATCH_TOTAL_TOKENS);
+    }
   });
 
   it("50 folder candidates + `none` = 51 options stay inside the guards", () => {
@@ -722,13 +709,4 @@ describe("guards at the candidate caps", () => {
     ).toBeLessThanOrEqual(MAX_BATCH_TOTAL_TOKENS);
   });
 
-  it("30 rerank nouls stay inside the guards and the 64k batch budget", () => {
-    const task = rerank({ query: "rust async", candidates: manyBookmarks });
-    const request = task.decision.build(task.state, MODEL);
-    expect(Object.keys(request.questions)).toHaveLength(30);
-    expect(() => checkGuards(request)).not.toThrow();
-    expect(
-      estimateTokens(request.state) + estimateTokens(request.questions),
-    ).toBeLessThanOrEqual(MAX_BATCH_TOTAL_TOKENS);
-  });
 });

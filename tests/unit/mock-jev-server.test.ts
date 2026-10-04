@@ -199,11 +199,13 @@ describe("routing", () => {
 });
 
 describe("scripted replies", () => {
-  it.each([401, 422, 500, 529])("returns a scripted HTTP %i", async (status) => {
-    const s = await start();
-    s.queue({ kind: "status", status });
-    const response = await post(s.url);
-    expect(response.status).toBe(status);
+  it("returns a scripted HTTP status", async () => {
+    for (const status of [401, 422, 500, 529]) {
+      const s = await start();
+      s.queue({ kind: "status", status });
+      const response = await post(s.url);
+      expect(response.status, `HTTP ${status}`).toBe(status);
+    }
   });
 
   it("returns scripted headers such as retry-after on 429", async () => {

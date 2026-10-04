@@ -94,7 +94,7 @@ async function seedEnabledProvider(consent = true, model = "gpt-4o-mini") {
   if (consent) await grantConsentAtOrigin("llm_explain", ORIGIN);
 }
 
-beforeEach(async () => {
+const resetEnv = async () => {
   bookmarksApi = installBookmarksFake({
     bookmarksBar: [
       { id: "bm-001", title: "A", url: "https://a-site.com/?q=secret" },
@@ -108,7 +108,9 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", server.fetch);
   await db.delete();
   await db.open();
-});
+};
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
@@ -116,12 +118,12 @@ afterAll(() => {
 });
 
 describe("explainDecision", () => {
-  it.each([
-    ["429", "blocklist"], ["transport", "blocklist"],
-    ["429", "live URL"], ["transport", "live URL"],
-  ] as const)(
-    "refuses an internal %s retry after a changed %s without losing prior exposure",
-    async (failure, change) => {
+  it("refuses an internal retry after a changed blocklist or live URL without losing prior exposure", async () => {
+    for (const [failure, change] of [
+      ["429", "blocklist"], ["transport", "blocklist"],
+      ["429", "live URL"], ["transport", "live URL"],
+    ] as const) {
+      await resetEnv();
       await seedEnabledProvider();
       await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
       await db.metadata.put({ key: "decisions:blocklist", value: ["blocked-site.dev"] });
@@ -140,25 +142,28 @@ describe("explainDecision", () => {
           }
         }
       });
-      await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({ code: "stale" });
-      expect(server.requests).toHaveLength(1);
-      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+      await expect(
+        explainDecision(UUID, PROVIDER_ID),
+        `${failure} / ${change}`,
+      ).rejects.toMatchObject({ code: "stale" });
+      expect(server.requests, `${failure} / ${change}`).toHaveLength(1);
+      expect((await getDecision(UUID))?.rationale, `${failure} / ${change}`).toBeUndefined();
       const reservations = await db.llmReservations.toArray();
-      expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
+      expect(reservations.map((row) => row.status).sort(), `${failure} / ${change}`).toEqual(["released", "settled"]);
       const usage = await db.llmUsage.toArray();
-      expect(usage).toHaveLength(1);
-      expect(usage[0]).toMatchObject({
+      expect(usage, `${failure} / ${change}`).toHaveLength(1);
+      expect(usage[0], `${failure} / ${change}`).toMatchObject({
         inputTokens: 8_192, outputTokens: 1_024,
         estimatedCostUsd: expect.closeTo(0.0018432, 10),
       });
-      expect(usage[0]?.costUsd).toBeUndefined();
-      expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0018432, 12);
-    },
-  );
+      expect(usage[0]?.costUsd, `${failure} / ${change}`).toBeUndefined();
+      expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0), `${failure} / ${change}`).toBeCloseTo(0.0018432, 12);
+    }
+  });
 
-  it.each(["429", "transport"] as const)(
-    "keeps the internal %s retry when feature admission remains allowed",
-    async (failure) => {
+  it("keeps the internal retry when feature admission remains allowed", async () => {
+    for (const failure of ["429", "transport"] as const) {
+      await resetEnv();
       await seedEnabledProvider();
       await persistDecision(decision());
       server = makeOpenAiServer({
@@ -172,15 +177,15 @@ describe("explainDecision", () => {
           await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
         }
       });
-      expect((await explainDecision(UUID, PROVIDER_ID)).rationale).toBe("Allowed retry.");
-      expect(server.requests).toHaveLength(2);
-      expect((await getDecision(UUID))?.rationale).toBe("Allowed retry.");
-    },
-  );
+      expect((await explainDecision(UUID, PROVIDER_ID)).rationale, failure).toBe("Allowed retry.");
+      expect(server.requests, failure).toHaveLength(2);
+      expect((await getDecision(UUID))?.rationale, failure).toBe("Allowed retry.");
+    }
+  });
 
-  it.each(["https://a-site.com/", "https://docs.a-site.com/"])(
-    "refuses a persisted blocked explanation for %s without egress",
-    async (url) => {
+  it("refuses a persisted blocked explanation without egress", async () => {
+    for (const url of ["https://a-site.com/", "https://docs.a-site.com/"]) {
+      await resetEnv();
       await seedEnabledProvider();
       await bookmarksApi.update("bm-001", { url });
       await db.metadata.put({ key: "decisions:blocklist", value: ["a-site.com"] });
@@ -188,14 +193,14 @@ describe("explainDecision", () => {
       const error = await explainDecision(UUID, PROVIDER_ID).catch(
         (caught: unknown) => caught,
       );
-      expect(error).toBeInstanceOf(ExplainError);
-      expect(error).toMatchObject({ code: "stale" });
-      expect(String(error)).not.toContain("a-site.com");
-      expect(server.requests).toHaveLength(0);
-      expect((await getDecision(UUID))?.rationale).toBeUndefined();
-      expect(await db.llmUsage.count()).toBe(0);
-    },
-  );
+      expect(error, url).toBeInstanceOf(ExplainError);
+      expect(error, url).toMatchObject({ code: "stale" });
+      expect(String(error), url).not.toContain("a-site.com");
+      expect(server.requests, url).toHaveLength(0);
+      expect((await getDecision(UUID))?.rationale, url).toBeUndefined();
+      expect(await db.llmUsage.count(), url).toBe(0);
+    }
+  });
 
   it("refuses the whole multi-bookmark explanation when only one reference is blocked", async () => {
     await seedEnabledProvider();
@@ -238,9 +243,9 @@ describe("explainDecision", () => {
     expect(JSON.stringify(server.requests[0]!.body)).toContain("not-a-site.com");
   });
 
-  it.each(["fallback", "repair"] as const)(
-    "rereads the blocklist before an explanation %s send",
-    async (hop) => {
+  it("rereads the blocklist before an explanation fallback or repair send", async () => {
+    for (const hop of ["fallback", "repair"] as const) {
+      await resetEnv();
       await seedEnabledProvider();
       await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
       server = makeOpenAiServer({
@@ -254,14 +259,14 @@ describe("explainDecision", () => {
         await db.metadata.put({ key: "decisions:blocklist", value: ["b-site.org"] });
         return response;
       });
-      await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      await expect(explainDecision(UUID, PROVIDER_ID), hop).rejects.toMatchObject({
         code: "stale",
       });
-      expect(server.requests).toHaveLength(1);
-      expect(await db.llmUsage.count()).toBe(1);
-      expect((await getDecision(UUID))?.rationale).toBeUndefined();
-    },
-  );
+      expect(server.requests, hop).toHaveLength(1);
+      expect(await db.llmUsage.count(), hop).toBe(1);
+      expect((await getDecision(UUID))?.rationale, hop).toBeUndefined();
+    }
+  });
 
   it("rereads a referenced bookmark's live URL before explanation fallback", async () => {
     await seedEnabledProvider();
@@ -303,9 +308,9 @@ describe("explainDecision", () => {
     expect((await getDecision(UUID))?.rationale).toBeUndefined();
   });
 
-  it.each(["fallback", "repair"] as const)(
-    "allows an explanation %s when a changed blocklist does not affect its references",
-    async (hop) => {
+  it("allows an explanation fallback or repair when a changed blocklist does not affect its references", async () => {
+    for (const hop of ["fallback", "repair"] as const) {
+      await resetEnv();
       await seedEnabledProvider();
       await persistDecision(decision());
       server = makeOpenAiServer({
@@ -323,11 +328,11 @@ describe("explainDecision", () => {
         await db.metadata.put({ key: "decisions:blocklist", value: ["unrelated-site.dev"] });
         return response;
       });
-      expect((await explainDecision(UUID, PROVIDER_ID)).rationale).toBe("Still allowed.");
-      expect(server.requests).toHaveLength(2);
-      expect((await getDecision(UUID))?.rationale).toBe("Still allowed.");
-    },
-  );
+      expect((await explainDecision(UUID, PROVIDER_ID)).rationale, hop).toBe("Still allowed.");
+      expect(server.requests, hop).toHaveLength(2);
+      expect((await getDecision(UUID))?.rationale, hop).toBe("Still allowed.");
+    }
+  });
 
   it("sends only the minimized explain payload — no ids, notes, or raw URLs", async () => {
     await seedEnabledProvider();

@@ -10,9 +10,8 @@ import type { LlmPresetId } from "../../src/schemas/llm";
 const PRESETS = ["openai", "openrouter"] as const satisfies readonly LlmPresetId[];
 
 describe("preset pricing table", () => {
-  it.each(PRESETS)(
-    "prices the %s preset's default model — the model a fresh setup sends",
-    (preset) => {
+  it("prices every preset's default model — the model a fresh setup sends", () => {
+    for (const preset of PRESETS) {
       // Without this the reservation engine refuses every automatic request
       // with `pricing_required`, making escalation unreachable on presets.
       const pricing = resolveProviderPricing({
@@ -20,16 +19,13 @@ describe("preset pricing table", () => {
         preset,
         model: LLM_PRESETS[preset].defaultModel,
       });
-      expect(pricing).toBeDefined();
-      expect(pricing!.inputPerMillion).toBeGreaterThan(0);
-      expect(pricing!.outputPerMillion).toBeGreaterThan(0);
-    },
-  );
-
-  it.each(PRESETS)("prices the %s preset with no explicit model", (preset) => {
-    expect(resolveProviderPricing({ kind: "preset", preset })).toEqual(
-      PRESET_MODEL_PRICING[preset][LLM_PRESETS[preset].defaultModel],
-    );
+      expect(pricing, preset).toBeDefined();
+      expect(pricing!.inputPerMillion, preset).toBeGreaterThan(0);
+      expect(pricing!.outputPerMillion, preset).toBeGreaterThan(0);
+      expect(resolveProviderPricing({ kind: "preset", preset }), preset).toEqual(
+        PRESET_MODEL_PRICING[preset][LLM_PRESETS[preset].defaultModel],
+      );
+    }
   });
 
   it("records when the built-in rates were verified", () => {

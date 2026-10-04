@@ -73,25 +73,26 @@ interface StoredEnvelope {
 }
 
 describe("provider key storage", () => {
-  it.each(PRESETS)("round-trips a saved key for %s", async (preset) => {
-    await saveProviderKey(preset, "secret-example");
-    expect(await readProviderKey(preset)).toBe("secret-example");
+  it("round-trips a saved key for every preset without persisting plaintext", async () => {
+    for (const preset of PRESETS) {
+      await saveProviderKey(preset, "secret-example");
+      expect(await readProviderKey(preset), preset).toBe("secret-example");
+    }
     // Plaintext must never appear in storage writes or the live store.
     expect(JSON.stringify(chromeStub.writes)).not.toContain("secret-example");
     expect(JSON.stringify(chromeStub.store)).not.toContain("secret-example");
   });
 
-  it.each(PRESETS)(
-    "scopes the storage entry and CryptoKey to %s",
-    async (preset) => {
+  it("scopes the storage entry and CryptoKey to every preset", async () => {
+    for (const preset of PRESETS) {
       await saveProviderKey(preset, "secret-example");
-      expect(chromeStub.store[`${STORAGE_KEY_PREFIX}${preset}`]).toBeDefined();
+      expect(chromeStub.store[`${STORAGE_KEY_PREFIX}${preset}`], preset).toBeDefined();
       const entry = await db.keyMaterials.get(`provider:${preset}`);
-      expect(entry?.key.type).toBe("secret");
-      expect(entry?.key.algorithm.name).toBe("AES-GCM");
-      expect(entry?.key.extractable).toBe(false);
-    },
-  );
+      expect(entry?.key.type, preset).toBe("secret");
+      expect(entry?.key.algorithm.name, preset).toBe("AES-GCM");
+      expect(entry?.key.extractable, preset).toBe(false);
+    }
+  });
 
   it("uses a fresh random IV on every save", async () => {
     await saveProviderKey("typesafe", "same-plaintext");

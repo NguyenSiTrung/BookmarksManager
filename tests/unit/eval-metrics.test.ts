@@ -95,7 +95,7 @@ describe("scoreObservation", () => {
       ).toMatchObject({ correct: true, outcome: "unsure", autoApplied: false });
     });
 
-    it("flags an incorrect auto-apply", () => {
+    it("flags an incorrect auto-apply and treats the band boundaries exactly", () => {
       const s = scoreObservation(
         obs(c, { kind: "categorize", choice: "video", confidence: 0.95 }),
         T,
@@ -108,9 +108,7 @@ describe("scoreObservation", () => {
         expected: "docs",
         predicted: "video",
       });
-    });
-
-    it("treats boundaries exactly: floor 0.5 is review, auto-apply 0.85 is auto_apply", () => {
+      // floor 0.5 is review; auto-apply 0.85 is auto_apply.
       expect(
         scoreObservation(obs(c, { kind: "categorize", choice: "docs", confidence: 0.5 }), T).outcome,
       ).toBe("review");
@@ -184,16 +182,13 @@ describe("scoreObservation", () => {
       ).toBe("unsure");
     });
 
-    it("never auto-applies a move even at max confidence", () => {
+    it("never auto-applies a move — even at max confidence — and scores a correct none", () => {
       expect(
         scoreObservation(obs(c, { kind: "placement", choice: "f1", confidence: 1 }), T).outcome,
       ).toBe("preselect");
       expect(
         scoreObservation(obs(c, { kind: "placement", choice: "f1", confidence: 1 }), T).autoApplied,
       ).toBe(false);
-    });
-
-    it("scores a correct none answer", () => {
       const noneCase = corpusCase("placement", { expect: { folder: "none" } });
       const s = scoreObservation(
         obs(noneCase, { kind: "placement", choice: "none", confidence: 0.9 }),
@@ -213,14 +208,14 @@ describe("scoreObservation", () => {
       expect(s).toMatchObject({ correct: true, outcome: "review", autoApplied: false });
     });
 
-    it("a correctly-filed case accepts current folder or none", () => {
+    it("scores correctly-filed vs misfiled cases by which folder the model picks", () => {
       const filed = corpusCase("misfiled", { expect: { folder: "f2" } });
       for (const choice of ["f2", "none"]) {
         const s = scoreObservation(
           obs(filed, { kind: "misfiled", choice, confidence: 0.9 }),
           T,
         );
-        expect(s.correct).toBe(true);
+        expect(s.correct, `filed:${choice}`).toBe(true);
       }
       const wrong = scoreObservation(
         obs(filed, { kind: "misfiled", choice: "f1", confidence: 0.9 }),
@@ -228,13 +223,12 @@ describe("scoreObservation", () => {
       );
       expect(wrong.correct).toBe(false);
       expect(wrong.detail).toMatchObject({ flaggedMisfiled: true });
-    });
-
-    it("a misfiled case is wrong when the model says none or current", () => {
+      // A genuinely misfiled case: none or the current folder is wrong.
       const c = corpusCase("misfiled");
       for (const choice of ["f2", "none"]) {
         expect(
           scoreObservation(obs(c, { kind: "misfiled", choice, confidence: 0.9 }), T).correct,
+          `misfiled:${choice}`,
         ).toBe(false);
       }
     });
@@ -242,22 +236,19 @@ describe("scoreObservation", () => {
 
   describe("near_duplicate", () => {
     const c = corpusCase("near_duplicate");
-    it("scores exact match and records the delta", () => {
-      const s = scoreObservation(
+    it("scores exact match with delta 0; a level off is incorrect but within-one", () => {
+      const exact = scoreObservation(
         obs(c, { kind: "near_duplicate", score: 3, confidence: 0.8 }),
         T,
       );
-      expect(s).toMatchObject({ correct: true, outcome: "review", predicted: 3 });
-      expect(s.detail).toMatchObject({ delta: 0, withinOne: true });
-    });
-
-    it("a level off is incorrect but within-one", () => {
-      const s = scoreObservation(
+      expect(exact).toMatchObject({ correct: true, outcome: "review", predicted: 3 });
+      expect(exact.detail).toMatchObject({ delta: 0, withinOne: true });
+      const off = scoreObservation(
         obs(c, { kind: "near_duplicate", score: 4, confidence: 0.8 }),
         T,
       );
-      expect(s.correct).toBe(false);
-      expect(s.detail).toMatchObject({ delta: 1, withinOne: true });
+      expect(off.correct).toBe(false);
+      expect(off.detail).toMatchObject({ delta: 1, withinOne: true });
     });
 
     it("merge never auto-applies; below-floor confidence is unsure", () => {
@@ -280,53 +271,43 @@ describe("scoreObservation", () => {
       expect(s).toMatchObject({ correct: true, predicted: ["bm1", "bm3"] });
     });
 
-    it("all candidates below the bar is a no_match outcome", () => {
-      const s = scoreObservation(
+    it("treats the bar inclusively: below it is no_match, at it is a weak match", () => {
+      const below = scoreObservation(
         obs(c, { kind: "rerank", probabilities: [0.1, 0.2, 0.49] }),
         T,
       );
-      expect(s.outcome).toBe("no_match");
-      expect(s.correct).toBe(false);
-    });
-
-    it("a candidate exactly at the bar counts as a (weak) match", () => {
-      const s = scoreObservation(
+      expect(below.outcome).toBe("no_match");
+      expect(below.correct).toBe(false);
+      const at = scoreObservation(
         obs(c, { kind: "rerank", probabilities: [0.5, 0.2, 0.3] }),
         T,
       );
-      expect(s.outcome).not.toBe("no_match");
-      expect(s.predicted).toEqual(["bm1"]);
+      expect(at.outcome).not.toBe("no_match");
+      expect(at.predicted).toEqual(["bm1"]);
     });
   });
 
   describe("incomplete or failed observations", () => {
     const c = corpusCase("categorize");
-    it.each(["timeout", "error", "skipped"] as const)(
-      "status %s is unanswered and not incorrect",
-      (status) => {
+    it("counts timeout/error/skipped, answerless, and wrong-kind observations as unanswered", () => {
+      for (const status of ["timeout", "error", "skipped"] as const) {
         const s = scoreObservation({ case: c, status }, T);
-        expect(s).toMatchObject({
+        expect(s, status).toMatchObject({
           answered: false,
           correct: null,
           outcome: "unanswered",
           autoApplied: false,
           incorrectAutoApply: false,
         });
-      },
-    );
-
-    it("an answered status without a usable answer is unanswered", () => {
-      const s = scoreObservation({ case: c, status: "answered", modelId: "m" }, T);
-      expect(s.answered).toBe(false);
-      expect(s.correct).toBe(null);
-    });
-
-    it("an answer for the wrong kind is unanswered", () => {
-      const s = scoreObservation(
+      }
+      const noAnswer = scoreObservation({ case: c, status: "answered", modelId: "m" }, T);
+      expect(noAnswer.answered).toBe(false);
+      expect(noAnswer.correct).toBe(null);
+      const wrongKind = scoreObservation(
         obs(c, { kind: "placement", choice: "f1", confidence: 0.9 }),
         T,
       );
-      expect(s.answered).toBe(false);
+      expect(wrongKind.answered).toBe(false);
     });
   });
 
@@ -414,14 +395,11 @@ describe("aggregateEval", () => {
     expect(sparse.scored).toHaveLength(6);
   });
 
-  it("sorts scored observations by case id regardless of input order", () => {
+  it("sorts by case id, rejects unknown cases, and rejects duplicate observations", () => {
     const reversed = [...observations].reverse();
     const report = aggregateEval(corpus, reversed, T, "g");
     const ids = report.scored.map((s) => s.caseId);
     expect(ids).toEqual([...ids].sort());
-  });
-
-  it("rejects an observation for an unknown case", () => {
     const foreign: EvalObservation = {
       ...obs(corpusCase("categorize"), {
         kind: "categorize",
@@ -431,9 +409,6 @@ describe("aggregateEval", () => {
       case: { ...corpusCase("categorize"), id: "c_foreign" } as EvalCase,
     };
     expect(() => aggregateEval(corpus, [foreign], T, "g")).toThrow(/unknown/i);
-  });
-
-  it("rejects duplicate observations for one case", () => {
     expect(() =>
       aggregateEval(corpus, [observations[0] as EvalObservation, observations[0] as EvalObservation], T, "g"),
     ).toThrow(/duplicate/i);

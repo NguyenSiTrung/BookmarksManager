@@ -28,12 +28,14 @@ describe("coordinateJob", () => {
     await first;
   });
 
-  it.each(["rejection", "synchronous throw"])("releases ownership after %s", async (mode) => {
-    const failed = coordinateJob(`failure-${mode}`, () => {
-      if (mode === "synchronous throw") throw new Error("failed");
-      return Promise.reject(new Error("failed"));
-    });
-    await expect(failed).rejects.toThrow("failed");
-    await expect(coordinateJob(`failure-${mode}`, async () => {})).resolves.toBeUndefined();
+  it("releases ownership after a rejection or synchronous throw", async () => {
+    for (const mode of ["rejection", "synchronous throw"]) {
+      const failed = coordinateJob(`failure-${mode}`, () => {
+        if (mode === "synchronous throw") throw new Error("failed");
+        return Promise.reject(new Error("failed"));
+      });
+      await expect(failed, mode).rejects.toThrow("failed");
+      await expect(coordinateJob(`failure-${mode}`, async () => {}), mode).resolves.toBeUndefined();
+    }
   });
 });

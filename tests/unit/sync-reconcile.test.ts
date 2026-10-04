@@ -90,16 +90,18 @@ describe("reconcileMetadata", () => {
     expect((await getMeta(created.id))?.summary).toBe("Retain during confirmation.");
   });
 
-  it.each(["reject", "empty"] as const)("defers deletion on a %s confirming read", async (outcome) => {
-    const api = installBookmarksFake();
-    const tree = await api.getTree();
-    await putMeta("ghost", { summary: "Preserve ambiguous state." });
-    const read = vi.spyOn(api, "getTree").mockResolvedValueOnce(tree);
-    if (outcome === "reject") read.mockRejectedValueOnce(new Error("Native read failed"));
-    else read.mockResolvedValueOnce([]);
+  it("defers deletion on a rejecting or empty confirming read", async () => {
+    for (const outcome of ["reject", "empty"] as const) {
+      const api = installBookmarksFake();
+      const tree = await api.getTree();
+      await putMeta("ghost", { summary: "Preserve ambiguous state." });
+      const read = vi.spyOn(api, "getTree").mockResolvedValueOnce(tree);
+      if (outcome === "reject") read.mockRejectedValueOnce(new Error("Native read failed"));
+      else read.mockResolvedValueOnce([]);
 
-    expect(await reconcileMetadata()).toBe(0);
-    expect((await getMeta("ghost"))?.summary).toBe("Preserve ambiguous state.");
+      expect(await reconcileMetadata(), outcome).toBe(0);
+      expect((await getMeta("ghost"))?.summary, outcome).toBe("Preserve ambiguous state.");
+    }
   });
 
   it("deletes rows whose ids are absent from the tree, keeps live rows", async () => {

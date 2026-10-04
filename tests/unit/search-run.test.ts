@@ -128,18 +128,15 @@ const ALL_TREE = corpusTree;
 // ---------------------------------------------------------------------------
 
 describe("runQuery — free-text terms", () => {
-  it("ANDs multiple terms across fields", () => {
+  it("ANDs terms across fields with inherited prefix and fuzzy matching", () => {
     // "rust" hits title+url, "checker" hits notes — the doc has both.
     expect(ids(run("rust checker"))).toEqual(["rust-book"]);
     expect(ids(run("rust async handbook"))).toEqual(["rust-book"]);
-  });
-
-  it("inherits prefix matching and fuzzy typo tolerance from the index", () => {
     expect(ids(run("hand"))).toEqual(["rust-book"]); // prefix of "handbook"
     expect(ids(run("hndbook"))).toEqual(["rust-book"]); // one deletion off
   });
 
-  it("excludes hits matching a negated term", () => {
+  it("excludes negated hits and ANDs the words of a spaced non-exact term", () => {
     expect(ids(run("rust -handbook"))).toEqual([]);
     // Negation alone: all docs minus the rust one, in tree order.
     expect(ids(run("-rust"))).toEqual([
@@ -150,9 +147,6 @@ describe("runQuery — free-text terms", () => {
       "notexample",
       "gist",
     ]);
-  });
-
-  it("ANDs the words of a non-exact term containing spaces", () => {
     // Parser turns `p"age b"` into one term with text "page b".
     const q = parseQuery('p"age b"');
     expect(q.terms).toEqual([{ text: "page b", exact: false, negated: false }]);
@@ -224,7 +218,7 @@ describe("runQuery — exact phrases", () => {
     ]);
   });
 
-  it("drops hits whose words only co-occur across different fields", () => {
+  it("drops cross-field co-occurrences and matches single-word exact terms verbatim", () => {
     // split-fields has "async" in title and "rust" in notes — the phrase can
     // live in neither, so neither the positive nor the negated form keeps it.
     expect(ids(runPhrase('"async rust"'))).not.toContain("split-fields");
@@ -233,9 +227,6 @@ describe("runQuery — exact phrases", () => {
       "split-fields",
       "scattered-title",
     ]);
-  });
-
-  it("matches a single-word exact term verbatim — no prefix or fuzzy", () => {
     // "asynchronous" is not the token "async".
     expect(sortedIds(runPhrase('"async"'))).toEqual([
       "adjacent-title",
@@ -271,8 +262,10 @@ describe("runQuery — tag:", () => {
     ["tag:nonexistent", []],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("filters by tag semantics across query variants", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 });
 
@@ -302,8 +295,10 @@ describe("runQuery — folder:", () => {
     ["folder:Nope", []],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("filters by folder semantics across query variants", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 });
 
@@ -327,8 +322,10 @@ describe("runQuery — domain:", () => {
     ["domain:github.com -domain:gist.github.com", ["rust-book"]],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("filters by domain semantics across query variants", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 });
 
@@ -349,8 +346,10 @@ describe("runQuery — category:", () => {
     ],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("filters by category semantics across query variants", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 });
 
@@ -375,8 +374,10 @@ describe("runQuery — before:/after:", () => {
     ],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("filters by date precision across query variants", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 
   describe("precision boundaries (local time)", () => {
@@ -434,14 +435,16 @@ describe("runQuery — before:/after:", () => {
       ["before:0000", []],
     ];
 
-    it.each(cases)("%s → %j", (query, expected) => {
-      expect(ids(runEdge(query))).toEqual(expected);
+    it("honors local-time precision boundaries", () => {
+      for (const [query, expected] of cases) {
+        expect(ids(runEdge(query)), query).toEqual(expected);
+      }
     });
   });
 });
 
 describe("runQuery — is:", () => {
-  it("is:duplicate keeps only members of a duplicate group", () => {
+  it("is:duplicate and is:untagged filter, AND, and negate correctly", () => {
     expect(ids(run("is:duplicate"))).toEqual(["dup-b", "dup-a"]);
     expect(ids(run("-is:duplicate"))).toEqual([
       "undated",
@@ -450,18 +453,12 @@ describe("runQuery — is:", () => {
       "gist",
       "rust-book",
     ]);
-  });
-
-  it("is:untagged keeps docs with an empty tagKeys list", () => {
     expect(ids(run("is:untagged"))).toEqual([
       "undated",
       "exsub",
       "dup-b",
       "gist",
     ]);
-  });
-
-  it("is: filters AND with each other and with negation", () => {
     // dup-a is a duplicate but tagged; dup-b is both.
     expect(ids(run("is:duplicate is:untagged"))).toEqual(["dup-b"]);
     expect(ids(run("is:untagged -is:duplicate"))).toEqual([
@@ -497,8 +494,10 @@ describe("runQuery — cross-key AND and mixed queries", () => {
     ["dup -page -folder:Rust", []],
   ];
 
-  it.each(cases)("%s → %j", (query, expected) => {
-    expect(ids(run(query))).toEqual(expected);
+  it("ANDs filters across keys and free text", () => {
+    for (const [query, expected] of cases) {
+      expect(ids(run(query)), query).toEqual(expected);
+    }
   });
 });
 
@@ -565,11 +564,8 @@ describe("runQuery — ordering", () => {
     ]);
   });
 
-  it("orders negated-only results in tree order", () => {
+  it("orders negated-only and empty queries in tree order", () => {
     expect(ids(runBoost("-guide"))).toEqual(["notes", "url", "domain", "tags"]);
-  });
-
-  it("returns all docs in tree order for an empty query", () => {
     expect(ids(runBoost(""))).toEqual(["notes", "url", "domain", "tags", "title"]);
     expect(ids(runBoost("   "))).toEqual([
       "notes",
@@ -594,27 +590,24 @@ describe("runQuery — input forms and warnings", () => {
   });
 
   it("echoes parser warnings through while still running the rest", () => {
-    const result = run("before:bad rust");
-    expect(result.warnings).toEqual([
+    const bad = run("before:bad rust");
+    expect(bad.warnings).toEqual([
       {
         token: "before:bad",
         message: "Invalid date — use YYYY, YYYY-MM, or YYYY-MM-DD",
       },
     ]);
-    expect(ids(result)).toEqual(["rust-book"]);
-  });
-
-  it("is:dead warns, matches nothing, and leaves the rest runnable", () => {
-    const result = run("is:dead");
-    expect(result.warnings).toEqual([
+    expect(ids(bad)).toEqual(["rust-book"]);
+    const dead = run("is:dead");
+    expect(dead.warnings).toEqual([
       { token: "is:dead", message: "Link checking isn't available yet" },
     ]);
-    expect(ids(result)).toEqual(ALL_TREE);
+    expect(ids(dead)).toEqual(ALL_TREE);
   });
 });
 
 describe("collectDuplicateIds", () => {
-  it("unions exact and normalized group members", () => {
+  it("unions exact and normalized group members, empty otherwise", () => {
     // http/https pair is a normalized-only duplicate.
     const ids = collectDuplicateIds([
       { id: "a", url: "https://x.example/1" },
@@ -622,9 +615,6 @@ describe("collectDuplicateIds", () => {
       { id: "c", url: "https://y.example/" },
     ]);
     expect(ids).toEqual(new Set(["a", "b"]));
-  });
-
-  it("returns an empty set when nothing groups", () => {
     expect(collectDuplicateIds([])).toEqual(new Set());
     expect(
       collectDuplicateIds([

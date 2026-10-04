@@ -130,16 +130,14 @@ describe("bulkAddTag", () => {
     expect((await getMeta("bm-b"))?.tags).toEqual(["second"]);
   });
 
-  it("still resolves the def when the selection is empty", async () => {
+  it("still resolves the def on an empty selection, and fails invalid_tag on bad names", async () => {
     // "Add tag" in the UI doubles as "create this tag": the def is
     // resolve-or-created up front, so an empty selection still creates it.
     const result = expectOk(await bulkAddTag([], "New Tag"));
     expect(result.created).toBe(true);
     expect(result.affected).toBe(0);
     expect(await getTag("new tag")).toBeDefined();
-  });
-
-  it("fails invalid_tag on blank or overlong names and writes nothing", async () => {
+    await db.tags.clear();
     expect(await bulkAddTag(["bm-a"], "   ")).toMatchObject({
       ok: false,
       code: "invalid_tag",
@@ -203,7 +201,7 @@ describe("bulkRemoveTag", () => {
     expect(await getMeta("bm-a")).toBeUndefined();
   });
 
-  it("reports zero when nothing selected carries the key", async () => {
+  it("reports zero for absent keys and fails invalid_tag on a blank reference", async () => {
     await putMeta("bm-a", { tags: ["other"] });
     expect(await bulkRemoveTag(["bm-a"], "ghost")).toMatchObject({
       ok: true,
@@ -213,9 +211,6 @@ describe("bulkRemoveTag", () => {
       ok: true,
       affected: 0,
     });
-  });
-
-  it("fails invalid_tag on a blank tag reference", async () => {
     expect(await bulkRemoveTag(["bm-a"], "  ")).toMatchObject({
       ok: false,
       code: "invalid_tag",
@@ -255,7 +250,7 @@ describe("bulkSetCategory", () => {
     });
   });
 
-  it("clears the category on null and drops rows left empty", async () => {
+  it("clears the category on null, drops emptied rows, and counts only real changes", async () => {
     await putMeta("bm-a", { category: "docs" });
     await putMeta("bm-b", { category: "docs", notes: "keep" });
     const result = expectOk(await bulkSetCategory(["bm-a", "bm-b"], null));
@@ -264,17 +259,13 @@ describe("bulkSetCategory", () => {
     expect(await db.bookmarkMeta.get("bm-a")).toBeUndefined();
     expect(await getMeta("bm-b")).toMatchObject({ notes: "keep" });
     expect((await getMeta("bm-b"))?.category).toBeUndefined();
-  });
-
-  it("counts only rows that actually changed", async () => {
+    // Setting a category already held changes nothing.
     await putMeta("bm-a", { category: "docs" });
     await putMeta("bm-b", { category: "video", notes: "x" });
-    // bm-a already has it; bm-c has no row (nothing to clear/set differently).
     expect(
       await bulkSetCategory(["bm-a", "bm-b"], "docs"),
     ).toMatchObject({ ok: true, affected: 1 });
-    // Clearing: only bm-b still has a category — bm-a was already "docs",
-    // but the first call changed it... verify current state first.
+    // Clearing likewise counts only rows that lose a category.
     expect((await getMeta("bm-a"))?.category).toBe("docs");
     expect(
       await bulkSetCategory(["bm-a", "bm-c"], null),
@@ -313,14 +304,11 @@ describe("renameTag", () => {
     expect(await getTag("reading list")).toBeUndefined();
   });
 
-  it("fails not_found for a missing tag", async () => {
+  it("fails not_found, tag_exists (rolled back), and invalid_tag without touching data", async () => {
     expect(await renameTag("ghost", "New")).toMatchObject({
       ok: false,
       code: "not_found",
     });
-  });
-
-  it("fails tag_exists on a collision and rolls the repo transaction back", async () => {
     await createTag("Alpha");
     await createTag("Beta");
     await putMeta("bm-a", { tags: ["alpha"] });
@@ -330,9 +318,6 @@ describe("renameTag", () => {
     });
     expect((await getTag("alpha"))?.name).toBe("Alpha");
     expect((await getMeta("bm-a"))?.tags).toEqual(["alpha"]);
-  });
-
-  it("fails invalid_tag on a schema-breaking new name", async () => {
     await createTag("Foo");
     expect(await renameTag("foo", "n".repeat(65))).toMatchObject({
       ok: false,
@@ -443,7 +428,7 @@ describe("deleteTagWithUndo", () => {
     expect(await getTag("empty")).toMatchObject({ name: "Empty" });
   });
 
-  it("fails not_found for a missing tag and writes no snapshot", async () => {
+  it("fails not_found/invalid_tag on unknown or blank refs and writes no snapshot", async () => {
     // Rows carrying an orphaned key are left alone too — only a real def is
     // deletable through this path (there is nothing to snapshot/restore).
     await putMeta("bm-a", { tags: ["orphan"] });
@@ -453,9 +438,6 @@ describe("deleteTagWithUndo", () => {
     });
     expect(await db.undo.count()).toBe(0);
     expect((await getMeta("bm-a"))?.tags).toEqual(["orphan"]);
-  });
-
-  it("fails invalid_tag on a blank tag reference and writes no snapshot", async () => {
     expect(await deleteTagWithUndo("   ")).toMatchObject({
       ok: false,
       code: "invalid_tag",

@@ -274,9 +274,11 @@ describe("saveCredential / readCredential", () => {
     expect(JSON.stringify(chromeStub.store)).not.toContain("second-secret");
   });
 
-  it.each(["", "   "])("rejects the invalid credential id %j", async (id) => {
-    await expect(saveCredential(id, "secret")).rejects.toThrow();
-    await expect(readCredential(id)).rejects.toThrow();
-    await expect(deleteCredential(id)).rejects.toThrow();
+  it("rejects invalid credential ids", async () => {
+    for (const id of ["", "   "]) {
+      await expect(saveCredential(id, "secret"), JSON.stringify(id)).rejects.toThrow();
+      await expect(readCredential(id), JSON.stringify(id)).rejects.toThrow();
+      await expect(deleteCredential(id), JSON.stringify(id)).rejects.toThrow();
+    }
   });
 });

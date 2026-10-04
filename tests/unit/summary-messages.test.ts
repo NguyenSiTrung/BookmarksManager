@@ -184,7 +184,7 @@ function combinedFetch(jevAnswer: "supported" | "unsupported" | "uncertain") {
   };
 }
 
-beforeEach(async () => {
+const resetEnv = async () => {
   wireRequests = [];
   const bookmarks = installBookmarksFake({
     bookmarksBar: [{ id: BOOKMARK_ID, title: "An article", url: PAGE_URL }],
@@ -196,7 +196,9 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", combinedFetch("supported"));
   await db.delete();
   await db.open();
-});
+};
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
@@ -341,9 +343,9 @@ describe("handleSummarizeMessage", () => {
     expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
   });
 
-  it.each(["missing", "stale version", "LLM origin", "Jev origin", "LLM model", "Jev endpoint"] as const)(
-    "refuses %s approval before any grant, extraction, or egress",
-    async (kind) => {
+  it("refuses missing or mismatched approval fields before any grant, extraction, or egress", async () => {
+    for (const kind of ["missing", "stale version", "LLM origin", "Jev origin", "LLM model", "Jev endpoint"] as const) {
+      await resetEnv();
       await seedProvider();
       await db.consents.put({ scope: "llm_summary", origin: LLM_ORIGIN, consentVersion: 3, acceptedAt: "2026-09-25T10:00:00.000Z" });
       const before = await db.consents.toArray();
@@ -356,17 +358,17 @@ describe("handleSummarizeMessage", () => {
       expect(await handleSummarizeMessage({
         type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID,
         ...(kind === "missing" ? {} : { consentApproval: approval }),
-      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
-      expect(await db.consents.toArray()).toEqual(before);
-      expect(tabsGet).not.toHaveBeenCalled();
-      expect(executeScript).not.toHaveBeenCalled();
-      expect(wireRequests).toHaveLength(0);
-    },
-  );
+      }, TRUSTED), kind).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
+      expect(await db.consents.toArray(), kind).toEqual(before);
+      expect(tabsGet, kind).not.toHaveBeenCalled();
+      expect(executeScript, kind).not.toHaveBeenCalled();
+      expect(wireRequests, kind).toHaveLength(0);
+    }
+  });
 
-  it.each(["LLM origin", "LLM model", "Jev origin", "Jev model"] as const)(
-    "rejects a changed %s after preflight rather than granting the new provider",
-    async (change) => {
+  it("rejects a changed origin or model after preflight rather than granting the new provider", async () => {
+    for (const change of ["LLM origin", "LLM model", "Jev origin", "Jev model"] as const) {
+      await resetEnv();
       await seedProvider();
       const approval = await preflightApproval();
       if (change === "LLM origin") {
@@ -387,23 +389,26 @@ describe("handleSummarizeMessage", () => {
       const before = await db.consents.toArray();
       expect(await handleSummarizeMessage({
         type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: approval,
-      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent" });
-      expect(await db.consents.toArray()).toEqual(before);
-      expect(executeScript).not.toHaveBeenCalled();
-      expect(wireRequests).toHaveLength(0);
-    },
-  );
+      }, TRUSTED), change).toMatchObject({ ok: false, code: "no_consent" });
+      expect(await db.consents.toArray(), change).toEqual(before);
+      expect(executeScript, change).not.toHaveBeenCalled();
+      expect(wireRequests, change).toHaveLength(0);
+    }
+  });
 
-  it.each(["LLM_SUMMARY_PREFLIGHT", "LLM_SUMMARIZE"] as const)("rejects untrusted %s without granting or extracting", async (type) => {
-    await seedProvider();
-    const before = await db.consents.toArray();
-    const message = type === "LLM_SUMMARY_PREFLIGHT" ? { type } : {
-      type, tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: APPROVAL,
-    };
-    expect(await handleSummarizeMessage(message, { url: "https://evil.example.com/" })).toMatchObject({ ok: false, code: "untrusted_sender" });
-    expect(await db.consents.toArray()).toEqual(before);
-    expect(executeScript).not.toHaveBeenCalled();
-    expect(wireRequests).toHaveLength(0);
+  it("rejects untrusted LLM_SUMMARY_PREFLIGHT and LLM_SUMMARIZE without granting or extracting", async () => {
+    for (const type of ["LLM_SUMMARY_PREFLIGHT", "LLM_SUMMARIZE"] as const) {
+      await resetEnv();
+      await seedProvider();
+      const before = await db.consents.toArray();
+      const message = type === "LLM_SUMMARY_PREFLIGHT" ? { type } : {
+        type, tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval: APPROVAL,
+      };
+      expect(await handleSummarizeMessage(message, { url: "https://evil.example.com/" }), type).toMatchObject({ ok: false, code: "untrusted_sender" });
+      expect(await db.consents.toArray(), type).toEqual(before);
+      expect(executeScript, type).not.toHaveBeenCalled();
+      expect(wireRequests, type).toHaveLength(0);
+    }
   });
 
   it("retains cost-confirmation binding and refuses a changed provider on resend", async () => {
@@ -418,9 +423,9 @@ describe("handleSummarizeMessage", () => {
     expect(wireRequests).toHaveLength(0);
   });
 
-  it.each(["llm_summary", "jev_summary_verify"] as const)(
-    "does not reacquire revoked %s consent from a cost-confirmation resend",
-    async (scope) => {
+  it("does not reacquire revoked llm_summary or jev_summary_verify consent from a cost-confirmation resend", async () => {
+    for (const scope of ["llm_summary", "jev_summary_verify"] as const) {
+      await resetEnv();
       await seedProvider("gpt-4o-mini-2024-07-18");
       const consentApproval = await preflightApproval();
       const message = { type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval };
@@ -430,12 +435,12 @@ describe("handleSummarizeMessage", () => {
       await db.consents.delete([scope, origin]);
       expect(await handleSummarizeMessage({
         ...message, unknownCostConfirmed: true,
-      }, TRUSTED)).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
-      expect(await db.consents.get([scope, origin])).toBeUndefined();
-      expect(executeScript).toHaveBeenCalledTimes(extractionCount);
-      expect(wireRequests).toHaveLength(0);
-    },
-  );
+      }, TRUSTED), scope).toMatchObject({ ok: false, code: "no_consent", stage: "consent" });
+      expect(await db.consents.get([scope, origin]), scope).toBeUndefined();
+      expect(executeScript, scope).toHaveBeenCalledTimes(extractionCount);
+      expect(wireRequests, scope).toHaveLength(0);
+    }
+  });
 
   it("strictly refuses malformed approval data before any sensitive operation", async () => {
     await seedProvider();

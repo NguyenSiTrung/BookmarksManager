@@ -544,23 +544,22 @@ describe("retries", () => {
     expect(sleep.mock.calls).toEqual([[250], [500]]);
   });
 
-  it.each([
-    [401, "auth"],
-    [422, "incompatible"],
-    [403, "http_error"],
-    [404, "http_error"],
-  ])(
-    "does not retry HTTP %i and maps it to %s",
-    async (status, code) => {
+  it("does not retry non-retryable HTTP statuses and maps each to its code", async () => {
+    for (const [status, code] of [
+      [401, "auth"],
+      [422, "incompatible"],
+      [403, "http_error"],
+      [404, "http_error"],
+    ] as const) {
       const transport = makeTransport(() => jsonResponse("no", status));
       const error = await client(transport, { maxRetries: 3 })
         .run(requestOf({ q: noulQuestion() }))
         .catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(JevClientError);
-      expect((error as JevClientError).code).toBe(code);
-      expect(transport).toHaveBeenCalledTimes(1);
-    },
-  );
+      expect(error, `HTTP ${status}`).toBeInstanceOf(JevClientError);
+      expect((error as JevClientError).code, `HTTP ${status}`).toBe(code);
+      expect(transport, `HTTP ${status}`).toHaveBeenCalledTimes(1);
+    }
+  });
 
   it("maps exhausted retries to retry_later", async () => {
     const transport = makeTransport(() => jsonResponse("down", 503));

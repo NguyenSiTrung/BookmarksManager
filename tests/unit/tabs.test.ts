@@ -59,16 +59,15 @@ describe("openBookmarkUrl dispositions", () => {
 });
 
 describe("openBookmarkUrl openable-URL guard", () => {
-  it.each(DISPOSITIONS)(
-    "rejects a javascript: URL for %s without touching chrome.tabs",
-    async (disposition) => {
+  it("rejects a javascript: URL for every disposition without touching chrome.tabs", async () => {
+    for (const disposition of DISPOSITIONS) {
       const { create, update } = installTabs();
       const result = await openBookmarkUrl("javascript:alert(1)", disposition);
-      expect(result).toMatchObject({ ok: false, code: "not_openable" });
-      expect(create).not.toHaveBeenCalled();
-      expect(update).not.toHaveBeenCalled();
-    },
-  );
+      expect(result, disposition).toMatchObject({ ok: false, code: "not_openable" });
+      expect(create, disposition).not.toHaveBeenCalled();
+      expect(update, disposition).not.toHaveBeenCalled();
+    }
+  });
 
   it("rejects a data: URL without touching chrome.tabs", async () => {
     const { create, update } = installTabs();
@@ -125,14 +124,13 @@ describe("openBookmarkUrl absent and partial surfaces", () => {
     expect(result).toMatchObject({ ok: false, code: "unavailable" });
   });
 
-  it.each(DISPOSITIONS)(
-    "reports unavailable for %s when chrome.tabs is an empty object",
-    async (disposition) => {
+  it("reports unavailable for every disposition when chrome.tabs is an empty object", async () => {
+    for (const disposition of DISPOSITIONS) {
       vi.stubGlobal("chrome", { tabs: {} });
       const result = await openBookmarkUrl(URL_OK, disposition);
-      expect(result).toMatchObject({ ok: false, code: "unavailable" });
-    },
-  );
+      expect(result, disposition).toMatchObject({ ok: false, code: "unavailable" });
+    }
+  });
 
   it("reports unavailable when the disposition's method is missing (create present, update absent)", async () => {
     const create = vi.fn(() => Promise.resolve({ id: 42 }));

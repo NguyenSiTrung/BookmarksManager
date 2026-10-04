@@ -98,22 +98,19 @@ describe("cleanUrl", () => {
     }
   });
 
-  it("is idempotent", () => {
+  it("is idempotent and returns null for unparseable URLs", () => {
     const once = cleanUrl("https://user:pass@EXAMPLE.com/p?a=1#f");
     expect(once).not.toBeNull();
     expect(cleanUrl(once as string)).toBe(once);
-  });
-
-  it("returns null for unparseable URLs", () => {
     const unparseable = ["", "   ", "not a url", "example.com", "example.com/path", "https://"];
     for (const input of unparseable) {
-      expect(cleanUrl(input)).toBeNull();
+      expect(cleanUrl(input), input).toBeNull();
     }
   });
 });
 
 describe("domainOf", () => {
-  it("returns the hostname of valid URLs", () => {
+  it("returns the hostname of valid URLs and null for unparseable or hostless input", () => {
     const cases: Array<[string, string]> = [
       ["https://example.com/p?x=1", "example.com"],
       ["https://bücher.de/", "xn--bcher-kva.de"],
@@ -123,11 +120,8 @@ describe("domainOf", () => {
     for (const [input, expected] of cases) {
       expect(domainOf(input)).toBe(expected);
     }
-  });
-
-  it("returns null for unparseable or hostless input", () => {
     for (const input of ["not a url", "", "mailto:a@b.c", "file:///x"]) {
-      expect(domainOf(input)).toBeNull();
+      expect(domainOf(input), input).toBeNull();
     }
   });
 });
@@ -187,18 +181,52 @@ describe("isSensitiveUrl — built-in list", () => {
 });
 
 describe("isSensitiveUrl — file, IP, and intranet rules", () => {
-  it("blocks file: URLs", () => {
+  it("blocks file: URLs and intranet-ish inputs", () => {
     const files = [
       "file:///etc/passwd",
       "file:///C:/Users/me/secret.xlsx",
       "FILE:///tmp/x",
     ];
     for (const url of files) {
-      expect(isSensitiveUrl(url)).toBe(true);
+      expect(isSensitiveUrl(url), url).toBe(true);
+    }
+    const intranet = [
+      "http://localhost/",
+      "http://localhost:3000/app",
+      "http://localhost./",
+      "http://nas/intranet",
+      "http://printer/",
+      "http://foo.local/",
+      "http://wiki.internal/",
+      "http://router.lan/",
+      "http://home.arpa/",
+      "http://build.corp/",
+      "http://host.test/",
+      "http://x.invalid/",
+      "https://site.onion/",
+      "http://intranet/",
+    ];
+    for (const url of intranet) {
+      expect(isSensitiveUrl(url), url).toBe(true);
+    }
+    const schemes = [
+      "mailto:user@example.com",
+      "javascript:alert(1)",
+      "data:text/html;base64,PGI+",
+      "about:blank",
+      "chrome://extensions/",
+      "chrome-extension://abcdef/page.html",
+      "blob:https://example.com/uuid",
+    ];
+    for (const url of schemes) {
+      expect(isSensitiveUrl(url), url).toBe(true);
+    }
+    for (const url of ["", "not a url", "://missing", "https://"]) {
+      expect(isSensitiveUrl(url), url).toBe(true);
     }
   });
 
-  it("blocks private/loopback IPv4 addresses", () => {
+  it("blocks private/loopback IPv4 and IPv6 addresses", () => {
     const ipv4 = [
       "http://10.0.0.5/admin",
       "http://10.255.255.255/",
@@ -225,11 +253,8 @@ describe("isSensitiveUrl — file, IP, and intranet rules", () => {
       "http://255.255.255.255/",
     ];
     for (const url of ipv4) {
-      expect(isSensitiveUrl(url)).toBe(true);
+      expect(isSensitiveUrl(url), url).toBe(true);
     }
-  });
-
-  it("blocks private/loopback IPv6 addresses", () => {
     const ipv6 = [
       "http://[::1]/",
       "http://[::1]:8080/x",
@@ -247,61 +272,20 @@ describe("isSensitiveUrl — file, IP, and intranet rules", () => {
       "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
     ];
     for (const url of ipv6) {
-      expect(isSensitiveUrl(url)).toBe(true);
-    }
-  });
-
-  it("blocks intranet hostnames, content schemes, and unparseable input", () => {
-    const intranet = [
-      "http://localhost/",
-      "http://localhost:3000/app",
-      "http://localhost./",
-      "http://nas/intranet",
-      "http://printer/",
-      "http://foo.local/",
-      "http://wiki.internal/",
-      "http://router.lan/",
-      "http://home.arpa/",
-      "http://build.corp/",
-      "http://host.test/",
-      "http://x.invalid/",
-      "https://site.onion/",
-      "http://intranet/",
-    ];
-    for (const url of intranet) {
-      expect(isSensitiveUrl(url)).toBe(true);
-    }
-
-    const schemes = [
-      "mailto:user@example.com",
-      "javascript:alert(1)",
-      "data:text/html;base64,PGI+",
-      "about:blank",
-      "chrome://extensions/",
-      "chrome-extension://abcdef/page.html",
-      "blob:https://example.com/uuid",
-    ];
-    for (const url of schemes) {
-      expect(isSensitiveUrl(url)).toBe(true);
-    }
-
-    for (const url of ["", "not a url", "://missing", "https://"]) {
-      expect(isSensitiveUrl(url)).toBe(true);
+      expect(isSensitiveUrl(url), url).toBe(true);
     }
   });
 });
 
 describe("isSensitiveUrl — user blocklist entries", () => {
-  it("blocks hosts matching a user entry", () => {
+  it("matches normalized entries, skips unrelated hosts, ignores malformed ones", () => {
     const entries = ["mycorp.io", "portal.internal.mycorp.org"];
     expect(isSensitiveUrl("https://mycorp.io/", entries)).toBe(true);
     expect(isSensitiveUrl("https://intranet.mycorp.io/", entries)).toBe(true);
     expect(
       isSensitiveUrl("https://portal.internal.mycorp.org/login", entries),
     ).toBe(true);
-  });
-
-  it("normalizes raw user input before matching", () => {
+    // Raw input is normalized before matching.
     expect(isSensitiveUrl("https://mybank.com/", ["  MyBank.COM  "])).toBe(true);
     expect(
       isSensitiveUrl("https://portal.example.org/x", [
@@ -310,16 +294,12 @@ describe("isSensitiveUrl — user blocklist entries", () => {
     ).toBe(true);
     expect(isSensitiveUrl("http://[2001:db8::9]/", ["2001:db8::9"])).toBe(true);
     expect(isSensitiveUrl("http://8.8.8.8/", ["8.8.8.8"])).toBe(true);
-  });
-
-  it("does not block unrelated hosts", () => {
-    const entries = ["mycorp.io"];
-    expect(isSensitiveUrl("https://notmycorp.io/", entries)).toBe(false);
-    expect(isSensitiveUrl("https://mycorp.io.evil.com/", entries)).toBe(false);
-    expect(isSensitiveUrl("https://example.com/", entries)).toBe(false);
-  });
-
-  it("ignores malformed entries instead of throwing", () => {
+    // Suffix lookalikes and unrelated hosts pass.
+    const single = ["mycorp.io"];
+    expect(isSensitiveUrl("https://notmycorp.io/", single)).toBe(false);
+    expect(isSensitiveUrl("https://mycorp.io.evil.com/", single)).toBe(false);
+    expect(isSensitiveUrl("https://example.com/", single)).toBe(false);
+    // Malformed entries are ignored, never thrown.
     expect(
       isSensitiveUrl("https://example.com/", ["not a host!!", "???"]),
     ).toBe(false);
@@ -343,19 +323,14 @@ describe("isSensitiveUrl — opaque-scheme hosts are case-folded", () => {
     }
   });
 
-  it("still allows ordinary opaque-scheme hosts", () => {
+  it("allows ordinary opaque-scheme hosts and folds mixed-case user entries", () => {
     expect(isSensitiveUrl("foo://EXAMPLE.COM/")).toBe(false);
     expect(isSensitiveUrl("foo://example.com/path")).toBe(false);
     expect(isSensitiveUrl("foo://tokio.rs/")).toBe(false);
-  });
-
-  it("matches a mixed-case user entry against a lowercase host", () => {
     expect(normalizeBlocklistEntry("foo://MyCorp.IO")).toBe("mycorp.io");
     expect(isSensitiveUrl("foo://mycorp.io/", ["MyCorp.IO"])).toBe(true);
     expect(isSensitiveUrl("foo://MYCORP.IO/", ["mycorp.io"])).toBe(true);
-  });
-
-  it("round-trips a mixed-case entry through add then match", () => {
+    // An entry added mixed-case matches lower-case hosts afterwards.
     const entries = addBlocklistEntry([], "foo://MyCorp.IO");
     expect(entries).toEqual(["mycorp.io"]);
     expect(isSensitiveUrl("foo://mycorp.io/", entries)).toBe(true);
@@ -398,25 +373,18 @@ describe("normalizeBlocklistEntry / add / remove", () => {
   it("rejects invalid blocklist entries", () => {
     const rejects = ["", "   ", "not a host", "a/b/c", "x?y", "x#y", "u@h", "http://"];
     for (const input of rejects) {
-      expect(normalizeBlocklistEntry(input)).toBeNull();
+      expect(normalizeBlocklistEntry(input), input).toBeNull();
     }
   });
 
-  it("adds normalized entries without duplicates", () => {
+  it("adds normalized entries without duplicates, throws on invalid, removes normalized", () => {
     let entries = addBlocklistEntry([], "Example.COM");
     expect(entries).toEqual(["example.com"]);
     entries = addBlocklistEntry(entries, "example.com");
     expect(entries).toEqual(["example.com"]);
     entries = addBlocklistEntry(entries, "https://other.org/x");
     expect(entries).toEqual(["example.com", "other.org"]);
-  });
-
-  it("throws on an invalid entry", () => {
     expect(() => addBlocklistEntry([], "not a host")).toThrow(TypeError);
-  });
-
-  it("removes entries by normalized value", () => {
-    const entries = ["example.com", "other.org"];
     expect(removeBlocklistEntry(entries, "Example.COM")).toEqual([
       "other.org",
     ]);
@@ -453,22 +421,19 @@ describe("minimizeBookmark", () => {
     expect("notes" in (result ?? {})).toBe(false);
   });
 
-  it("truncates over-long titles to the SentBookmark bound", () => {
+  it("truncates over-long titles and returns null past the CleanedUrl bound", () => {
     const result = minimizeBookmark({
       title: "t".repeat(600),
       url: "https://example.com/",
     });
     expect(result?.title).toHaveLength(500);
     expect(SentBookmark.safeParse(result).success).toBe(true);
-  });
-
-  it("returns null when the cleaned URL exceeds the CleanedUrl bound", () => {
     const url = `https://example.com/${"a".repeat(2_048)}`;
     expect(url.length).toBeGreaterThan(2_048);
     expect(minimizeBookmark({ title: "x", url })).toBeNull();
   });
 
-  it("returns null for unparseable or sensitive URLs", () => {
+  it("returns null for unparseable, sensitive, or user-blocklisted URLs", () => {
     const urls = [
       "https://chase.com/login",
       "file:///etc/passwd",
@@ -480,11 +445,8 @@ describe("minimizeBookmark", () => {
       "",
     ];
     for (const url of urls) {
-      expect(minimizeBookmark({ title: "x", url })).toBeNull();
+      expect(minimizeBookmark({ title: "x", url }), url).toBeNull();
     }
-  });
-
-  it("honors the user blocklist", () => {
     const input = { title: "portal", url: "https://portal.example.org/" };
     expect(minimizeBookmark(input)).not.toBeNull();
     expect(

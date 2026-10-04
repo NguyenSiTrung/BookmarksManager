@@ -60,7 +60,7 @@ const contentScriptSender = {
 let containsSpy: ReturnType<typeof vi.fn>;
 let removeSpy: ReturnType<typeof vi.fn>;
 
-beforeEach(async () => {
+const resetEnv = async () => {
   containsSpy = vi.fn(async () => true);
   removeSpy = vi.fn(async () => true);
   vi.stubGlobal("chrome", {
@@ -74,7 +74,9 @@ beforeEach(async () => {
   vi.mocked(deleteProviderKey).mockClear();
   await db.delete();
   await db.open();
-});
+};
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
@@ -105,15 +107,18 @@ function testMessage(
 }
 
 describe("TEST_PROVIDER validation and sender trust", () => {
-  it.each([
-    ["a missing preset", { type: "TEST_PROVIDER" }],
-    ["a non-preset value", testMessage({ preset: "anthropic" })],
-    ["a numeric preset", testMessage({ preset: 42 })],
-  ])("rejects %s as malformed and never tests", async (_label, message) => {
-    await enableProvider();
-    const result = await handleProviderMessage(message, optionsSender);
-    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
-    expect(testConnection).not.toHaveBeenCalled();
+  it("rejects a missing, non-preset, or numeric preset as malformed and never tests", async () => {
+    for (const [label, message] of [
+      ["a missing preset", { type: "TEST_PROVIDER" }],
+      ["a non-preset value", testMessage({ preset: "anthropic" })],
+      ["a numeric preset", testMessage({ preset: 42 })],
+    ] as const) {
+      await resetEnv();
+      await enableProvider();
+      const result = await handleProviderMessage(message, optionsSender);
+      expect(result, label).toMatchObject({ ok: false, code: "malformed_message" });
+      expect(testConnection, label).not.toHaveBeenCalled();
+    }
   });
 
   it("rejects a content-script sender before touching the provider", async () => {
@@ -259,43 +264,43 @@ describe("TEST_PROVIDER success", () => {
 });
 
 describe("TEST_PROVIDER failure mapping", () => {
-  it.each([
-    "auth",
-    "incompatible",
-    "retry_later",
-    "timeout",
-    "invalid_response",
-    "http_error",
-    "unlisted_model",
-    "https_only",
-    "unlisted_origin",
-    "no_consent",
-    "no_permission",
-    "no_key",
-    "transport",
-    "unregistered_scope",
-    "request_not_allowed",
-    "answer_mismatch",
-    "model_mismatch",
-    "too_large",
-    "invalid_request",
-  ] as const satisfies readonly JevConnectionErrorCode[])(
-    "maps JevConnectionError code %s with its redacted message verbatim",
-    async (code) => {
+  it("maps every JevConnectionError code with its redacted message verbatim", async () => {
+    for (const code of [
+      "auth",
+      "incompatible",
+      "retry_later",
+      "timeout",
+      "invalid_response",
+      "http_error",
+      "unlisted_model",
+      "https_only",
+      "unlisted_origin",
+      "no_consent",
+      "no_permission",
+      "no_key",
+      "transport",
+      "unregistered_scope",
+      "request_not_allowed",
+      "answer_mismatch",
+      "model_mismatch",
+      "too_large",
+      "invalid_request",
+    ] as const satisfies readonly JevConnectionErrorCode[]) {
+      await resetEnv();
       await enableProvider();
       const message = `redacted guidance for ${code}`;
       testConnection.mockRejectedValue(new JevConnectionError(code, message));
 
       const result = await handleProviderMessage(testMessage(), optionsSender);
 
-      expect(result).toEqual({ ok: false, code, message });
-      expect(ProviderMessageResult.parse(result)).toEqual(result);
-    },
-  );
+      expect(result, code).toEqual({ ok: false, code, message });
+      expect(ProviderMessageResult.parse(result), code).toEqual(result);
+    }
+  });
 
-  it.each(["no_consent", "no_permission", "no_key"] as const)(
-    "relays a propagated NetworkGateError's %s code and message verbatim",
-    async (code) => {
+  it("relays a propagated NetworkGateError's code and message verbatim", async () => {
+    for (const code of ["no_consent", "no_permission", "no_key"] as const) {
+      await resetEnv();
       await enableProvider();
       const gateError = new NetworkGateError(
         code,
@@ -305,14 +310,14 @@ describe("TEST_PROVIDER failure mapping", () => {
 
       const result = await handleProviderMessage(testMessage(), optionsSender);
 
-      expect(result).toEqual({
+      expect(result, code).toEqual({
         ok: false,
         code,
         message: gateError.message,
       });
-      expect(ProviderMessageResult.parse(result)).toEqual(result);
-    },
-  );
+      expect(ProviderMessageResult.parse(result), code).toEqual(result);
+    }
+  });
 
   it("maps a ProviderKeyError to reconnect with its re-enter-the-key guidance", async () => {
     await enableProvider();
@@ -333,23 +338,23 @@ describe("TEST_PROVIDER failure mapping", () => {
     expect(ProviderMessageResult.parse(result)).toEqual(result);
   });
 
-  it.each([
-    ["a plain Error rejection", new Error("crypto subsystem unavailable")],
-    ["a non-Error rejection", "kaboom-secret-material"],
-  ])(
-    "maps %s to internal_error without echoing internals",
-    async (_label, thrown) => {
+  it("maps plain and non-Error rejections to internal_error without echoing internals", async () => {
+    for (const [label, thrown] of [
+      ["a plain Error rejection", new Error("crypto subsystem unavailable")],
+      ["a non-Error rejection", "kaboom-secret-material"],
+    ] as const) {
+      await resetEnv();
       await enableProvider();
       testConnection.mockRejectedValue(thrown);
 
       const result = await handleProviderMessage(testMessage(), optionsSender);
 
-      expect(result).toMatchObject({ ok: false, code: "internal_error" });
+      expect(result, label).toMatchObject({ ok: false, code: "internal_error" });
       const serialized = JSON.stringify(result);
-      expect(serialized).not.toContain("crypto subsystem unavailable");
-      expect(serialized).not.toContain("kaboom-secret-material");
-    },
-  );
+      expect(serialized, label).not.toContain("crypto subsystem unavailable");
+      expect(serialized, label).not.toContain("kaboom-secret-material");
+    }
+  });
 
   it("leaves consent, settings, and key untouched by a failed test", async () => {
     await enableProvider();

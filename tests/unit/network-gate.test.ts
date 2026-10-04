@@ -38,7 +38,7 @@ let containsSpy: ReturnType<typeof vi.fn>;
 
 const PLAINTEXT_KEY = "test-provider-key-material";
 
-beforeEach(async () => {
+async function resetEnv() {
   fetchSpy = vi.fn();
   vi.stubGlobal("fetch", fetchSpy);
   containsSpy = vi.fn(async () => true);
@@ -46,7 +46,9 @@ beforeEach(async () => {
   readKey.mockReset().mockResolvedValue(PLAINTEXT_KEY);
   await db.delete();
   await db.open();
-});
+}
+
+beforeEach(resetEnv);
 
 afterAll(() => {
   db.close();
@@ -594,24 +596,27 @@ describe("jev_decisions gate", () => {
     expect(await db.sentLog.count()).toBe(0);
   });
 
-  it.each([
-    ["a query string", "https://news.ycombinator.com/item?id=1"],
-    ["a fragment", "https://news.ycombinator.com/item#top"],
-    ["userinfo", "https://user:pass@news.ycombinator.com/item"],
-  ])("refuses a bookmark URL carrying %s before key/permission reads", async (_label, url) => {
-    await grantConsent("jev_decisions", "typesafe");
-    const error = await sendConsented(
-      "jev_decisions",
-      "typesafe",
-      "jev-latest",
-      decisionsRequest({
-        bookmark: { title: "T", url, domain: "news.ycombinator.com" },
-      }),
-    ).catch((caught: unknown) => caught);
-    expect((error as NetworkGateError).code).toBe("request_not_allowed");
-    expect(containsSpy).not.toHaveBeenCalled();
-    expect(readKey).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
+  it("refuses a bookmark URL carrying a query string, fragment, or userinfo before key/permission reads", async () => {
+    for (const url of [
+      "https://news.ycombinator.com/item?id=1",
+      "https://news.ycombinator.com/item#top",
+      "https://user:pass@news.ycombinator.com/item",
+    ]) {
+      await resetEnv();
+      await grantConsent("jev_decisions", "typesafe");
+      const error = await sendConsented(
+        "jev_decisions",
+        "typesafe",
+        "jev-latest",
+        decisionsRequest({
+          bookmark: { title: "T", url, domain: "news.ycombinator.com" },
+        }),
+      ).catch((caught: unknown) => caught);
+      expect((error as NetworkGateError).code, url).toBe("request_not_allowed");
+      expect(containsSpy, url).not.toHaveBeenCalled();
+      expect(readKey, url).not.toHaveBeenCalled();
+      expect(fetchSpy, url).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses a blocklisted bookmark URL as request_not_allowed", async () => {

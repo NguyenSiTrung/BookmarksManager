@@ -54,7 +54,9 @@ beforeAll(async () => {
   await db.open();
 });
 
-beforeEach(async () => {
+const resetEnv = async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   resetJevClientPools();
   const bookmarks = installBookmarksFake({
     bookmarksBar: [{ id: "b1", title: "B1", url: "https://b1.example/" }],
@@ -74,7 +76,9 @@ beforeEach(async () => {
   await db.llmUsage.clear();
   await db.llmReservations.clear();
   await db.sentLog.clear();
-});
+};
+
+beforeEach(resetEnv);
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -285,8 +289,10 @@ describe("runPersistedJob guards", () => {
     return wire;
   }
 
-  it.each(["cancel", "replace", "pause"] as const)("library_scan honors %s during the first real pair request", async (control) => {
-    await seedProvider();
+  it("library_scan honors cancel, replace, and pause during the first real pair request", async () => {
+    for (const control of ["cancel", "replace", "pause"] as const) {
+      await resetEnv();
+      await seedProvider();
     const native = installBookmarksFake({ bookmarksBar: [
       { id: "a", title: "Async guide", url: "https://docs.guides.dev/guide-a" },
       { id: "b", title: "Async guide", url: "https://docs.guides.dev/guide-b" },
@@ -314,17 +320,18 @@ describe("runPersistedJob guards", () => {
     held.release();
     await running;
     const spent = control === "pause" ? 6 : 5;
-    expect(pairs).toHaveLength(control === "pause" ? 2 : 1);
-    expect(wire).toHaveBeenCalledTimes(spent); // same-owner pause drains both pairs
-    expect(await db.usage.where("jobId").equals(job.id).count()).toBe(spent);
-    expect(await db.sentLog.count()).toBe(spent);
-    expect((await getJob(job.id))?.progress.committedBatches).toBe(control === "pause" ? 2 : 1);
+    expect(pairs, control).toHaveLength(control === "pause" ? 2 : 1);
+    expect(wire, control).toHaveBeenCalledTimes(spent); // same-owner pause drains both pairs
+    expect(await db.usage.where("jobId").equals(job.id).count(), control).toBe(spent);
+    expect(await db.sentLog.count(), control).toBe(spent);
+    expect((await getJob(job.id))?.progress.committedBatches, control).toBe(control === "pause" ? 2 : 1);
     if (control === "pause") {
       expect((await getJob(job.id))?.status).toBe("paused");
       await productionHandlers().resumeJob(job.id);
       await runPersistedJob(job.id);
       expect((await getJob(job.id))?.status).toBe("completed");
       expect(wire).toHaveBeenCalledTimes(6);
+    }
     }
   });
 
@@ -404,9 +411,9 @@ describe("runPersistedJob guards", () => {
     expect(await db.usage.where("jobId").equals(job.id).count()).toBe(0);
   });
 
-  it.each(["analyze_selection", "restructure"] as const)(
-    "%s keeps one owner through a held request and two resumes, then commits monotonic batches",
-    async (kind) => {
+  it("analyze_selection and restructure keep one owner through a held request and two resumes, then commit monotonic batches", async () => {
+    for (const kind of ["analyze_selection", "restructure"] as const) {
+      await resetEnv();
       const job = await seedWork(kind, 2);
       const entered = deferred();
       const held = deferred();
@@ -474,11 +481,13 @@ describe("runPersistedJob guards", () => {
       await runPersistedJob(job.id);
       expect((await handlers.resumeJob(job.id)).status).toBe("completed");
       expect(requests).toHaveLength(3);
-    },
-  );
+    }
+  });
 
-  it.each(["paused", "canceled"] as const)("a newer %s intent wins over a resume waiting for the batch", async (intent) => {
-    const job = await seedWork("analyze_selection");
+  it("a newer paused or canceled intent wins over a resume waiting for the batch", async () => {
+    for (const intent of ["paused", "canceled"] as const) {
+      await resetEnv();
+      const job = await seedWork("analyze_selection");
     const entered = deferred();
     const held = deferred();
     let requests = 0;
@@ -505,12 +514,15 @@ describe("runPersistedJob guards", () => {
     held.release();
     await Promise.all([running, waiting]);
     await runPersistedJob(job.id);
-    expect((await getJob(job.id))?.status).toBe(intent);
-    expect(requests).toBe(1);
+    expect((await getJob(job.id))?.status, intent).toBe(intent);
+    expect(requests, intent).toBe(1);
+    }
   });
 
-  it.each(["analyze_selection", "restructure"] as const)("%s startup uses committed progress, ignores paused/terminal rows and coalesces a manual drive", async (kind) => {
-    const job = await seedWork(kind);
+  it("analyze_selection and restructure startup use committed progress, ignore paused/terminal rows and coalesce a manual drive", async () => {
+    for (const kind of ["analyze_selection", "restructure"] as const) {
+      await resetEnv();
+      const job = await seedWork(kind);
     await setJobStatus(job.id, "running", {
       progress: { totalBatches: 3, committedBatches: 1, processedCount: 1 },
     });
@@ -538,8 +550,9 @@ describe("runPersistedJob guards", () => {
       resolveWorkSet: async () => { throw new Error("terminal and paused jobs must not resolve"); },
       runJob: async () => { throw new Error("must not drive"); },
     });
-    expect((await getJob(paused.id))?.status).toBe("paused");
-    expect(requests).toEqual(["B3", "B4"]);
+    expect((await getJob(paused.id))?.status, kind).toBe("paused");
+    expect(requests, kind).toEqual(["B3", "B4"]);
+    }
   });
 
   it("releases a failed production drive and does not automatically retry a failed batch", async () => {
@@ -559,9 +572,9 @@ describe("runPersistedJob guards", () => {
     expect((await getJob(next.id))?.status).toBe("completed");
   });
 
-  it.each(["analyze_selection", "restructure"] as const)(
-    "%s releases a paused failing batch before two waiting resumes retry its uncommitted offset",
-    async (kind) => {
+  it("analyze_selection and restructure release a paused failing batch before two waiting resumes retry its uncommitted offset", async () => {
+    for (const kind of ["analyze_selection", "restructure"] as const) {
+      await resetEnv();
       const job = await seedWork(kind, 2);
       const entered = deferred();
       const held = deferred();
@@ -609,8 +622,8 @@ describe("runPersistedJob guards", () => {
       expect(finished.status).toBe("completed");
       expect(finished.progress.committedBatches).toBe(2);
       expect(finished.usage.requests).toBe(3);
-    },
-  );
+    }
+  });
 
   it("does not persist a stale restructure callback after its owner was superseded", async () => {
     const job = await seedWork("restructure");

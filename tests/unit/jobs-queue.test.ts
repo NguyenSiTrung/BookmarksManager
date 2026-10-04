@@ -244,15 +244,17 @@ describe("lifecycle transitions", () => {
     expect((await getJob(job.id))?.progress).toEqual(progress);
   });
 
-  it.each(["completed", "canceled", "failed"] as const)("keeps %s immutable against late owner writes", async (status) => {
-    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
-    const owner = (await claimJobOwner(job.id, now))!;
-    const terminal = await setJobStatus(job.id, status, {}, now);
-    await commitJobProgress(job.id, { totalBatches: 1, committedBatches: 1, processedCount: 1 },
-      { inputTokens: 10, outputTokens: 2, requests: 1 }, now, owner.ownerGeneration);
-    await setJobStatus(job.id, "failed", { error: "late" }, now, owner.ownerGeneration);
-    expect(await getJob(job.id)).toEqual(terminal);
-    expect(await claimJobOwner(job.id, now)).toBeUndefined();
+  it("keeps terminal statuses immutable against late owner writes", async () => {
+    for (const status of ["completed", "canceled", "failed"] as const) {
+      const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+      const owner = (await claimJobOwner(job.id, now))!;
+      const terminal = await setJobStatus(job.id, status, {}, now);
+      await commitJobProgress(job.id, { totalBatches: 1, committedBatches: 1, processedCount: 1 },
+        { inputTokens: 10, outputTokens: 2, requests: 1 }, now, owner.ownerGeneration);
+      await setJobStatus(job.id, "failed", { error: "late" }, now, owner.ownerGeneration);
+      expect(await getJob(job.id), status).toEqual(terminal);
+      expect(await claimJobOwner(job.id, now), status).toBeUndefined();
+    }
   });
 
   it("commits a settled paused batch but never changes its pause intent to completion or failure", async () => {

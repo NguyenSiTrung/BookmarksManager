@@ -344,9 +344,10 @@ describe("structured output caps through the real client and gate", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["json_schema", "json_object", "prompt_only"] as const)(
-    "caps the initial request and both repairs on the %s tier",
-    async (tier) => {
+  it("caps the initial request and both repairs on every tier", async () => {
+    for (const tier of ["json_schema", "json_object", "prompt_only"] as const) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
       let completions = 0;
       const server = makeOpenAiServer({
         completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
@@ -363,8 +364,8 @@ describe("structured output caps through the real client and gate", () => {
         expect(request.body).toMatchObject({ max_tokens: 50 });
       }
       expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([50, 50, 50]);
-    },
-  );
+    }
+  });
 
   it("caps every transport retry, tier fallback and subsequent repair body", async () => {
     let completions = 0;
@@ -401,8 +402,11 @@ describe("structured output caps through the real client and gate", () => {
     expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0014, 12);
   });
 
-  it.each([25, 1000])("retains caller limit %s clamping through fallback and repair", async (caller) => {
-    let completions = 0;
+  it("retains caller limit clamping through fallback and repair", async () => {
+    for (const caller of [25, 1000]) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
+      let completions = 0;
     const server = makeOpenAiServer({
       failures: [{ status: 400, body: { error: { message: "response_format unsupported" } } }],
       completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
@@ -420,13 +424,17 @@ describe("structured output caps through the real client and gate", () => {
     expect((await db.llmReservations.toArray()).map((row) => row.maxOutputTokens)).toEqual([
       expected, expected, expected, expected,
     ]);
+    }
   });
 
-  it.each([
-    [400, "max_tokens", "max_tokens unsupported with response_format json_schema"],
-    [404, "max_completion_tokens", "max_completion_tokens required instead of max_tokens for json_schema"],
-    [422, "max_output_tokens", "structured output requires max_output_tokens, not max_tokens"],
-  ])("surfaces HTTP %s token-limit rejection without fallback or repair", async (status, param, message) => {
+  it("surfaces HTTP token-limit rejections without fallback or repair", async () => {
+    for (const [status, param, message] of [
+      [400, "max_tokens", "max_tokens unsupported with response_format json_schema"],
+      [404, "max_completion_tokens", "max_completion_tokens required instead of max_tokens for json_schema"],
+      [422, "max_output_tokens", "structured output requires max_output_tokens, not max_tokens"],
+    ] as const) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
     const server = makeOpenAiServer({
       failures: [{ status, body: { error: { param, message } } }],
       completion: () => response(okAnswer()),
@@ -436,6 +444,7 @@ describe("structured output caps through the real client and gate", () => {
     expect(server.requests).toHaveLength(1);
     expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
     expect(await db.llmReservations.count()).toBe(1);
+    }
   });
 
   it("cancels an oversized error stream and refuses fallback with the cap still present", async () => {
@@ -467,7 +476,10 @@ describe("structured output caps through the real client and gate", () => {
     expect(failedResponse.body?.locked).toBe(false);
   });
 
-  it.each([undefined, 0.02])("charges a reported token overrun honestly (reported cost %s)", async (cost) => {
+  it("charges a reported token overrun honestly", async () => {
+    for (const cost of [undefined, 0.02]) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
     const server = makeOpenAiServer({
       completion: () => response(okAnswer(), {
         usage: {
@@ -487,6 +499,7 @@ describe("structured output caps through the real client and gate", () => {
       outputTokens: 1000,
       ...(cost !== undefined ? { costUsd: 0.02 } : { estimatedCostUsd: expect.closeTo(0.00201, 10) }),
     });
+    }
     const reservations = await db.llmReservations.toArray();
     expect(reservations).toHaveLength(1);
     expect(reservations[0]).toMatchObject({ maxOutputTokens: 50, status: "settled" });

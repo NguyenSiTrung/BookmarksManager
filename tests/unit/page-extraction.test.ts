@@ -87,20 +87,22 @@ describe("extractActivePage", () => {
     expect(executeScript).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "chrome://extensions/",
-    "chrome-extension://otherext/page.html",
-    "file:///home/user/secret.pdf",
-    "about:blank",
-    "chrome.google.com/webstore",
-  ])("refuses restricted or non-http URLs (%s)", async (url) => {
-    const { extractActivePage } = await import("../../src/extract/page");
-    stubChrome({ id: 7, incognito: false, url }, GOOD_RESULT);
-    const result = await extractActivePage(7);
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("unreachable");
-    expect(result.code).toBe("restricted_url");
-    expect(executeScript).not.toHaveBeenCalled();
+  it("refuses restricted or non-http URLs", async () => {
+    for (const url of [
+      "chrome://extensions/",
+      "chrome-extension://otherext/page.html",
+      "file:///home/user/secret.pdf",
+      "about:blank",
+      "chrome.google.com/webstore",
+    ]) {
+      const { extractActivePage } = await import("../../src/extract/page");
+      stubChrome({ id: 7, incognito: false, url }, GOOD_RESULT);
+      const result = await extractActivePage(7);
+      expect(result.ok, url).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.code, url).toBe("restricted_url");
+      expect(executeScript, url).not.toHaveBeenCalled();
+    }
   });
 
   it("refuses a tab with no readable URL", async () => {

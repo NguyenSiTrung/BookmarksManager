@@ -185,92 +185,92 @@ describe("consent snapshot (§13.12)", () => {
 });
 
 describe("store disclosures match the disclosure constants", () => {
-  it.each(STORE_TEXTS)("%s names every sent field", (_name, text) => {
-    const lower = text.toLowerCase();
-    for (const field of [...SYNTHETIC_FIELDS, ...DECISIONS_SENT_FIELDS]) {
-      expect(lower).toContain(field.toLowerCase());
+  it("names every sent field", () => {
+    for (const [name, text] of STORE_TEXTS) {
+      const lower = text.toLowerCase();
+      for (const field of [...SYNTHETIC_FIELDS, ...DECISIONS_SENT_FIELDS]) {
+        expect(lower, `${name}: ${field}`).toContain(field.toLowerCase());
+      }
     }
   });
 
-  it.each(STORE_TEXTS)("%s names the never-sent fields", (_name, text) => {
-    const lower = text.toLowerCase();
-    for (const field of DECISIONS_NEVER_SENT_FIELDS) {
-      expect(lower).toContain(field.toLowerCase());
+  it("names the never-sent fields", () => {
+    for (const [name, text] of STORE_TEXTS) {
+      const lower = text.toLowerCase();
+      for (const field of DECISIONS_NEVER_SENT_FIELDS) {
+        expect(lower, `${name}: ${field}`).toContain(field.toLowerCase());
+      }
     }
   });
 
-  it.each(STORE_TEXTS)("%s names every purpose", (_name, text) => {
-    const lower = text.toLowerCase();
-    for (const purpose of DECISIONS_PURPOSES) {
-      expect(lower).toContain(purpose.toLowerCase());
+  it("names every purpose", () => {
+    for (const [name, text] of STORE_TEXTS) {
+      const lower = text.toLowerCase();
+      for (const purpose of DECISIONS_PURPOSES) {
+        expect(lower, `${name}: ${purpose}`).toContain(purpose.toLowerCase());
+      }
     }
   });
 
-  it.each(STORE_TEXTS)(
-    "%s names every trigger and the user-started guarantee",
-    (_name, text) => {
+  it("names every trigger and the user-started guarantee", () => {
+    for (const [name, text] of STORE_TEXTS) {
       const lower = text.toLowerCase();
       for (const trigger of DECISIONS_TRIGGERS) {
-        expect(lower).toContain(trigger.toLowerCase());
+        expect(lower, `${name}: ${trigger}`).toContain(trigger.toLowerCase());
       }
-      expect(lower).toContain(DECISIONS_TRIGGER_NOTE.toLowerCase());
-    },
-  );
+      expect(lower, name).toContain(DECISIONS_TRIGGER_NOTE.toLowerCase());
+    }
+  });
 
-  it.each(STORE_TEXTS)(
-    "%s names both provider origins and privacy-policy links",
-    (_name, text) => {
+  it("names both provider origins and privacy-policy links", () => {
+    for (const [name, text] of STORE_TEXTS) {
       for (const preset of ["typesafe", "openrouter"] as const) {
         const disclosure = PROVIDER_DISCLOSURES[preset];
-        expect(text).toContain(disclosure.origin);
-        expect(text).toContain(disclosure.privacyPolicyUrl);
+        expect(text, `${name}: ${preset} origin`).toContain(disclosure.origin);
+        expect(text, `${name}: ${preset} policy`).toContain(disclosure.privacyPolicyUrl);
       }
-      expect(text.toLowerCase()).toContain(
+      expect(text.toLowerCase(), name).toContain(
         EXTENSION_PRIVACY_POLICY_REFERENCE.toLowerCase(),
       );
-    },
-  );
+    }
+  });
 
-  it.each(STORE_TEXTS)(
-    "%s names every LLM scope with its title and sent fields",
-    (_name, text) => {
+  it("names every LLM scope with its title and sent fields", () => {
+    for (const [name, text] of STORE_TEXTS) {
       const lower = text.toLowerCase();
       for (const scope of LLM_CONSENT_SCOPES) {
-        expect(text).toContain(scope);
+        expect(text, `${name}: ${scope}`).toContain(scope);
         const disclosure = LLM_SCOPE_DISCLOSURES[scope];
-        expect(lower).toContain(disclosure.title.toLowerCase());
+        expect(lower, `${name}: ${scope} title`).toContain(disclosure.title.toLowerCase());
         for (const field of disclosure.fields) {
-          expect(lower).toContain(field.toLowerCase());
+          expect(lower, `${name}: ${scope} field ${field}`).toContain(field.toLowerCase());
         }
       }
-    },
-  );
+    }
+  });
 
-  it.each(STORE_TEXTS)(
-    "%s names the LLM credential path and the never-sent content",
-    (_name, text) => {
+  it("names the LLM credential path and the never-sent content", () => {
+    for (const [name, text] of STORE_TEXTS) {
       const lower = text.toLowerCase();
-      expect(lower).toContain(LLM_CREDENTIAL_USE.toLowerCase());
+      expect(lower, `${name}: credential use`).toContain(LLM_CREDENTIAL_USE.toLowerCase());
       for (const field of LLM_NEVER_SENT) {
-        expect(lower).toContain(field.toLowerCase());
+        expect(lower, `${name}: ${field}`).toContain(field.toLowerCase());
       }
-    },
-  );
+    }
+  });
 
-  it.each(STORE_TEXTS)(
-    "%s names the jev_decisions scope and the versioned consent",
-    (_name, text) => {
-      expect(text).toContain("jev_decisions");
-      expect(text.toLowerCase()).toContain("consentversion");
-    },
-  );
+  it("names the jev_decisions scope and the versioned consent", () => {
+    for (const [name, text] of STORE_TEXTS) {
+      expect(text, name).toContain("jev_decisions");
+      expect(text.toLowerCase(), name).toContain("consentversion");
+    }
+  });
 
-  it.each(STORE_TEXTS)(
-    "%s states the developer runs no server and is never a destination",
-    (_name, text) => {
-      expect(text).toContain(NO_DEVELOPER_SERVER_NOTE);
-    },
-  );
+  it("states the developer runs no server and is never a destination", () => {
+    for (const [name, text] of STORE_TEXTS) {
+      expect(text, name).toContain(NO_DEVELOPER_SERVER_NOTE);
+    }
+  });
 
   it("keeps the preset origins aligned with the frozen registry", () => {
     expect(PROVIDER_DISCLOSURES.typesafe.origin).toBe(PRESETS.typesafe.origin);

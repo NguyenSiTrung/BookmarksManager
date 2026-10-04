@@ -175,8 +175,10 @@ function mustSerialize(envelope: ExportEnvelope): string {
 }
 
 describe("buildExportTree", () => {
-  it("returns [] for an empty forest", () => {
+  it("returns [] for an empty forest and gives leaf folders an empty children array", () => {
     expect(buildExportTree([])).toEqual([]);
+    const [node] = buildExportTree([{ id: "f", title: "Empty" }]);
+    expect(node).toEqual({ id: "f", title: "Empty", children: [] });
   });
 
   it("keeps id/title/url/children and drops every other Chrome field", () => {
@@ -210,12 +212,7 @@ describe("buildExportTree", () => {
     });
   });
 
-  it("gives leaf folders an empty children array, not an absent one", () => {
-    const [node] = buildExportTree([{ id: "f", title: "Empty" }]);
-    expect(node).toEqual({ id: "f", title: "Empty", children: [] });
-  });
-
-  it("orders children by numeric index when every sibling carries one", () => {
+  it("orders children by numeric index, keeping array order when any sibling lacks one", () => {
     const [node] = buildExportTree([
       {
         id: "f",
@@ -228,14 +225,11 @@ describe("buildExportTree", () => {
       },
     ]);
     expect(node?.children?.map((child) => child.id)).toEqual(["a", "b", "c"]);
-  });
-
-  it("keeps array order when any sibling lacks an index", () => {
     const nodes = buildExportTree([
       { id: "b", title: "b", url: "https://b/" },
       { id: "a", index: 0, title: "a", url: "https://a/" },
     ]);
-    expect(nodes.map((node) => node.id)).toEqual(["b", "a"]);
+    expect(nodes.map((n) => n.id)).toEqual(["b", "a"]);
   });
 });
 
@@ -308,12 +302,9 @@ describe("buildExport — whole library", () => {
     expect(envelope.tree.map((node) => node.id)).toEqual(["s-1", "s-2"]);
   });
 
-  it("stamps a default exportedAt that parses as an ISO datetime", () => {
+  it("defaults exportedAt to an ISO stamp and rejects invalid values", () => {
     const envelope = mustBuild({ tree: chromeTree(), meta: [], tags: [] });
     expect(Number.isNaN(Date.parse(envelope.exportedAt))).toBe(false);
-  });
-
-  it("fails with invalid_envelope on an invalid exportedAt", () => {
     const result = buildExport({
       tree: chromeTree(),
       meta: [],
@@ -325,7 +316,7 @@ describe("buildExport — whole library", () => {
 });
 
 describe("buildExport — folder scope", () => {
-  it("exports the folder itself as the single top-level node", () => {
+  it("exports the folder subtree: node shape, scoped meta, and the whole tag library", () => {
     const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
@@ -343,28 +334,8 @@ describe("buildExport — folder scope", () => {
         ],
       },
     ]);
-  });
-
-  it("scopes meta to the subtree (folder row plus descendants)", () => {
-    const envelope = mustBuild({
-      tree: chromeTree(),
-      meta: META_ROWS,
-      tags: TAG_DEFS,
-      folderId: "10",
-      exportedAt: EXPORTED_AT,
-    });
     // "13" and "20" are outside the subtree and excluded along with the orphan.
     expect(envelope.meta.map((row) => row.id)).toEqual(["11", "10"]);
-  });
-
-  it("still exports the tag library wholesale under folder scope", () => {
-    const envelope = mustBuild({
-      tree: chromeTree(),
-      meta: META_ROWS,
-      tags: TAG_DEFS,
-      folderId: "10",
-      exportedAt: EXPORTED_AT,
-    });
     expect(envelope.tags).toHaveLength(3);
   });
 
@@ -396,7 +367,7 @@ describe("buildExport — folder scope", () => {
 });
 
 describe("serializeExport", () => {
-  it("pretty-prints with two-space indent and a trailing newline", () => {
+  it("pretty-prints and refuses envelopes carrying secret-bearing extra keys", () => {
     const envelope = mustBuild({
       tree: chromeTree(),
       meta: META_ROWS,
@@ -406,9 +377,6 @@ describe("serializeExport", () => {
     const json = mustSerialize(envelope);
     expect(json).toBe(`${JSON.stringify(envelope, null, 2)}\n`);
     expect(json.startsWith('{\n  "version": 1,')).toBe(true);
-  });
-
-  it("refuses to write an envelope carrying secret-bearing extra keys", () => {
     const dirty = {
       ...validExportEnvelope,
       keys: ["sk-live-000"],
@@ -419,75 +387,54 @@ describe("serializeExport", () => {
 });
 
 describe("parseExport", () => {
-  it("accepts a JSON string", () => {
-    const result = parseExport(JSON.stringify(validExportEnvelope));
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data.version).toBe(1);
-      expect(result.data.tree[0]?.children?.[0]?.url).toBe(
+  it("accepts JSON strings, parsed values, and empty libraries with schema defaults", () => {
+    const fromString = parseExport(JSON.stringify(validExportEnvelope));
+    expect(fromString.ok).toBe(true);
+    if (fromString.ok) {
+      expect(fromString.data.version).toBe(1);
+      expect(fromString.data.tree[0]?.children?.[0]?.url).toBe(
         "https://example.com/article",
       );
     }
-  });
-
-  it("accepts an already-parsed value", () => {
-    const result = parseExport(validExportEnvelope);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data.meta[0]?.category).toBe("docs");
+    const parsed = parseExport(validExportEnvelope);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.data.meta[0]?.category).toBe("docs");
     }
-  });
-
-  it("accepts an empty library", () => {
-    const result = parseExport(minimalExportEnvelope);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data.tree).toEqual([]);
-      expect(result.data.tags).toEqual([]);
-      expect(result.data.meta).toEqual([]);
+    const empty = parseExport(minimalExportEnvelope);
+    expect(empty.ok).toBe(true);
+    if (empty.ok) {
+      expect(empty.data.tree).toEqual([]);
+      expect(empty.data.tags).toEqual([]);
+      expect(empty.data.meta).toEqual([]);
     }
-  });
-
-  it("applies schema defaults on the way in (meta.tags)", () => {
-    const result = parseExport({
+    const defaulted = parseExport({
       ...minimalExportEnvelope,
       meta: [{ id: "b", updatedAt: "2026-09-26T10:05:00.000Z" }],
     });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.meta[0]?.tags).toEqual([]);
+    expect(defaulted.ok).toBe(true);
+    if (defaulted.ok) expect(defaulted.data.meta[0]?.tags).toEqual([]);
   });
 
-  it("rejects malformed JSON with invalid_json", () => {
+  it("rejects non-JSON and non-envelope input", () => {
     for (const input of ["", "{", "not json", "[1,2", "undefined"]) {
       const result = parseExport(input);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.code).toBe("invalid_json");
+      expect(result.ok, input).toBe(false);
+      if (!result.ok) expect(result.code, input).toBe("invalid_json");
     }
-  });
-
-  it("rejects valid JSON that is not an envelope with invalid_envelope", () => {
     for (const input of ["null", "42", '"a string"', "[]", "{}"]) {
       const result = parseExport(input);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.code).toBe("invalid_envelope");
+      expect(result.ok, input).toBe(false);
+      if (!result.ok) expect(result.code, input).toBe("invalid_envelope");
     }
   });
 
-  it("rejects a wrong version literal with unsupported_version", () => {
-    const result = parseExport(malformedExportEnvelopes.versionTwo);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("unsupported_version");
-  });
-
-  it("rejects every schema-invalid fixture with invalid_envelope", () => {
+  it("rejects every schema-invalid and malformed/smuggled fixture", () => {
     for (const [name, bad] of Object.entries(invalidExportEnvelopes)) {
       const result = parseExport(bad);
       expect(result.ok, name).toBe(false);
       if (!result.ok) expect(result.code, name).toBe("invalid_envelope");
     }
-  });
-
-  it("rejects every malformed/smuggled fixture", () => {
     for (const [name, bad] of Object.entries(malformedExportEnvelopes)) {
       const result = parseExport(bad);
       expect(result.ok, name).toBe(false);
@@ -496,14 +443,12 @@ describe("parseExport", () => {
         expect(result.code, name).toBe(expected);
       }
     }
-  });
-
-  it("rejects envelopes smuggling secret keys as JSON text too", () => {
-    const result = parseExport(
+    // Secret-bearing keys are smuggling even when serialized as JSON text.
+    const smuggled = parseExport(
       JSON.stringify({ ...validExportEnvelope, consents: [], sentLog: [] }),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("invalid_envelope");
+    expect(smuggled.ok).toBe(false);
+    if (!smuggled.ok) expect(smuggled.code).toBe("invalid_envelope");
   });
 
   it("rejects string input above MAX_FILE_BYTES before parsing (too_large)", () => {
@@ -512,25 +457,22 @@ describe("parseExport", () => {
     expect(result).toMatchObject({ ok: false, code: "too_large" });
   });
 
-  it("rejects a tree nested deeper than MAX_TREE_DEPTH (invalid_envelope)", () => {
+  it("enforces MAX_TREE_DEPTH exactly: rejects deeper, accepts the boundary", () => {
     let node: unknown = { id: "leaf", title: "Leaf", url: "https://leaf/" };
     for (let i = 0; i < MAX_TREE_DEPTH + 10; i++) {
       node = { id: `f${i}`, title: `f${i}`, children: [node] };
     }
-    const result = parseExport(
+    const deep = parseExport(
       JSON.stringify({ ...minimalExportEnvelope, tree: [node] }),
     );
-    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
-    if (!result.ok) expect(result.message).toContain("depth");
-  });
-
-  it("accepts a tree nested exactly at the MAX_TREE_DEPTH boundary", () => {
-    let node: unknown = { id: "leaf", title: "Leaf", url: "https://leaf/" };
+    expect(deep).toMatchObject({ ok: false, code: "invalid_envelope" });
+    if (!deep.ok) expect(deep.message).toContain("depth");
+    node = { id: "leaf", title: "Leaf", url: "https://leaf/" };
     for (let i = 0; i < MAX_TREE_DEPTH; i++) {
       node = { id: `f${i}`, title: `f${i}`, children: [node] };
     }
-    const result = parseExport({ ...minimalExportEnvelope, tree: [node] });
-    expect(result.ok).toBe(true);
+    const boundary = parseExport({ ...minimalExportEnvelope, tree: [node] });
+    expect(boundary.ok).toBe(true);
   });
 });
 

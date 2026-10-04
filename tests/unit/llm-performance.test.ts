@@ -103,24 +103,27 @@ describe("summary-verification state bounds", () => {
     expect(SummaryVerificationState.safeParse(valid).success).toBe(true);
   });
 
-  it.each([
-    ["excerpt > 20_000", { excerpt: "x".repeat(20_001) }],
-    ["headings > 50", { headings: Array.from({ length: 51 }, () => "h") }],
-    ["a heading > 200", { headings: ["x".repeat(201)] }],
-    ["summary > 2_000", { summary: "x".repeat(2_001) }],
-    [
-      "bookmark title > 500",
-      {
-        bookmark: {
-          title: "x".repeat(501),
-          url: "https://a.io/",
-          domain: "a.io",
+  it("rejects over-limit fields", () => {
+    for (const [label, over] of [
+      ["excerpt > 20_000", { excerpt: "x".repeat(20_001) }],
+      ["headings > 50", { headings: Array.from({ length: 51 }, () => "h") }],
+      ["a heading > 200", { headings: ["x".repeat(201)] }],
+      ["summary > 2_000", { summary: "x".repeat(2_001) }],
+      [
+        "bookmark title > 500",
+        {
+          bookmark: {
+            title: "x".repeat(501),
+            url: "https://a.io/",
+            domain: "a.io",
+          },
         },
-      },
-    ],
-  ])("rejects %s", (_label, over) => {
-    expect(
-      SummaryVerificationState.safeParse({ ...valid, ...over }).success,
-    ).toBe(false);
+      ],
+    ] as const) {
+      expect(
+        SummaryVerificationState.safeParse({ ...valid, ...over }).success,
+        label,
+      ).toBe(false);
+    }
   });
 });

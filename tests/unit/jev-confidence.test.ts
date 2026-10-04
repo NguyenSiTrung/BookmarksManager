@@ -31,19 +31,17 @@ describe("noulMargin", () => {
     expect(noulMargin(0.7, 0.7)).toBe(0);
   });
 
-  it.each([-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY])(
-    "throws RangeError for p = %f outside [0, 1]",
-    (p) => {
-      expect(() => noulMargin(p)).toThrow(RangeError);
-    },
-  );
+  it("throws RangeError for p outside [0, 1]", () => {
+    for (const p of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => noulMargin(p), `p=${p}`).toThrow(RangeError);
+    }
+  });
 
-  it.each([0, 1, -0.25, 1.5, Number.NaN])(
-    "throws RangeError for t = %f outside (0, 1)",
-    (t) => {
-      expect(() => noulMargin(0.5, t)).toThrow(RangeError);
-    },
-  );
+  it("throws RangeError for t outside (0, 1)", () => {
+    for (const t of [0, 1, -0.25, 1.5, Number.NaN]) {
+      expect(() => noulMargin(0.5, t), `t=${t}`).toThrow(RangeError);
+    }
+  });
 });
 
 describe("answerConfidence", () => {

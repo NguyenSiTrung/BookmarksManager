@@ -55,11 +55,8 @@ function consentRow(
 }
 
 describe("versioned consent records", () => {
-  it("pins CONSENT_VERSION to 4", () => {
+  it("pins CONSENT_VERSION to 4 and reports no consent before any grant", async () => {
     expect(CONSENT_VERSION).toBe(4);
-  });
-
-  it("reports no consent before any grant", async () => {
     for (const id of PRESET_IDS) {
       expect(await hasTestConsent(id)).toBe(false);
     }
@@ -95,20 +92,14 @@ describe("versioned consent records", () => {
     });
   });
 
-  it("revoke deletes the grant row", async () => {
+  it("revoke deletes the row, is safe when no grant exists, and round-trips grant → revoke → grant", async () => {
     await grantTestConsent("typesafe");
     await revokeTestConsent("typesafe");
     expect(await hasTestConsent("typesafe")).toBe(false);
     expect(
       await db.consents.get([CONSENT_SCOPE, PRESETS.typesafe.origin]),
     ).toBeUndefined();
-  });
-
-  it("revoke is safe when no grant exists", async () => {
     await expect(revokeTestConsent("openrouter")).resolves.toBeUndefined();
-  });
-
-  it("round-trips grant → revoke → grant", async () => {
     await grantTestConsent("openrouter");
     expect(await hasTestConsent("openrouter")).toBe(true);
     await revokeTestConsent("openrouter");
@@ -123,24 +114,20 @@ describe("versioned consent records", () => {
     expect(await hasTestConsent("openrouter")).toBe(false);
   });
 
-  it("rejects stale consent versions", async () => {
+  it("rejects stale versions and grants recorded for other origins or scopes", async () => {
     await db.consents.put(
       consentRow({ consentVersion: CONSENT_VERSION + 1 }),
     );
-    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(await hasTestConsent("typesafe"), "version+1").toBe(false);
     await db.consents.put(consentRow({ consentVersion: 99 }));
-    expect(await hasTestConsent("typesafe")).toBe(false);
-  });
-
-  it("ignores grants recorded for other origins", async () => {
+    expect(await hasTestConsent("typesafe"), "version 99").toBe(false);
+    await db.consents.clear();
     await db.consents.put(consentRow({ origin: "https://evil.example.com" }));
-    expect(await hasTestConsent("typesafe")).toBe(false);
-    expect(await hasTestConsent("openrouter")).toBe(false);
-  });
-
-  it("ignores grants recorded under a different scope at the same origin", async () => {
+    expect(await hasTestConsent("typesafe"), "foreign origin").toBe(false);
+    expect(await hasTestConsent("openrouter"), "foreign origin").toBe(false);
+    await db.consents.clear();
     await db.consents.put(consentRow({ scope: "bookmark_analysis" }));
-    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(await hasTestConsent("typesafe"), "foreign scope").toBe(false);
   });
 
   it("re-granting upserts the row and refreshes acceptedAt", async () => {
@@ -253,29 +240,25 @@ describe("jev_decisions scope", () => {
 });
 
 describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
-  it.each([1, 2, 3])("a v%i jev_test row fails hasConsent", async (version) => {
-    await db.consents.put(
-      consentRow({ scope: "jev_test", consentVersion: version }),
-    );
-    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
-    expect(await hasTestConsent("typesafe")).toBe(false);
+  it("v1/v2/v3 jev_test rows fail hasConsent", async () => {
+    for (const version of [1, 2, 3]) {
+      await db.consents.put(
+        consentRow({ scope: "jev_test", consentVersion: version }),
+      );
+      expect(await hasConsent("jev_test", "typesafe"), `v${version}`).toBe(false);
+      expect(await hasTestConsent("typesafe"), `v${version}`).toBe(false);
+    }
   });
 
-  it.each([1, 2, 3])(
-    "a v%i jev_decisions row fails hasConsent",
-    async (version) => {
+  it("v1/v2/v3 jev_decisions and llm-scope rows fail their checks", async () => {
+    for (const version of [1, 2, 3]) {
       await db.consents.put(
         consentRow({ scope: "jev_decisions", consentVersion: version }),
       );
-      expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(
-        false,
-      );
-    },
-  );
-
-  it.each([1, 2, 3])(
-    "a v%i llm-scope row fails hasConsentAtOrigin",
-    async (version) => {
+      expect(
+        await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe"),
+        `jev_decisions v${version}`,
+      ).toBe(false);
       await db.consents.put(
         consentRow({
           scope: "llm_explain",
@@ -285,16 +268,9 @@ describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
       );
       expect(
         await hasConsentAtOrigin("llm_explain", "https://api.example.com"),
+        `llm_explain v${version}`,
       ).toBe(false);
-    },
-  );
-
-  it("a v1 jev_test row fails hasConsent", async () => {
-    await db.consents.put(
-      consentRow({ scope: "jev_test", consentVersion: 1 }),
-    );
-    expect(await hasConsent("jev_test", "typesafe")).toBe(false);
-    expect(await hasTestConsent("typesafe")).toBe(false);
+    }
   });
 
   it("a fresh v4 grant passes for jev and llm scopes", async () => {
@@ -308,9 +284,9 @@ describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
     ).toBe(true);
   });
 
-  it.each(CONSENT_SCOPES)(
-    "preserves a v3 %s grant as stale until reacquired for its exact origin",
-    async (scope) => {
+  it("preserves a v3 grant as stale until reacquired for its exact origin", async () => {
+    for (const scope of CONSENT_SCOPES) {
+      await db.consents.clear();
       const origin = "http://localhost:11434";
       const otherOrigin = "http://localhost:11435";
       const old = consentRow({ scope, origin, consentVersion: 3 });
@@ -327,8 +303,8 @@ describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
       expect(await hasConsentAtOrigin(scope, otherOrigin)).toBe(false);
       expect(await db.consents.get([scope, otherOrigin])).toEqual(other);
       expect(await db.consents.count()).toBe(2);
-    },
-  );
+    }
+  });
 });
 
 describe("origin-generic consent (dynamic LLM providers)", () => {
@@ -351,7 +327,7 @@ describe("origin-generic consent (dynamic LLM providers)", () => {
     ).toBe(false);
   });
 
-  it("accepts canonical loopback http origins, port included", async () => {
+  it("accepts canonical loopback http origins (port included) and rejects non-canonical or disallowed ones", async () => {
     for (const origin of [
       "http://localhost:11434",
       "http://127.0.0.1:8080",
@@ -364,20 +340,20 @@ describe("origin-generic consent (dynamic LLM providers)", () => {
     expect(
       await hasConsentAtOrigin("llm_test", "http://localhost:9999"),
     ).toBe(false);
-  });
-
-  it.each([
-    "http://api.example.com",
-    "https://api.example.com/path",
-    "https://api.example.com/",
-    "http://evil-localhost.com:8080",
-    "notaurl",
-    "",
-  ])("rejects the non-canonical or disallowed origin %j", async (origin) => {
-    await expect(
-      grantConsentAtOrigin("llm_test", origin),
-    ).rejects.toThrow();
-    expect(await hasConsentAtOrigin("llm_test", origin)).toBe(false);
+    for (const origin of [
+      "http://api.example.com",
+      "https://api.example.com/path",
+      "https://api.example.com/",
+      "http://evil-localhost.com:8080",
+      "notaurl",
+      "",
+    ]) {
+      await expect(
+        grantConsentAtOrigin("llm_test", origin),
+        origin,
+      ).rejects.toThrow();
+      expect(await hasConsentAtOrigin("llm_test", origin), origin).toBe(false);
+    }
   });
 
   it("revokeConsentsAtOrigin sweeps every scope at the origin only", async () => {
@@ -417,6 +393,7 @@ describe("revokeProviderConsents", () => {
 
   it("is safe when the provider holds no grants", async () => {
     await expect(revokeProviderConsents("openrouter")).resolves.toBeUndefined();
+    expect(await db.consents.count()).toBe(0);
   });
 
   it("throws a typed failure when a scope deletion rejects, still deleting the rest", async () => {

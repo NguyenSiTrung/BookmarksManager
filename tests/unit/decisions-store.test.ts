@@ -112,9 +112,10 @@ describe("persistDecision", () => {
     expect(read?.kind).toBe("set_category");
   });
 
-  it("does not call Jev and keeps source.model / questionSetVersion verbatim", async () => {
+  it("stores the document verbatim and captures decision-time placement guards", async () => {
     const stored = await persistDecision(
       decision({
+        bookmarkIds: ["bm-001", "bm-002"],
         source: {
           engine: "jev",
           providerId: "typesafe",
@@ -125,25 +126,16 @@ describe("persistDecision", () => {
     );
     expect(stored.source.model).toBe("jev-1.13.0");
     expect(stored.source.questionSetVersion).toBe("qs-7");
-  });
-
-  it("captures a decision-time placement guard for every bookmark id", async () => {
-    const stored = await persistDecision(decision({ bookmarkIds: ["bm-001", "bm-002"] }));
     expect(stored.guard?.placements).toEqual({ "bm-001": "1", "bm-002": "1" });
+    // A bookmark already gone from the tree gets no placement entry.
+    const ghost = await persistDecision(decision({ bookmarkIds: ["bm-ghost"] }));
+    expect(ghost.guard?.placements).toEqual({});
   });
 
-  it("records no placement for a bookmark that is already gone", async () => {
-    const stored = await persistDecision(decision({ bookmarkIds: ["bm-ghost"] }));
-    expect(stored.guard?.placements).toEqual({});
-  });
-
-  it("refuses a document that violates the Decision schema", async () => {
+  it("refuses a schema-violating document and upserts idempotently", async () => {
     const bad = { ...decision(), confidence: 2 } as unknown as Decision;
     await expectStoreError(() => persistDecision(bad), "invalid");
     expect(await listDecisions()).toEqual([]);
-  });
-
-  it("overwrites a previous row with the same id (idempotent upsert)", async () => {
     await persistDecision(decision());
     await persistDecision(decision({ confidence: 0.5 }));
     const rows = await listDecisions();
@@ -166,26 +158,15 @@ describe("queries", () => {
     expect(rows.map((r) => r.id)).toEqual([UUID, UUID2]);
   });
 
-  it("listPending returns only status === 'pending'", async () => {
+  it("listPending/listByStatus filter on status; unknown ids miss", async () => {
     await persistDecision(decision({ id: UUID, status: "pending" }));
     await persistDecision(
       decision({ id: UUID2, status: "rejected", createdAt: "2026-09-25T11:00:00.000Z" }),
     );
-    const rows = await listPending();
-    expect(rows.map((r) => r.id)).toEqual([UUID]);
-  });
-
-  it("listByStatus filters on the status index", async () => {
-    await persistDecision(decision({ id: UUID, status: "unsure" }));
-    await persistDecision(
-      decision({ id: UUID2, status: "applied", createdAt: "2026-09-25T11:00:00.000Z" }),
-    );
-    expect((await listByStatus("unsure")).map((r) => r.id)).toEqual([UUID]);
-    expect((await listByStatus("applied")).map((r) => r.id)).toEqual([UUID2]);
+    expect((await listPending()).map((r) => r.id)).toEqual([UUID]);
+    expect((await listByStatus("rejected")).map((r) => r.id)).toEqual([UUID2]);
+    expect((await listByStatus("pending")).map((r) => r.id)).toEqual([UUID]);
     expect(await listByStatus("reverted")).toEqual([]);
-  });
-
-  it("getDecision returns undefined for an unknown id", async () => {
     expect(await getDecision("00000000-0000-4000-8000-000000000000")).toBeUndefined();
   });
 });
@@ -195,35 +176,28 @@ describe("queries", () => {
 // ---------------------------------------------------------------------------
 
 describe("isLegalTransition", () => {
-  it("allows approve/reject from the reviewable states", () => {
+  it("models the §7 status state machine", () => {
+    // Approve/reject is open from every reviewable state.
     for (const from of ["pending", "unsure", "approved", "auto_applied"] as const) {
-      expect(isLegalTransition(from, "applied")).toBe(true);
-      expect(isLegalTransition(from, "rejected")).toBe(true);
+      expect(isLegalTransition(from, "applied"), from).toBe(true);
+      expect(isLegalTransition(from, "rejected"), from).toBe(true);
     }
-  });
-
-  it("allows the policy auto-apply transition from a reviewable state", () => {
+    // The policy auto-apply edge is open from reviewable states only.
     for (const from of ["pending", "unsure", "approved"] as const) {
-      expect(isLegalTransition(from, "auto_applied")).toBe(true);
+      expect(isLegalTransition(from, "auto_applied"), from).toBe(true);
     }
     expect(isLegalTransition("applied", "auto_applied")).toBe(false);
-  });
-
-  it("allows revert only from an applied state", () => {
+    // Revert is open from applied states only.
     expect(isLegalTransition("applied", "reverted")).toBe(true);
     expect(isLegalTransition("auto_applied", "reverted")).toBe(true);
     expect(isLegalTransition("pending", "reverted")).toBe(false);
     expect(isLegalTransition("rejected", "reverted")).toBe(false);
-  });
-
-  it("treats rejected and reverted as terminal", () => {
+    // Rejected and reverted are terminal.
     for (const to of ["applied", "rejected", "reverted", "pending"] as const) {
-      expect(isLegalTransition("rejected", to)).toBe(false);
-      expect(isLegalTransition("reverted", to)).toBe(false);
+      expect(isLegalTransition("rejected", to), to).toBe(false);
+      expect(isLegalTransition("reverted", to), to).toBe(false);
     }
-  });
-
-  it("never allows a self-transition", () => {
+    // No self-transitions.
     for (const s of [
       "pending",
       "unsure",
@@ -233,7 +207,7 @@ describe("isLegalTransition", () => {
       "rejected",
       "reverted",
     ] as const) {
-      expect(isLegalTransition(s, s)).toBe(false);
+      expect(isLegalTransition(s, s), s).toBe(false);
     }
   });
 });
@@ -259,35 +233,29 @@ describe("transitionStatus", () => {
     expect(audit.from).toBe("pending");
   });
 
-  it("stamps a parseable AuditEvent with an IndexedDB-assigned id", async () => {
-    await persistDecision(decision({ status: "pending" }));
-    await transitionStatus(UUID, "rejected", "user");
-    const raw = await db.audit.toArray();
-    const parsed = AuditEvent.parse(raw[0]);
-    expect(parsed.id).toBeGreaterThan(0);
-    expect(parsed.to).toBe("rejected");
-  });
-
-  it("records the policy actor for an auto-apply transition", async () => {
-    await persistDecision(decision({ status: "pending" }));
-    await transitionStatus(UUID, "auto_applied", "policy");
-    const rows = await db.audit.toArray();
-    expect(rows[0]?.actor).toBe("policy");
-    expect(rows[0]?.to).toBe("auto_applied");
-  });
-
-  it("stores no bookmark content in the audit row", async () => {
-    await persistDecision(decision({ bookmarkIds: ["bm-001"] }));
+  it("writes a complete audit row: parsed, actor-stamped, content-free", async () => {
+    await persistDecision(decision({ status: "pending", bookmarkIds: ["bm-001"] }));
     await transitionStatus(UUID, "rejected", "user");
     const raw = (await db.audit.toArray())[0] as Record<string, unknown>;
+    const parsed = AuditEvent.parse(raw);
+    expect(parsed.id).toBeGreaterThan(0);
+    expect(parsed.to).toBe("rejected");
     expect(Object.keys(raw).sort()).toEqual(
       ["actor", "changedAt", "decisionId", "from", "id", "to"].sort(),
     );
     // No title/url/folder/tag fields leaked in.
     expect(JSON.stringify(raw)).not.toContain("https://a.example/");
+    await transitionStatus(UUID, "auto_applied", "policy").catch(() => {});
+    await persistDecision(decision({ id: UUID2, status: "pending" }));
+    await transitionStatus(UUID2, "auto_applied", "policy");
+    const policyRow = (await db.audit.toArray()).find(
+      (r) => r.decisionId === UUID2,
+    );
+    expect(policyRow?.actor).toBe("policy");
+    expect(policyRow?.to).toBe("auto_applied");
   });
 
-  it("refuses an illegal transition and writes nothing", async () => {
+  it("refuses illegal transitions and unknown ids without writing", async () => {
     await persistDecision(decision({ status: "reverted" }));
     await expectStoreError(
       () => transitionStatus(UUID, "applied", "user"),
@@ -295,9 +263,6 @@ describe("transitionStatus", () => {
     );
     expect((await getDecision(UUID))?.status).toBe("reverted");
     expect(await db.audit.toArray()).toEqual([]);
-  });
-
-  it("refuses an unknown decision id", async () => {
     await expectStoreError(
       () => transitionStatus(UUID2, "applied", "user"),
       "not_found",
@@ -348,7 +313,7 @@ describe("persistDecisionRationale", () => {
     throw new Error(`expected a DecisionStoreError ${code}`);
   }
 
-  it("writes only the rationale — status, payload, and sidecars untouched", async () => {
+  it("writes only the rationale, overwrites it, and leaves audit/undo untouched", async () => {
     await persistDecision(
       decision({ status: "pending", probabilities: { article: 0.9 } }),
     );
@@ -361,40 +326,24 @@ describe("persistDecisionRationale", () => {
     const after = (await getDecision(UUID)) as DecisionRow;
     expect(after.rationale).toBe("Jev picked 'article'.");
     expect(after.status).toBe("pending");
-  });
-
-  it("writes no audit row and touches no undo/apply bookkeeping", async () => {
-    await persistDecision(decision());
-    await persistDecisionRationale(UUID, "A concise rationale.");
+    await persistDecisionRationale(UUID, "new");
+    expect((await getDecision(UUID))?.rationale).toBe("new");
     expect(await db.audit.toArray()).toEqual([]);
     expect(await db.undo.toArray()).toEqual([]);
     expect((await getDecision(UUID))?.undoSnapshotId).toBeUndefined();
   });
 
-  it("overwrites an existing rationale", async () => {
-    await persistDecision(decision({ rationale: "old" }));
-    await persistDecisionRationale(UUID, "new");
-    expect((await getDecision(UUID))?.rationale).toBe("new");
-  });
-
-  it("rejects a rationale over the 1,000-character §7 bound", async () => {
+  it("rejects oversized or empty rationales and unknown ids", async () => {
     await persistDecision(decision());
     await expectRationaleError(
       () => persistDecisionRationale(UUID, "x".repeat(1_001)),
       "invalid",
     );
     expect((await getDecision(UUID))?.rationale).toBeUndefined();
-  });
-
-  it("rejects an empty rationale", async () => {
-    await persistDecision(decision());
     await expectRationaleError(
       () => persistDecisionRationale(UUID, ""),
       "invalid",
     );
-  });
-
-  it("rejects an unknown decision id", async () => {
     await expectRationaleError(
       () => persistDecisionRationale(UUID2, "no row"),
       "not_found",
@@ -501,24 +450,6 @@ describe("prunePopupDecisions", () => {
     );
   });
 
-  it("breaks createdAt ties by decision id, deterministically", async () => {
-    const createdAt = new Date(POPUP_EPOCH).toISOString();
-    const rows = Array.from({ length: POPUP_DECISION_LIMIT + 2 }, (_, n) =>
-      popupRow(n, { createdAt }),
-    );
-    // Insert newest-first to prove the sweep orders by (createdAt, id), not
-    // by insertion order.
-    await db.decisions.bulkPut([...rows].reverse());
-
-    expect(await prunePopupDecisions()).toBe(2);
-    expect(await getDecision(syntheticUuid(0))).toBeUndefined();
-    expect(await getDecision(syntheticUuid(1))).toBeUndefined();
-    expect(await getDecision(syntheticUuid(2))).toBeDefined();
-    expect(
-      await getDecision(syntheticUuid(POPUP_DECISION_LIMIT + 1)),
-    ).toBeDefined();
-  });
-
   it("preserves real, mixed, non-prunable, audit, and undo rows", async () => {
     await db.decisions.bulkPut(
       Array.from({ length: POPUP_DECISION_LIMIT + 5 }, (_, n) => popupRow(n)),
@@ -569,17 +500,14 @@ describe("prunePopupDecisions", () => {
     expect(await db.undo.count()).toBe(1);
   });
 
-  it("is a no-op at or below the limit and writes nothing", async () => {
+  it("is a no-op at or below the limit and on an empty table", async () => {
+    expect(await prunePopupDecisions()).toBe(0);
+    expect(await db.decisions.count()).toBe(0);
     await db.decisions.bulkPut(
       Array.from({ length: POPUP_DECISION_LIMIT }, (_, n) => popupRow(n)),
     );
     expect(await prunePopupDecisions()).toBe(0);
     expect(await db.decisions.count()).toBe(POPUP_DECISION_LIMIT);
-  });
-
-  it("is a no-op on an empty decisions table", async () => {
-    expect(await prunePopupDecisions()).toBe(0);
-    expect(await db.decisions.count()).toBe(0);
   });
 
   it("orders equal-createdAt rows by decision id, not by Dexie key order", async () => {

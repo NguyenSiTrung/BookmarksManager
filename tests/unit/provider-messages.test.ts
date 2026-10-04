@@ -97,35 +97,22 @@ async function storedSettings(providerId: string) {
 }
 
 describe("sender validation", () => {
-  it("rejects a content-script sender and writes nothing", async () => {
-    const result = await handleProviderMessage(
-      enableMessage(),
-      contentScriptSender,
-    );
-    expect(result).toMatchObject({ ok: false, code: "untrusted_sender" });
-    expect(saveKey).not.toHaveBeenCalled();
-    expect(await db.metadata.count()).toBe(0);
-    expect(await db.consents.count()).toBe(0);
-  });
-
-  it("rejects another extension page of the same extension", async () => {
-    const result = await handleProviderMessage(enableMessage(), {
-      url: `chrome-extension://${EXTENSION_ID}/popup.html`,
-    });
-    expect(result).toMatchObject({ ok: false, code: "untrusted_sender" });
-    expect(saveKey).not.toHaveBeenCalled();
-  });
-
-  it("rejects another extension's options page", async () => {
-    const result = await handleProviderMessage(enableMessage(), {
-      url: "chrome-extension://some-other-id/options.html",
-    });
-    expect(result).toMatchObject({ ok: false, code: "untrusted_sender" });
-  });
-
-  it("rejects a sender with no url", async () => {
-    const result = await handleProviderMessage(enableMessage(), {});
-    expect(result).toMatchObject({ ok: false, code: "untrusted_sender" });
+  it("rejects untrusted senders — content scripts, other pages, other extensions, no url — and writes nothing", async () => {
+    for (const [label, sender] of [
+      ["content script", contentScriptSender],
+      ["same-extension popup", { url: `chrome-extension://${EXTENSION_ID}/popup.html` }],
+      ["other extension", { url: "chrome-extension://some-other-id/options.html" }],
+      ["no url", {}],
+    ] as const) {
+      const result = await handleProviderMessage(enableMessage(), sender);
+      expect(result, label).toMatchObject({
+        ok: false,
+        code: "untrusted_sender",
+      });
+      expect(saveKey, label).not.toHaveBeenCalled();
+      expect(await db.metadata.count(), label).toBe(0);
+      expect(await db.consents.count(), label).toBe(0);
+    }
   });
 
   it("accepts the Options page when its URL carries a panel hash", async () => {
@@ -140,24 +127,26 @@ describe("sender validation", () => {
 });
 
 describe("message validation", () => {
-  it.each([
-    ["a non-object", "ENABLE_PROVIDER"],
-    ["an empty object", {}],
-    ["an unknown type", { type: "WIPE_EVERYTHING" }],
-    ["missing key", { type: "ENABLE_PROVIDER", preset: "typesafe", model: "jev-latest" }],
-    ["an empty key", enableMessage({ key: "" })],
-    ["an unknown preset", enableMessage({ preset: "anthropic" })],
-    [
-      "a non-boolean deleteKey",
-      { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: "yes" },
-    ],
-    ["a missing preset", { type: "PROVIDER_STATUS" }],
-  ])("rejects %s as malformed", async (_label, message) => {
-    const result = await handleProviderMessage(message, optionsSender);
-    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
-    expect(saveKey).not.toHaveBeenCalled();
-    expect(await db.metadata.count()).toBe(0);
-    expect(await db.consents.count()).toBe(0);
+  it("rejects malformed messages", async () => {
+    for (const [label, message] of [
+      ["a non-object", "ENABLE_PROVIDER"],
+      ["an empty object", {}],
+      ["an unknown type", { type: "WIPE_EVERYTHING" }],
+      ["missing key", { type: "ENABLE_PROVIDER", preset: "typesafe", model: "jev-latest" }],
+      ["an empty key", enableMessage({ key: "" })],
+      ["an unknown preset", enableMessage({ preset: "anthropic" })],
+      [
+        "a non-boolean deleteKey",
+        { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: "yes" },
+      ],
+      ["a missing preset", { type: "PROVIDER_STATUS" }],
+    ] as const) {
+      const result = await handleProviderMessage(message, optionsSender);
+      expect(result, label).toMatchObject({ ok: false, code: "malformed_message" });
+      expect(saveKey, label).not.toHaveBeenCalled();
+      expect(await db.metadata.count(), label).toBe(0);
+      expect(await db.consents.count(), label).toBe(0);
+    }
   });
 });
 
@@ -196,20 +185,19 @@ describe("ENABLE_PROVIDER", () => {
     });
   });
 
-  it.each(["x9q", "zz42"])(
-    "never persists a short key as its own suffix — %s stores a masked placeholder",
-    async (shortKey) => {
+  it("masks key suffixes — a placeholder for short keys, the last four otherwise", async () => {
+    for (const shortKey of ["x9q", "zz42"]) {
       const result = await handleProviderMessage(
         enableMessage({ key: shortKey }),
         optionsSender,
       );
-      expect(result).toMatchObject({
+      expect(result, shortKey).toMatchObject({
         ok: true,
         status: { enabled: true, keySuffix: "****" },
       });
       // The raw key must not appear in the metadata row or any response.
       const settings = await storedSettings("typesafe");
-      expect(settings?.keySuffix).toBe("****");
+      expect(settings?.keySuffix, shortKey).toBe("****");
       expect(JSON.stringify(settings)).not.toContain(shortKey);
       const status = await handleProviderMessage(
         { type: "PROVIDER_STATUS", preset: "typesafe" },
@@ -217,10 +205,7 @@ describe("ENABLE_PROVIDER", () => {
       );
       expect(JSON.stringify(status)).not.toContain(shortKey);
       expect(JSON.stringify(result)).not.toContain(shortKey);
-    },
-  );
-
-  it("still stores the last four characters for a five-character key", async () => {
+    }
     const result = await handleProviderMessage(
       enableMessage({ key: "abcde" }),
       optionsSender,
@@ -234,35 +219,31 @@ describe("ENABLE_PROVIDER", () => {
     });
   });
 
-  it("fails without writes when the host permission was not granted", async () => {
+  it("fails closed without writes when the host permission is denied or the API throws", async () => {
     containsSpy.mockResolvedValue(false);
-    const result = await enableProvider();
-    expect(result).toMatchObject({ ok: false, code: "no_permission" });
+    const denied = await enableProvider();
+    expect(denied).toMatchObject({ ok: false, code: "no_permission" });
     expect(saveKey).not.toHaveBeenCalled();
     expect(await db.metadata.count()).toBe(0);
     expect(await hasTestConsent("typesafe")).toBe(false);
-  });
-
-  it("fails closed when the permissions API throws", async () => {
     containsSpy.mockRejectedValue(new Error("permissions API down"));
-    const result = await enableProvider();
-    expect(result).toMatchObject({ ok: false, code: "no_permission" });
+    const thrown = await enableProvider();
+    expect(thrown).toMatchObject({ ok: false, code: "no_permission" });
     expect(saveKey).not.toHaveBeenCalled();
   });
 
-  it.each(["gpt-4o", "typesafe/jev-1.13"])(
-    "rejects unlisted model %s without any writes",
-    async (model) => {
+  it("rejects unlisted models without any writes", async () => {
+    for (const model of ["gpt-4o", "typesafe/jev-1.13"]) {
       const result = await handleProviderMessage(
         enableMessage({ model }),
         optionsSender,
       );
-      expect(result).toMatchObject({ ok: false, code: "unlisted_model" });
-      expect(saveKey).not.toHaveBeenCalled();
-      expect(await db.metadata.count()).toBe(0);
-      expect(await db.consents.count()).toBe(0);
-    },
-  );
+      expect(result, model).toMatchObject({ ok: false, code: "unlisted_model" });
+      expect(saveKey, model).not.toHaveBeenCalled();
+      expect(await db.metadata.count(), model).toBe(0);
+      expect(await db.consents.count(), model).toBe(0);
+    }
+  });
 
   it("rolls back settings and key when the consent write fails", async () => {
     const putSpy = vi
@@ -332,7 +313,7 @@ describe("PROVIDER_STATUS", () => {
     expect(JSON.stringify(result)).not.toContain("sk-live-9abc");
   });
 
-  it("reports disabled when the permission was removed outside the app, consent still recorded", async () => {
+  it("reports disabled when the permission was removed, and keeps presets independent", async () => {
     await enableProvider();
     containsSpy.mockResolvedValue(false);
     const result = await handleProviderMessage(
@@ -343,15 +324,11 @@ describe("PROVIDER_STATUS", () => {
       ok: true,
       status: { enabled: false, consentGranted: true },
     });
-  });
-
-  it("keeps the two presets independent", async () => {
-    await enableProvider();
-    const result = await handleProviderMessage(
+    const other = await handleProviderMessage(
       { type: "PROVIDER_STATUS", preset: "openrouter" },
       optionsSender,
     );
-    expect(result).toMatchObject({
+    expect(other).toMatchObject({
       ok: true,
       status: { enabled: false, consentGranted: false },
     });
@@ -395,7 +372,7 @@ describe("REVOKE_PROVIDER", () => {
     expect(await db.consents.count()).toBe(0);
   });
 
-  it("keeps the encrypted key when deleteKey is false but removes consent and permission", async () => {
+  it("keeps the encrypted key when deleteKey is false, and no-ops on a never-enabled preset", async () => {
     await enableProvider();
     const result = await handleProviderMessage(
       { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: false },
@@ -408,14 +385,11 @@ describe("REVOKE_PROVIDER", () => {
     });
     expect(deleteKey).not.toHaveBeenCalled();
     expect(await storedSettings("typesafe")).toBeUndefined();
-  });
-
-  it("is a harmless no-op for a never-enabled preset", async () => {
-    const result = await handleProviderMessage(
+    const noop = await handleProviderMessage(
       { type: "REVOKE_PROVIDER", preset: "openrouter", deleteKey: true },
       optionsSender,
     );
-    expect(result).toMatchObject({
+    expect(noop).toMatchObject({
       ok: true,
       status: { enabled: false, consentGranted: false },
     });
@@ -424,34 +398,31 @@ describe("REVOKE_PROVIDER", () => {
     });
   });
 
-  it("stops when consent removal fails — permission and key untouched", async () => {
+  it("fails revoke when consent or permission removal fails, honoring the spec ordering", async () => {
     await enableProvider();
     const deleteSpy = vi
       .spyOn(db.consents, "delete")
       .mockRejectedValueOnce(new Error("indexeddb unavailable"));
-    const result = await handleProviderMessage(
+    const consentFail = await handleProviderMessage(
       { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: true },
       optionsSender,
     );
     deleteSpy.mockRestore();
-    expect(result).toMatchObject({ ok: false, code: "revoke_failed" });
+    expect(consentFail).toMatchObject({ ok: false, code: "revoke_failed" });
     // The spec ordering: nothing else runs when consent removal fails.
     expect(removeSpy).not.toHaveBeenCalled();
     expect(deleteKey).not.toHaveBeenCalled();
     expect(await storedSettings("typesafe")).toBeDefined();
-  });
-
-  it("still removes consent when permission removal fails, and reports the failure", async () => {
-    await enableProvider();
+    // A permission-removal failure still leaves consent revoked and the
+    // requested key deletion honored.
     removeSpy.mockRejectedValue(new Error("permissions API down"));
-    const result = await handleProviderMessage(
+    const permFail = await handleProviderMessage(
       { type: "REVOKE_PROVIDER", preset: "typesafe", deleteKey: true },
       optionsSender,
     );
-    expect(result).toMatchObject({ ok: false, code: "revoke_failed" });
+    expect(permFail).toMatchObject({ ok: false, code: "revoke_failed" });
     // Consent came off first, so the gate still blocks all traffic.
     expect(await hasTestConsent("typesafe")).toBe(false);
-    // The requested key deletion is still honored.
     expect(deleteKey).toHaveBeenCalledWith("typesafe");
   });
 
@@ -519,8 +490,8 @@ describe("custom provider", () => {
     expect(JSON.stringify(result)).not.toContain(RAW_KEY);
   });
 
-  it("requires a base URL — malformed without it", async () => {
-    const result = await handleProviderMessage(
+  it("requires a base URL and rejects non-loopback, non-canonical, credentialed, or malformed ones without writes", async () => {
+    const missing = await handleProviderMessage(
       {
         type: "ENABLE_PROVIDER",
         preset: "custom",
@@ -529,25 +500,24 @@ describe("custom provider", () => {
       },
       optionsSender,
     );
-    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
+    expect(missing).toMatchObject({ ok: false, code: "malformed_message" });
     expect(saveKey).not.toHaveBeenCalled();
     expect(await db.metadata.count()).toBe(0);
     expect(await db.consents.count()).toBe(0);
-  });
-
-  it.each([
-    "http://ai-gateway.example.com/api", // non-loopback http
-    "https://ai-gateway.example.com/api/", // non-canonical
-    "https://user:pw@ai-gateway.example.com/api",
-    "not a url",
-  ])("rejects base URL %s without writes", async (baseUrl) => {
-    const result = await handleProviderMessage(
-      customEnable({ baseUrl }),
-      optionsSender,
-    );
-    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
-    expect(saveKey).not.toHaveBeenCalled();
-    expect(await db.metadata.count()).toBe(0);
+    for (const baseUrl of [
+      "http://ai-gateway.example.com/api", // non-loopback http
+      "https://ai-gateway.example.com/api/", // non-canonical
+      "https://user:pw@ai-gateway.example.com/api",
+      "not a url",
+    ]) {
+      const result = await handleProviderMessage(
+        customEnable({ baseUrl }),
+        optionsSender,
+      );
+      expect(result, baseUrl).toMatchObject({ ok: false, code: "malformed_message" });
+      expect(saveKey, baseUrl).not.toHaveBeenCalled();
+      expect(await db.metadata.count(), baseUrl).toBe(0);
+    }
   });
 
   it("ignores a stray baseUrl sent for a preset", async () => {
@@ -574,7 +544,7 @@ describe("custom provider", () => {
     ).toBe(false);
   });
 
-  it("reports not-enabled status for an unconfigured custom provider", async () => {
+  it("reports not-enabled status and refuses TEST_PROVIDER for an unconfigured custom provider", async () => {
     const result = await handleProviderMessage(
       { type: "PROVIDER_STATUS", preset: "custom" },
       optionsSender,
@@ -588,6 +558,11 @@ describe("custom provider", () => {
     }).status;
     expect(status.baseUrl).toBeUndefined();
     expect(status.origin).toBeUndefined();
+    const test = await handleProviderMessage(
+      { type: "TEST_PROVIDER", preset: "custom" },
+      optionsSender,
+    );
+    expect(test).toMatchObject({ ok: false, code: "not_enabled" });
   });
 
   it("re-enabling at a new origin grants consent there — per-origin consent keeps the old grant too", async () => {
@@ -625,14 +600,6 @@ describe("custom provider", () => {
     expect(removeSpy).toHaveBeenCalledWith({
       origins: ["https://ai-gateway.example.com/*"],
     });
-  });
-
-  it("refuses TEST_PROVIDER for an unconfigured custom provider", async () => {
-    const result = await handleProviderMessage(
-      { type: "TEST_PROVIDER", preset: "custom" },
-      optionsSender,
-    );
-    expect(result).toMatchObject({ ok: false, code: "not_enabled" });
   });
 
   it("tests a configured custom provider through the gate to <baseUrl>/systemone", async () => {

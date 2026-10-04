@@ -120,9 +120,11 @@ afterAll(() => {
 });
 
 describe("createLlmClient", () => {
-  it.each(["429", "transport"] as const)(
-    "carries feature admission through an internal %s retry and accounts prior exposure",
-    async (failure) => {
+  it("carries feature admission through an internal retry and accounts prior exposure", async () => {
+    for (const failure of ["429", "transport"] as const) {
+      await db.llmReservations.clear();
+      await db.llmUsage.clear();
+      await db.metadata.delete("decisions:blocklist");
       const server = makeOpenAiServer({
         failures: [failure === "429" ? { status: 429 } : { throw: new TypeError("reset") }],
       });
@@ -147,8 +149,8 @@ describe("createLlmClient", () => {
         feature: "llm_test", inputTokens: 100, outputTokens: 50,
         estimatedCostUsd: expect.closeTo(0.000045, 10),
       }]);
-    },
-  );
+    }
+  });
 
   it("returns the parsed completion JSON and settles usage", async () => {
     const { fetch } = makeOpenAiServer({
@@ -210,27 +212,28 @@ describe("createLlmClient", () => {
     expect(error.message).not.toContain("bad key");
   });
 
-  it.each([
-    { error: "response_format unsupported" },
-    { error: { message: "response_format is not supported by this model", param: null, type: "invalid_request_error", code: null } },
-    { error: { message: "response_format json_schema not supported" } },
-    { error: { message: "response_format json_object unsupported" } },
-    { error: { message: "unsupported", param: "response_format" } },
-    { error: { message: "not supported", param: "json_schema" } },
-    { error: { message: "structured output unsupported" } },
-  ])("classifies a validated known capability envelope %# from its bounded stream", async (body) => {
-    const encoded = new TextEncoder().encode(JSON.stringify(body));
-    const wire = errorStream([encoded.slice(0, 8), encoded.slice(8)]);
-    const error = await client(async () => wire.response).send(REQUEST).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(LlmCapabilityError);
-    expect(wire.text).not.toHaveBeenCalled();
-    expect(wire.json).not.toHaveBeenCalled();
-    expect(wire.response.body?.locked).toBe(false);
+  it("classifies validated known capability envelopes from their bounded stream", async () => {
+    for (const body of [
+      { error: "response_format unsupported" },
+      { error: { message: "response_format is not supported by this model", param: null, type: "invalid_request_error", code: null } },
+      { error: { message: "response_format json_schema not supported" } },
+      { error: { message: "response_format json_object unsupported" } },
+      { error: { message: "unsupported", param: "response_format" } },
+      { error: { message: "not supported", param: "json_schema" } },
+      { error: { message: "structured output unsupported" } },
+    ]) {
+      const encoded = new TextEncoder().encode(JSON.stringify(body));
+      const wire = errorStream([encoded.slice(0, 8), encoded.slice(8)]);
+      const error = await client(async () => wire.response).send(REQUEST).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(LlmCapabilityError);
+      expect(wire.text).not.toHaveBeenCalled();
+      expect(wire.json).not.toHaveBeenCalled();
+      expect(wire.response.body?.locked).toBe(false);
+    }
   });
 
-  it.each(["max_tokens", "max_completion_tokens", "max_output_tokens", "max_new_tokens"])(
-    "vetoes capability fallback for token field %s in every recognized error field",
-    async (tokenField) => {
+  it("vetoes capability fallback for every token field in every recognized error field", async () => {
+    for (const tokenField of ["max_tokens", "max_completion_tokens", "max_output_tokens", "max_new_tokens"] as const) {
       const envelopes = [
         { error: { param: tokenField, message: "response_format json_schema unsupported" } },
         { error: { param: "response_format", message: `${tokenField} unsupported with json_schema` } },
@@ -247,28 +250,30 @@ describe("createLlmClient", () => {
         expect(server.requests).toHaveLength(1);
         expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
       }
-    },
-  );
+    }
+  });
 
-  it.each([
-    "response_format unsupported",
-    JSON.stringify({ message: "response_format unsupported" }),
-    JSON.stringify({ error: ["response_format unsupported"] }),
-    JSON.stringify({ error: { message: 5, param: "response_format" } }),
-    JSON.stringify({ error: { message: "response_format unsupported", param: 5 } }),
-    JSON.stringify({ error: { message: "response_format unsupported", code: {} } }),
-    JSON.stringify({ error: { message: "response_format is invalid" } }),
-    JSON.stringify({ error: { message: "response_format unsupported", param: "model" } }),
-    JSON.stringify({ error: { message: "bad key" }, metadata: "response_format unsupported" }),
-    JSON.stringify({ error: { message: "model unavailable" }, response_format: "unsupported" }),
-    '{"error":{"message":"response_format unsupported"',
-  ])("surfaces malformed or ambiguous envelope %# as status-only HTTP failure", async (body) => {
-    const wire = errorStream([new TextEncoder().encode(body)]);
-    const error = await client(async () => wire.response).send(REQUEST).catch((caught: unknown) => caught);
-    expect(error).toBeInstanceOf(LlmHttpError);
-    expect(error).toMatchObject({ status: 400 });
-    expectRedacted(error);
-    expect(wire.response.body?.locked).toBe(false);
+  it("surfaces malformed or ambiguous envelopes as status-only HTTP failure", async () => {
+    for (const body of [
+      "response_format unsupported",
+      JSON.stringify({ message: "response_format unsupported" }),
+      JSON.stringify({ error: ["response_format unsupported"] }),
+      JSON.stringify({ error: { message: 5, param: "response_format" } }),
+      JSON.stringify({ error: { message: "response_format unsupported", param: 5 } }),
+      JSON.stringify({ error: { message: "response_format unsupported", code: {} } }),
+      JSON.stringify({ error: { message: "response_format is invalid" } }),
+      JSON.stringify({ error: { message: "response_format unsupported", param: "model" } }),
+      JSON.stringify({ error: { message: "bad key" }, metadata: "response_format unsupported" }),
+      JSON.stringify({ error: { message: "model unavailable" }, response_format: "unsupported" }),
+      '{"error":{"message":"response_format unsupported"',
+    ]) {
+      const wire = errorStream([new TextEncoder().encode(body)]);
+      const error = await client(async () => wire.response).send(REQUEST).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(LlmHttpError);
+      expect(error).toMatchObject({ status: 400 });
+      expectRedacted(error);
+      expect(wire.response.body?.locked).toBe(false);
+    }
   });
 
   it("classifies a complete 4096-byte envelope without bulk body consumption", async () => {
@@ -280,9 +285,8 @@ describe("createLlmClient", () => {
     expect(wire.json).not.toHaveBeenCalled();
   });
 
-  it.each(["one large chunk", "multiple chunks", "multibyte bytes"])(
-    "cancels an oversized %s error without classifying a truncated capability prefix",
-    async (mode) => {
+  it("cancels an oversized error without classifying a truncated capability prefix", async () => {
+    for (const mode of ["one large chunk", "multiple chunks", "multibyte bytes"] as const) {
       const encoder = new TextEncoder();
       const validPrefix = JSON.stringify({ error: "response_format unsupported BODY_SECRET" }).padEnd(4096);
       const chunks = mode === "one large chunk"
@@ -300,8 +304,8 @@ describe("createLlmClient", () => {
       expect(wire.json).not.toHaveBeenCalled();
       expect(wire.response.body?.locked).toBe(false);
       expectRedacted(error);
-    },
-  );
+    }
+  });
 
   it("decodes valid UTF-8 across chunk boundaries and refuses invalid UTF-8", async () => {
     const bytes = new TextEncoder().encode(JSON.stringify({
@@ -317,9 +321,8 @@ describe("createLlmClient", () => {
     await expect(client(async () => invalid.response).send(REQUEST)).rejects.toBeInstanceOf(LlmHttpError);
   });
 
-  it.each(["locked", "consumed"] as const)(
-    "fails visibly without a native cause when the error body is already %s",
-    async (state) => {
+  it("fails visibly without a native cause when the error body is already locked or consumed", async () => {
+    for (const state of ["locked", "consumed"] as const) {
       const response = new Response(JSON.stringify({ error: "response_format unsupported BODY_SECRET" }), { status: 400 });
       const heldReader = state === "locked" ? response.body!.getReader() : undefined;
       if (state === "consumed") await response.text();
@@ -331,8 +334,8 @@ describe("createLlmClient", () => {
       } finally {
         heldReader?.releaseLock();
       }
-    },
-  );
+    }
+  });
 
   it("does not expose a native stream cancellation failure", async () => {
     const response = new Response(new ReadableStream<Uint8Array>({
@@ -349,9 +352,8 @@ describe("createLlmClient", () => {
     expect(response.body?.locked).toBe(false);
   });
 
-  it.each(["capability", "token", "parse", "stream"] as const)(
-    "does not leak %s bodies, prompts or native causes into errors, logs or persistence",
-    async (failure) => {
+  it("does not leak bodies, prompts or native causes into errors, logs or persistence", async () => {
+    for (const failure of ["capability", "token", "parse", "stream"] as const) {
       const logs = ["log", "info", "warn", "error", "debug"].map((method) =>
         vi.spyOn(console, method as "log").mockImplementation(() => {}),
       );
@@ -386,8 +388,8 @@ describe("createLlmClient", () => {
       } finally {
         for (const log of logs) log.mockRestore();
       }
-    },
-  );
+    }
+  });
 
   it("does not attach the native JSON parse cause to a malformed success response", async () => {
     const response = new Response("BODY_SECRET sk-test PROMPT_SECRET", { status: 200 });
@@ -431,22 +433,25 @@ describe("createLlmClient", () => {
   // substitution, ignoring error-envelope usage, or accepting negative costs
   // would reduce the observed spend below these hand-derived values.
   describe.each([200, 400])("usage settlement for HTTP %s", (status) => {
-    it.each([
-      { usage: undefined, input: 100, output: 50, cost: 0.000045 },
-      { usage: {}, input: 100, output: 50, cost: 0.000045 },
-      { usage: { total_tokens: 20 }, input: 100, output: 50, cost: 0.000045 },
-      { usage: { prompt_tokens: 10 }, input: 10, output: 50, cost: 0.0000315 },
-      { usage: { completion_tokens: 5 }, input: 100, output: 5, cost: 0.000018 },
-      { usage: { prompt_tokens: 0 }, input: 0, output: 50, cost: 0.00003 },
-      { usage: { completion_tokens: 0 }, input: 100, output: 0, cost: 0.000015 },
-      { usage: { prompt_tokens: 0, completion_tokens: 0 }, input: 0, output: 0, cost: 0 },
-      { usage: { prompt_tokens: 10, cost: null }, input: 10, output: 50, cost: 0.0000315 },
-      { usage: { prompt_tokens: 10, cost: -1 }, input: 10, output: 50, cost: 0.0000315 },
-      { usage: { prompt_tokens: null, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
-      { usage: { prompt_tokens: -1, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
-      { usage: { prompt_tokens: 10, cost: "unavailable" }, input: 10, output: 50, cost: 0.0000315 },
-      { usage: { prompt_tokens: 10, total_tokens: null }, input: 10, output: 50, cost: 0.0000315 },
-    ])("preserves missing versus explicit zero usage %#", async ({ usage, input, output, cost }) => {
+    it("preserves missing versus explicit zero usage across field variants", async () => {
+      for (const { usage, input, output, cost } of [
+        { usage: undefined, input: 100, output: 50, cost: 0.000045 },
+        { usage: {}, input: 100, output: 50, cost: 0.000045 },
+        { usage: { total_tokens: 20 }, input: 100, output: 50, cost: 0.000045 },
+        { usage: { prompt_tokens: 10 }, input: 10, output: 50, cost: 0.0000315 },
+        { usage: { completion_tokens: 5 }, input: 100, output: 5, cost: 0.000018 },
+        { usage: { prompt_tokens: 0 }, input: 0, output: 50, cost: 0.00003 },
+        { usage: { completion_tokens: 0 }, input: 100, output: 0, cost: 0.000015 },
+        { usage: { prompt_tokens: 0, completion_tokens: 0 }, input: 0, output: 0, cost: 0 },
+        { usage: { prompt_tokens: 10, cost: null }, input: 10, output: 50, cost: 0.0000315 },
+        { usage: { prompt_tokens: 10, cost: -1 }, input: 10, output: 50, cost: 0.0000315 },
+        { usage: { prompt_tokens: null, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
+        { usage: { prompt_tokens: -1, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
+        { usage: { prompt_tokens: 10, cost: "unavailable" }, input: 10, output: 50, cost: 0.0000315 },
+        { usage: { prompt_tokens: 10, total_tokens: null }, input: 10, output: 50, cost: 0.0000315 },
+      ] as const) {
+        await db.llmUsage.clear();
+        await db.llmReservations.clear();
       const body = status === 400
         ? { error: { message: "request refused" }, usage }
         : { model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }], usage };
@@ -465,9 +470,13 @@ describe("createLlmClient", () => {
       expect(rows[0]?.estimatedCostUsd).toBeCloseTo(cost, 12);
       expect(rows[0]?.costUsd).toBeUndefined();
       expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+      }
     });
 
-    it.each([0, 0.02])("retains reported cost %s over estimates without token counts", async (cost) => {
+    it("retains reported cost over estimates without token counts", async () => {
+      for (const cost of [0, 0.02]) {
+        await db.llmUsage.clear();
+        await db.llmReservations.clear();
       const body = status === 400
         ? { error: { message: "request refused" }, usage: { cost } }
         : { model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }], usage: { cost } };
@@ -479,9 +488,13 @@ describe("createLlmClient", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50, costUsd: cost });
       expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+      }
     });
 
-    it.each([0, 0.02])("retains reported cost %s when another usage field is invalid", async (cost) => {
+    it("retains reported cost when another usage field is invalid", async () => {
+      for (const cost of [0, 0.02]) {
+        await db.llmUsage.clear();
+        await db.llmReservations.clear();
       const response = new Response(JSON.stringify({
         error: { message: "request refused" },
         usage: { prompt_tokens: null, completion_tokens: 1000, cost },
@@ -493,9 +506,13 @@ describe("createLlmClient", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: cost });
       expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+      }
     });
 
-    it.each(["malformed JSON", "body read failure"])("charges missing usage after %s", async (failure) => {
+    it("charges missing usage after a malformed JSON or body read failure", async () => {
+      for (const failure of ["malformed JSON", "body read failure"] as const) {
+        await db.llmUsage.clear();
+        await db.llmReservations.clear();
       const response = failure === "malformed JSON"
         ? new Response("{", { status })
         : new Response(new ReadableStream<Uint8Array>({
@@ -508,6 +525,7 @@ describe("createLlmClient", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
       expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+      }
     });
   });
 
@@ -524,13 +542,16 @@ describe("createLlmClient", () => {
 
   // Losing an earlier attempt or applying the final reported zero to the whole
   // send would understate committed spend and admit the third provider send.
-  it.each([
-    { prior: undefined, final: undefined, estimated: 0.00009, reported: 0 },
-    { prior: { prompt_tokens: 10 }, final: { completion_tokens: 5 }, estimated: 0.0000495, reported: 0 },
-    { prior: undefined, final: { cost: 0 }, estimated: 0.000045, reported: 0 },
-    { prior: { completion_tokens: 1000 }, final: { cost: 0 }, estimated: 0.000615, reported: 0 },
-    { prior: { prompt_tokens: 10, completion_tokens: 1000, cost: 0.02 }, final: { cost: 0 }, estimated: 0, reported: 0.02 },
-  ])("settles retry-to-success attempts separately and blocks subsequent admission %#", async ({ prior, final, estimated, reported }) => {
+  it("settles retry-to-success attempts separately and blocks subsequent admission", async () => {
+    for (const { prior, final, estimated, reported } of [
+      { prior: undefined, final: undefined, estimated: 0.00009, reported: 0 },
+      { prior: { prompt_tokens: 10 }, final: { completion_tokens: 5 }, estimated: 0.0000495, reported: 0 },
+      { prior: undefined, final: { cost: 0 }, estimated: 0.000045, reported: 0 },
+      { prior: { completion_tokens: 1000 }, final: { cost: 0 }, estimated: 0.000615, reported: 0 },
+      { prior: { prompt_tokens: 10, completion_tokens: 1000, cost: 0.02 }, final: { cost: 0 }, estimated: 0, reported: 0.02 },
+    ] as const) {
+      await db.llmUsage.clear();
+      await db.llmReservations.clear();
     const cap = estimated + reported + 0.00001;
     await saveLlmProvider({ ...record, monthlyBudgetUsd: cap + 0.00009 });
     const server = makeOpenAiServer({
@@ -563,6 +584,7 @@ describe("createLlmClient", () => {
     await saveLlmProvider({ ...record, monthlyBudgetUsd: cap });
     await expect(llm.send(REQUEST)).rejects.toMatchObject({ code: "budget_exceeded" });
     expect(server.requests).toHaveLength(2);
+    }
   });
 
   it("keeps confirmed unpriced retry exposure unknown beside a final reported zero", async () => {

@@ -558,18 +558,20 @@ describe("applyRestructurePlan", () => {
     expect(await listSnapshots()).toHaveLength(1);
   });
 
-  it.each([
-    ["1", "stale"],
-    ["41", "mutation_failed"],
-  ])("never moves a fixed root or managed bookmark (%s)", async (id, code) => {
-    const job = await completedJob(
-      [id!],
-      [{ bookmarkId: id!, proposedPath: "dev/tools", confidence: 0.9 }],
-    );
-    const before = (await api.getChildren("1")).map((node) => node.id);
-    await expect(applyRestructurePlan(job.id)).rejects.toMatchObject({ code });
-    expect((await api.getChildren("1")).map((node) => node.id)).toEqual(before);
-    expect((await api.get("41"))[0]?.parentId).toBe("40");
+  it("never moves a fixed root or managed bookmark", async () => {
+    for (const [id, code] of [
+      ["1", "stale"],
+      ["41", "mutation_failed"],
+    ] as const) {
+      const job = await completedJob(
+        [id],
+        [{ bookmarkId: id, proposedPath: "dev/tools", confidence: 0.9 }],
+      );
+      const before = (await api.getChildren("1")).map((node) => node.id);
+      await expect(applyRestructurePlan(job.id), `${id} → ${code}`).rejects.toMatchObject({ code });
+      expect((await api.getChildren("1")).map((node) => node.id), id).toEqual(before);
+      expect((await api.get("41"))[0]?.parentId, id).toBe("40");
+    }
   });
 });
 

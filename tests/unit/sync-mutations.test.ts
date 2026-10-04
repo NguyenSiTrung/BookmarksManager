@@ -120,9 +120,10 @@ afterAll(() => {
 async function expectMutationError(
   promise: Promise<unknown>,
   code: MutationErrorCode,
+  label?: string,
 ): Promise<void> {
-  await expect(promise).rejects.toBeInstanceOf(MutationError);
-  await expect(promise).rejects.toMatchObject({
+  await expect(promise, label).rejects.toBeInstanceOf(MutationError);
+  await expect(promise, label).rejects.toMatchObject({
     name: "MutationError",
     code,
   });
@@ -151,16 +152,14 @@ describe("createBookmark", () => {
     expect(created.url).toBe("https://new.example/");
     expect(created.index).toBe(1);
     expect(await childIds("folder-a")).toEqual(["bm-a1", created.id, "sub-a"]);
-  });
-
-  it("appends when index is omitted", async () => {
-    const created = await createBookmark({
+    // An omitted index appends to the tail.
+    const tail = await createBookmark({
       parentId: BOOKMARKS_BAR_ID,
       title: "Tail",
       url: "https://tail.example/",
     });
-    expect(created.index).toBe(2);
-    expect((await childIds(BOOKMARKS_BAR_ID)).at(-1)).toBe(created.id);
+    expect(tail.index).toBe(2);
+    expect((await childIds(BOOKMARKS_BAR_ID)).at(-1)).toBe(tail.id);
   });
 
   it("creates under the fixed root folders 1/2/3 but not under root 0", async () => {
@@ -215,7 +214,8 @@ describe("createBookmark", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("rejects a managed parent anywhere in its subtree", async () => {
+  it("rejects invalid parents: managed subtrees, leaves, and managed leaves", async () => {
+    const spy = vi.spyOn(fake, "create");
     await expectMutationError(
       createBookmark({
         parentId: "managed-sub",
@@ -223,10 +223,8 @@ describe("createBookmark", () => {
         url: "https://x.example/",
       }),
       "managed",
+      "managed subtree",
     );
-  });
-
-  it("rejects a leaf bookmark as parent", async () => {
     await expectMutationError(
       createBookmark({
         parentId: "bm-b",
@@ -234,13 +232,10 @@ describe("createBookmark", () => {
         url: "https://x.example/",
       }),
       "invalid",
+      "leaf as parent",
     );
-  });
-
-  it("reports managed (not invalid) for a managed leaf used as parent", async () => {
     // Chrome/the fake check managed before leaf-ness: a managed bookmark
     // as parent is a `managed` violation, not a leaf-as-parent one.
-    const spy = vi.spyOn(fake, "create");
     await expectMutationError(
       createBookmark({
         parentId: "managed-child",
@@ -248,11 +243,12 @@ describe("createBookmark", () => {
         url: "https://x.example/",
       }),
       "managed",
+      "managed leaf as parent",
     );
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("maps a non-not-found get rejection to api, not not_found", async () => {
+  it("maps lookup failures to api and validates the index before the write", async () => {
     // A transient API failure is not "the node is gone" — it must surface
     // as `api` so callers don't mislabel it. The mocked rejection hits the
     // requireNode(parent) lookup inside createBookmark.
@@ -267,9 +263,6 @@ describe("createBookmark", () => {
       }),
       "api",
     );
-  });
-
-  it("rejects an out-of-range or fractional index before the write", async () => {
     const spy = vi.spyOn(fake, "create");
     for (const index of [-1, 3, 1.5]) {
       await expectMutationError(
@@ -280,6 +273,7 @@ describe("createBookmark", () => {
           index,
         }),
         "invalid",
+        `index ${index}`,
       );
     }
     expect(spy).not.toHaveBeenCalled();
@@ -331,12 +325,9 @@ describe("updateBookmark", () => {
     expect(stored.url).toBe("https://renamed.example/");
   });
 
-  it("updates a folder's title when no url is passed", async () => {
+  it("updates a folder's title but rejects urls on folders", async () => {
     const updated = await updateBookmark("folder-a", { title: "F" });
     expect(updated.title).toBe("F");
-  });
-
-  it("rejects setting a url on a folder", async () => {
     await expectMutationError(
       updateBookmark("folder-a", { url: "https://x.example/" }),
       "invalid",
@@ -344,28 +335,19 @@ describe("updateBookmark", () => {
     expect((await node("folder-a")).url).toBeUndefined();
   });
 
-  it.each(FIXED_ROOT_IDS)("rejects root %s before the API call", async (id) => {
-    const spy = vi.spyOn(fake, "update");
-    await expectMutationError(updateBookmark(id, { title: "x" }), "root");
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("rejects managed nodes and descendants of managed nodes", async () => {
-    await expectMutationError(
-      updateBookmark("managed", { title: "x" }),
-      "managed",
-    );
-    await expectMutationError(
-      updateBookmark("managed-child", { title: "x" }),
-      "managed",
-    );
-    await expectMutationError(
-      updateBookmark("managed-leaf", { title: "x" }),
-      "managed",
-    );
-  });
-
-  it("rejects a missing node", async () => {
+  it("rejects root, managed, and missing nodes before the API call", async () => {
+    for (const id of FIXED_ROOT_IDS) {
+      const spy = vi.spyOn(fake, "update");
+      await expectMutationError(updateBookmark(id, { title: "x" }), "root", id);
+      expect(spy, id).not.toHaveBeenCalled();
+    }
+    for (const id of ["managed", "managed-child", "managed-leaf"]) {
+      await expectMutationError(
+        updateBookmark(id, { title: "x" }),
+        "managed",
+        id,
+      );
+    }
     await expectMutationError(
       updateBookmark("missing", { title: "x" }),
       "not_found",
@@ -380,22 +362,20 @@ describe("renameFolder", () => {
     expect((await node("sub-a")).title).toBe("Sub renamed");
   });
 
-  it("rejects a leaf bookmark", async () => {
-    await expectMutationError(renameFolder("bm-b", "x"), "invalid");
-  });
-
-  it.each(FIXED_ROOT_IDS)("rejects root %s", async (id) => {
-    const spy = vi.spyOn(fake, "update");
-    await expectMutationError(renameFolder(id, "x"), "root");
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("rejects managed folders and their descendants", async () => {
-    await expectMutationError(renameFolder("managed", "x"), "managed");
-    await expectMutationError(renameFolder("managed-sub", "x"), "managed");
-  });
-
-  it("rejects a missing folder", async () => {
+  it("rejects leaf, root, managed, and missing targets", async () => {
+    await expectMutationError(
+      renameFolder("bm-b", "x"),
+      "invalid",
+      "leaf",
+    );
+    for (const id of FIXED_ROOT_IDS) {
+      const spy = vi.spyOn(fake, "update");
+      await expectMutationError(renameFolder(id, "x"), "root", id);
+      expect(spy, id).not.toHaveBeenCalled();
+    }
+    for (const id of ["managed", "managed-sub"]) {
+      await expectMutationError(renameFolder(id, "x"), "managed", id);
+    }
     await expectMutationError(renameFolder("missing", "x"), "not_found");
   });
 });
@@ -415,56 +395,43 @@ describe("moveNode", () => {
     expect(await childIds("folder-a")).toEqual(["bm-a1", "sub-a", "bm-b"]);
   });
 
-  it("moves to an explicit index in another parent", async () => {
+  it("moves to an explicit index in another parent, or into a fixed root", async () => {
     await moveNode("bm-b", { parentId: "folder-a", index: 0 });
     expect(await childIds("folder-a")).toEqual(["bm-b", "bm-a1", "sub-a"]);
-  });
-
-  it("moves into a fixed root folder (1/2/3 are writable parents)", async () => {
+    // Fixed root folders 1/2/3 are writable parents.
     const moved = await moveNode("bm-b", { parentId: OTHER_BOOKMARKS_ID });
     expect(moved.parentId).toBe(OTHER_BOOKMARKS_ID);
     expect(await childIds(OTHER_BOOKMARKS_ID)).toContain("bm-b");
   });
 
-  it("rejects an empty destination", async () => {
+  it("rejects an empty destination and moving root ids", async () => {
     const spy = vi.spyOn(fake, "move");
     await expectMutationError(moveNode("bm-b", {}), "invalid");
+    for (const id of FIXED_ROOT_IDS) {
+      await expectMutationError(moveNode(id, { index: 0 }), "root", id);
+    }
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it.each(FIXED_ROOT_IDS)("rejects moving root %s", async (id) => {
+  it("rejects managed nodes as move subjects and as destinations", async () => {
+    for (const id of ["managed", "managed-child", "managed-leaf"]) {
+      await expectMutationError(
+        moveNode(id, { parentId: BOOKMARKS_BAR_ID }),
+        "managed",
+        id,
+      );
+    }
+    for (const parentId of ["managed", "managed-sub"]) {
+      await expectMutationError(
+        moveNode("bm-b", { parentId }),
+        "managed",
+        parentId,
+      );
+    }
+  });
+
+  it("rejects bad destinations: synthetic root, leaf, missing, self, and own descendant", async () => {
     const spy = vi.spyOn(fake, "move");
-    await expectMutationError(moveNode(id, { index: 0 }), "root");
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("rejects moving managed nodes or their descendants", async () => {
-    await expectMutationError(
-      moveNode("managed", { parentId: BOOKMARKS_BAR_ID }),
-      "managed",
-    );
-    await expectMutationError(
-      moveNode("managed-child", { parentId: BOOKMARKS_BAR_ID }),
-      "managed",
-    );
-    await expectMutationError(
-      moveNode("managed-leaf", { parentId: BOOKMARKS_BAR_ID }),
-      "managed",
-    );
-  });
-
-  it("rejects moving INTO managed nodes or their descendants", async () => {
-    await expectMutationError(
-      moveNode("bm-b", { parentId: "managed" }),
-      "managed",
-    );
-    await expectMutationError(
-      moveNode("bm-b", { parentId: "managed-sub" }),
-      "managed",
-    );
-  });
-
-  it("rejects moving into the synthetic root, a leaf, or a missing parent", async () => {
     await expectMutationError(
       moveNode("bm-b", { parentId: ROOT_NODE_ID }),
       "root",
@@ -481,17 +448,15 @@ describe("moveNode", () => {
       moveNode("missing", { parentId: BOOKMARKS_BAR_ID }),
       "not_found",
     );
-  });
-
-  it("rejects moving a folder into itself or a descendant", async () => {
-    const spy = vi.spyOn(fake, "move");
     await expectMutationError(
       moveNode("folder-a", { parentId: "folder-a" }),
       "invalid",
+      "self",
     );
     await expectMutationError(
       moveNode("folder-a", { parentId: "sub-a" }),
       "invalid",
+      "descendant",
     );
     expect(spy).not.toHaveBeenCalled();
     // The tree is untouched.
@@ -534,36 +499,29 @@ describe("removeNode / removeTree", () => {
     expect((await node("folder-a")).title).toBe("Folder A");
   });
 
-  it("removeTree deletes a folder with its whole subtree", async () => {
+  it("removeTree deletes a folder with its whole subtree, or a leaf", async () => {
     await removeTree("folder-a");
     for (const id of ["folder-a", "bm-a1", "sub-a", "bm-a2"]) {
       await expect(fake.get(id)).rejects.toThrow(/Can't find bookmark/);
     }
     expect(await childIds(BOOKMARKS_BAR_ID)).toEqual(["bm-b"]);
-  });
-
-  it("removeTree also deletes a leaf bookmark", async () => {
     await removeTree("bm-b");
     await expect(fake.get("bm-b")).rejects.toThrow(/Can't find bookmark/);
   });
 
-  it.each(FIXED_ROOT_IDS)("rejects removing root %s", async (id) => {
-    const removeSpy = vi.spyOn(fake, "remove");
-    const removeTreeSpy = vi.spyOn(fake, "removeTree");
-    await expectMutationError(removeNode(id), "root");
-    await expectMutationError(removeTree(id), "root");
-    expect(removeSpy).not.toHaveBeenCalled();
-    expect(removeTreeSpy).not.toHaveBeenCalled();
-  });
-
-  it("rejects managed nodes and descendants of managed nodes", async () => {
+  it("rejects removing root ids, managed nodes, and missing nodes", async () => {
+    for (const id of FIXED_ROOT_IDS) {
+      const removeSpy = vi.spyOn(fake, "remove");
+      const removeTreeSpy = vi.spyOn(fake, "removeTree");
+      await expectMutationError(removeNode(id), "root", id);
+      await expectMutationError(removeTree(id), "root", id);
+      expect(removeSpy, id).not.toHaveBeenCalled();
+      expect(removeTreeSpy, id).not.toHaveBeenCalled();
+    }
     await expectMutationError(removeNode("managed"), "managed");
     await expectMutationError(removeTree("managed"), "managed");
     await expectMutationError(removeNode("managed-child"), "managed");
     await expectMutationError(removeTree("managed-leaf"), "managed");
-  });
-
-  it("rejects a missing node", async () => {
     await expectMutationError(removeNode("missing"), "not_found");
     await expectMutationError(removeTree("missing"), "not_found");
   });
@@ -586,25 +544,22 @@ describe("metadata sidecar", () => {
     });
   });
 
-  it("writes meta for createFolder", async () => {
-    const created = await createFolder({
+  it("writes meta for createFolder and none when meta is not given", async () => {
+    const folder = await createFolder({
       parentId: BOOKMARKS_BAR_ID,
       title: "Folder meta",
       meta: { tags: ["x"] },
     });
-    expect((await getMeta(created.id))?.tags).toEqual(["x"]);
-  });
-
-  it("leaves no meta row when meta is not given", async () => {
-    const created = await createBookmark({
+    expect((await getMeta(folder.id))?.tags).toEqual(["x"]);
+    const bare = await createBookmark({
       parentId: BOOKMARKS_BAR_ID,
       title: "Bare",
       url: "https://bare.example/",
     });
-    expect(await getMeta(created.id)).toBeUndefined();
+    expect(await getMeta(bare.id)).toBeUndefined();
   });
 
-  it("merges meta on updateBookmark (patch semantics)", async () => {
+  it("merges meta on updateBookmark and renameFolder (patch semantics)", async () => {
     await putMeta("bm-a1", { tags: ["keep"], notes: "stay" });
     await updateBookmark("bm-a1", { title: "t" }, { category: "docs" });
     expect(await getMeta("bm-a1")).toMatchObject({
@@ -613,9 +568,6 @@ describe("metadata sidecar", () => {
       notes: "stay",
       category: "docs",
     });
-  });
-
-  it("merges meta on renameFolder", async () => {
     await renameFolder("folder-a", "F", { notes: "folder note" });
     expect((await getMeta("folder-a"))?.notes).toBe("folder note");
   });

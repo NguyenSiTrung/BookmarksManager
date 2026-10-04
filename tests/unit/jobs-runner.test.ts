@@ -92,24 +92,26 @@ async function runningJob(ids: readonly string[], batchSize = 2) {
 }
 
 describe("JobRunner.run", () => {
-  it.each(["resolve", "reject"] as const)("stops a superseded owner after a held analysis %s", async (settlement) => {
-    const job = await runningJob(["bm-0", "bm-1"], 1);
-    let release!: () => void;
-    let entered!: () => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    const analyzer = makeAnalyzer({ onCall: async () => {
-      entered();
-      await held;
-      if (settlement === "reject") throw new Error("stale failure");
-    } });
-    const running = new JobRunner({ analyze: analyzer.analyze, now }).run(job.id, { bookmarks: bookmarks(2) });
-    await started;
-    const replacement = await claimJobOwner(job.id, now);
-    release();
-    await running;
-    expect(analyzer.calls).toEqual(["bm-0"]);
-    expect(await db.jobs.get(job.id)).toEqual(replacement);
+  it("stops a superseded owner after a held analysis resolves or rejects", async () => {
+    for (const settlement of ["resolve", "reject"] as const) {
+      const job = await runningJob(["bm-0", "bm-1"], 1);
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const analyzer = makeAnalyzer({ onCall: async () => {
+        entered();
+        await held;
+        if (settlement === "reject") throw new Error("stale failure");
+      } });
+      const running = new JobRunner({ analyze: analyzer.analyze, now }).run(job.id, { bookmarks: bookmarks(2) });
+      await started;
+      const replacement = await claimJobOwner(job.id, now);
+      release();
+      await running;
+      expect(analyzer.calls, settlement).toEqual(["bm-0"]);
+      expect(await db.jobs.get(job.id), settlement).toEqual(replacement);
+    }
   });
 
   it("does not restart a paused row merely because a runner was scheduled before the pause", async () => {

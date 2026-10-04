@@ -286,17 +286,17 @@ describe("Test connection results", () => {
     ],
     ["not_enabled", 'Provider "typesafe" is not fully enabled.'],
   ];
-  it.each(failureCases)(
-    "renders the worker's redacted %s failure verbatim",
-    async (code, message) => {
+  it("renders each worker redacted failure verbatim", async () => {
+    for (const [code, message] of failureCases) {
+      cleanup();
       testReply = () => Promise.resolve({ ok: false, code, message });
       const button = await renderEnabled();
       fireEvent.click(button);
       const alert = await screen.findByRole("alert");
-      expect(alert.textContent).toContain(code);
-      expect(alert.textContent).toContain(message);
-    },
-  );
+      expect(alert.textContent, code).toContain(code);
+      expect(alert.textContent, code).toContain(message);
+    }
+  });
 
   it("shows a generic error when the worker reply fails schema validation", async () => {
     testReply = () =>

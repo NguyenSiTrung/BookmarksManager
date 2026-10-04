@@ -486,7 +486,7 @@ describe("blocklist editor", () => {
     expect(screen.getByText("example.net")).toBeTruthy();
   });
 
-  it("does not send for a duplicate entry", async () => {
+  it("does not send for duplicates or inputs that cannot name a host", async () => {
     workerBlocklist = ["example.org"];
     render(<DecisionSettings />);
     await screen.findByText("example.org");
@@ -495,12 +495,6 @@ describe("blocklist editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
     await screen.findByText(/already/i);
-    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
-  });
-
-  it("does not send for input that cannot name a host", async () => {
-    render(<DecisionSettings />);
-    await screen.findByLabelText(/block a host/i);
     fireEvent.change(screen.getByLabelText(/block a host/i), {
       target: { value: "not a host" },
     });
@@ -539,9 +533,14 @@ describe("data sent log", () => {
     });
   }
 
-  it("lists only metadata — time, destination, feature, field names", async () => {
-    await seedLog();
+  it("lists only metadata, shows the empty state, and clears", async () => {
     render(<SentLog />);
+    await screen.findByText(/nothing has been sent/i);
+    // A Dexie write re-fires the live query — wrap it so the state update
+    // lands inside act.
+    await act(async () => {
+      await seedLog();
+    });
     await screen.findByText("https://api.typesafe.ai");
     expect(screen.getByText("https://openrouter.ai")).toBeTruthy();
     expect(screen.getByText(/jev_decisions/)).toBeTruthy();
@@ -551,22 +550,6 @@ describe("data sent log", () => {
     expect(
       screen.getByText(new RegExp(`${SENT_LOG_RETENTION_CAP}`)),
     ).toBeTruthy();
-  });
-
-  it("shows the empty state and clears the log", async () => {
-    render(<SentLog />);
-    await screen.findByText(/nothing has been sent/i);
-    // A Dexie write re-fires the live query — wrap it so the state update
-    // lands inside act.
-    await act(async () => {
-      await db.sentLog.add({
-        sentAt: "2026-09-25T10:05:00.000Z",
-        destination: "https://api.typesafe.ai",
-        feature: "jev_decisions",
-        fieldNames: ["title"],
-      });
-    });
-    await screen.findByText("https://api.typesafe.ai");
     fireEvent.click(screen.getByRole("button", { name: /clear/i }));
     await waitFor(async () =>
       expect(await db.sentLog.count()).toBe(0),
@@ -644,14 +627,12 @@ describe("protocol discipline", () => {
     }
   });
 
-  it("renders a generic error when the worker returns a non-protocol reply", async () => {
+  it("renders worker failure replies — generic for non-protocol, verbatim for {ok:false}", async () => {
     sendMessageSpy.mockResolvedValue({ nonsense: true });
     render(<DecisionSettings />);
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/unexpected/i);
-  });
-
-  it("renders the worker's {ok:false} code and message verbatim", async () => {
+    const generic = await screen.findByRole("alert");
+    expect(generic.textContent).toMatch(/unexpected/i);
+    cleanup();
     sendMessageSpy.mockResolvedValue({
       ok: false,
       code: "internal_error",
@@ -667,7 +648,7 @@ describe("protocol discipline", () => {
 });
 
 describe("settings load failure", () => {
-  it("shows a retryable failure — not perpetual loading — and retry re-calls GET_SETTINGS", async () => {
+  it("shows a retryable failure, recovers on retry, and stays retryable on repeat failure", async () => {
     sendMessageSpy.mockRejectedValueOnce(new Error("worker gone"));
     render(<DecisionSettings />);
     const alert = await screen.findByRole("alert");
@@ -687,14 +668,13 @@ describe("settings load failure", () => {
     expect(
       screen.queryByRole("button", { name: /^retry$/i }),
     ).toBeNull();
-  });
-
-  it("keeps the retry state when the retried load fails again", async () => {
+    cleanup();
+    sendMessageSpy.mockReset();
     sendMessageSpy.mockRejectedValue(new Error("worker gone"));
     render(<DecisionSettings />);
     await screen.findByRole("alert");
-    const retries = screen.getAllByRole("button", { name: /^retry$/i });
-    fireEvent.click(retries[0]!);
+    const second = screen.getAllByRole("button", { name: /^retry$/i });
+    fireEvent.click(second[0]!);
     // A second GET_SETTINGS goes out, fails, and the retryable failure
     // returns rather than dead-ending on "Loading…".
     await waitFor(() =>
@@ -726,7 +706,7 @@ describe("disclosure read gate", () => {
     await waitFor(() => expect(agreeBox().checked).toBe(true));
   });
 
-  it("re-arms the gate when the provider preset changes", async () => {
+  it("re-arms the gate on preset changes and after consent is revoked", async () => {
     render(<DecisionSettings />);
     await screen.findByRole("checkbox", { name: /agree/i });
     openDisclosure();
@@ -738,9 +718,7 @@ describe("disclosure read gate", () => {
       expect(agreeBox().getAttribute("aria-disabled")).toBe("true"),
     );
     expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-  });
-
-  it("re-arms the gate after consent is revoked", async () => {
+    cleanup();
     render(<DecisionSettings />);
     await screen.findByRole("checkbox", { name: /agree/i });
     await grantDecisionsConsent();

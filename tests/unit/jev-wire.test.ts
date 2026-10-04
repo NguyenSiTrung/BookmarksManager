@@ -81,14 +81,17 @@ describe("ChoiceQuestion", () => {
     ).toBe(true);
   });
 
-  it.each([1, 256])("rejects %i options (bounds are 2–255)", (n) => {
-    expect(
-      ChoiceQuestion.safeParse({
-        type: "choice",
-        instructions: "Which?",
-        criteria: criteriaOf(n),
-      }).success,
-    ).toBe(false);
+  it("rejects option counts outside the 2–255 bounds", () => {
+    for (const n of [1, 256]) {
+      expect(
+        ChoiceQuestion.safeParse({
+          type: "choice",
+          instructions: "Which?",
+          criteria: criteriaOf(n),
+        }).success,
+        `criteriaOf(${n})`,
+      ).toBe(false);
+    }
   });
 
   it("rejects a missing criteria map", () => {
@@ -120,14 +123,17 @@ describe("ScoreQuestion", () => {
     ).toBe(true);
   });
 
-  it.each([1, 11])("rejects %i levels (bounds are 2–10)", (n) => {
-    expect(
-      ScoreQuestion.safeParse({
-        type: "score",
-        instructions: "Rate it.",
-        criteria: Array.from({ length: n }, (_, i) => `level ${i}`),
-      }).success,
-    ).toBe(false);
+  it("rejects level counts outside the 2–10 bounds", () => {
+    for (const n of [1, 11]) {
+      expect(
+        ScoreQuestion.safeParse({
+          type: "score",
+          instructions: "Rate it.",
+          criteria: Array.from({ length: n }, (_, i) => `level ${i}`),
+        }).success,
+        `${n} levels`,
+      ).toBe(false);
+    }
   });
 });
 
@@ -184,23 +190,26 @@ describe("SystemOneRequest", () => {
     ).toBe(true);
   });
 
-  it.each(["model", "state", "questions"])("rejects a missing %s", (key) => {
-    const request = { ...makeSyntheticRequest("m") } as Record<
-      string,
-      unknown
-    >;
-    delete request[key];
-    expect(SystemOneRequest.safeParse(request).success).toBe(false);
+  it("rejects a request missing model, state, or questions", () => {
+    for (const key of ["model", "state", "questions"]) {
+      const request = { ...makeSyntheticRequest("m") } as Record<
+        string,
+        unknown
+      >;
+      delete request[key];
+      expect(SystemOneRequest.safeParse(request).success, `missing ${key}`).toBe(false);
+    }
   });
 });
 
 describe("Answer discriminated union", () => {
-  it.each([0, 0.5, 1])("accepts noul=%f within [0, 1]", (noul) => {
-    expect(Answer.safeParse({ type: "noul", noul }).success).toBe(true);
-  });
-
-  it.each([-0.1, 1.4])("rejects noul=%f outside [0, 1]", (noul) => {
-    expect(Answer.safeParse({ type: "noul", noul }).success).toBe(false);
+  it("accepts noul within [0, 1] and rejects it outside", () => {
+    for (const noul of [0, 0.5, 1]) {
+      expect(Answer.safeParse({ type: "noul", noul }).success, `noul=${noul}`).toBe(true);
+    }
+    for (const noul of [-0.1, 1.4]) {
+      expect(Answer.safeParse({ type: "noul", noul }).success, `noul=${noul}`).toBe(false);
+    }
   });
 
   it("accepts a choice answer with probabilities and confidence", () => {
@@ -264,12 +273,14 @@ describe("SystemOneResponse", () => {
     ).toBe(true);
   });
 
-  it.each([
-    ["missing usage", responseMissingUsage],
-    ["noul out of range", responseNoulOutOfRange],
-    ["fractional tokens", responseFractionalTokens],
-  ])("rejects a response with %s", (_label, body) => {
-    expect(SystemOneResponse.safeParse(body).success).toBe(false);
+  it("rejects responses with missing usage, out-of-range noul, or fractional tokens", () => {
+    for (const [label, body] of [
+      ["missing usage", responseMissingUsage],
+      ["noul out of range", responseNoulOutOfRange],
+      ["fractional tokens", responseFractionalTokens],
+    ] as const) {
+      expect(SystemOneResponse.safeParse(body).success, label).toBe(false);
+    }
   });
 });
 

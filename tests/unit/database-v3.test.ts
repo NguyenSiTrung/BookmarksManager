@@ -194,57 +194,42 @@ describe("Phase 4 schemas", () => {
     expect(Job.safeParse(failedJob).success).toBe(true);
   });
 
-  it.each(Object.entries(invalidJobs))(
-    "rejects invalid job fixture %s",
-    (_label, fixture) => {
-      expect(Job.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedJobs))(
-    "rejects malformed job fixture %s",
-    (_label, fixture) => {
-      expect(Job.safeParse(fixture).success).toBe(false);
-    },
-  );
+  it("rejects invalid and malformed job fixtures", () => {
+    for (const [label, fixture] of [
+      ...Object.entries(invalidJobs),
+      ...Object.entries(malformedJobs),
+    ]) {
+      expect(Job.safeParse(fixture).success, label).toBe(false);
+    }
+  });
 
   it("accepts user- and policy-actor audit events", () => {
     expect(AuditEvent.safeParse(validAuditEvent).success).toBe(true);
     expect(AuditEvent.safeParse(policyAuditEvent).success).toBe(true);
   });
 
-  it.each(Object.entries(invalidAuditEvents))(
-    "rejects invalid audit fixture %s",
-    (_label, fixture) => {
-      expect(AuditEvent.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedAuditEvents))(
-    "rejects malformed audit fixture %s",
-    (_label, fixture) => {
-      expect(AuditEvent.safeParse(fixture).success).toBe(false);
-    },
-  );
+  it("rejects invalid and malformed audit fixtures", () => {
+    for (const [label, fixture] of [
+      ...Object.entries(invalidAuditEvents),
+      ...Object.entries(malformedAuditEvents),
+    ]) {
+      expect(AuditEvent.safeParse(fixture).success, label).toBe(false);
+    }
+  });
 
   it("accepts a job-linked usage row and a standalone one", () => {
     expect(UsageRecord.safeParse(validUsageRecord).success).toBe(true);
     expect(UsageRecord.safeParse(minimalUsageRecord).success).toBe(true);
   });
 
-  it.each(Object.entries(invalidUsageRecords))(
-    "rejects invalid usage fixture %s",
-    (_label, fixture) => {
-      expect(UsageRecord.safeParse(fixture).success).toBe(false);
-    },
-  );
-
-  it.each(Object.entries(malformedUsageRecords))(
-    "rejects malformed usage fixture %s",
-    (_label, fixture) => {
-      expect(UsageRecord.safeParse(fixture).success).toBe(false);
-    },
-  );
+  it("rejects invalid and malformed usage fixtures", () => {
+    for (const [label, fixture] of [
+      ...Object.entries(invalidUsageRecords),
+      ...Object.entries(malformedUsageRecords),
+    ]) {
+      expect(UsageRecord.safeParse(fixture).success, label).toBe(false);
+    }
+  });
 });
 
 describe("delete-all drops the v3 tables", () => {

@@ -149,7 +149,7 @@ describe("approveDecision — add_tags", () => {
     expect(meta?.notes).toBe("keep me");
   });
 
-  it("pushes a meta undo snapshot capturing the pre-change rows", async () => {
+  it("pushes the meta snapshot and writes exactly one audit row", async () => {
     await putMeta("bm-a", { tags: ["old"] });
     const d = await persistDecision(
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["new"] }),
@@ -160,13 +160,6 @@ describe("approveDecision — add_tags", () => {
     expect(snapshot?.nodes).toEqual([]);
     expect(snapshot?.meta.map((m) => m.id)).toEqual(["bm-a"]);
     expect(snapshot?.meta[0]?.tags).toEqual(["old"]);
-  });
-
-  it("writes exactly one audit row for the transition", async () => {
-    const d = await persistDecision(
-      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
-    );
-    await approveDecision(d.id);
     const audit = await db.audit.toArray();
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ decisionId: d.id, from: "pending", to: "applied", actor: "user" });
@@ -283,13 +276,6 @@ describe("rejectDecision", () => {
     expect(audit[0]).toMatchObject({ to: "rejected", from: "pending" });
   });
 
-  it("refuses to reject an already-applied row", async () => {
-    const d = await persistDecision(
-      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
-    );
-    await approveDecision(d.id);
-    await expectApplyError(() => rejectDecision(d.id), "illegal_transition");
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -318,20 +304,31 @@ describe("revertDecision", () => {
     expect((await get("bm-b"))[0]?.parentId).toBe("1");
   });
 
-  it("deletes the row's meta entirely when there was no prior meta", async () => {
+  it("deletes meta-less rows entirely and audits the revert transition", async () => {
     const d = await persistDecision(
       decision({ kind: "set_category", bookmarkIds: ["bm-a"], category: "docs" }),
     );
     await approveDecision(d.id);
     await revertDecision(d.id);
     expect(await getMeta("bm-a")).toBeUndefined();
+    const audit = await db.audit.toArray();
+    expect(audit.map((a) => a.to)).toEqual(["applied", "reverted"]);
   });
 
-  it("refuses to revert a decision that was never applied", async () => {
-    const d = await persistDecision(
+  it("refuses rows that were never applied or carry no snapshot", async () => {
+    const pending = await persistDecision(
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
     );
-    await expectApplyError(() => revertDecision(d.id), "illegal_transition");
+    await expectApplyError(() => revertDecision(pending.id), "illegal_transition");
+    const noSnap = await persistDecision(
+      decision({
+        kind: "add_tags",
+        bookmarkIds: ["bm-a"],
+        tags: ["x"],
+        status: "applied",
+      }),
+    );
+    await expectApplyError(() => revertDecision(noSnap.id), "invalid");
   });
 
   it("refuses with undo_conflict when its snapshot is not the stack head", async () => {
@@ -347,27 +344,6 @@ describe("revertDecision", () => {
     expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
   });
 
-  it("refuses with invalid when the row has no recorded snapshot", async () => {
-    const d = await persistDecision(
-      decision({
-        kind: "add_tags",
-        bookmarkIds: ["bm-a"],
-        tags: ["x"],
-        status: "applied",
-      }),
-    );
-    await expectApplyError(() => revertDecision(d.id), "invalid");
-  });
-
-  it("writes an audit row for the revert transition", async () => {
-    const d = await persistDecision(
-      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
-    );
-    await approveDecision(d.id);
-    await revertDecision(d.id);
-    const audit = await db.audit.toArray();
-    expect(audit.map((a) => a.to)).toEqual(["applied", "reverted"]);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -375,26 +351,25 @@ describe("revertDecision", () => {
 // ---------------------------------------------------------------------------
 
 describe("illegal transitions", () => {
-  it("refuses to approve an already-reverted row", async () => {
-    const d = await persistDecision(
+  it("refuses reverted rows, unsupported kinds, unknown ids, and applied rows", async () => {
+    const reverted = await persistDecision(
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
     );
-    await approveDecision(d.id);
-    await revertDecision(d.id);
-    const err = await expectApplyError(() => approveDecision(d.id), "illegal_transition");
+    await approveDecision(reverted.id);
+    await revertDecision(reverted.id);
+    const err = await expectApplyError(() => approveDecision(reverted.id), "illegal_transition");
     expect(err.message).toMatch(/reverted/);
-  });
-
-  it("refuses to approve an unsupported decision kind", async () => {
-    const d = await persistDecision(
+    const unsupported = await persistDecision(
       decision({ kind: "rename", bookmarkIds: ["bm-a"], newTitle: "Renamed" }),
     );
-    await expectApplyError(() => approveDecision(d.id), "unsupported");
+    await expectApplyError(() => approveDecision(unsupported.id), "unsupported");
     expect((await get("bm-a"))[0]?.title).toBe("A");
-  });
-
-  it("refuses an unknown decision id", async () => {
     await expectApplyError(() => approveDecision(uuid()), "not_found");
+    const applied = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    await approveDecision(applied.id);
+    await expectApplyError(() => rejectDecision(applied.id), "illegal_transition");
   });
 });
 
@@ -403,24 +378,21 @@ describe("illegal transitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("stale decisions", () => {
-  it("refuses when the bookmark no longer exists", async () => {
-    const d = await persistDecision(
+  it("refuses gone bookmarks and bookmarks moved since the decision", async () => {
+    const gone = await persistDecision(
       decision({ kind: "move", bookmarkIds: ["bm-ghost"], targetFolderId: "f-target" }),
     );
-    const err = await expectApplyError(() => approveDecision(d.id), "stale");
-    expect(err.staleReason).toBe("bookmark_gone");
-    expect((await db.decisions.get(d.id))?.status).toBe("pending");
+    const goneErr = await expectApplyError(() => approveDecision(gone.id), "stale");
+    expect(goneErr.staleReason).toBe("bookmark_gone");
+    expect((await db.decisions.get(gone.id))?.status).toBe("pending");
     expect(await db.audit.toArray()).toEqual([]);
-  });
-
-  it("refuses when the bookmark moved since the decision was made", async () => {
-    const d = await persistDecision(
+    const moved = await persistDecision(
       decision({ kind: "move", bookmarkIds: ["bm-b"], targetFolderId: "f-target" }),
     );
     // The user moves the bookmark elsewhere between decision and review.
     await moveNode("bm-b", { parentId: "2" });
-    const err = await expectApplyError(() => approveDecision(d.id), "stale");
-    expect(err.staleReason).toBe("bookmark_moved");
+    const movedErr = await expectApplyError(() => approveDecision(moved.id), "stale");
+    expect(movedErr.staleReason).toBe("bookmark_moved");
     expect((await get("bm-b"))[0]?.parentId).toBe("2"); // not applied blindly
   });
 });

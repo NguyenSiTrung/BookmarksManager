@@ -65,15 +65,16 @@ const sizedState = (targetTokens: number): string =>
 const expectBudgetError = (
   fn: () => unknown,
   code: "too_large" | "invalid_request",
+  label?: string,
 ): BudgetError => {
   try {
     fn();
   } catch (error) {
-    expect(error).toBeInstanceOf(BudgetError);
-    expect(error).toBeInstanceOf(Error);
+    expect(error, label).toBeInstanceOf(BudgetError);
+    expect(error, label).toBeInstanceOf(Error);
     const budgetError = error as BudgetError;
-    expect(budgetError.name).toBe("BudgetError");
-    expect(budgetError.code).toBe(code);
+    expect(budgetError.name, label).toBe("BudgetError");
+    expect(budgetError.code, label).toBe(code);
     return budgetError;
   }
   throw new Error(`expected BudgetError(${code}) but nothing was thrown`);
@@ -117,47 +118,42 @@ describe("checkGuards", () => {
     ).not.toThrow();
   });
 
-  it.each([0, 1, 256])(
-    "rejects a choice question with %i options (bounds 2–255)",
-    (options) => {
+  it("rejects out-of-bounds choice options and accepts the bounds", () => {
+    for (const options of [0, 1, 256]) {
       expectBudgetError(
         () => checkGuards(request({ pick: choice(options) })),
         "invalid_request",
       );
-    },
-  );
-
-  it.each([2, 255])("accepts a choice question with %i options", (options) => {
-    expect(() =>
-      checkGuards(request({ pick: choice(options) })),
-    ).not.toThrow();
+    }
+    for (const options of [2, 255]) {
+      expect(() =>
+        checkGuards(request({ pick: choice(options) })),
+      ).not.toThrow();
+    }
   });
 
-  it.each([0, 1, 11])(
-    "rejects a score question with %i levels (bounds 2–10)",
-    (levels) => {
+  it("rejects out-of-bounds score levels and accepts the bounds", () => {
+    for (const levels of [0, 1, 11]) {
       expectBudgetError(
         () => checkGuards(request({ rate: score(levels) })),
         "invalid_request",
       );
-    },
-  );
-
-  it.each([2, 10])("accepts a score question with %i levels", (levels) => {
-    expect(() =>
-      checkGuards(request({ rate: score(levels) })),
-    ).not.toThrow();
+    }
+    for (const levels of [2, 10]) {
+      expect(() =>
+        checkGuards(request({ rate: score(levels) })),
+      ).not.toThrow();
+    }
   });
 
-  it.each(["", "   ", " \t\n "])(
-    "rejects an empty or whitespace-only question key (%j)",
-    (key) => {
+  it("rejects empty or whitespace-only question keys", () => {
+    for (const key of ["", "   ", " \t\n "]) {
       expectBudgetError(
         () => checkGuards(request({ [key]: noul() })),
         "invalid_request",
       );
-    },
-  );
+    }
+  });
 
   it("cannot see duplicate keys: JSON.parse and object literals dedupe them", () => {
     // A Record<string, Question> cannot hold duplicate keys — the later
@@ -172,26 +168,29 @@ describe("checkGuards", () => {
     expect(() => checkGuards(request(questions))).not.toThrow();
   });
 
-  it.each([
-    ["a null question", { bad: null }],
-    ["a non-object question", { bad: "nope" }],
-    ["an unknown question type", { bad: { type: "rank", instructions: "?" } }],
-    [
-      "a choice question without a criteria map",
-      { bad: { type: "choice", instructions: "?" } },
-    ],
-    [
-      "a score question without a criteria array",
-      { bad: { type: "score", instructions: "?" } },
-    ],
-  ])("rejects %s as invalid_request", (_label, questions) => {
-    expectBudgetError(
-      () =>
-        checkGuards(
-          request(questions as unknown as Record<string, Question>),
-        ),
-      "invalid_request",
-    );
+  it("rejects malformed question entries as invalid_request", () => {
+    for (const [label, questions] of [
+      ["a null question", { bad: null }],
+      ["a non-object question", { bad: "nope" }],
+      ["an unknown question type", { bad: { type: "rank", instructions: "?" } }],
+      [
+        "a choice question without a criteria map",
+        { bad: { type: "choice", instructions: "?" } },
+      ],
+      [
+        "a score question without a criteria array",
+        { bad: { type: "score", instructions: "?" } },
+      ],
+    ] as const) {
+      expectBudgetError(
+        () =>
+          checkGuards(
+            request(questions as unknown as Record<string, Question>),
+          ),
+        "invalid_request",
+        label,
+      );
+    }
   });
 
   it("rejects a non-record questions bag instead of throwing a TypeError", () => {
