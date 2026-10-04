@@ -2,7 +2,7 @@ import {
   LlmGateError,
   parseLlmUsage,
   readLlmErrorBody,
-  sendLlmConsented,
+  createLlmSendSession,
   settleLlmUsage,
 } from "../net/llm-send";
 import { LlmCapabilityError } from "./structured";
@@ -29,7 +29,6 @@ export interface LlmClientConfig {
   readonly maxOutputTokens: number;
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
-  readonly fetchImpl?: typeof fetch;
   /** Feature admission rerun by the gate before every fetch attempt. */
   readonly beforeSend?: () => Promise<void>;
 }
@@ -110,15 +109,14 @@ export function createLlmClient(
   readonly lastReservationId: string | undefined;
 } {
   let lastReservationId: string | undefined;
+  const send = createLlmSendSession(providerId, config.scope);
   return {
     get lastReservationId() {
       return lastReservationId;
     },
     async send(request: unknown): Promise<unknown> {
-      const { response, reservation } = await sendLlmConsented(
+      const { response, reservation, readResponse } = await send(
         {
-          providerId,
-          scope: config.scope,
           request,
           maxInputTokens: config.maxInputTokens,
           maxOutputTokens: config.maxOutputTokens,
@@ -127,7 +125,6 @@ export function createLlmClient(
         {
           unknownCostConfirmed: config.unknownCostConfirmed,
           signal: config.signal,
-          fetchImpl: config.fetchImpl,
           beforeSend: config.beforeSend,
         },
       );
@@ -149,7 +146,7 @@ export function createLlmClient(
 
       let raw: unknown;
       try {
-        raw = await response.json();
+        raw = await readResponse();
       } catch {
         await settleLlmUsage(reservation.id, config.scope, {});
         throw new LlmGateError(

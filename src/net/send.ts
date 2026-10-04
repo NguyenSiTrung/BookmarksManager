@@ -3,13 +3,25 @@ import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 import { resolveStoredJevDestination } from "../jev/settings";
 import type { JevDestination } from "../jev/providers";
-import { makeSyntheticRequest, SystemOneRequest } from "../jev/wire";
+import { makeSyntheticRequest, SystemOneRequest, NoulQuestion, ChoiceQuestion, ScoreQuestion } from "../jev/wire";
+import { z } from "../schemas/z";
 import { DecisionState } from "../schemas/decision-state";
 import { LOOPBACK_HOSTS } from "../schemas/llm";
 import { SummaryVerificationState } from "../schemas/summary-verification";
 import { readProviderKey } from "../security/keys";
 import { appendSentLog } from "./sent-log";
 
+// Wire schemas elsewhere accept provider extensions. Egress must reject
+// unknown fields, not silently strip them before sending.
+const ClosedSystemOneRequest = SystemOneRequest.strict().extend({
+  questions: z.record(z.string(), z.discriminatedUnion("type", [
+    NoulQuestion.strict().extend({
+      criteria: NoulQuestion.shape.criteria.unwrap().strict().optional(),
+    }),
+    ChoiceQuestion.strict(),
+    ScoreQuestion.strict(),
+  ])),
+});
 /**
  * The extension's single consented egress point (PROJECT_PLAN.md §Global
  * Constraints): this module is the only `src/` code allowed to call `fetch`
@@ -358,7 +370,7 @@ export async function sendConsented(
 
   // The guard constrained the payload but did not parse it — a malformed
   // body still cannot leave the extension.
-  const parsed = SystemOneRequest.safeParse(request);
+  const parsed = ClosedSystemOneRequest.safeParse(request);
   if (!parsed.success) {
     throw new NetworkGateError(
       "request_not_allowed",

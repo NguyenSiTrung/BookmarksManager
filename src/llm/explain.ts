@@ -1,4 +1,4 @@
-import { z } from "../schemas/z";
+import { EXPLAIN_SYSTEM_PROMPT, ExplainResponse } from "./prompt-contracts";
 import type { DecisionRow } from "../decisions/store";
 import { getDecision, persistDecisionRationale } from "../decisions/store";
 import { minimizeBookmark } from "../decisions/minimize";
@@ -60,22 +60,9 @@ export interface ExplainOptions {
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
 }
-
-const ExplainResponse = z.strictObject({
-  rationale: z.string().min(1).max(1_000),
-});
-
 /** Conservative admission bounds — the payload is a handful of short fields. */
 const MAX_INPUT_TOKENS = 8_192;
 const MAX_OUTPUT_TOKENS = 1_024;
-
-const EXPLAIN_SYSTEM_PROMPT =
-  "You explain automated bookmark-organizer decisions in plain language. " +
-  "Given the question the organizer asked, the candidate labels, the " +
-  "probability it assigned to each label, the answer it picked, and the " +
-  "minimized bookmark data it saw, explain in one or two sentences why that " +
-  "answer is plausible. Do not invent facts about the page; describe only " +
-  "what the input shows. Reply with the JSON object the schema requests.";
 
 /** The question wording Jev answered, per decision kind. */
 function questionFor(row: DecisionRow): { question: string; answer: string } {

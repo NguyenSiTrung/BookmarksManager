@@ -1,3 +1,4 @@
+import { ESCALATE_SYSTEM_PROMPT, EscalationResponse } from "./prompt-contracts";
 import { z } from "../schemas/z";
 import { db } from "../db/database";
 import { REVIEW_FLOOR } from "../decisions/policy";
@@ -91,25 +92,8 @@ export async function writeLlmEscalationSettings(
 // ---------------------------------------------------------------------------
 // The second-opinion call
 // ---------------------------------------------------------------------------
-
-const EscalationResponse = z.strictObject({
-  verdict: z.enum(["agree", "disagree", "unsure"]),
-  /** Must echo one of the offered option ids; required on `disagree`. */
-  alternative: z.string().min(1).max(64).optional(),
-  rationale: z.string().min(1).max(1_000),
-});
-
 const MAX_INPUT_TOKENS = 8_192;
 const MAX_OUTPUT_TOKENS = 1_024;
-
-const ESCALATE_SYSTEM_PROMPT =
-  "You are a second opinion for an automated bookmark organizer. Its " +
-  "first-pass engine answered a question about the shown bookmark data; " +
-  "judge whether that answer is right. Reply only with the JSON object the " +
-  "schema requests: verdict is 'agree', 'unsure', or 'disagree' — and on " +
-  "'disagree' you must also echo back the `id` of one of the offered " +
-  "options as `alternative`. Never invent an option or an action that is " +
-  "not listed.";
 
 /**
  * Maybe get a second opinion on `decision`. Returns `null` for every

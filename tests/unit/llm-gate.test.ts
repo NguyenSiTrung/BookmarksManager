@@ -10,10 +10,10 @@ import { readBlocklist } from "../../src/decisions/blocklist";
 import { monthlyBudgetSnapshot, type BudgetReservation } from "../../src/llm/budget";
 import {
   LlmGateError,
-  sendLlmConsented,
   settleLlmUsage,
   STALE_RESERVATION_TTL_MS,
 } from "../../src/net/llm-send";
+import { sendLlmForTest as sendLlmConsented, scopeRequest, TEST_LLM_SCOPES } from "../fakes/llm";
 import { makeOpenAiServer } from "../mock-servers/openai";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
@@ -97,10 +97,7 @@ function customProviderRecord(
 }
 
 function validRequest(model = MODEL) {
-  return {
-    model,
-    messages: [{ role: "user", content: "hello" }],
-  };
+  return scopeRequest("llm_explain", model);
 }
 
 function send(overrides: object = {}, options: object = {}) {
@@ -109,7 +106,7 @@ function send(overrides: object = {}, options: object = {}) {
     result: sendLlmConsented(
       {
         providerId: PROVIDER_ID,
-        scope: "llm_test",
+        scope: "llm_explain",
         request: validRequest(),
         maxInputTokens: 100,
         maxOutputTokens: 50,
@@ -179,7 +176,7 @@ describe("sendLlmConsented gate order", () => {
         scope,
         request: { ...validRequest(), max_output_tokens: 25 },
       });
-      await expectGateBlock(result, "request_not_allowed");
+      await expectGateBlock(result, scope === "jev_summary_verify" ? "unregistered_scope" : "request_not_allowed");
       expect(fetch.requests).toHaveLength(0);
     }
     expect(containsSpy).not.toHaveBeenCalled();
@@ -227,7 +224,7 @@ describe("sendLlmConsented gate order", () => {
 
   it("refuses a model other than the configured one", async () => {
     await saveLlmProvider(providerRecord());
-    await grantConsentAtOrigin("llm_test", ORIGIN);
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
     const { result, fetch } = send({ request: validRequest("other-model") });
     await expectGateBlock(result, "unlisted_model");
     expect(fetch.requests).toHaveLength(0);
@@ -240,7 +237,7 @@ describe("sendLlmConsented gate order", () => {
     const { result, fetch } = send();
     await expectGateBlock(result, "no_consent");
     await db.consents.put({
-      scope: "llm_test",
+      scope: "llm_explain",
       origin: ORIGIN,
       consentVersion: CONSENT_VERSION - 1,
       acceptedAt: "2020-01-01T00:00:00.000Z",
@@ -257,7 +254,7 @@ describe("sendLlmConsented gate order", () => {
     const credentials = await import("../../src/security/credentials");
     readCredentialSpy = vi.spyOn(credentials, "readCredential");
     await saveLlmProvider(providerRecord());
-    await grantConsentAtOrigin("llm_test", ORIGIN);
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
     containsSpy.mockResolvedValue(false);
     const { result, fetch } = send();
     await expectGateBlock(result, "no_permission");
@@ -274,7 +271,7 @@ describe("sendLlmConsented gate order", () => {
 describe("sendLlmConsented happy path", () => {
   beforeEach(async () => {
     await saveLlmProvider(providerRecord());
-    await grantConsentAtOrigin("llm_test", ORIGIN);
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
     await saveCredential(PROVIDER_ID, "sk-test-1234");
   });
 
@@ -321,7 +318,7 @@ describe("sendLlmConsented happy path", () => {
     for (const change of ["consent", "permission", "origin"] as const) {
       await db.llmUsage.clear();
       await db.llmReservations.clear();
-      await grantConsentAtOrigin("llm_test", ORIGIN);
+      await grantConsentAtOrigin("llm_explain", ORIGIN);
       containsSpy.mockResolvedValue(true);
       await saveLlmProvider(providerRecord());
       const server = makeOpenAiServer({ failures: [{ status: 503 }] });
@@ -393,7 +390,7 @@ describe("sendLlmConsented happy path", () => {
         inputTokens: 100, outputTokens: 50,
         estimatedCostUsd: expect.closeTo(0.000045, 10),
       }]);
-      await settleLlmUsage(reservations.find((row) => row.status === "settled")!.id, "llm_test", {
+      await settleLlmUsage(reservations.find((row) => row.status === "settled")!.id, "llm_explain", {
         inputTokens: 100, outputTokens: 50,
       }, NOW);
       expect(await db.llmUsage.count()).toBe(1);
@@ -500,7 +497,7 @@ describe("sendLlmConsented happy path", () => {
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({
       destination: ORIGIN,
-      feature: "llm_test",
+      feature: "llm_explain",
     });
     expect(log[0]?.fieldNames.sort()).toEqual(["max_tokens", "messages", "model"]);
     expect(JSON.stringify(log[0])).not.toContain("hello");
@@ -537,13 +534,13 @@ describe("sendLlmConsented happy path", () => {
   });
 
   it("adds the gate-owned cap after request validation for every consent scope", async () => {
-    for (const scope of LLM_CONSENT_SCOPES) {
+    for (const scope of TEST_LLM_SCOPES) {
       await grantConsentAtOrigin(scope, ORIGIN);
-      const { result, fetch } = send({ scope });
+      const { result, fetch } = send({ scope, request: scopeRequest(scope, MODEL) });
       const { reservation } = await result;
-      expect(reservation.maxOutputTokens).toBe(50);
+      expect(reservation.maxOutputTokens).toBe(scope === "llm_test" ? 16 : 50);
       expect(fetch.requests).toHaveLength(1);
-      expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 50 });
+      expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: scope === "llm_test" ? 16 : 50 });
     }
   });
 
@@ -616,7 +613,7 @@ describe("sendLlmConsented happy path", () => {
     const { reservation } = await result;
     await settleLlmUsage(
       reservation.id,
-      "llm_test",
+      "llm_explain",
       { inputTokens: 100, outputTokens: 40, reportedCostUsd: 0.001 },
       NOW,
     );
@@ -650,7 +647,7 @@ describe("sendLlmConsented happy path", () => {
       {
         providerId: "custom:https://llm.example.com/v1",
         scope: "llm_explain",
-        request: { model: "llama-3", messages: [{ role: "user", content: "x" }] },
+        request: scopeRequest("llm_explain", "llama-3"),
         maxInputTokens: 100_000,
         maxOutputTokens: 100_000,
         kind: "manual",
@@ -735,7 +732,7 @@ describe("sendLlmConsented happy path", () => {
     const { response } = await sendLlmConsented(
       {
         providerId: PROVIDER_ID,
-        scope: "llm_test",
+        scope: "llm_explain",
         request: validRequest(),
         maxInputTokens: 100,
         maxOutputTokens: 50,
@@ -755,7 +752,7 @@ describe("sendLlmConsented happy path", () => {
     const { response } = await sendLlmConsented(
       {
         providerId: PROVIDER_ID,
-        scope: "llm_test",
+        scope: "llm_explain",
         request: validRequest(),
         maxInputTokens: 100,
         maxOutputTokens: 50,
@@ -772,7 +769,7 @@ describe("sendLlmConsented happy path", () => {
     const { response } = await sendLlmConsented(
       {
         providerId: PROVIDER_ID,
-        scope: "llm_test",
+        scope: "llm_explain",
         request: validRequest(),
         maxInputTokens: 100,
         maxOutputTokens: 50,
@@ -796,7 +793,7 @@ describe("sendLlmConsented happy path", () => {
     const error = (await sendLlmConsented(
       {
         providerId: PROVIDER_ID,
-        scope: "llm_test",
+        scope: "llm_explain",
         request: validRequest(),
         maxInputTokens: 100,
         maxOutputTokens: 50,
@@ -848,10 +845,7 @@ describe("sendLlmConsented happy path", () => {
       {
         providerId: custom.providerId,
         scope: "llm_summary",
-        request: {
-          model: "llama-3",
-          messages: [{ role: "user", content: "summarize" }],
-        },
+        request: scopeRequest("llm_summary", "llama-3"),
         maxInputTokens: 100,
         maxOutputTokens: 50,
         kind: "manual",
@@ -884,10 +878,7 @@ describe("sendLlmConsented happy path", () => {
       {
         providerId: local.providerId,
         scope: "llm_summary",
-        request: {
-          model: "llama3",
-          messages: [{ role: "user", content: "s" }],
-        },
+        request: scopeRequest("llm_summary", "llama3"),
         maxInputTokens: 10,
         maxOutputTokens: 10,
         kind: "manual",
@@ -912,10 +903,10 @@ describe("sendLlmConsented happy path", () => {
     expect(await db.llmUsage.count()).toBe(0);
 
     await Promise.all([
-      settleLlmUsage(reservation.id, "llm_test", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
-      settleLlmUsage(reservation.id, "llm_test", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
+      settleLlmUsage(reservation.id, "llm_explain", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
+      settleLlmUsage(reservation.id, "llm_explain", { outputTokens: 1000, reportedCostUsd: 0.02 }, late),
     ]);
-    await settleLlmUsage(reservation.id, "llm_test", {}, late);
+    await settleLlmUsage(reservation.id, "llm_explain", {}, late);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: 0.02 });
@@ -937,8 +928,8 @@ describe("sendLlmConsented happy path", () => {
       }));
     expect(await snapshot()).toMatchObject({ hasUnknownCost: true, unknownCostRequests: 2 });
     await Promise.all([
-      settleLlmUsage(reservation.id, "llm_test", {}, late),
-      settleLlmUsage(reservation.id, "llm_test", {}, late),
+      settleLlmUsage(reservation.id, "llm_explain", {}, late),
+      settleLlmUsage(reservation.id, "llm_explain", {}, late),
     ]);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
@@ -955,10 +946,10 @@ describe("sendLlmConsented happy path", () => {
         pricing: { inputPerMillion: 10, outputPerMillion: 20 } },
     }));
     await Promise.all([
-      settleLlmUsage(reservation.id, "llm_test", { inputTokens: 10 }, NOW),
-      settleLlmUsage(reservation.id, "llm_test", { inputTokens: 10 }, NOW),
+      settleLlmUsage(reservation.id, "llm_explain", { inputTokens: 10 }, NOW),
+      settleLlmUsage(reservation.id, "llm_explain", { inputTokens: 10 }, NOW),
     ]);
-    await settleLlmUsage(reservation.id, "llm_test", { reportedCostUsd: 9 }, NOW);
+    await settleLlmUsage(reservation.id, "llm_explain", { reportedCostUsd: 9 }, NOW);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ inputTokens: 10, outputTokens: 50 });
@@ -992,10 +983,7 @@ describe("sendLlmConsented happy path", () => {
       {
         providerId: custom.providerId,
         scope: "llm_explain",
-        request: {
-          model: "llama-3",
-          messages: [{ role: "user", content: "x" }],
-        },
+        request: scopeRequest("llm_explain", "llama-3"),
         maxInputTokens: 100,
         maxOutputTokens: 100,
         kind: "manual",
@@ -1035,10 +1023,7 @@ describe("sendLlmConsented happy path", () => {
         {
           providerId: custom.providerId,
           scope: "llm_explain",
-          request: {
-            model: "llama-3",
-            messages: [{ role: "user", content: "x" }],
-          },
+          request: scopeRequest("llm_explain", "llama-3"),
           // 100k × $1/M + 100k × $2/M = $0.30 reserved per request.
           maxInputTokens: 100_000,
           maxOutputTokens: 100_000,

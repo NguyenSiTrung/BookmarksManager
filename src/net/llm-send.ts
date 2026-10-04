@@ -14,12 +14,16 @@ import {
 } from "../llm/budget";
 import { resolveLlmDestination } from "../llm/providers";
 import { resolveProviderPricing } from "../llm/pricing";
-import { ChatCompletionRequest, ChatCompletionResponse, TokenBound } from "../llm/wire";
-import { LLM_CONSENT_SCOPES } from "../schemas/provider";
+import { ChatCompletionRequest, ChatCompletionResponse, TokenBound, firstText } from "../llm/wire";
+import {
+  FEATURE_CONTRACTS, jsonSchemaOf, tierSystemPrompt, pingRequest,
+  repairForResponse, MAX_REPAIRS, type FeatureScope,
+} from "../llm/prompt-contracts";
 import { z } from "../schemas/z";
 import { readCredential } from "../security/credentials";
 import { db } from "../db/database";
 import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
+import { isSensitiveUrl } from "../decisions/minimize";
 
 /**
  * `chrome` is provided by the extension runtime; as in `net/send.ts`,
@@ -69,7 +73,7 @@ export class LlmGateError extends Error {
 export interface LlmSendInput {
   /** The stored provider record id (`preset:<id>` or `custom:<baseUrl>`). */
   readonly providerId: string;
-  /** One of the six LLM consent scopes — also the sentLog feature label. */
+  /** An LLM consent scope — Jev verification never authorizes LLM egress. */
   readonly scope: ConsentScope;
   /** The outbound body; must strict-parse as `ChatCompletionRequest`. */
   readonly request: unknown;
@@ -93,8 +97,6 @@ export interface LlmSendOptions {
   /** Extra attempts after a transient failure (default 1). */
   readonly retries?: number;
   readonly now?: () => Date;
-  /** Test seam; defaults to global `fetch`. */
-  readonly fetchImpl?: typeof fetch;
   /** Feature admission before EACH fetch attempt, including internal retries.
    * Throw a typed, content-free refusal; this does not bypass the origin gate. */
   readonly beforeSend?: () => Promise<void>;
@@ -105,6 +107,9 @@ export interface LlmSendResult {
   readonly response: Response;
   /** The persisted active reservation — settle it via `settleLlmUsage`. */
   readonly reservation: BudgetReservation;
+  /** Read the actual response and derive private, input-bound repair authority.
+   * There is deliberately no caller-supplied raw-response registration API. */
+  readonly readResponse: () => Promise<unknown>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -183,7 +188,101 @@ export function parseLlmUsage(raw: unknown): ActualUsage {
 }
 
 function isRegisteredScope(scope: string): scope is ConsentScope {
-  return (LLM_CONSENT_SCOPES as readonly string[]).includes(scope);
+  return scope === "llm_test" || Object.hasOwn(FEATURE_CONTRACTS, scope);
+}
+
+interface SendSession {
+  binding?: string;
+  /** Exact transcripts derived only from consumed, actual provider responses. */
+  readonly repairs: Set<string>;
+}
+
+function rejectPayload(): never {
+  throw new LlmGateError("request_not_allowed", "This scope does not admit the request payload.");
+}
+
+/** Stable structural JSON equality, independent of the caller's key order. */
+function canonical(value: unknown, depth = 0): string {
+  // Schemas are untrusted unknown records at the outer wire boundary. Refuse
+  // cyclic/deep/non-JSON values with a redacted gate error, never a native cause.
+  if (depth > 32) rejectPayload();
+  if (Array.isArray(value)) return `[${value.map((entry) => canonical(entry, depth + 1)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${canonical(entry, depth + 1)}`).join(",")}}`;
+  }
+  if (value !== null && !["string", "number", "boolean", "undefined"].includes(typeof value)) rejectPayload();
+  if (typeof value === "number" && !Number.isFinite(value)) rejectPayload();
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function admitPayload(
+  input: LlmSendInput,
+  request: ChatCompletionRequest,
+  origin: string,
+  userBlocklist: readonly string[],
+  session?: SendSession,
+): { binding: string; contract?: (typeof FEATURE_CONTRACTS)[FeatureScope] } {
+  const tier = request.response_format?.type ?? "prompt_only";
+  if (input.scope === "llm_test") {
+    const expected = pingRequest(request.model, tier);
+    // A gate-supplied or caller-lowered ceiling may only tighten the fixed 16.
+    expected.max_tokens = Math.min(16, request.max_tokens ?? 16);
+    if (canonical(expected) !== canonical(request)) rejectPayload();
+    return { binding: canonical([input.providerId, input.scope, origin, request.model, "ping"]) };
+  }
+  const contract = FEATURE_CONTRACTS[input.scope as FeatureScope];
+  const [system, user] = request.messages;
+  if (system?.role !== "system" || user?.role !== "user" ||
+      request.messages.length < 2 || request.messages.length > 2 + MAX_REPAIRS * 2 ||
+      request.messages.length % 2 !== 0) rejectPayload();
+  const schema = jsonSchemaOf(contract.output);
+  const augmentation = tierSystemPrompt(tier, schema);
+  if (system.content !== (augmentation === null ? contract.prompt : `${augmentation}\n\n${contract.prompt}`)) {
+    rejectPayload();
+  }
+  if (tier === "json_schema" && canonical(request.response_format) !== canonical({
+    type: "json_schema", json_schema: { name: contract.name, strict: true, schema },
+  })) rejectPayload();
+  let payload: unknown;
+  try { payload = JSON.parse(user.content); } catch { rejectPayload(); }
+  const parsed = contract.payload.safeParse(payload);
+  if (!parsed.success) rejectPayload();
+  const facts = parsed.data;
+  if ("bookmarks" in facts) {
+    if (facts.bookmarks.some((bookmark) => isSensitiveUrl(bookmark.url, userBlocklist))) rejectPayload();
+  } else if ("url" in facts) {
+    if (isSensitiveUrl(facts.url, userBlocklist)) rejectPayload();
+  } else {
+    for (const { domain } of facts.domains) {
+      try {
+        const url = new URL(`https://${domain}/`);
+        if (url.hostname !== domain || url.pathname !== "/" || url.search !== "" ||
+            url.hash !== "" || url.username !== "" || url.password !== "" ||
+            isSensitiveUrl(url.href, userBlocklist)) rejectPayload();
+      } catch { rejectPayload(); }
+    }
+  }
+  const binding = canonical([
+    input.providerId, input.scope, origin, request.model, input.kind,
+    input.maxInputTokens, request.max_tokens, parsed.data,
+  ]);
+  if (session?.binding !== undefined && session.binding !== binding) rejectPayload();
+  if (request.messages.length > 2 && !session?.repairs.has(canonical(request))) rejectPayload();
+  // Claim synchronously before subsequent awaited consent/permission/budget
+  // preflight, so concurrent callers cannot change one session's original input.
+  if (session !== undefined) session.binding ??= binding;
+  return { binding, contract };
+}
+
+/** A client gets private repair provenance, never an injectable transport.
+ * Provider and scope are captured and cannot be overridden by runtime input. */
+export function createLlmSendSession(providerId: string, scope: ConsentScope): (
+  input: Omit<LlmSendInput, "providerId" | "scope">,
+  options?: LlmSendOptions,
+) => Promise<LlmSendResult> {
+  const session: SendSession = { repairs: new Set() };
+  return (input, options) => sendLlmRequest({ ...input, providerId, scope }, options, session);
 }
 
 /** Fail-closed permission check: any API error counts as "not granted". */
@@ -277,6 +376,14 @@ export async function sendLlmConsented(
   input: LlmSendInput,
   options?: LlmSendOptions,
 ): Promise<LlmSendResult> {
+  return sendLlmRequest(input, options);
+}
+
+async function sendLlmRequest(
+  input: LlmSendInput,
+  options?: LlmSendOptions,
+  session?: SendSession,
+): Promise<LlmSendResult> {
   const now = options?.now ?? (() => new Date());
 
   if (!isRegisteredScope(input.scope)) {
@@ -343,12 +450,14 @@ export async function sendLlmConsented(
 
   // Independent of feature admission: an unreadable privacy policy refuses
   // every attempt, including internal retries, before credentials or budget.
+  let userBlocklist: string[];
   try {
-    await readBlocklist();
+    userBlocklist = await readBlocklist();
   } catch (cause) {
     if (!(cause instanceof BlocklistReadError)) throw cause;
     throw new LlmGateError("request_not_allowed", cause.message);
   }
+  const admission = admitPayload(input, request, destination.origin, userBlocklist, session);
 
   if (!(await hasConsentAtOrigin(input.scope, destination.origin))) {
     throw new LlmGateError(
@@ -441,7 +550,6 @@ export async function sendLlmConsented(
   }
   const reservation = reservationResult.reservation;
 
-  const fetchImpl = options?.fetchImpl ?? fetch;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = options?.retries ?? DEFAULT_RETRIES;
   const headers: Record<string, string> = {
@@ -457,9 +565,10 @@ export async function sendLlmConsented(
   // One durable reservation per attempt. Prior attempts are already settled
   // when the full gate reserves again, so both budget and current admission
   // include their exposure. Keep the normalized, clamped request immutable.
-  const retry = () => sendLlmConsented(
+  const retry = () => sendLlmRequest(
     { ...input, request, maxInputTokens: reservation.maxInputTokens, maxOutputTokens },
     { ...options, retries: retries - 1 },
+    session,
   );
   try {
     await options?.beforeSend?.();
@@ -473,7 +582,7 @@ export async function sendLlmConsented(
     : timeoutSignal;
   let response: Response;
   try {
-    response = await fetchImpl(destination.chatCompletionsUrl, {
+    response = await fetch(destination.chatCompletionsUrl, {
       method: "POST",
       credentials: "omit",
       redirect: "error",
@@ -517,5 +626,25 @@ export async function sendLlmConsented(
     feature: input.scope,
     fieldNames: Object.keys(request),
   });
-  return { response, reservation };
+  // Bind the reader now, before exposing Response to the client/caller.
+  // Supplying a fabricated parsed result cannot register a repair transcript.
+  const readJson = response.json.bind(response);
+  return { response, reservation, readResponse: async () => {
+    const raw: unknown = await readJson();
+    if (session !== undefined && admission.contract !== undefined && response.status < 400 &&
+        request.messages.length < 2 + MAX_REPAIRS * 2) {
+      const parsedResponse = ChatCompletionResponse.safeParse(raw);
+      if (parsedResponse.success) {
+        const repair = repairForResponse(admission.contract.output, firstText(parsedResponse.data));
+        if (repair !== null) {
+          const next = { ...request, messages: [...request.messages,
+            { role: "assistant", content: repair.echo },
+            { role: "user", content: repair.instruction },
+          ] };
+          session.repairs.add(canonical(next));
+        }
+      }
+    }
+    return raw;
+  } };
 }

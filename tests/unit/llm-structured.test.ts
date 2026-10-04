@@ -3,7 +3,9 @@ import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
-import { createLlmClient, LlmHttpError } from "../../src/llm/client";
+import { LlmHttpError } from "../../src/llm/client";
+import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
+import { ExplainResponse } from "../../src/llm/prompt-contracts";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { makeOpenAiServer } from "../mock-servers/openai";
 import { z } from "../../src/schemas/z";
@@ -297,7 +299,9 @@ describe("runStructured", () => {
 describe("structured output caps through the real client and gate", () => {
   const providerId = "custom:http://127.0.0.1:11434";
   const model = "local-test";
-  const scope = "llm_restructure";
+  const scope = "llm_explain";
+  const messages = scopeRequest(scope, model, "json_schema").messages;
+  const okExplanation = () => JSON.stringify({ rationale: "Synthetic explanation." });
 
   function gatedClient(fetchImpl: typeof fetch) {
     return createLlmClient(providerId, {
@@ -313,8 +317,8 @@ describe("structured output caps through the real client and gate", () => {
     return runStructured({
       tier: "json_schema",
       model,
-      schema: AnswerSchema,
-      messages: MESSAGES,
+      schema: ExplainResponse, schemaName: "explanation",
+      messages,
       send,
     });
   }
@@ -350,13 +354,13 @@ describe("structured output caps through the real client and gate", () => {
       await db.llmUsage.clear();
       let completions = 0;
       const server = makeOpenAiServer({
-        completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+        completion: () => response(++completions < 3 ? "invalid json" : okExplanation()),
       });
       const client = gatedClient(server.fetch);
       const result = await runStructured({
-        tier, model, schema: AnswerSchema, messages: MESSAGES, send: client.send,
+        tier, model, schema: ExplainResponse, schemaName: "explanation", messages, send: client.send,
       });
-      expect(result.value).toEqual({ answer: "42", confidence: 0.9 });
+      expect(result.value).toEqual({ rationale: "Synthetic explanation." });
       expect(result.tierUsed).toBe(tier);
       expect(result.repairs).toBe(2);
       expect(server.requests).toHaveLength(3);
@@ -376,11 +380,11 @@ describe("structured output caps through the real client and gate", () => {
         { throw: new TypeError("reset") },
         { status: 422, body: { error: { message: "response_format json_object unsupported" } } },
       ],
-      completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+      completion: () => response(++completions < 3 ? "invalid json" : okExplanation()),
     });
     const client = gatedClient(server.fetch);
     const result = await run(client.send);
-    expect(result.value).toEqual({ answer: "42", confidence: 0.9 });
+    expect(result.value).toEqual({ rationale: "Synthetic explanation." });
     expect(result.tierUsed).toBe("prompt_only");
     expect(result.repairs).toBe(2);
     expect(server.requests).toHaveLength(7);
@@ -409,11 +413,11 @@ describe("structured output caps through the real client and gate", () => {
       let completions = 0;
     const server = makeOpenAiServer({
       failures: [{ status: 400, body: { error: { message: "response_format unsupported" } } }],
-      completion: () => response(++completions < 3 ? "invalid json" : okAnswer()),
+      completion: () => response(++completions < 3 ? "invalid json" : okExplanation()),
     });
     const client = gatedClient(server.fetch);
     const result = await run((request) => client.send({ ...request, max_tokens: caller }));
-    expect(result.value.answer).toBe("42");
+    expect(result.value.rationale).toBe("Synthetic explanation.");
     expect(result.tierUsed).toBe("json_object");
     expect(result.repairs).toBe(2);
     expect(server.requests).toHaveLength(4);
@@ -437,7 +441,7 @@ describe("structured output caps through the real client and gate", () => {
       await db.llmUsage.clear();
     const server = makeOpenAiServer({
       failures: [{ status, body: { error: { param, message } } }],
-      completion: () => response(okAnswer()),
+      completion: () => response(okExplanation()),
     });
     const client = gatedClient(server.fetch);
     await expect(run(client.send)).rejects.toMatchObject({ name: "LlmHttpError", status });
@@ -481,7 +485,7 @@ describe("structured output caps through the real client and gate", () => {
       await db.llmReservations.clear();
       await db.llmUsage.clear();
     const server = makeOpenAiServer({
-      completion: () => response(okAnswer(), {
+      completion: () => response(okExplanation(), {
         usage: {
           prompt_tokens: 10, completion_tokens: 1000, total_tokens: 1010,
           ...(cost !== undefined ? { cost } : {}),
@@ -489,7 +493,7 @@ describe("structured output caps through the real client and gate", () => {
       }),
     });
     const result = await run(gatedClient(server.fetch).send);
-    expect(result.value.answer).toBe("42");
+    expect(result.value.rationale).toBe("Synthetic explanation.");
     expect(result.usage?.completionTokens).toBe(1000);
     expect(server.requests[0]?.body).toMatchObject({ max_tokens: 50 });
     const usage = await db.llmUsage.toArray();

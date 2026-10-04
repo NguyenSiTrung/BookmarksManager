@@ -5,7 +5,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { grantConsentAtOrigin } from "../../src/consent/records";
 import { readBlocklist } from "../../src/decisions/blocklist";
 import { db } from "../../src/db/database";
-import { createLlmClient, LlmHttpError } from "../../src/llm/client";
+import { LlmHttpError } from "../../src/llm/client";
+import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
 import { LlmGateError, settleLlmUsage } from "../../src/net/llm-send";
 import { monthlyBudgetSnapshot } from "../../src/llm/budget";
 import { LlmCapabilityError } from "../../src/llm/structured";
@@ -57,14 +58,11 @@ const record: LlmProviderRecord = {
   monthlyBudgetUsd: 5,
 };
 
-const REQUEST = {
-  model: "gpt-4o-mini",
-  messages: [{ role: "user", content: "hi" }],
-};
+const REQUEST = scopeRequest("llm_explain", "gpt-4o-mini");
 
 function client(fetchImpl: typeof fetch, beforeSend?: () => Promise<void>) {
   return createLlmClient(PROVIDER_ID, {
-    scope: "llm_test",
+    scope: "llm_explain",
     kind: "manual",
     maxInputTokens: 100,
     maxOutputTokens: 50,
@@ -110,7 +108,7 @@ beforeEach(async () => {
   await db.delete();
   await db.open();
   await saveLlmProvider(record);
-  await grantConsentAtOrigin("llm_test", ORIGIN);
+  await grantConsentAtOrigin("llm_explain", ORIGIN);
   await saveCredential(PROVIDER_ID, "sk-test");
 });
 
@@ -146,7 +144,7 @@ describe("createLlmClient", () => {
       expect(server.requests).toHaveLength(1);
       expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled"]);
       expect(await db.llmUsage.toArray()).toMatchObject([{
-        feature: "llm_test", inputTokens: 100, outputTokens: 50,
+        feature: "llm_explain", inputTokens: 100, outputTokens: 50,
         estimatedCostUsd: expect.closeTo(0.000045, 10),
       }]);
     }
@@ -173,7 +171,7 @@ describe("createLlmClient", () => {
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({
       providerId: PROVIDER_ID,
-      feature: "llm_test",
+      feature: "llm_explain",
       configuredModel: "gpt-4o-mini",
       inputTokens: 12,
       outputTokens: 8,
@@ -371,7 +369,8 @@ describe("createLlmClient", () => {
           }), { status: 400 })
           : errorStream([new TextEncoder().encode(body)]).response;
         const error = await client(async () => response).send({
-          ...REQUEST, messages: [{ role: "user", content: "PROMPT_SECRET" }],
+          ...REQUEST, messages: [REQUEST.messages[0]!, { role: "user",
+            content: JSON.stringify({ ...JSON.parse(REQUEST.messages[1]!.content) as object, answer: "PROMPT_SECRET" }) }],
         }).catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(failure === "capability" ? LlmCapabilityError : LlmHttpError);
         expectRedacted(error);
@@ -568,7 +567,7 @@ describe("createLlmClient", () => {
     expect(reservations.every((row) => row.status === "settled")).toBe(true);
     const finalReservation = reservations.find((row) => row.id === llm.lastReservationId);
     expect(finalReservation).toBeDefined();
-    await Promise.all(reservations.map((row) => settleLlmUsage(row.id, "llm_test", { reportedCostUsd: 0 })));
+    await Promise.all(reservations.map((row) => settleLlmUsage(row.id, "llm_explain", { reportedCostUsd: 0 })));
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(2);
     const snap = monthlyBudgetSnapshot({ providerId: PROVIDER_ID, usage, reservations, now: new Date() });
@@ -595,7 +594,7 @@ describe("createLlmClient", () => {
       completion: () => ({ model, choices: [{ message: { content: "{}" } }], usage: { cost: 0 } }),
     });
     await createLlmClient(PROVIDER_ID, {
-      scope: "llm_test", kind: "manual", maxInputTokens: 100, maxOutputTokens: 50,
+      scope: "llm_explain", kind: "manual", maxInputTokens: 100, maxOutputTokens: 50,
       unknownCostConfirmed: true, fetchImpl: server.fetch,
     }).send({ ...REQUEST, model });
     const usage = await db.llmUsage.toArray();
@@ -625,7 +624,7 @@ describe("createLlmClient", () => {
       completion: () => ({ model, choices: [{ message: { content: "{}" } }] }),
     });
     const config = {
-      scope: "llm_test" as const, maxInputTokens: 100, maxOutputTokens: 50,
+      scope: "llm_explain" as const, maxInputTokens: 100, maxOutputTokens: 50,
       unknownCostConfirmed: true, fetchImpl: server.fetch,
     };
     await createLlmClient(PROVIDER_ID, { ...config, kind: "manual" }).send({ ...REQUEST, model });

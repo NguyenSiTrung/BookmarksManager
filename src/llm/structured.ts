@@ -1,5 +1,7 @@
 import type { StructuredOutputTier } from "../schemas/llm";
-import { z } from "../schemas/z";
+import type { z } from "../schemas/z";
+import { extractBoundedJson, jsonSchemaOf, tierSystemPrompt, truncateForEcho,
+  repairInstruction, schemaValidationDetail, MAX_OUTPUT_CHARS, MAX_REPAIRS } from "./prompt-contracts";
 import {
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -8,6 +10,8 @@ import {
   parseUsage,
   type TokenUsage,
 } from "./wire";
+
+export { extractBoundedJson } from "./prompt-contracts";
 
 /**
  * Structured-output engine (spec FR4). Orchestrates a chat-completion request
@@ -85,68 +89,11 @@ export interface RunStructuredParams<T> {
   send: (request: ChatCompletionRequest) => Promise<unknown>;
 }
 
-/** Hard cap on provider output accepted for JSON extraction (64 KiB). */
-const MAX_OUTPUT_CHARS = 64 * 1024;
-/** Cap on echoed bad output appended to a repair transcript (4 KiB). */
-const MAX_REPAIR_ECHO_CHARS = 4 * 1024;
-const MAX_REPAIRS = 2;
 const TIER_ORDER: readonly StructuredOutputTier[] = [
   "json_schema",
   "json_object",
   "prompt_only",
 ];
-
-const FENCED_JSON = /^```[a-zA-Z]*\r?\n([\s\S]*?)\s*```\s*$/;
-
-/**
- * Bounded JSON extraction: accepts the whole trimmed body as JSON, or a
- * single fenced code block spanning the whole body. Anything else —
- * embedded JSON amid prose, trailing prose, oversized output — returns null.
- */
-export function extractBoundedJson(
-  content: string,
-  maxLength: number = MAX_OUTPUT_CHARS,
-): unknown {
-  if (content.length > maxLength) {
-    return null;
-  }
-  const trimmed = content.trim();
-  const fenced = FENCED_JSON.exec(trimmed);
-  const candidate = fenced !== null ? (fenced[1] ?? "") : trimmed;
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    return null;
-  }
-}
-
-function jsonSchemaOf(schema: z.ZodType<unknown>): Record<string, unknown> {
-  // Draft-7 is the subset OpenAI-compatible providers document for
-  // `response_format: json_schema`.
-  return z.toJSONSchema(schema, { target: "draft-7" }) as Record<
-    string,
-    unknown
-  >;
-}
-
-function tierSystemPrompt(
-  tier: StructuredOutputTier,
-  jsonSchema: Record<string, unknown>,
-): string | null {
-  if (tier === "json_schema") {
-    return null;
-  }
-  const schemaBlock =
-    "Respond with a JSON value that validates against this JSON Schema:\n" +
-    JSON.stringify(jsonSchema);
-  if (tier === "json_object") {
-    return schemaBlock;
-  }
-  return (
-    schemaBlock +
-    "\nReply with only the JSON value — optionally inside a single fenced code block; no other prose."
-  );
-}
 
 /** Merge our tier instruction into a leading system message, else unshift. */
 function augmentMessages(
@@ -190,19 +137,6 @@ function buildRequest(
     request.response_format = { type: "json_object" };
   }
   return ChatCompletionRequest.parse(request);
-}
-
-function truncateForEcho(content: string): string {
-  return content.length > MAX_REPAIR_ECHO_CHARS
-    ? `${content.slice(0, MAX_REPAIR_ECHO_CHARS)}…`
-    : content;
-}
-
-function repairInstruction(reason: string): string {
-  return (
-    `Your previous response was rejected (${reason}). ` +
-    "Reply with only a corrected JSON value matching the required schema."
-  );
 }
 
 interface TierOutcome<T> {
@@ -275,12 +209,8 @@ async function attemptTier<T>(
           },
         };
       }
-      const firstIssue = parsed.error.issues[0];
       lastReason = "schema_validation";
-      lastDetail =
-        firstIssue !== undefined
-          ? `model output failed schema validation (${firstIssue.path.join(".") || "root"}: ${firstIssue.code})`
-          : "model output failed schema validation";
+      lastDetail = schemaValidationDetail(parsed.error.issues[0]);
     }
 
     if (attempt === MAX_REPAIRS) {

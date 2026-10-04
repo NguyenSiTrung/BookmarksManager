@@ -7,7 +7,7 @@
       "task_index": 1,
       "beads_task": "BookmarksManager-3op.1.2",
       "worker_id": "0012e074-1313-4331-b10f-21b272981ca8",
-      "status": "awaiting_review_integration",
+      "status": "completed",
       "brief": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task2-brief.md",
       "report": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task2-report.md"
     },
@@ -57,6 +57,6 @@
     "tests/unit/llm-summarize.test.ts": "task7",
     "tests/unit/summary-messages.test.ts": "task7"
   },
-  "completed_workers": 1,
+  "completed_workers": 2,
   "total_workers": 3
 }

@@ -258,3 +258,30 @@ claim that any audit finding has been fixed or reproduced.
   tree, leaving working files untouched. Its five relevant test files passed
   **263/263**, including original pre-P03 blocklist controls. This validates
   the standalone commit, not just the combined working-tree gate.
+- **P08 local commit:** `eea1971`, with Git note; mapped Bead closed.
+
+## 2026-10-04 — Phase 1 task 2: P03
+
+- Closed per-scope user payloads, exact canonical system/output schemas,
+  current URL/domain policy and closed Jev question variants now enforce
+  admission independently of feature callers. Jev verification consent is
+  not an LLM entitlement. Synthetic connection probes remain synthetic.
+- Canonical pure prompt contracts avoid producer/gate drift and dependency
+  cycles. Real clients get ephemeral original-input-bound sessions; only a
+  reader bound to the fetched response may authorize the next provider echo.
+  Forged/borrowed/mutated/free-form repairs refuse; actual bounded fallback/
+  repairs remain compatible. Concurrent sends cannot rebind one session.
+- Production `fetchImpl` interfaces/runtime forwarding were removed. Test-only
+  global transport installers retain meaningful concurrent budget/send tests.
+  Otherwise-sendable blocklist controls use actual scope requests, not
+  malformed chat fixtures.
+- Baseline replay of final payload suite against original gates/client:
+  **77 failed / 16 controls passed**. Final worker slice **526 tests / 14
+  files passed**, plus scoped lint/typecheck. Fresh combined full gate and
+  independent review evidence above applies to the unchanged implementation.
+- Shared producer callback additions remain unstaged for the separate P04
+  commit. P03 includes only their canonical contract imports, with limits
+  already committed under P08. No source working files were reverted.
+- Exact staged P03 snapshot passed typecheck and **529 tests / 14 files**,
+  including the three newly added late-Jev regressions. This independently
+  validates the contract-only producer stage without P04 callback additions.

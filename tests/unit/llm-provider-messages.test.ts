@@ -21,7 +21,7 @@ import {
   saveCredential,
 } from "../../src/security/credentials";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
-import { createLlmClient } from "../../src/llm/client";
+import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
 import type { BudgetReservation } from "../../src/llm/budget";
 import { settleLlmUsage } from "../../src/net/llm-send";
 import { deleteAllExtensionData } from "../../src/security/delete-all";
@@ -135,10 +135,7 @@ function heldCompletion() {
     maxOutputTokens: 50,
     fetchImpl,
   });
-  const request = {
-    model: MODEL,
-    messages: [{ role: "user", content: "Synthetic connectivity fixture" }],
-  };
+  const request = scopeRequest("llm_explain", MODEL);
   return { client, request, fetchImpl, invoked: invoked.promise, response };
 }
 
@@ -940,7 +937,12 @@ describe("LLM_REVOKE", () => {
       snapshot: { reservedUsd: 0.0004, requestCount: 0 },
     });
     await grantConsentAtOrigin("llm_explain", ORIGIN);
-    await expect(held.client.send({ ...held.request, model: "gpt-4o" })).rejects.toMatchObject({ code: "budget_exceeded" });
+    // A new configuration starts a new input-bound client operation; retain
+    // the original held send and shared dispatcher so budget concurrency stays real.
+    const nextClient = createLlmClient(PROVIDER_ID, {
+      scope: "llm_explain", kind: "manual", maxInputTokens: 100, maxOutputTokens: 50,
+    });
+    await expect(nextClient.send({ ...held.request, model: "gpt-4o" })).rejects.toMatchObject({ code: "budget_exceeded" });
     expect(held.fetchImpl).toHaveBeenCalledTimes(1);
     held.response.resolve(completionResponse());
     await inFlight;

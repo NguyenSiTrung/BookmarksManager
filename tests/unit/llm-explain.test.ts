@@ -145,11 +145,15 @@ describe("explainDecision", () => {
       await expect(
         explainDecision(UUID, PROVIDER_ID),
         `${failure} / ${change}`,
-      ).rejects.toMatchObject({ code: "stale" });
+      ).rejects.toMatchObject({ code: change === "blocklist" ? "request_not_allowed" : "stale" });
       expect(server.requests, `${failure} / ${change}`).toHaveLength(1);
       expect((await getDecision(UUID))?.rationale, `${failure} / ${change}`).toBeUndefined();
       const reservations = await db.llmReservations.toArray();
-      expect(reservations.map((row) => row.status).sort(), `${failure} / ${change}`).toEqual(["released", "settled"]);
+      // The independent gate now refuses newly blocked captured input before
+      // reserving again; live-node-only staleness still releases a never-sent reservation.
+      expect(reservations.map((row) => row.status).sort(), `${failure} / ${change}`).toEqual(
+        change === "blocklist" ? ["settled"] : ["released", "settled"],
+      );
       const usage = await db.llmUsage.toArray();
       expect(usage, `${failure} / ${change}`).toHaveLength(1);
       expect(usage[0], `${failure} / ${change}`).toMatchObject({

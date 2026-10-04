@@ -26,6 +26,7 @@ import { saveProviderKey } from "../../src/security/keys";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import { decisionBase } from "../fixtures/base-records";
 import { makeOpenAiServer } from "../mock-servers/openai";
+import { scopeRequest, TEST_LLM_SCOPES } from "../fakes/llm";
 
 // Real services, provider stores, credentials, consent, gates and persistence;
 // only Chrome, IndexedDB and the external provider transport are synthetic.
@@ -244,11 +245,10 @@ const surfaces: Surface[] = [
     }),
     refusal: { name: "NetworkGateError", code: "request_not_allowed" }, allowed: { status: 200 },
   },
-  ...LLM_CONSENT_SCOPES.map((scope): Surface => ({
+  ...TEST_LLM_SCOPES.map((scope): Surface => ({
     name: `independent ${scope} gate without feature admission`,
     run: () => sendLlmConsented({
-      providerId: LLM_ID, scope, request: { model: "gpt-4o-mini",
-        messages: [{ role: "user", content: "Synthetic input." }] },
+      providerId: LLM_ID, scope, request: scopeRequest(scope, "gpt-4o-mini"),
       maxInputTokens: 100, maxOutputTokens: 50, kind: "manual",
     }),
     refusal: { name: "LlmGateError", code: "request_not_allowed" },

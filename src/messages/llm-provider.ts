@@ -1,3 +1,4 @@
+import { pingRequest } from "../llm/prompt-contracts";
 import {
   grantConsentAtOrigin,
   hasConsentAtOrigin,
@@ -21,7 +22,6 @@ import {
 import { LlmCapabilityError } from "../llm/structured";
 import {
   ChatCompletionResponse,
-  type ChatCompletionRequest,
 } from "../llm/wire";
 import {
   BudgetChoice,
@@ -523,48 +523,6 @@ async function configureProvider(message: {
     );
   }
   return { ok: true, status: await readStatus(record.providerId) };
-}
-
-/**
- * The synthetic connectivity-check request. Bounded output (`max_tokens`
- * 16), temperature 0, and a fixed prompt — no user data, no bookmark
- * content, nothing derived from the library.
- */
-function pingRequest(
-  model: string,
-  tier: StructuredOutputTier,
-): ChatCompletionRequest {
-  const request: ChatCompletionRequest = {
-    model,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a connectivity check for a browser extension. Reply with the JSON object {\"ok\":true} and nothing else.",
-      },
-      { role: "user", content: "ping" },
-    ],
-    max_tokens: 16,
-    temperature: 0,
-  };
-  if (tier === "json_schema") {
-    request.response_format = {
-      type: "json_schema",
-      json_schema: {
-        name: "connectivity_check",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: { ok: { type: "boolean" } },
-          required: ["ok"],
-          additionalProperties: false,
-        },
-      },
-    };
-  } else if (tier === "json_object") {
-    request.response_format = { type: "json_object" };
-  }
-  return request;
 }
 
 const TIER_PROBE_ORDER = [

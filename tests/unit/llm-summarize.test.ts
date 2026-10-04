@@ -556,13 +556,18 @@ describe("summarizeActiveBookmark", () => {
       });
       const jevTransport = jevTransportFor("supported");
       expect(await run(jevTransport)).toMatchObject({
-        ok: false, stage: "summarize", code: "unsendable",
+        ok: false, stage: "summarize",
+        // P03's independent current-policy guard refuses a newly blocked
+        // payload before feature admission or a second reservation.
+        code: change === "blocklist" ? "request_not_allowed" : "unsendable",
       });
       expect(server.requests).toHaveLength(1);
       expect(jevTransport).not.toHaveBeenCalled();
       expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
       const reservations = await db.llmReservations.toArray();
-      expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
+      expect(reservations.map((row) => row.status).sort()).toEqual(
+        change === "blocklist" ? ["settled"] : ["released", "settled"],
+      );
       const usage = await db.llmUsage.toArray();
       expect(usage).toHaveLength(1);
       expect(usage[0]).toMatchObject({
