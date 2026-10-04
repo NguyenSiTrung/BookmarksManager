@@ -12,7 +12,7 @@ import { InfoIcon } from "../../ui/components/icons";
  * Jev save suggestions for the quick-save form (spec FR10).
  *
  * This is the read/render half of the flow. `App` owns the write half: once
- * the form is prefilled it sends one `SAVE_SUGGEST` message (consent-gated,
+ * the user focuses Tags or presses Suggest it sends one `SAVE_SUGGEST` message (consent-gated,
  * best-effort) under a synthetic `popup:<uuid>` bookmark id and tracks the
  * reply's outcome as {@link SuggestionStatus}. The reply itself carries only
  * counts — the suggestions arrive asynchronously as `db.decisions` rows whose

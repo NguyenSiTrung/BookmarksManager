@@ -134,3 +134,29 @@ claim that any audit finding has been fixed or reproduced.
   Classify descendant admission before applying synopsis path caps. Preserve
   unrelated empty folders and walk structural roots even in an all-blocked
   library, so privacy filtering does not incidentally erase harmless paths.
+- **Local commit:** `03a655a` (with Git note); `BookmarksManager-3op.1.1` closed.
+
+## 2026-10-04 — Phase 1 task 5: P05
+
+- **Implemented:** Popup suggestions require Tags input focus or the Suggest
+  button. Opening with current consent sends no request. The request stays
+  one-shot, reads the latest form values, and does not tear down on edits.
+  The popup explains the trigger; existing consent/refusal/blocklist behavior,
+  independent popup correlation and user-controlled save remain intact.
+- **Files:** `src/entrypoints/popup/{App,Suggestions}.tsx`,
+  `tests/components/popup-suggestions.test.tsx`,
+  `tests/e2e/decisions.spec.ts`.
+- **RED:** Three regressions failed before runtime edits: consented open sent
+  automatically, pre-trigger edits could not remain unsent, and Suggest did
+  not exist. Focus/refocus and repeated button activation are bounded to one
+  request; a no-consent test now explicitly focuses Tags to exercise refusal.
+- **GREEN:** `taskset -c 2 npm run test -- --run --maxWorkers=1
+  tests/components/popup-suggestions.test.tsx
+  tests/components/popup-save.test.tsx` passed 43 tests across two files.
+  The full gate recorded under task 1 passed over the same unchanged runtime
+  diff: 2564 unit/component tests and 43 browser tests, one intentional
+  screenshot skip. The real-wire popup test observed zero requests and log
+  rows after opening, then exactly one minimized send after Tags focus.
+- **Learnings:** Keep user intent in the effect dependencies, but keep editable
+  payload values in the latest-input ref. Changing form fields must not
+  cancel an in-flight one-shot request or silently request another.

@@ -101,7 +101,8 @@ import { TagField } from "./TagField";
  * Dexie connection, so the popup cannot block the database drop.
  *
  * Jev save suggestions (FR10) ride on top of the same form without ever
- * blocking it: once the prefill settles, one `SAVE_SUGGEST` message goes out
+ * blocking it: after the user focuses Tags or presses Suggest, one
+ * `SAVE_SUGGEST` message goes out
  * under a synthetic `popup:<uuid>` bookmark id — but only when some provider
  * already holds a `jev_decisions` consent grant (a cheap local check; the
  * worker refuses `ok:false` anyway, which reads the same in the UI). The
@@ -223,6 +224,7 @@ export function App() {
   /** Outcome of the suggestion request, for `<Suggestions>`' quiet notes. */
   const [suggestionStatus, setSuggestionStatus] =
     useState<SuggestionStatus>("idle");
+  const [suggestionRequested, setSuggestionRequested] = useState(false);
   /** Single-shot guard: SAVE_SUGGEST goes out exactly once per popup open. */
   const suggestAttemptedRef = useRef(false);
   /**
@@ -298,19 +300,19 @@ export function App() {
   }, [ready]);
 
   // --- Jev save suggestions (FR10): fire-and-forget -------------------------
-  // Exactly once per popup open, off the render path. A refusal at any step —
+  // Exactly once after an explicit user action, off the render path. A refusal at any step —
   // no consent grant, an absent runtime surface, a rejection, a malformed or
   // `ok:false` reply — collapses to "unavailable" and the UI simply renders
   // nothing; the form is never gated on this. `sent:false` with the
   // "blocklisted" reason is the one outcome with a visible note. The reply
   // carries counts only; suggested values arrive as `db.decisions` rows.
   //
-  // Deps are `[ready, suggestId]` only — `suggestId` is stable per mount, and
+  // `suggestId` is stable per mount, and the request flag only changes once.
   // `title`/`url`/`folderId` are read at send time from `latestInputRef`. The
   // effect must NOT re-run on edits: its cleanup would cancel an in-flight
   // request and drop the reply, defeating the `suggestAttemptedRef` one-shot.
   useEffect(() => {
-    if (!ready || suggestAttemptedRef.current) return;
+    if (!ready || !suggestionRequested || suggestAttemptedRef.current) return;
     suggestAttemptedRef.current = true;
     let cancelled = false;
     void (async () => {
@@ -377,7 +379,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [ready, suggestId]);
+  }, [ready, suggestId, suggestionRequested]);
 
   const search = useSearchIndex(tree, metas, tagDefs);
 
@@ -712,14 +714,39 @@ export function App() {
               </div>
 
               <div className="space-y-2">
-                <TagField
-                  chips={chips}
-                  input={tagInput}
-                  disabled={saved}
-                  onInputChange={setTagInput}
-                  onCommit={addChip}
-                  onRemove={removeChip}
-                />
+                <div
+                  onFocus={(event) => {
+                    if (event.target instanceof HTMLInputElement) {
+                      setSuggestionRequested(true);
+                    }
+                  }}
+                >
+                  <TagField
+                    chips={chips}
+                    input={tagInput}
+                    disabled={saved}
+                    onInputChange={setTagInput}
+                    onCommit={addChip}
+                    onRemove={removeChip}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <p
+                    id="popup-suggest-note"
+                    className="flex-1 text-xs text-muted-foreground"
+                  >
+                    AI suggestions start only when you focus Tags or press Suggest.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={suggestionRequested}
+                    aria-describedby="popup-suggest-note"
+                    onClick={() => setSuggestionRequested(true)}
+                    className={cn(ghostButton, "disabled:opacity-50")}
+                  >
+                    Suggest
+                  </button>
+                </div>
                 <Suggestions
                   bookmarkId={suggestId}
                   status={suggestionStatus}

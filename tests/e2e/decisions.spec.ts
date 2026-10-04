@@ -40,7 +40,7 @@ import {
  *     refused, consent UI armed, sentLog and every outbound request empty);
  *  2. Analyze → Review → Approve → Undo over the real queue, with the
  *     blocklist and URL cleaning proven on the wire;
- *  3. the quick-save popup's one-shot SAVE_SUGGEST (prefill → suggestions →
+ *  3. the quick-save popup's one-shot SAVE_SUGGEST (explicit Tags focus → suggestions →
  *     folder preselect → chips → minimized egress);
  *  4. Ask rerank (query on the wire as `DecisionState.query`, ranked order,
  *     no-match bar, Ask-off sends nothing);
@@ -235,7 +235,7 @@ test("Analyze queues reviewable suggestions; Approve applies, Undo reverts", asy
   ext.dispose();
 });
 
-test("quick-save popup: prefill drives one minimized SAVE_SUGGEST", async () => {
+test("quick-save popup: Tags focus drives one minimized SAVE_SUGGEST, never open", async () => {
   test.setTimeout(120_000);
   // `tabs` on the patched copy only: production prefills via `activeTab`,
   // which Playwright cannot grant. Everything after the prefill runs
@@ -280,7 +280,13 @@ test("quick-save popup: prefill drives one minimized SAVE_SUGGEST", async () => 
     "https://suggest.guidesite.dev/tokio/guide?utm_source=e2e",
   );
 
-  // The one-shot SAVE_SUGGEST at ready: a category chip and the ≥0.7 folder
+  // Opening with consent already granted sends nothing at the real wire.
+  await popup.waitForLoadState("networkidle");
+  expect(route.requests).toHaveLength(0);
+  expect(await sentLogRows(popup)).toHaveLength(0);
+  await popup.getByLabel("New tag name").focus();
+
+  // The explicit action starts one SAVE_SUGGEST: a category chip and the ≥0.7 folder
   // preselect land in the form.
   const categoryChip = popup.getByRole("button", {
     name: "Set category to Docs",

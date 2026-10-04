@@ -32,7 +32,7 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 /**
  * Phase 4 Task 2 — popup save suggestions (spec FR10).
  *
- * The popup fires one `SAVE_SUGGEST` message once the form is prefilled and a
+ * The popup fires one `SAVE_SUGGEST` message after an explicit action and a
  * `jev_decisions` consent grant exists. The reply carries only counts — the
  * actual folder/tag/category suggestions arrive as persisted `db.decisions`
  * rows keyed by a synthetic `popup:<uuid>` bookmark id, which the suggestion
@@ -141,6 +141,7 @@ function sentBookmark(): SentBookmark {
 
 /** Wait until the popup has dispatched SAVE_SUGGEST; returns its bookmark. */
 async function waitForSuggestRequest(): Promise<SentBookmark> {
+  fireEvent.focus(screen.getByLabelText("New tag name"));
   await waitFor(() => expect(sendMessage).toHaveBeenCalled());
   return sentBookmark();
 }
@@ -233,11 +234,53 @@ async function seedPopupBacklog(count: number): Promise<void> {
 }
 
 describe("PopupApp — save suggestions", () => {
+  it("sends nothing on open even with current decisions consent", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+    await act(async () => {
+      await db.consents.toArray();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends once after Tags focus, using the current form rather than the prefill", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+    await act(async () => {
+      await db.consents.toArray();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Edited before suggesting" },
+    });
+    fireEvent.focus(screen.getByLabelText("New tag name"));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sentBookmark().title).toBe("Edited before suggesting");
+    fireEvent.blur(screen.getByLabelText("New tag name"));
+    fireEvent.focus(screen.getByLabelText("New tag name"));
+    await act(async () => { await db.consents.toArray(); });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends once when Suggest is pressed, even with repeated activation and Tags focus", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+    const suggest = screen.getByRole("button", { name: "Suggest" });
+    fireEvent.click(suggest);
+    fireEvent.click(suggest);
+    fireEvent.focus(screen.getByLabelText("New tag name"));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sentBookmark().id).toMatch(/^popup:/);
+  });
+
   it("keeps the save form fully interactive while the suggestion request is in flight", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     // The worker never answers — the form must still work end to end.
     sendMessage.mockImplementation(() => new Promise(() => {}));
     await renderPopup();
+    fireEvent.focus(screen.getByLabelText("New tag name"));
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
 
     fireEvent.change(screen.getByLabelText("Title"), {
@@ -489,6 +532,7 @@ describe("PopupApp — save suggestions", () => {
   it("does not send SAVE_SUGGEST without a jev_decisions consent grant", async () => {
     // No grantConsent call — the cheap local gate skips the request.
     await renderPopup();
+    fireEvent.focus(screen.getByLabelText("New tag name"));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
@@ -505,6 +549,7 @@ describe("PopupApp — save suggestions", () => {
       result: { sent: false, reason: "blocklisted", decisionCount: 0 },
     });
     await renderPopup();
+    fireEvent.focus(screen.getByLabelText("New tag name"));
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
 
     const note = await screen.findByTestId("suggestions-not-sent");
@@ -524,6 +569,7 @@ describe("PopupApp — save suggestions", () => {
       message: "No provider is enabled for decisions.",
     });
     await renderPopup();
+    fireEvent.focus(screen.getByLabelText("New tag name"));
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -543,6 +589,7 @@ describe("PopupApp — save suggestions", () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     sendMessage.mockRejectedValue(new Error("Could not establish connection"));
     await renderPopup();
+    fireEvent.focus(screen.getByLabelText("New tag name"));
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -555,6 +602,10 @@ describe("PopupApp — save suggestions", () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     render(<PopupApp />);
     render(<PopupApp />);
+    await waitFor(() => expect(screen.getAllByLabelText("New tag name")).toHaveLength(2));
+    for (const input of screen.getAllByLabelText("New tag name")) {
+      fireEvent.focus(input);
+    }
     await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
 
     const firstId = (
