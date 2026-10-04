@@ -95,3 +95,15 @@
   approved Conductor plan uses task checkbox lines. Continue using the
   existing track-specific ignored workspace and manually extracted briefs,
   preserving the approved plan format.
+
+## Revision 8 — 2026-10-04 — P07 shared-test alignment
+
+- **Trigger:** Two existing Jev split-draining regressions wait for one
+  sent-log row after two fetches have already started. Dispatch-time logging
+  now correctly writes two rows before either response settles.
+- **Change:** Task 3 also owns the narrow interim-wait adaptation in
+  `tests/unit/jev-client.test.ts`. Wait for the first row's final `http_401`
+  outcome instead of the old response-time row count; retain final two-row
+  accounting and the original owner-drain/Resume assertions.
+- **Reason:** Test the same completed-attempt boundary without hiding a
+  dispatched sibling. No Jev production behavior or source ownership change.

@@ -285,6 +285,149 @@ describe("sendLlmConsented happy path", () => {
     expect(fetch.requests).toHaveLength(0);
     expect((await db.llmReservations.toArray())[0]?.status).toBe("released");
     expect(await db.llmUsage.count()).toBe(0);
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("records both a retried 503 and the successful attempt as metadata only", async () => {
+    const server = makeOpenAiServer({ failures: [{ status: 503 }] });
+    const { response } = await send({}, { fetchImpl: server.fetch }).result;
+    expect(response.status).toBe(200);
+    expect(server.requests).toHaveLength(2);
+    const rows = await db.sentLog.orderBy(":id").toArray();
+    expect(rows).toHaveLength(2);
+    expect(rows).toMatchObject([
+      { destination: ORIGIN, feature: "llm_explain", sentAt: NOW.toISOString(), outcome: "retried" },
+      { destination: ORIGIN, feature: "llm_explain", sentAt: NOW.toISOString(), outcome: "ok" },
+    ]);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(["destination", "feature", "fieldNames", "id", "outcome", "sentAt"]);
+      expect(row.fieldNames.sort()).toEqual(["max_tokens", "messages", "model"]);
+    }
+    expect(JSON.stringify(rows)).not.toMatch(/Synthetic article|allowed-site|sk-test|temporarily/);
+  });
+
+  it("records an opaque redirect without retrying and settles sent exposure", async () => {
+    const fetchImpl: typeof fetch = async () => ({ type: "opaqueredirect", status: 0 }) as Response;
+    await expectGateBlock(send({}, { fetchImpl }).result, "transport");
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "redirect" }]);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it("refuses signals aborted before dispatch with no attempt row and releases never-sent exposure", async () => {
+    for (const when of ["before gate", "during final admission"] as const) {
+      await db.llmReservations.clear();
+      const controller = new AbortController();
+      if (when === "before gate") controller.abort();
+      const { result, fetch } = send({}, {
+        signal: controller.signal,
+        beforeSend: async () => { controller.abort(); },
+      });
+      await expectGateBlock(result, "timeout");
+      expect(fetch.requests).toHaveLength(0);
+      expect(await db.sentLog.count()).toBe(0);
+      expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["released"]);
+      expect(await db.llmUsage.count()).toBe(0);
+    }
+  });
+
+  it("records dispatch time rather than delayed response time", async () => {
+    let time = NOW;
+    const server = makeOpenAiServer();
+    const fetchImpl: typeof fetch = async (...args) => {
+      time = new Date("2026-09-15T12:01:00.000Z");
+      return server.fetch(...args);
+    };
+    await send({}, { now: () => time, fetchImpl }).result;
+    expect(await db.sentLog.toArray()).toMatchObject([{ sentAt: "2026-09-15T12:00:00.000Z", outcome: "ok" }]);
+  });
+
+  it("records a rejected redirect as one transport attempt without inspecting error text", async () => {
+    const server = makeOpenAiServer({ failures: [{ throw: new TypeError("redirect refused: private destination") }] });
+    await expectGateBlock(send({}, { fetchImpl: server.fetch, retries: 0 }).result, "transport");
+    expect(server.requests).toHaveLength(1);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "transport" }]);
+    expect(JSON.stringify(await db.sentLog.toArray())).not.toContain("private destination");
+  });
+
+  it("audits a native deadline as timeout without changing the existing error classification", async () => {
+    const fetchImpl: typeof fetch = (_url, init) => new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => { reject(init!.signal!.reason); }, { once: true });
+    });
+    // Phase 2 owns the current TimeoutError-vs-AbortError result/retry policy.
+    await expectGateBlock(send({}, { fetchImpl, timeoutMs: 5, retries: 0 }).result, "transport");
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
+  });
+
+  it("synchronous audit write failures cannot suppress success or strand its reservation", async () => {
+    vi.spyOn(db.sentLog, "add").mockImplementation(() => { throw new Error("private sync storage failure"); });
+    const { response, reservation } = await send().result;
+    expect(response.status).toBe(200);
+    expect((await db.llmReservations.get(reservation.id))?.status).toBe("active");
+    expect(await db.llmUsage.count()).toBe(0);
+  });
+
+  it("persists unknown dispatch metadata while transport is pending", async () => {
+    let complete!: (response: Response) => void;
+    const fetchImpl: typeof fetch = () => new Promise<Response>((resolve) => { complete = resolve; });
+    const { result } = send({}, { fetchImpl });
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    const [row] = await db.sentLog.toArray();
+    expect(row).toMatchObject({ destination: ORIGIN, feature: "llm_explain" });
+    expect(row).not.toHaveProperty("outcome");
+    complete(new Response("{}", { status: 200 }));
+    await result;
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "ok" }]);
+  });
+
+  it("does not await audit IO after final feature admission", async () => {
+    const original = db.sentLog.add.bind(db.sentLog);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(db.sentLog, "add").mockImplementation((...args) => original(...args).then(async (id) => {
+      await held;
+      return id;
+    }));
+    let admitted = false;
+    let dispatched = false;
+    const { result } = send({}, {
+      beforeSend: async () => {
+        admitted = true;
+        queueMicrotask(() => { queueMicrotask(() => { admitted = false; }); });
+      },
+      fetchImpl: async () => {
+        expect(admitted).toBe(true);
+        dispatched = true;
+        release();
+        return new Response("{}", { status: 200 });
+      },
+    });
+    await vi.waitFor(() => expect(dispatched).toBe(true));
+    await result;
+  });
+
+  it("failed append or outcome update cannot change results or reservation disposition", async () => {
+    for (const operation of ["add", "update"] as const) {
+      for (const outcome of ["ok", "http", "timeout", "transport", "retry"] as const) {
+        vi.restoreAllMocks();
+        await db.llmReservations.clear();
+        await db.llmUsage.clear();
+        await db.sentLog.clear();
+        vi.spyOn(db.sentLog, operation).mockRejectedValue(new Error("private log failure"));
+        const server = makeOpenAiServer({ failures: outcome === "ok" ? [] : [
+          outcome === "http" || outcome === "retry" ? { status: outcome === "http" ? 400 : 503 } :
+            { throw: outcome === "timeout" ? new DOMException("private abort", "AbortError") : new TypeError("private reset") },
+        ] });
+        const { result } = send({}, { fetchImpl: server.fetch, retries: outcome === "retry" ? 1 : 0 });
+        if (outcome === "timeout" || outcome === "transport") await expectGateBlock(result, outcome);
+        else expect((await result).response.status).toBe(outcome === "http" ? 400 : 200);
+        const statuses = (await db.llmReservations.toArray()).map((row) => row.status).sort();
+        expect(statuses).toEqual(outcome === "retry" ? ["active", "settled"] :
+          outcome === "timeout" || outcome === "transport" ? ["settled"] : ["active"]);
+        expect(await db.llmUsage.count()).toBe(outcome === "retry" || outcome === "timeout" || outcome === "transport" ? 1 : 0);
+      }
+    }
   });
 
   it("charges prior exposure before budget admission can allow a retry", async () => {
@@ -742,7 +885,7 @@ describe("sendLlmConsented happy path", () => {
     );
     expect(response.status).toBe(200);
     expect(server.requests).toHaveLength(2);
-    expect(await db.sentLog.count()).toBe(1);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "retried" }, { outcome: "ok" }]);
   });
 
   it("honors retry-after on 429 then succeeds", async () => {
@@ -779,6 +922,7 @@ describe("sendLlmConsented happy path", () => {
     );
     expect(response.status).toBe(400);
     expect(server.requests).toHaveLength(1);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "http_400" }]);
   });
 
   it("accounts sent exposure and throws timeout on abort", async () => {
@@ -815,7 +959,7 @@ describe("sendLlmConsented happy path", () => {
       inputTokens: 100, outputTokens: 50,
       estimatedCostUsd: expect.closeTo(0.000045, 12),
     }]);
-    expect(await db.sentLog.count()).toBe(0);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
   });
 
   it("accounts missing usage for every exhausted transport attempt", async () => {
@@ -833,6 +977,7 @@ describe("sendLlmConsented happy path", () => {
       });
     }
     expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "retried" }, { outcome: "transport" }]);
   });
 
   it("uses api-key auth for custom providers and hits the custom origin", async () => {

@@ -290,7 +290,8 @@ describe("real-gate attempt admission and rejected split draining", () => {
     await bothEntered.promise;
     await pauseJob(job.id);
     fail.release();
-    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    await vi.waitFor(async () =>
+      expect((await db.sentLog.orderBy(":id").toArray())[0]?.outcome).toBe("http_401"));
     const resuming = resumeJob(job.id);
     try {
       expect(coordinateJob(job.id, async () => {})).toBe(owner);

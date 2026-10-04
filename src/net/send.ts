@@ -9,7 +9,7 @@ import { DecisionState } from "../schemas/decision-state";
 import { LOOPBACK_HOSTS } from "../schemas/llm";
 import { SummaryVerificationState } from "../schemas/summary-verification";
 import { readProviderKey } from "../security/keys";
-import { appendSentLog } from "./sent-log";
+import { beginSentLog } from "./sent-log";
 
 // Wire schemas elsewhere accept provider extensions. Egress must reject
 // unknown fields, not silently strip them before sending.
@@ -319,12 +319,12 @@ function isAbortError(cause: unknown): boolean {
  * `Authorization: Bearer <key>` plus `Content-Type: application/json`.
  *
  * `options.signal` is forwarded to `fetch`; an aborted (or pre-aborted) send
- * maps to `timeout` and writes no log row. Resolves with the raw `Response`
+ * maps to `timeout`; only a pre-dispatch abort writes no log row. Resolves with the raw `Response`
  * for any HTTP status; throws `NetworkGateError` for every pre-flight
  * refusal and transport failure, and propagates `ProviderKeyError` (already
  * redacted) as-is. A `sentLog` audit row — time, origin, feature, and
- * top-level field names only — is appended after `fetch` resolves; a
- * rejected or aborted fetch logs nothing.
+ * top-level field names plus a safe outcome — starts at each dispatch,
+ * including rejected/aborted transport. Audit failures never change the result.
  */
 export async function sendConsented(
   scope: string,
@@ -400,6 +400,7 @@ export async function sendConsented(
     );
   }
 
+  const body = JSON.stringify(parsed.data);
   // Caller authority is additive to every existing gate above, and checked
   // after their asynchronous preflight. Keep refusals outside fetch's catch:
   // they are not transport failures and must not become retryable.
@@ -412,6 +413,14 @@ export async function sendConsented(
     );
   }
 
+  // Initiate metadata IO without awaiting: final admission → fetch must not
+  // acquire a new asynchronous privacy race boundary.
+  const finishLog = beginSentLog({
+    sentAt: new Date().toISOString(),
+    destination: destination.origin,
+    feature: scopeEntry.scope,
+    fieldNames: Object.keys(parsed.data),
+  });
   let response: Response;
   try {
     response = await fetch(destination.url, {
@@ -423,15 +432,19 @@ export async function sendConsented(
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(parsed.data),
+      body,
     });
   } catch (cause) {
     if (isAbortError(cause)) {
+      await finishLog("timeout");
       throw new NetworkGateError(
         "timeout",
         `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted.`,
       );
     }
+    // Native deadline signals may reject with TimeoutError; audit the signal
+    // without changing the existing public error/retry policy.
+    await finishLog(signal?.aborted ? "timeout" : "transport");
     throw new NetworkGateError(
       "transport",
       `Outbound ${scopeEntry.scope} request for provider "${providerId}" failed in transport.`,
@@ -439,23 +452,15 @@ export async function sendConsented(
     );
   }
 
-  // The request left the extension — record the audit row before inspecting
-  // the response. Only metadata is stored: never bodies, headers, or keys.
-  // `appendSentLog` also enforces the retention cap (see `./sent-log.ts`).
-  await appendSentLog({
-    sentAt: new Date().toISOString(),
-    destination: destination.origin,
-    feature: scopeEntry.scope,
-    fieldNames: Object.keys(parsed.data),
-  });
-
   if (response.type === "opaqueredirect") {
+    await finishLog("redirect");
     throw new NetworkGateError(
       "transport",
       `Outbound ${scopeEntry.scope} request for provider "${providerId}" answered with an opaque redirect.`,
     );
   }
 
+  await finishLog(response.ok ? "ok" : `http_${response.status}`);
   return response;
 }
 

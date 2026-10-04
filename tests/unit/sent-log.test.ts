@@ -1,13 +1,15 @@
 import "fake-indexeddb/auto";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db, type SentLogEntry } from "../../src/db/database";
 import {
   appendSentLog,
+  beginSentLog,
   clearSentLog,
   SENT_LOG_RETENTION_CAP,
 } from "../../src/net/sent-log";
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   if (!db.isOpen()) await db.open();
   await db.sentLog.clear();
 });
@@ -52,6 +54,16 @@ async function appendMany(count: number): Promise<void> {
 }
 
 describe("appendSentLog", () => {
+  it("keeps safe outcomes but drops arbitrary runtime outcome text", async () => {
+    for (const outcome of ["ok", "retried", "timeout", "redirect", "transport", "http_503"]) {
+      await appendSentLog({ ...entry(), outcome } as Omit<SentLogEntry, "id">);
+    }
+    await appendSentLog({ ...entry(), outcome: "Bearer secret / private error" } as unknown as Omit<SentLogEntry, "id">);
+    const rows = await db.sentLog.orderBy(":id").toArray();
+    expect(rows.map((row) => row.outcome))
+      .toEqual(["ok", "retried", "timeout", "redirect", "transport", "http_503", undefined]);
+    expect(JSON.stringify(rows)).not.toContain("secret");
+  });
   it("writes exactly one metadata-only row per append", async () => {
     const id = await appendSentLog(entry());
     expect(typeof id).toBe("number");
@@ -136,6 +148,49 @@ describe("appendSentLog", () => {
     await appendMany(SENT_LOG_RETENTION_CAP + 10);
 
     expect(await db.sentLog.count()).toBe(SENT_LOG_RETENTION_CAP);
+  });
+});
+
+describe("beginSentLog", () => {
+  it("persists an unknown dispatch while transport is pending, then updates only its outcome", async () => {
+    const finish = beginSentLog(entry());
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    const [pending] = await db.sentLog.toArray();
+    expect(pending).toMatchObject({
+      destination: "https://api.typesafe.ai",
+      feature: "jev_test",
+      fieldNames: ["state", "question"],
+    });
+    expect(pending).not.toHaveProperty("outcome");
+    await finish("timeout");
+    expect(await db.sentLog.toArray()).toEqual([{ ...pending, outcome: "timeout" }]);
+  });
+
+  it("does not resurrect attempts cleared while in flight", async () => {
+    const finish = beginSentLog(entry());
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    await clearSentLog();
+    await finish("ok");
+    expect(await db.sentLog.count()).toBe(0);
+  });
+
+  it("does not resurrect an attempt trimmed while in flight", async () => {
+    const finish = beginSentLog(entry({ feature: "pending" }));
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    const pendingId = (await db.sentLog.toArray())[0]!.id!;
+    await appendMany(SENT_LOG_RETENTION_CAP);
+    expect(await db.sentLog.get(pendingId)).toBeUndefined();
+    await finish("ok");
+    expect(await db.sentLog.get(pendingId)).toBeUndefined();
+    expect(await db.sentLog.count()).toBe(SENT_LOG_RETENTION_CAP);
+  });
+
+  it("rejects unsafe outcome updates without leaking runtime error text", async () => {
+    const finish = beginSentLog(entry());
+    await finish("private response / Bearer key" as Parameters<typeof finish>[0]);
+    const [row] = await db.sentLog.toArray();
+    expect(row).not.toHaveProperty("outcome");
+    expect(JSON.stringify(row)).not.toContain("Bearer");
   });
 });
 

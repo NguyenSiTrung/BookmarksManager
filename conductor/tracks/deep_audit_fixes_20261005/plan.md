@@ -99,7 +99,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     outside the closed shape is rejected; `fetchImpl` is unavailable to
     production entry points.
   - Fix: closed per-scope payload schemas parsed inside the gates; `isSensitiveUrl` re-check; separate test-only entry for `fetchImpl`.
-- [~] Task 3: P07 — per-attempt sent log with outcome
+- [x] Task 3: P07 — per-attempt sent log with outcome
   <!-- files: src/net/send.ts, src/net/llm-send.ts, src/net/sent-log.ts, src/db/database.ts, src/entrypoints/options/SentLog.tsx -->
   <!-- depends: task2 -->
   - Tests: 503-then-200 → two rows; timeout → one row; redirect error → one

@@ -17,8 +17,8 @@ import { cardClass, ghostDangerButtonClass, sectionHeadingClass } from "./ui";
  *   unpriced requests surface as a count.
  * - **Sent log.** `db.sentLog` is metadata-only by construction
  *   (`src/net/sent-log.ts` rebuilds each row from exactly
- *   `sentAt`/`destination`/`feature`/`fieldNames`), so each row renders those
- *   four fields and nothing else — no request bodies, headers, keys, or
+ *   `sentAt`/`destination`/`feature`/`fieldNames` plus a closed `outcome`), so each row renders those
+ *   metadata fields and nothing else — no request bodies, headers, keys, or
  *   bookmark content exist on the rows to leak. Ordered newest-first by
  *   `sentAt`; the retention cap is disclosed with the same
  *   `SENT_LOG_RETENTION_CAP` the writer enforces. Clear calls
@@ -147,9 +147,10 @@ export function SentLog() {
           Sent log
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every request that left this device is listed by time, destination,
-          feature, and the names of the fields it carried — contents are never
-          recorded. The log keeps the newest {SENT_LOG_RETENTION_CAP} entries.
+          Dispatched attempts are listed by time, destination, feature, field
+          names, and outcome — contents are never recorded. Unknown / pending
+          means the outcome was not recorded, including older entries. The log
+          keeps the newest {SENT_LOG_RETENTION_CAP} entries when logging succeeds.
         </p>
         {entries.length === 0 ? (
           <div className="mt-3 flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
@@ -173,6 +174,9 @@ export function SentLog() {
                   <Chip>{entry.destination}</Chip>
                   <span className="rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-accent-foreground">
                     {entry.feature}
+                  </span>
+                  <span className="text-xs font-medium" aria-label="Attempt outcome">
+                    {entry.outcome ?? "Unknown / pending"}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {entry.fieldNames.join(", ")}

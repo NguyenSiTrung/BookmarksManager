@@ -1,4 +1,4 @@
-import { appendSentLog } from "./sent-log";
+import { beginSentLog } from "./sent-log";
 import {
   hasConsentAtOrigin,
   type ConsentScope,
@@ -366,8 +366,10 @@ export async function settleLlmUsage(
  * run — `credentials: "omit"`, `redirect: "error"`, per-attempt timeout, and
  * at most `retries` extra attempts on transport failures and 408/429/5xx
  * (honoring a bounded Retry-After). A `sentLog` metadata row — timestamp,
- * origin, feature, top-level field names — is appended only after `fetch`
- * resolves. Feature admission runs before each fetch attempt and propagates
+ * origin, feature, top-level field names, safe outcome — starts at every
+ * dispatch without awaiting IO after final admission. Refused/pre-aborted
+ * attempts are not logged; failed logging never changes the request result.
+ * Feature admission runs before each fetch attempt and propagates
  * its typed refusal unchanged, conservatively settling prior exposure.
  * Gate refusals throw `LlmGateError`; bodies, headers, and credentials never
  * appear in errors.
@@ -580,6 +582,17 @@ async function sendLlmRequest(
   const signal = options?.signal !== undefined
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;
+  if (signal.aborted) {
+    await db.llmReservations.put(releaseBudget(reservation, now()));
+    throw new LlmGateError("timeout", "Outbound LLM request was aborted before dispatch.");
+  }
+  // No awaited bookkeeping between final feature admission and fetch.
+  const finishLog = beginSentLog({
+    sentAt: now().toISOString(),
+    destination: destination.origin,
+    feature: input.scope,
+    fieldNames: Object.keys(request),
+  });
   let response: Response;
   try {
     response = await fetch(destination.chatCompletionsUrl, {
@@ -591,17 +604,31 @@ async function sendLlmRequest(
       body,
     });
   } catch (cause) {
+    // Capture at transport failure, not after awaited settlement: a deadline
+    // expiring during bookkeeping must not relabel an earlier socket failure.
+    const abortedAtFailure = signal.aborted;
     await settleLlmUsage(reservation.id, input.scope, {}, now());
-    if (cause instanceof LlmGateError) throw cause;
+    if (cause instanceof LlmGateError) {
+      await finishLog("transport");
+      throw cause;
+    }
     if (isAbortError(cause)) {
+      await finishLog("timeout");
       throw new LlmGateError("timeout", "Outbound LLM request timed out or was aborted.");
     }
-    if (retries > 0) return retry();
+    if (retries > 0) {
+      await finishLog("retried");
+      return retry();
+    }
+    // Audit native deadline signals honestly; Phase 2 owns TimeoutError's
+    // existing public error classification and retry behavior.
+    await finishLog(abortedAtFailure ? "timeout" : "transport");
     throw new LlmGateError("transport", "Outbound LLM request failed in transport.");
   }
 
   if (response.type === "opaqueredirect") {
     await settleLlmUsage(reservation.id, input.scope, {}, now());
+    await finishLog("redirect");
     throw new LlmGateError("transport", "Outbound LLM request answered with an opaque redirect.");
   }
   if (RETRYABLE_STATUS.has(response.status) && retries > 0) {
@@ -615,17 +642,13 @@ async function sendLlmRequest(
       }
     }
     await settleLlmUsage(reservation.id, input.scope, usage, now());
+    await finishLog("retried");
     const wait = retryAfterMs(response);
     if (wait > 0) await sleep(wait);
     return retry();
   }
 
-  await appendSentLog({
-    sentAt: now().toISOString(),
-    destination: destination.origin,
-    feature: input.scope,
-    fieldNames: Object.keys(request),
-  });
+  await finishLog(response.ok ? "ok" : `http_${response.status}`);
   // Bind the reader now, before exposing Response to the client/caller.
   // Supplying a fabricated parsed result cannot register a repair transcript.
   const readJson = response.json.bind(response);

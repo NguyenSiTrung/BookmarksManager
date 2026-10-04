@@ -311,3 +311,55 @@ claim that any audit finding has been fixed or reproduced.
   applicable lint/type/build/store/site check. Follow-up independent review
   closed all findings. Separate task commit contains callback additions only,
   not the already committed P03 canonical producer imports.
+- **Local commit:** `a89239b`, with Git note; mapped Bead closed.
+
+## 2026-10-04 — P06 targeted implementation
+
+- RED reproduced startup egress and unpaused running/pending rows (four
+  failures, 35 controls). An additional RED proved an old owner's queued
+  authority remained admitted. Atomic local cold-start pause preserves
+  progress and increments owner/control fences; explicit messages wait for
+  that recovery before acting.
+- Narrow runner/queue/messages/scan slice passed 109 tests across five files;
+  disclosure/Options/restructure slice passed 78 across three. Scoped lint,
+  typecheck, build, manifest, bundle, store and diff checks passed.
+- Two wire-level browser restart tests passed startup pause/zero requests/
+  stable log rows and explicit Resume from committed progress. P07 changed
+  aggregate totals: old interrupted attempts and native transport failures
+  must remain visible. Require exactly the successful Resume sends, preserve
+  only safe transport failures besides them, and assert no idle log growth.
+- Review and combined full gate pending; task remains in progress.
+
+## 2026-10-04 — P07/P06 integration verification
+
+- P07 RED: 20 failures / 101 controls, then two audit-only native deadline
+  failures. Final owned slice: 129 tests / four files; broader privacy slice:
+  524 / nine. Both gates initiate metadata-only logging at dispatch with no
+  awaited IO after final privacy admission; outcome finishing is fail-soft.
+  Legacy/pending outcomes remain optional. Clear/trim updates cannot recreate
+  removed rows. Public native timeout/retry policy remains Phase 2 work.
+- Two Jev sibling-drain tests now wait for the first row's `http_401` outcome,
+  not one total row after two fetches have already started. Final two-row
+  accounting and original ownership/Resume checks remain unchanged.
+- Independent P07 review passed spec and quality with no findings. P06 review
+  confirmed runtime recovery and found obsolete second-opinion Save wording.
+  A rendered Options regression reproduced that mismatch before correction;
+  scoped re-review confirmed it addressed, with both verdicts passing.
+- `taskset -c 3 npm run lint` and typecheck passed. Full unit/component run:
+  **2831 passed / one failed**, 165 files. Only failure was unchanged search
+  build at 626.9 ms versus 500 ms; subsequent CPU-3 slice still failed
+  search, while analyze-on-save (max 345 ms) and planner (351.3 ms) passed.
+  Host load was about 11 across four vCPUs, CPU pressure about 92%.
+- `git diff c229c43 -- src/search tests/unit/search-perf.test.ts` was empty.
+  `taskset -c 2 npm run test -- --run --maxWorkers=1
+  tests/unit/search-perf.test.ts` passed both tests with original thresholds.
+  This is a successful focused rerun, not a successful full-suite invocation.
+- Remaining fresh CPU-2 build, manifest, bundle, store, site, browser and diff
+  checks passed: **43 browser tests / one intentional screenshot skip**.
+  No paid/live/eval requests, native permission prompt coverage or remote sync.
+- Task implementations are reviewed and validated. Phase 1 checkpoint still
+  awaits P09 and a fresh complete gate.
+- Exact staged P07 snapshot passed typecheck and 170 tests across five files,
+  including aligned real Jev sibling draining. Initial snapshot execution had
+  no generated `.wxt/tsconfig.json` and collected zero tests; preparing types
+  resolved that harness issue without modifying repository working files.

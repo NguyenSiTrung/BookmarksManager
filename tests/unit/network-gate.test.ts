@@ -39,6 +39,7 @@ let containsSpy: ReturnType<typeof vi.fn>;
 const PLAINTEXT_KEY = "test-provider-key-material";
 
 async function resetEnv() {
+  vi.restoreAllMocks();
   fetchSpy = vi.fn();
   vi.stubGlobal("fetch", fetchSpy);
   containsSpy = vi.fn(async () => true);
@@ -293,7 +294,7 @@ describe("sendConsentedTest gate", () => {
     });
   });
 
-  it("writes a sent-log row with only time, origin, feature, and field names", async () => {
+  it("writes a sent-log row with only time, origin, feature, field names, and outcome", async () => {
     await grantTestConsent("typesafe");
     fetchSpy.mockResolvedValue(okResponse());
     await sendConsentedTest("typesafe", "jev-latest");
@@ -305,12 +306,14 @@ describe("sendConsentedTest gate", () => {
       "feature",
       "fieldNames",
       "id",
+      "outcome",
       "sentAt",
     ]);
     expect(row.destination).toBe(PRESETS.typesafe.origin);
     expect(row.feature).toBe("jev_test");
     expect(row.fieldNames).toEqual(["model", "state", "questions"]);
     expect(row.sentAt).toBe(new Date(row.sentAt).toISOString());
+    expect(row).toHaveProperty("outcome", "ok");
     // The audit row must never carry key material or payload contents.
     expect(JSON.stringify(row)).not.toContain(PLAINTEXT_KEY);
     expect(JSON.stringify(row)).not.toContain("synthetic connection test");
@@ -324,9 +327,10 @@ describe("sendConsentedTest gate", () => {
     expect(result).toBe(unauthorized);
     expect(result.status).toBe(401);
     expect(await db.sentLog.count()).toBe(1);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "http_401" }]);
   });
 
-  it("maps a fetch rejection to a redacted transport error with no log row", async () => {
+  it("maps a fetch rejection to a redacted transport error with one attempt row", async () => {
     await grantTestConsent("typesafe");
     fetchSpy.mockRejectedValue(new TypeError("socket hangup"));
     const error = await sendConsentedTest("typesafe", "jev-latest").catch(
@@ -334,9 +338,9 @@ describe("sendConsentedTest gate", () => {
     );
     expect(error).toBeInstanceOf(NetworkGateError);
     expect((error as NetworkGateError).code).toBe("transport");
-    // Fetch was invoked and rejected — no request went out, so no log row.
+    // Dispatch happened; rejection cannot prove that no bytes left.
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(await db.sentLog.count()).toBe(0);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "transport" }]);
     expect((error as Error).message).not.toContain(PLAINTEXT_KEY);
     expect((error as Error).message).not.toContain("socket hangup");
   });
@@ -356,6 +360,82 @@ describe("sendConsentedTest gate", () => {
     expect(error).toBeInstanceOf(NetworkGateError);
     expect((error as NetworkGateError).code).toBe("transport");
     expect(await db.sentLog.count()).toBe(1);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "redirect" }]);
+  });
+
+  it("starts an unknown attempt before a pending transport completes", async () => {
+    await grantTestConsent("typesafe");
+    let finishTransport!: (response: Response) => void;
+    fetchSpy.mockImplementation(() => new Promise<Response>((resolve) => { finishTransport = resolve; }));
+    const pending = sendConsentedTest("typesafe", "jev-latest");
+    await vi.waitFor(async () => expect(await db.sentLog.count()).toBe(1));
+    expect(await db.sentLog.toArray()).toMatchObject([{ feature: "jev_test" }]);
+    expect((await db.sentLog.toArray())[0]).not.toHaveProperty("outcome");
+    finishTransport(okResponse());
+    await pending;
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "ok" }]);
+  });
+
+  it("does not await audit IO between final admission and dispatch", async () => {
+    await grantTestConsent("typesafe");
+    const original = db.sentLog.add.bind(db.sentLog);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(db.sentLog, "add").mockImplementation((...args) => original(...args).then(async (id) => {
+      await held;
+      return id;
+    }));
+    let admitted = false;
+    fetchSpy.mockImplementation(() => {
+      expect(admitted).toBe(true);
+      release();
+      return Promise.resolve(okResponse());
+    });
+    const pending = sendConsented("jev_test", "typesafe", "jev-latest", makeSyntheticRequest("jev-latest"), {
+      beforeSend: async () => {
+        admitted = true;
+        queueMicrotask(() => { queueMicrotask(() => { admitted = false; }); });
+      },
+    });
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+    await pending;
+  });
+
+  it("failed append or outcome update cannot replace HTTP, timeout, or transport results", async () => {
+    await grantTestConsent("typesafe");
+    for (const operation of ["add", "update"] as const) {
+      for (const outcome of ["http", "timeout", "transport"] as const) {
+        vi.restoreAllMocks();
+        vi.spyOn(db.sentLog, operation).mockRejectedValue(new Error("private bookkeeping failure"));
+        const response = new Response("private response", { status: 401 });
+        if (outcome === "http") fetchSpy.mockResolvedValue(response);
+        else fetchSpy.mockRejectedValue(outcome === "timeout" ? new DOMException("private abort", "AbortError") : new TypeError("private socket"));
+        const result = sendConsentedTest("typesafe", "jev-latest");
+        if (outcome === "http") expect(await result).toBe(response);
+        else await expect(result).rejects.toMatchObject({ code: outcome });
+      }
+    }
+  });
+
+  it("a synchronous audit write failure cannot suppress the raw response", async () => {
+    await grantTestConsent("typesafe");
+    vi.spyOn(db.sentLog, "add").mockImplementation(() => { throw new Error("private sync audit failure"); });
+    const response = okResponse();
+    fetchSpy.mockResolvedValue(response);
+    expect(await sendConsentedTest("typesafe", "jev-latest")).toBe(response);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("audits an aborted signal as timeout even when fetch rejects with TimeoutError", async () => {
+    await grantTestConsent("typesafe");
+    const controller = new AbortController();
+    fetchSpy.mockImplementation(() => {
+      controller.abort(new DOMException("private deadline", "TimeoutError"));
+      return Promise.reject(controller.signal.reason);
+    });
+    await expect(sendConsented("jev_test", "typesafe", "jev-latest", makeSyntheticRequest("jev-latest"),
+      { signal: controller.signal })).rejects.toMatchObject({ code: "transport" });
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
   });
 
   it("re-checks consent on every call — revoking between calls blocks", async () => {
@@ -470,7 +550,7 @@ describe("scoped sendConsented gate", () => {
     expect(Object.keys(body).sort()).toEqual(["model", "questions", "state"]);
   });
 
-  it("maps a mid-flight fetch abort to timeout and writes no sentLog row", async () => {
+  it("maps a mid-flight fetch abort to timeout and records the dispatched attempt", async () => {
     await grantTestConsent("typesafe");
     fetchSpy.mockImplementation((_url: string, init?: RequestInit) => {
       return new Promise((_resolve, reject) => {
@@ -496,8 +576,7 @@ describe("scoped sendConsented gate", () => {
     const error = await pending.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkGateError);
     expect((error as NetworkGateError).code).toBe("timeout");
-    // The request never completed, so nothing "left" — no sentLog row.
-    expect(await db.sentLog.count()).toBe(0);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
   });
 
   it("maps an abort raised during the gate's async checks to timeout", async () => {

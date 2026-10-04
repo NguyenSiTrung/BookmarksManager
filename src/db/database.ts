@@ -19,8 +19,21 @@ export interface MetadataEntry {
 }
 
 /**
- * Audit row for one outbound request (track spec §3): records the time,
- * destination, feature, and request field names — never request contents,
+ * Closed, content-free outcome vocabulary for an outbound attempt.
+ * `retried` means the retry policy selected another attempt; its admission
+ * may still refuse that attempt. HTTP statuses are validated by the writer.
+ */
+export type SentLogOutcome =
+  | "ok"
+  | "retried"
+  | "timeout"
+  | "redirect"
+  | "transport"
+  | `http_${number}`;
+
+/**
+ * Audit row for one outbound attempt (track spec §3): records dispatch time,
+ * destination, feature, request field names, and outcome — never request contents,
  * auth headers, keys, or bookmark data. `id` is assigned by IndexedDB.
  */
 export interface SentLogEntry {
@@ -29,6 +42,8 @@ export interface SentLogEntry {
   destination: string;
   feature: string;
   fieldNames: string[];
+  /** Absent on legacy rows or a dispatch whose outcome is not yet known. */
+  outcome?: SentLogOutcome;
 }
 
 /**
