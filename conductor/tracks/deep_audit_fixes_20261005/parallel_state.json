@@ -43,19 +43,18 @@
       "status": "completed",
       "brief": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task6-brief.md",
       "report": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task6-report.md"
+    },
+    {
+      "task_index": 7,
+      "beads_task": "BookmarksManager-3op.1.8",
+      "worker_id": "e74e492e-fb9f-4926-89a1-031cd611a8ad",
+      "status": "completed",
+      "commit_sha": "82ae885",
+      "brief": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task8-brief.md",
+      "report": ".superpowers/sdd/deep_audit_fixes_20261005/phase1-task8-report.md"
     }
   ],
-  "file_locks": {
-    "src/net/send.ts": "task3",
-    "src/net/llm-send.ts": "task3",
-    "src/net/sent-log.ts": "task3",
-    "src/db/database.ts": "task3",
-    "src/entrypoints/options/SentLog.tsx": "task3",
-    "src/entrypoints/background.ts": "task6",
-    "src/jobs/queue.ts": "task6",
-    "src/consent/disclosure.ts": "task6",
-    "tests/e2e/decisions.spec.ts": "task6"
-  },
-  "completed_workers": 5,
-  "total_workers": 5
+  "file_locks": {},
+  "completed_workers": 6,
+  "total_workers": 6
 }

@@ -145,7 +145,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     the schema rejects oversize.
   - Fix: injected script returns `location.href` + identity; worker
     re-verifies; `maxElemsToParse`/`charThreshold`; `.max()` limits.
-- [x] Task 8: P09 — path minimization
+- [x] Task 8: P09 — path minimization (`82ae885`)
   <!-- files: src/decisions/minimize.ts, src/decisions/url-path.ts, src/schemas/decision-state.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md, site/privacy/index.html -->
   <!-- depends: task6 -->
   - Tests: `/s/<40-char token>` and `;jsessionid=…` never appear in the
@@ -153,7 +153,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     matching unaffected; the 10k-corpus analyze-on-save gate still < 1.5 s.
   - Fix: strip matrix params, replace opaque segments with a placeholder;
     disclosure states the path is sent; re-check eval fixtures for drift.
-- [ ] Task: Conductor - Automated Verification 'Phase 1: Privacy and consent enforcement' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 1: Privacy and consent enforcement' (automated gates; no manual wait)
   - Run the full local gate plus `xvfb-run -a npm run test:e2e` (macOS:
     `E2E_HEADLESS=1`); add wire-level e2e for P04/P05/P06 zero-egress cases.
 

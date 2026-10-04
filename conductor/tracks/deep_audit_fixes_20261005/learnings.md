@@ -440,3 +440,28 @@ claim that any audit finding has been fixed or reproduced.
   and **43 browser tests / one intentional screenshot skip**, with exact
   commands/log under the baseline-reset entry above. Live/eval/paid requests
   and native permission prompts remain excluded.
+- **Local commit:** `82ae885`, with Git note; mapped Bead closed.
+
+## 2026-10-04 — Phase 1 automated checkpoint
+
+- All eight implementation tasks and the discovered baseline-reset blocker
+  are committed locally and closed. Independent review findings are resolved.
+  The fresh full gate in `/tmp/audit-phase1-fix-gate-oowbCG.log` exited 0:
+  **2919 unit/component tests / 167 files**, every static/build/compliance
+  check, and **43 browser tests / one intentional screenshot skip**.
+- Wire acceptance inventory: missing/dismissed Explain/Restructure approval
+  sends nothing and writes no grant; consented popup open sends nothing until
+  Tags focus/Suggest; cold restart pauses with stable logs/zero new provider
+  requests until explicit committed-progress Resume.
+- P07 permanent gate tests account for each 503/200, timeout and redirect
+  attempt. Public native timeout/retry classification stays deferred to A01,
+  not incorrectly claimed fixed by logging. P08/P09 preserve local raw
+  identity and cap extraction/decoding. Consent versions remain scope-specific.
+- Original search, planner and analyze budgets passed in the final full
+  invocation; earlier failed runs remain documented. Worst-of-ten additional
+  P09 analyze evidence: 280.9 ms. No thresholds or original fixtures changed.
+- Reusable privacy, dispatch, policy, identity, recovery and verification
+  patterns elevated to `conductor/patterns.md`; superseded feature-consent,
+  response-time logging and implicit cold-resume patterns corrected.
+- Continue to Phase 2 after this automated checkpoint; no manual wait,
+  live/eval/paid requests, native permission prompt claim, or remote sync.

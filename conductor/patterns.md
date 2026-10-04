@@ -157,14 +157,14 @@ _Last refreshed: 2026-09-27_
 ### E2E: wire-level fakes and restarts
 
 - **Fake the provider at the wire, not the client.** `context.route` answers actual sent question keys/candidates with schema-valid responses so the real client, gate, pipeline, and persistence execute. A request valve fulfills the first N and holds the rest: a sequential runner then freezes deterministically mid-batch. Assert committed progress and release parked requests before `context.close()` so teardown cannot race pause into failure. Optional hosts are promoted to install-time `host_permissions` in a temporary manifest copy; this does not verify Chrome's native permission prompt. (from: phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase5_llm_layer_20260928, 2026-09-30)
-- **Feature consent is granted at the affirmative click.** Each `llm_*` /
-  `jev_summary_verify` scope's origin-scoped consent record is written by the
-  click that triggers the feature (Explain button, Summarize action,
-  Restructure start, escalation toggle) — the click IS the consent trigger,
-  mirroring `llm_test` at provider Enable. The egress gate then re-checks the
-  grant on every request, so revoking the provider (or testing a fresh
-  profile) fails closed with `no_consent`/`no_permission`. (from:
-  phase5_llm_layer_20260928)
+- **Feature consent requires affirmative disclosure approval, not a bare
+  feature click.** Explain/Restructure show recipient, endpoint/model,
+  fields, trigger, purpose and scoped version in an unchecked-default dialog.
+  Their worker handlers never grant consent; the UI writes only the accepted
+  scope/origin and retries with its binding. Summarize retains its explicit
+  bound affirmative approval. Opening/dismissing grants nothing; cost
+  confirmation is separate. Both gates recheck authority per attempt.
+  (from: phase5_llm_layer_20260928, deep_audit_fixes_20261005, 2026-10-04)
 - **Emulating a browser restart under Playwright:** persistent profile dir + a copy-once extension root (manifest check before re-copy) gives the SAME derived extension id across `launchPersistentContext` calls, so IndexedDB state (consents, jobs) survives; add `--host-resolver-rules="MAP <provider-origins> 127.0.0.1"` so a resume attempt that races route registration can never become real egress. A browser restart subsumes the MV3 worker restart no API can trigger on demand. The temp dirs need an explicit `dispose()` — the launcher's own cleanup deliberately skips caller-owned roots. (from: phase4_jev_decisions_20260927)
 - **Popup prefill under Playwright needs `tabs` injected and `bringToFront` ordering:** production prefills via `activeTab`, which Playwright cannot grant — patch the copied manifest to add `tabs` and use `chrome.tabs.query`. Create the HTTPS page, then `context.newPage()` STEALS the active-tab slot: `bringToFront()` the HTTPS page AFTER creating the popup page but BEFORE `popup.goto(chrome-extension://…)` or the prefill reads the wrong tab. (from: phase4_jev_decisions_20260927)
 
@@ -175,7 +175,12 @@ _Last refreshed: 2026-09-27_
 
 ### Decisions-layer contracts worth remembering
 
-- **The job runner is strictly sequential per bookmark within a batch** (`for … await`) — concurrency expectations anywhere in tests or UI must assume one in-flight analysis; batch-commit progress (`committedBatches`) is the resume boundary, and `appendSentLog` runs after `fetch` resolves, so a held or dying request writes NO row (exact sentLog counts are meaningful). (from: phase4_jev_decisions_20260927)
+- **The job runner is strictly sequential per bookmark within a batch**
+  (`for … await`); batch-commit progress (`committedBatches`) is the resume
+  boundary. Sent-log insertion starts at each actual dispatch, including
+  held/failed requests. Await completed outcomes, not obsolete response-time
+  row counts. Pending/legacy outcomes are unknown, not evidence of success.
+  (from: phase4_jev_decisions_20260927, deep_audit_fixes_20261005, 2026-10-04)
 - **`INTRANET_SUFFIXES` in `src/decisions/minimize.ts` blocklists `.example`/`.test`/`.local` and friends** — seed data for any decisions test must use a public-looking TLD (`.dev` works). MiniSearch query terms are strict-AND across fields: every expected hit needs every term. (from: phase4_jev_decisions_20260927)
 
 ## Elevated from track `phase6_store_release_20260928` (2026-09-28)
@@ -213,7 +218,15 @@ _Last refreshed: 2026-09-27_
 - **Unknown cost is not zero.** Keep reported, estimated, and unknown amounts distinct. Reserve before LLM spending using a numeric pricing snapshot; automatic unpriced requests fail closed, while unpriced manual requests require explicit confirmation and are not covered by a numeric cap. Settle reservation and usage atomically/idempotently; derive UTC-month membership from parsed dates, not timestamp prefixes. (from: phase3_jev_client_20260927, phase5_llm_layer_20260928, 2026-09-30)
 - **Structured-output fallback is capability-only.** Descend `json_schema → json_object → prompt_only` only for `LlmCapabilityError`, never for malformed output or exhausted repairs. Repairs stay on the chosen tier; merge tier instructions into an existing leading system message. (from: phase5_llm_layer_20260928, 2026-09-30)
 - **Live reads preserve identity and pending state.** `useLiveQuery` can retain an old dependency's result: emit `{arg, value}` and treat an argument mismatch as pending. Initial `undefined` is not settled absence (`null`); disable actions until the first read settles and render settled failures instead of perpetual loading. (from: phase4_jev_decisions_20260927, options_redesign_20260929, 2026-09-30)
-- **Resumption respects durable inputs and user intent.** Persist parameters affecting batch boundaries and resume from committed progress. Startup drives interrupted `running`/`pending` jobs, never user-paused jobs; re-read status before relaunch or failure writes so pause/cancel wins. Persist vetted restructure proposals/assignments so resume does not repeat the LLM proposal. (from: phase4_jev_decisions_20260927, phase5_llm_layer_20260928, 2026-09-30)
+- **Resumption respects durable inputs and user intent.** Persist parameters
+  affecting batch boundaries and resume from committed progress. Cold startup
+  atomically pauses interrupted `running`/`pending` jobs and invalidates their
+  old authority without provider egress. Explicit messages await recovery;
+  Resume continues durable progress. Persist vetted proposals/assignments so
+  resume does not repeat the LLM proposal. Same-session eviction recovery is a
+  separate, session-owned mechanism, never an implicit cold-start send.
+  (from: phase4_jev_decisions_20260927, phase5_llm_layer_20260928,
+  deep_audit_fixes_20261005, 2026-10-04)
 - **Summary egress is a separately consented exception.** Notes remain unsent; page text leaves only after explicit Summarize under `llm_summary` and `jev_summary_verify`, not as ordinary analyze input. Match extraction to the bookmark and persist only after Jev returns `supported`. (from: phase5_llm_layer_20260928, 2026-09-30)
 - **Metadata extensions must survive repository rewrites.** A new optional field must join `MetaFields`, `isEmptyMeta`, `commitMeta`, `putMeta`, `patchMeta` merging, and `rewriteTagRows` emptiness checks; a schema-only addition can compile while silently losing data. (from: phase5_llm_layer_20260928, 2026-09-30)
 - **Schema validity does not establish semantic validity.** Cross-check answers against sent keys/candidates and declared ranges. The Jev client enforces response-model consistency across batches; evaluations separately enforce accepted release model IDs and score production policy outcomes with production confidence helpers. (from: phase0_foundation_20260925, phase3_jev_client_20260927, phase4_jev_decisions_20260927, phase6_store_release_20260928, 2026-09-30)
@@ -237,7 +250,45 @@ _Last refreshed: 2026-09-27_
 
 ## Elevated from follow-up fixes (2026-10-01, post-audit)
 
-- **Consent gating should not punish agreeing early.** When a user checks a consent box before reading the linked disclosure, reveal/open and scroll to that disclosure rather than blocking the affirmative action — the click IS the consent trigger, so keep it effective while surfacing what was agreed to. (from: BookmarksManager-8qf, 2026-10-01)
+- **Consent gating should not punish agreeing early.** When a user checks a
+  consent box before reading the linked disclosure, reveal/open and scroll
+  to that disclosure while preserving the affirmative checkbox action.
+  A bare feature invocation is not consent; its disclosure approval remains
+  separate. (from: BookmarksManager-8qf, deep_audit_fixes_20261005, 2026-10-04)
 - **Popup save-suggest is a read model over decision rows, not a chip filter.** Render every tag chip independently of the confidence policy (a `noul` in `[0.5, 0.75)` must not hide siblings), and bound the rows lifecycle-side so repeated saves cannot accumulate unbounded decisions. (from: BookmarksManager-dm1, -f7c, 2026-10-01)
 - **Focus styling on a text input must not read as a boxed field.** A focus ring/border on the popup title input was mistaken for an editable box regression — when styling focus, prefer the surrounding affordance over a boxed border on the input itself. (from: popup title-input fix, 2026-10-01)
 - **Prerequisite-gated controls soft-block, not hard-disable.** A hard-disabled switch hides *which* prerequisite is missing and can trap an enabled control when a prerequisite later breaks. Keep it focusable with `aria-disabled`, render every unmet prerequisite at once through `aria-describedby` with its own action (disclosure reveal, jump to the provider/budget anchors), route a click on the blocked control to the first unmet step instead of toggling, and never block the OFF direction. (from: BookmarksManager-ky2, 2026-10-01)
+
+## Elevated from `deep_audit_fixes_20261005`, Phase 1 (2026-10-04)
+
+- **Unset policy is not unreadable policy.** Throw a typed content-free refusal
+  for malformed/unreadable persisted blocklists; recheck in every gate and
+  attempt before sensitive reads or reservations. Filter synopsis descendants
+  before caps, then re-admit all local source provenance, not just the capped
+  outbound domain list.
+- **Authority must survive every await through actual dispatch.** Retain
+  accepted recipient/model/endpoint/version plus source/document identity;
+  compose final callbacks into both real gates after asynchronous preflight.
+  Repairs/fallback/retries need the same authority. Do not add an awaited log
+  write between final privacy admission and fetch.
+- **Share pure closed prompt contracts, not feature services with gates.**
+  Canonical payload/system/schema/tier contracts prevent producer/guard drift
+  and cycles. Only a private input-bound session reading its actual response
+  authorizes provider echoes; test transport injection stays in test helpers.
+- **URL minimization never changes local resource identity.** Strip matrix
+  parameters and redact long opaque segments only on outbound copies. Inspect
+  raw paths as well as parser-normalized paths at independent admission.
+  Bound percent-decoding work; unresolved encodings fail closed. Explicitly
+  reject over-limit strings before Zod refinements do expensive work.
+- **Audit outcomes are best-effort dispatch metadata, not proof of billing.**
+  Preserve failed attempts and unknown pending/legacy rows; fail-soft append/
+  finishing cannot change results or recreate cleared rows. A killed worker
+  can lose an uncommitted insert or leave an unknown outcome.
+- **Make race tests control the boundary they claim to cover.** Defer IO until
+  after dismissal, or await the settled error before Cancel. A failure arriving
+  before dismissal is as important as one arriving after it; preserve both
+  until an explicit retry.
+- **Separate host pressure from regressions without weakening budgets.**
+  Record failed full invocations honestly; verify unchanged source/fixtures
+  and control worker count/affinity. A passing focused rerun is not a passing
+  full gate. Exact indexed snapshots validate isolated shared-file commits.
