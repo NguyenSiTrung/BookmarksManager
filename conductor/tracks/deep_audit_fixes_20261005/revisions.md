@@ -34,3 +34,29 @@
   the closed content-free binding and accessible unchecked-default dialog;
   reject provider changes on retry. The changed scopes need renewed consent
   without invalidating unchanged scopes. No overlap with running task 2.
+
+## Revision 4 — 2026-10-04 — Plan ownership
+
+- **Trigger:** P08 applies the same caps in the in-page Readability script
+  and the worker schema; importing worker extraction into the page script
+  would unnecessarily bundle worker policy dependencies.
+- **Change:** Task 7 owns new pure `src/extract/limits.ts`; keep the existing
+  `PAGE_EXTRACT_LIMITS` export from `page.ts` as a compatibility re-export.
+- **Reason:** One source for deterministic limits without page-side database
+  or network imports. Tests first reproduced navigation acceptance, missing
+  identity acceptance, seven oversize shapes and a 2.6 MB uncapped article.
+
+## Revision 5 — 2026-10-04 — Plan ownership
+
+- **Trigger:** P03 RED reproduced 33 bypasses but gate-local copies of
+  private prompts, schemas and repair wording would drift; importing feature
+  services into gates would create dependency cycles.
+- **Change:** Task 2 owns new pure `src/llm/prompt-contracts.ts` and contract
+  import substitutions in `src/llm/{explain,escalate,summarize,structured}.ts`,
+  `src/restructure/propose.ts`, `src/messages/llm-provider.ts`.
+- **Reason:** Share closed scope contracts and deterministic tier/repair
+  formatting with producers without database/client/gate dependencies.
+  Production behavior outside payload admission is unchanged. Task 4 owns
+  different message modules; task 7 owns extraction and summary orchestration.
+  Coordinator reserves the three extraction-related unit test files;
+  task 2 owns blocklist-egress fixture adaptation.
