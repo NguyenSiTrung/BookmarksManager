@@ -370,3 +370,30 @@ claim that any audit finding has been fixed or reproduced.
   identify Tags focus/Suggest and Resume. Rendered disclosure regression is
   meaningful RED/GREEN; independent fix review passed. No recipient/field
   expansion or relaxation, so unchanged version-4 scopes stay version 4.
+
+## 2026-10-04 — Baseline reset failure visibility
+
+- The fresh Phase 1 gate and isolated unchanged test reproduced a disappearing
+  reset failure. Closing the dialog unconditionally cleared an error that had
+  already arrived, so the original timing-sensitive regression sometimes
+  failed. This is a real baseline defect, not a performance threshold miss.
+- `BookmarksManager-3op.9` owns the separate repair. A deterministic settled
+  failure test failed before source edits (one failure / nine controls).
+  The existing mid-operation test now defers failure until after dismissal.
+  Removing only close-time error clearing preserves both orderings; explicit
+  confirmation still clears stale error before a retry.
+- Scoped lint and 33 tests across two collected reset files passed. Independent
+  review approved spec and quality, no findings. Deletion, native bookmarks,
+  permissions, storage and network behavior are unchanged.
+- Fresh combined full gate with P09 passed: `taskset -c 2 npm run lint`;
+  `taskset -c 2 npm run typecheck`;
+  `taskset -c 2 npm run test -- --run --maxWorkers=1`
+  (**167 files / 2919 tests**); `taskset -c 2 npm run build`;
+  `npm run check:manifest`; `npm run check:bundle`;
+  `npm run check:store`; `npm run check:site`;
+  `taskset -c 2 xvfb-run -a npm run test:e2e`
+  (**43 passed / one intentional screenshot skip**); `git diff --check`.
+  Every command exited 0. Full log:
+  `/tmp/audit-phase1-fix-gate-oowbCG.log`.
+- Existing React `act` warnings remain in the full gate. No live/eval/paid
+  requests, native permission-prompt coverage or remote synchronization.

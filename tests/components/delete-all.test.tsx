@@ -211,13 +211,48 @@ describe("DeleteAllData confirm flow", () => {
   });
 
   it("keeps a failure visible when the dialog was dismissed mid-operation", async () => {
-    // Same failure, but the user cancels before it lands: the section must
-    // still report it rather than dropping it with the dialog.
+    let rejectStorage: ((error: Error) => void) | undefined;
+    vi.stubGlobal("chrome", {
+      storage: {
+        local: {
+          clear: vi.fn(
+            () =>
+              new Promise<void>((_, reject) => {
+                rejectStorage = reject;
+              }),
+          ),
+        },
+      },
+      permissions: { contains: containsSpy, remove: removeSpy },
+      bookmarks,
+    });
+    render(<DeleteAllData />);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+    await waitFor(() => expect(rejectStorage).toBeDefined());
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    rejectStorage!(new Error("storage unavailable"));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/went wrong/i);
+  });
+
+  it("preserves an already-visible failure after Cancel until an explicit retry", async () => {
+    let rejectRetry: ((error: Error) => void) | undefined;
+    let firstAttempt = true;
     vi.stubGlobal("chrome", {
       storage: {
         local: {
           clear: vi.fn(async () => {
-            throw new Error("storage unavailable");
+            if (firstAttempt) {
+              firstAttempt = false;
+              throw new Error("storage unavailable");
+            }
+            return new Promise<void>((_, reject) => {
+              rejectRetry = reject;
+            });
           }),
         },
       },
@@ -229,11 +264,26 @@ describe("DeleteAllData confirm flow", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /delete everything/i }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/went wrong/i);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", {
+          name: /delete everything/i,
+        }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByRole("alert").textContent).toMatch(/went wrong/i);
 
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toMatch(/went wrong/i);
+    openDialog();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete everything/i }),
+    );
+    await waitFor(() => expect(rejectRetry).toBeDefined());
+    expect(screen.queryByRole("alert")).toBeNull();
+    rejectRetry!(new Error("storage still unavailable"));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/went wrong/i);
   });
 });
 

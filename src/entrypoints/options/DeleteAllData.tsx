@@ -79,7 +79,6 @@ export function DeleteAllData(props?: { deleteOptions?: DeleteAllOptions }) {
    * running and reports into the section when it finishes.
    */
   const handleOpenChange = (next: boolean) => {
-    if (!next) setError(null);
     setOpen(next);
   };
 

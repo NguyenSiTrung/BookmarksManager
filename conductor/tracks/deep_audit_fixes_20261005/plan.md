@@ -79,7 +79,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 
 ### Discovered checkpoint blocker
 
-- [~] Baseline reset failure visibility (`BookmarksManager-3op.9`):
+- [x] Baseline reset failure visibility (`BookmarksManager-3op.9`):
   `src/entrypoints/options/DeleteAllData.tsx` and
   `tests/components/delete-all.test.tsx`. Preserve the reset's error after
   dismissal whether failure arrives before or after Cancel. Clear it on an
