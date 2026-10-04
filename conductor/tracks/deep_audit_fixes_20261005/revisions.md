@@ -78,3 +78,20 @@
   summary final-gate callback forwarding and its regressions under task 7.
 - **Reason:** Each privacy authority must survive every await through actual
   dispatch. No concurrent source-file ownership conflict remains.
+
+## Revision 7 — 2026-10-04 — Logging and cold-start ownership
+
+- **Trigger:** P07's required additive row field lives in `src/db/database.ts`,
+  and outcome presentation lives in Options. P06's startup guarantee requires
+  replacing old browser-restart expectations and synchronizing disclosures.
+- **Change:** Add database row type and Options SentLog to task 3. Add README
+  and the affected store disclosures/reviewer notes to task 6. Task 3 owns
+  its sent-log/gate/component tests; task 6 owns background/queue tests and
+  restart tests in `tests/e2e/decisions.spec.ts`.
+- **Reason:** These files implement explicitly required behavior, not
+  incidental refactors. Tasks 3 and 6 remain file-disjoint. Later database
+  retention and same-session keepalive tasks wait for Phase 1.
+- **Tooling:** The SDD task-brief script expects task headings, while this
+  approved Conductor plan uses task checkbox lines. Continue using the
+  existing track-specific ignored workspace and manually extracted briefs,
+  preserving the approved plan format.

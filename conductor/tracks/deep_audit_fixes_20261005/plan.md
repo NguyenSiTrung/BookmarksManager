@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-04 — per-attempt consent and synopsis admission -->
+<!-- Last Revised: 2026-10-04 — logging and cold-start ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -99,14 +99,14 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     outside the closed shape is rejected; `fetchImpl` is unavailable to
     production entry points.
   - Fix: closed per-scope payload schemas parsed inside the gates; `isSensitiveUrl` re-check; separate test-only entry for `fetchImpl`.
-- [ ] Task 3: P07 — per-attempt sent log with outcome
-  <!-- files: src/net/send.ts, src/net/llm-send.ts, src/net/sent-log.ts -->
+- [~] Task 3: P07 — per-attempt sent log with outcome
+  <!-- files: src/net/send.ts, src/net/llm-send.ts, src/net/sent-log.ts, src/db/database.ts, src/entrypoints/options/SentLog.tsx -->
   <!-- depends: task2 -->
   - Tests: 503-then-200 → two rows; timeout → one row; redirect error → one
     row; failed append cannot suppress the request result.
   - Fix: append before/at dispatch per attempt with `outcome`; extend the
     sent-log schema additively; Options renders the outcome.
-- [x] Task 4: P04 — real consent for explain and restructure
+- [x] Task 4: P04 — real consent for explain and restructure (`a89239b`)
   <!-- files: src/messages/llm-features.ts, src/messages/restructure.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/feature-consent.ts, src/ui/components/FeatureConsentDialog.tsx, src/entrypoints/sidepanel/RestructureView.tsx, src/entrypoints/sidepanel/ReviewView.tsx, src/llm/explain.ts, src/restructure/propose.ts -->
   <!-- depends: task1 -->
   - Tests: handlers return a typed `consent_required` and send nothing without
@@ -120,8 +120,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: opening the popup with consent granted sends zero `SAVE_SUGGEST`;
     focusing the tags field or pressing Suggest sends exactly one.
   - Fix: move the effect behind the explicit trigger; update popup copy.
-- [ ] Task 6: P06 — no background egress on cold start
-  <!-- files: src/entrypoints/background.ts, src/jobs/queue.ts, src/consent/disclosure.ts -->
+- [~] Task 6: P06 — no background egress on cold start
+  <!-- files: src/entrypoints/background.ts, src/jobs/queue.ts, src/consent/disclosure.ts, README.md, store/privacy-policy.md, store/privacy-practices.md, store/reviewer-notes.md -->
   <!-- depends: task4 -->
   - Tests: cold start with a `running` job → `paused`, zero requests;
     explicit Resume continues from `committedBatches`; consent text
