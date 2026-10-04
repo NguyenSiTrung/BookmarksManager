@@ -465,3 +465,21 @@ claim that any audit finding has been fixed or reproduced.
   response-time logging and implicit cold-resume patterns corrected.
 - Continue to Phase 2 after this automated checkpoint; no manual wait,
   live/eval/paid requests, native permission prompt claim, or remote sync.
+
+## 2026-10-04 — A01/A02 partial implementation handoff
+
+- Worker `83b3f4ce-0e9c-4fb1-baac-7fe3c76ef25f` finished NEEDS_CONTEXT.
+  Shared abort classification, no LLM timeout retry, distinct caller abort,
+  Jev deadline reason and shared jitter/date parsing are uncommitted.
+- Owned slice: 229 tests / six files pass and scoped lint passes. Wider
+  slice: 500 pass / one old caller-abort expectation fails. Types report
+  five errors because four closed message-code unions omit `aborted`.
+  This is not a passing task/full gate and has not been independently reviewed.
+- Expand ownership explicitly for `messages/{llm-features,llm-provider,
+  provider,restructure}.ts` and caller/protocol tests before resuming.
+  Carry the public taxonomy through Zod message boundaries, not only gate/
+  client types. Worker correctly left unowned files untouched.
+- Full report and recovery instructions:
+  `handoff_20261004_230731.md`. No live workers remain. User requested
+  handoff after interruption; no further behavior edits or implementation
+  commits were made. Preserve the unfinished source/test files.
