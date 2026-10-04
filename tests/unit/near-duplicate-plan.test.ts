@@ -57,10 +57,8 @@ function normalizedDuplicates(count: number): Source[] {
 describe("planNearDuplicates", () => {
   it("bounds a dominant-domain common-title library on both limits", () => {
     const plan = planNearDuplicates(dominantDomain(5_000));
-    expect(plan.pairs.length).toBeLessThanOrEqual(NEAR_DUPLICATE_PAIR_LIMIT);
-    expect(plan.comparisons).toBeLessThanOrEqual(
-      NEAR_DUPLICATE_COMPARISON_LIMIT,
-    );
+    expect(plan.pairs).toHaveLength(NEAR_DUPLICATE_PAIR_LIMIT);
+    expect(plan.comparisons).toBe(NEAR_DUPLICATE_COMPARISON_LIMIT);
     expect(plan.truncated).toBe(true);
     // A meaningful fixture: similar pairs really were found before the cap.
     expect(plan.pairs.length).toBeGreaterThan(0);
@@ -217,6 +215,122 @@ describe("planNearDuplicates", () => {
     expect(plan.pairs[2]?.titleSimilarity).toBe(0.5);
     expect(`${plan.pairs[1]?.a.id}+${plan.pairs[1]?.b.id}`).toBe("a+b");
     expect(`${plan.pairs[2]?.a.id}+${plan.pairs[2]?.b.id}`).toBe("b+c");
+  });
+
+  it("preserves normalized-title shortcuts, Unicode tokens, and set similarity", () => {
+    const titles = [
+      "  ALPHA\t BETA  ",
+      "alpha beta",
+      "CAFÉ—東京 guide",
+      "café 東京 manual",
+      "repeat repeat shared",
+      "repeat shared other",
+      "!!!",
+      " !!! ",
+      "???",
+      "",
+      " \n ",
+    ];
+    const fixture = titles.map((title, i) => ({
+      id: `u${i}`,
+      title,
+      url: `https://unicode.example/${i}`,
+    }));
+    const plan = planNearDuplicates(fixture);
+    expect(plan.comparisons).toBe(55);
+    expect(plan.truncated).toBe(false);
+    expect(plan.pairs).toEqual([
+      {
+        a: { ...fixture[0]!, domain: "unicode.example" },
+        b: { ...fixture[1]!, domain: "unicode.example" },
+        titleSimilarity: 1,
+      },
+      {
+        a: { ...fixture[10]!, domain: "unicode.example" },
+        b: { ...fixture[9]!, domain: "unicode.example" },
+        titleSimilarity: 1,
+      },
+      {
+        a: { ...fixture[6]!, domain: "unicode.example" },
+        b: { ...fixture[7]!, domain: "unicode.example" },
+        titleSimilarity: 1,
+      },
+      {
+        a: { ...fixture[4]!, domain: "unicode.example" },
+        b: { ...fixture[5]!, domain: "unicode.example" },
+        titleSimilarity: 2 / 3,
+      },
+      {
+        a: { ...fixture[2]!, domain: "unicode.example" },
+        b: { ...fixture[3]!, domain: "unicode.example" },
+        titleSimilarity: 0.5,
+      },
+    ]);
+    expect(planNearDuplicates([...fixture].reverse())).toEqual(plan);
+  });
+
+  it("keeps tokenless grouping and duplicate attempts on the bounded path", () => {
+    const fixture: Source[] = Array.from({ length: 320 }, (_, i) => ({
+      id: `z${pad(i)}`,
+      title: `unique${i}`,
+      url: `https://bounded.example/${i}`,
+    }));
+    fixture[0]!.title = "!!!";
+    fixture[1]!.title = " !!! ";
+    fixture[2]!.title = "???";
+    fixture[3]!.title = "???";
+    fixture[4]!.title = "CAFÉ—東京 guide";
+    fixture[5]!.title = "café 東京 manual";
+    const plan = planNearDuplicates(fixture);
+    // The Unicode pair is attempted through both shared postings. Each
+    // identical tokenless group contributes one attempt; unlike "!!!" and
+    // "???", distinct normalized tokenless titles must never pair.
+    expect(plan.comparisons).toBe(4);
+    expect(plan.truncated).toBe(true);
+    const scores = plan.pairs.map((pair) => [
+      pair.a.id, pair.b.id, pair.titleSimilarity,
+    ]);
+    expect(scores).toEqual([
+      ["z00000", "z00001", 1],
+      ["z00002", "z00003", 1],
+      ["z00004", "z00005", 0.5],
+    ]);
+    expect(planNearDuplicates([...fixture].reverse())).toEqual(plan);
+  });
+
+  it("dedupes repeated postings without conflating delimiter-containing ids", () => {
+    const fixture: Source[] = Array.from({ length: 320 }, (_, i) => ({
+      id: `z${pad(i)}`,
+      title: `unique${i}`,
+      url: `https://ids.example/${i}`,
+    }));
+    for (const [i, id] of ["a", "b+c", "a+b", "c"].entries()) {
+      fixture[i] = { id, title: "common shared", url: `https://ids.example/${i}` };
+    }
+    const plan = planNearDuplicates(fixture);
+    expect(plan.comparisons).toBe(12);
+    expect(plan.truncated).toBe(true);
+    expect(plan.pairs.map((pair) => [pair.a.id, pair.b.id])).toEqual([
+      ["a", "a+b"],
+      ["a", "b+c"],
+      ["a", "c"],
+      ["a+b", "b+c"],
+      ["a+b", "c"],
+      ["b+c", "c"],
+    ]);
+    expect(planNearDuplicates([...fixture].reverse())).toEqual(plan);
+  });
+
+  it("recomputes title features after edits rather than reusing an earlier plan", () => {
+    const fixture = [
+      { id: "a", title: "alpha beta", url: "https://edits.example/a" },
+      { id: "b", title: "alpha beta", url: "https://edits.example/b" },
+    ];
+    expect(planNearDuplicates(fixture).pairs).toHaveLength(1);
+    fixture[1]!.title = "totally unrelated";
+    expect(planNearDuplicates(fixture).pairs).toEqual([]);
+    fixture[1]!.title = "ALPHA BETA";
+    expect(planNearDuplicates(fixture).pairs[0]?.titleSimilarity).toBe(1);
   });
 
   it("keeps the wrapper returning exactly the planned pairs", () => {

@@ -44,5 +44,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Deep Audit Fixes — resolve all findings of the 2026-10-04 whole-codebase audit (privacy/consent enforcement, accounting, job resilience, undo/duplicate integrity, import/export, UI safety, provider hardening)
+## [~] Track: Deep Audit Fixes — resolve all findings of the 2026-10-04 whole-codebase audit (privacy/consent enforcement, accounting, job resilience, undo/duplicate integrity, import/export, UI safety, provider hardening)
 *Link: [./conductor/tracks/deep_audit_fixes_20261005/](./conductor/tracks/deep_audit_fixes_20261005/)*

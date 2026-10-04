@@ -36,3 +36,57 @@ claim that any audit finding has been fixed or reproduced.
   Re-read current code before trusting any line reference in spec.md.
 
 <!-- Learnings from implementation will be appended below -->
+
+## 2026-10-04 — Preflight baseline blocker
+
+- **Evidence before edits:** `npm run test -- --run` timed out at 180 s.
+  `npm run test -- --run --maxWorkers=2` completed with 156 files passed,
+  3 failed; 2392 tests passed, 3 failed. Near-duplicate planning took 849 ms
+  against its 500 ms limit, search-index build took 659 ms against 500 ms,
+  and the EditDialog test timed out at 5 s.
+- **Isolation:** `npm run test -- --run --maxWorkers=1
+  tests/unit/decisions-perf.test.ts tests/unit/search-perf.test.ts
+  tests/components/sidepanel-actions.test.tsx` passed all 18 component tests
+  but still failed both performance gates (593 ms planning, 705 ms search
+  build). Analyze-on-save passed at 340 ms worst-of-three, below 1500 ms.
+- **User direction:** Investigate and fix the baseline first. Do not weaken
+  thresholds or skip performance tests. Track tasks remain pending until
+  the baseline repair passes.
+- **Tracking:** `BookmarksManager-3op.8` owns the baseline repair and blocks
+  Phase 1 task 1. The host has four ARM Neoverse-N1 vCPUs with observed load
+  averages around 11–12; timing evidence must distinguish contention from
+  production inefficiency.
+- **Workspace:** Existing epic notes explicitly direct execution on the
+  current `main` checkout. No remote synchronization is authorized.
+
+## 2026-10-04 — Baseline repair and contention control
+
+- **Implemented:** Precompute title normalization and token sets once per
+  bookmark in the near-duplicate planner. Replace JSON pair-key allocation
+  with canonical ID tuples held in a plan-local map of sets.
+- **Preserved:** 50,000 comparison attempts, 500 output pairs, stable ordering,
+  truncation accounting, duplicate exclusions, Unicode/punctuation and
+  tokenless-title behavior. Four permanent parity/edit regressions added.
+  Complete-plan comparisons against the original implementation passed 9/9.
+- **Root cause:** Repeated per-pair title work and key allocation. Planner
+  measurements improved from 740 ms to 318 ms in the worker's run, and
+  276 ms in the coordinator's controlled full run.
+- **Search finding:** No safe search change was needed or retained. Its
+  profile showed 769 ms elapsed but 328 ms process CPU. CPU pressure was
+  about 89% on this shared host. Pinning the test process to CPU 3 with one
+  worker passed the unchanged cold-build gate, both standalone and in the
+  full run. Do not introduce caches or relax thresholds to hide contention.
+- **Validation:** `taskset -c 3 npm run lint` and
+  `taskset -c 3 npm run typecheck` passed.
+  `taskset -c 3 npm run test -- --run --maxWorkers=1` ran all 159 files:
+  2398 tests passed, one failed (popup render 156 ms against 150 ms).
+  Both originally failing performance gates passed; analyze-on-save max was
+  257 ms. The unchanged failed file passed all 24 tests on an isolated rerun:
+  `taskset -c 3 npm run test -- --run --maxWorkers=1
+  tests/components/popup-save.test.tsx`. This is a passed rerun, not a
+  claim that the full-suite invocation exited successfully.
+- **Remaining checks:** `taskset -c 3 npm run build`,
+  `npm run check:manifest`, `npm run check:bundle`,
+  `npm run check:store`, `npm run check:site`, and `git diff --check` passed.
+  Existing React `act` warnings remain. E2E was not required for this
+  planner-only repair; live/eval and native permission prompts were not run.

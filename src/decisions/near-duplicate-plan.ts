@@ -77,6 +77,9 @@ interface Prepared {
   domain: string;
   /** `normalizeUrl(url)`, or `null` when the URL cannot normalize. */
   normKey: string | null;
+  /** Plan-local title features, shared by postings and pair scoring. */
+  normTitle: string;
+  tokens: ReadonlySet<string>;
 }
 
 /**
@@ -100,6 +103,8 @@ export function planNearDuplicates(
       url: item.url,
       domain,
       normKey: normalizeUrl(item.url),
+      normTitle: normalizeTitle(item.title),
+      tokens: tokenSet(item.title),
     };
     const bucket = byDomain.get(domain);
     if (bucket === undefined) {
@@ -154,7 +159,9 @@ function exhaustivePlan(byDomain: ReadonlyMap<string, Prepared[]>): NearDuplicat
  */
 function boundedPlan(byDomain: ReadonlyMap<string, Prepared[]>): NearDuplicatePlan {
   const pairs: NearDuplicatePair[] = [];
-  const seen = new Set<string>();
+  // Keep canonical ID tuples without allocating/stringifying a key for
+  // every attempt. Separate keys also avoid delimiter collisions.
+  const seen = new Map<string, Set<string>>();
   let comparisons = 0;
 
   const domains = [...byDomain.keys()].sort(compareStrings);
@@ -170,7 +177,7 @@ function boundedPlan(byDomain: ReadonlyMap<string, Prepared[]>): NearDuplicatePl
     const postings = new Map<string, Prepared[]>();
     const tokenless: Prepared[] = [];
     for (const item of sorted) {
-      const tokens = tokenSet(item.title);
+      const tokens = item.tokens;
       if (tokens.size === 0) {
         tokenless.push(item);
         continue;
@@ -206,7 +213,7 @@ function boundedPlan(byDomain: ReadonlyMap<string, Prepared[]>): NearDuplicatePl
     // shared token; group them by normalized title so they still pair.
     const tokenlessGroups = new Map<string, Prepared[]>();
     for (const item of tokenless) {
-      const key = normalizeTitle(item.title);
+      const key = item.normTitle;
       const group = tokenlessGroups.get(key);
       if (group === undefined) {
         tokenlessGroups.set(key, [item]);
@@ -241,14 +248,21 @@ function boundedPlan(byDomain: ReadonlyMap<string, Prepared[]>): NearDuplicatePl
 /** Record one candidate attempt: dedupe, exclude local dupes, score. */
 function consider(
   pairs: NearDuplicatePair[],
-  seen: Set<string>,
+  seen: Map<string, Set<string>>,
   first: Prepared,
   second: Prepared,
   domain: string,
 ): void {
-  const key = pairKey(first.id, second.id);
-  if (seen.has(key)) return;
-  seen.add(key);
+  const a = first.id <= second.id ? first.id : second.id;
+  const b = first.id <= second.id ? second.id : first.id;
+  let partners = seen.get(a);
+  if (partners === undefined) {
+    partners = new Set<string>();
+    seen.set(a, partners);
+  } else if (partners.has(b)) {
+    return;
+  }
+  partners.add(b);
   const pair = evaluate(first, second, domain);
   if (pair !== undefined) pairs.push(pair);
 }
@@ -260,7 +274,7 @@ function evaluate(
   domain: string,
 ): NearDuplicatePair | undefined {
   if (locallyCaught(first, second)) return undefined;
-  const similarity = titleSimilarity(first.title, second.title);
+  const similarity = titleSimilarity(first, second);
   if (similarity < NEAR_DUPLICATE_TITLE_THRESHOLD) return undefined;
   const [a, b] = first.id <= second.id ? [first, second] : [second, first];
   return { a: toSide(a, domain), b: toSide(b, domain), titleSimilarity: similarity };
@@ -291,12 +305,6 @@ function sortPairs(pairs: NearDuplicatePair[]): void {
   );
 }
 
-/** Orientation-free id pair key — the attempt-dedupe membership test. */
-function pairKey(x: string, y: string): string {
-  const [a, b] = x <= y ? [x, y] : [y, x];
-  return JSON.stringify([a, b]);
-}
-
 /** The same split MiniSearch's default tokenizer applies to text. */
 const TOKEN_SPLIT = /[\n\r\p{Z}\p{P}]+/u;
 
@@ -320,10 +328,10 @@ function normalizeTitle(text: string): string {
  * tokenless titles like "!!!"), otherwise Jaccard over lowercase word-token
  * sets; 0 when a side has no tokens.
  */
-function titleSimilarity(a: string, b: string): number {
-  if (normalizeTitle(a) === normalizeTitle(b)) return 1;
-  const ta = tokenSet(a);
-  const tb = tokenSet(b);
+function titleSimilarity(a: Prepared, b: Prepared): number {
+  if (a.normTitle === b.normTitle) return 1;
+  const ta = a.tokens;
+  const tb = b.tokens;
   if (ta.size === 0 || tb.size === 0) return 0;
   let shared = 0;
   for (const token of ta) {
