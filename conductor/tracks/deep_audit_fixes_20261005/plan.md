@@ -77,6 +77,15 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 | UI | sidepanel `App.tsx`, `ReviewView.tsx`, `BulkBar.tsx`, `BookmarkList.tsx`, `dnd.tsx`, `RestructureView.tsx`, `EditDialog.tsx`, `SummaryDialog.tsx`, `TagManager.tsx`, `UndoToast.tsx`; popup; Options |
 | Providers / docs | `src/messages/{provider,llm-provider}.ts`, `src/security/{credentials,keys}.ts`, `eslint.config.mjs`, `README.md`, `store/*`, `site/*`, `conductor/*` |
 
+### Discovered checkpoint blocker
+
+- [~] Baseline reset failure visibility (`BookmarksManager-3op.9`):
+  `src/entrypoints/options/DeleteAllData.tsx` and
+  `tests/components/delete-all.test.tsx`. Preserve the reset's error after
+  dismissal whether failure arrives before or after Cancel. Clear it on an
+  explicit retry. Verify deterministic regressions and the applicable gate.
+  This separate baseline repair blocks the Phase 1 checkpoint, not P09.
+
 ---
 
 ## Phase 1: Privacy and consent enforcement

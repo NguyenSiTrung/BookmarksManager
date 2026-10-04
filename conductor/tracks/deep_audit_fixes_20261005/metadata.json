@@ -37,6 +37,9 @@
     "add_tags_per_tag_policy": "BookmarksManager-rwy"
   },
   "beads_epic": "BookmarksManager-3op",
+  "discovered_tasks": {
+    "baseline_reset_failure_visibility": "BookmarksManager-3op.9"
+  },
   "beads_tasks": {
     "phase1": "BookmarksManager-3op.1",
     "phase2": "BookmarksManager-3op.2",

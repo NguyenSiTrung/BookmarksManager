@@ -130,3 +130,15 @@
 - **Reason:** Keep the local hosted-policy source and store policy synchronized
   before completing the task. This does not publish the site or preempt H06's
   final documentation consolidation.
+
+## Revision 11 — 2026-10-04 — Reset failure checkpoint blocker
+
+- **Trigger:** The fresh Phase 1 unit gate and isolated existing test both
+  reproduced a disappearing delete-all error. Source inspection identifies
+  unconditional error clearing on dialog close.
+- **Change:** Track `BookmarksManager-3op.9` as a separate baseline repair,
+  blocking the Phase 1 checkpoint. It owns only Options `DeleteAllData.tsx`
+  and its existing component test. P09's source ownership remains disjoint.
+- **Reason:** Fix the actual baseline defect instead of hiding a gate failure
+  with timing retries. Preserve an honest result for the destructive reset,
+  without changing deletion semantics or expanding the audited feature scope.
