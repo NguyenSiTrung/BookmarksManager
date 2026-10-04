@@ -160,3 +160,14 @@ claim that any audit finding has been fixed or reproduced.
 - **Learnings:** Keep user intent in the effect dependencies, but keep editable
   payload values in the latest-input ref. Changing form fields must not
   cancel an in-flight one-shot request or silently request another.
+- **Local commit:** `3a00d58` (with Git note); `BookmarksManager-3op.1.5` closed.
+
+## 2026-10-04 — Task 2 preflight
+
+- `fetchImpl` is also exposed by `LlmClientConfig` in `src/llm/client.ts`,
+  which forwards it to the gate. Add that file to task 2 ownership so
+  production caller configuration cannot retain the bypass after the gate
+  removes it. Test transport installation belongs in test-only utilities.
+- Valid structured-output fallback and bounded repair transcripts must remain
+  compatible with scope admission. Tests must cover the real feature payloads,
+  not just generic chat bodies that will now be intentionally refused.

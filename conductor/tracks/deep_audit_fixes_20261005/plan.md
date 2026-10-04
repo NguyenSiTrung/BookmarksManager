@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-04 — task 1 error-mapping ownership -->
+<!-- Last Revised: 2026-10-04 — task 2 transport-seam ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -91,8 +91,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Fix: `readBlocklist` returns a discriminated result (or throws a typed
     error); update every caller found via `xd://lsp` references; pass
     `userBlocklist` in `startRestructure`.
-- [ ] Task 2: P03 — per-scope payload guards at both gates
-  <!-- files: src/net/send.ts, src/net/llm-send.ts -->
+- [~] Task 2: P03 — per-scope payload guards at both gates
+  <!-- files: src/net/send.ts, src/net/llm-send.ts, src/llm/client.ts -->
   <!-- depends: task1 -->
   - Tests: LLM scope body carrying a notes marker, a blocklisted/sensitive
     URL, or an extra field is rejected before `fetch`; Jev `questions[*]`
@@ -115,7 +115,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     default; granting then retrying succeeds.
   - Fix: `consentApproval` payload like `LLM_SUMMARIZE`; disclosure dialogs;
     bump consent versions for `llm_explain`/`llm_restructure`.
-- [x] Task 5: P05 — popup suggest only on explicit action
+- [x] Task 5: P05 — popup suggest only on explicit action (`3a00d58`)
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Suggestions.tsx -->
   - Tests: opening the popup with consent granted sends zero `SAVE_SUGGEST`;
     focusing the tags field or pressing Suggest sends exactly one.
