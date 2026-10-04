@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-04 — shared abort classification ownership -->
+<!-- Last Revised: 2026-10-05 — message protocol and audit outcome ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -161,7 +161,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 <!-- execution: parallel -->
 
 - [~] Task 1: A01 + A02 — timeout classification and retry policy
-  <!-- files: src/net/llm-send.ts, src/net/send.ts, src/net/abort.ts, src/jev/retry.ts, src/jev/client.ts -->
+  <!-- files: src/net/llm-send.ts, src/net/send.ts, src/net/abort.ts, src/net/sent-log.ts, src/jev/retry.ts, src/jev/client.ts, src/db/database.ts, src/messages/llm-features.ts, src/messages/llm-provider.ts, src/messages/provider.ts, src/messages/restructure.ts, src/messages/summaries.ts -->
   - Tests: `AbortSignal.timeout` rejection → `timeout`, one request, one
     reservation; user abort distinguished; HTTP-date `Retry-After` honored;
     transport retries back off with jitter (fake clock).

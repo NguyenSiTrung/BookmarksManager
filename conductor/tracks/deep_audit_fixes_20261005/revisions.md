@@ -156,3 +156,32 @@
 - **Reason:** Distinguish timeout from caller abort without inspecting error
   text, changing Jev's intended retry policy, or duplicating rules. Preserve
   existing wait caps and per-attempt authority/accounting.
+
+## Revision 13 — 2026-10-05 — Message protocol and audit outcome ownership
+
+- **Trigger:** Phase 2 task 1's new `aborted` gate code surfaced five TS2345
+  errors: four closed message-code unions relay gate codes verbatim and
+  could not carry it. `SummarizeErrorCode`'s safe-parse guard would silently
+  flatten `aborted` to `internal_error`. The interrupted worker also logged
+  caller aborts as `timeout` under P07's closed outcome vocabulary, which
+  conflates a user cancel with a deadline in the audit register.
+- **Change:** Phase 2 task 1 additionally owns the narrow union-member
+  additions in `src/messages/{llm-features,llm-provider,provider,
+  restructure,summaries}.ts`, the `SentLogOutcome` member and the
+  `isSentLogOutcome` guard in `src/db/database.ts` and `src/net/sent-log.ts`
+  respectively (nothing else in either file), and the caller/protocol
+  regression updates in `tests/unit/{llm-provider-messages,
+  provider-messages,llm-feature-messages,restructure-messages,
+  summary-messages,sent-log}.test.ts`.
+- **Ruling on outcome honesty:** caller aborts record `outcome: "aborted"`
+  in the sent log; the closed P07 vocabulary gains one content-free member,
+  applied additively — legacy rows and every existing outcome are
+  unaffected, and the register stays honest about which attempts the user
+  cancelled versus which the deadline cut. A01's error-code distinction and
+  the audit row now agree.
+- **Reason:** Keep total typed message results verbatim at every UI
+  boundary (no `internal_error` flattening of a user action) and keep the
+  audit outcome truthful. No other Phase 2 task is active, so the shared
+  files cannot conflict; task 6's later `database.ts` work is unaffected
+  (union member only). No spec behavior, retry policy, wait cap, or
+  dependency change.
