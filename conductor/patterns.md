@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-01 (full refresh after audit hardening) -->
+<!-- Last refreshed: 2026-10-04 (full refresh after second-opinion soft-block fix) -->
 
 # Codebase Patterns
 
@@ -31,7 +31,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-10-01 (full refresh after audit hardening)
+Last refreshed: 2026-10-04 (full refresh after second-opinion soft-block fix)
 
 ---
 
@@ -240,3 +240,4 @@ _Last refreshed: 2026-09-27_
 - **Consent gating should not punish agreeing early.** When a user checks a consent box before reading the linked disclosure, reveal/open and scroll to that disclosure rather than blocking the affirmative action — the click IS the consent trigger, so keep it effective while surfacing what was agreed to. (from: BookmarksManager-8qf, 2026-10-01)
 - **Popup save-suggest is a read model over decision rows, not a chip filter.** Render every tag chip independently of the confidence policy (a `noul` in `[0.5, 0.75)` must not hide siblings), and bound the rows lifecycle-side so repeated saves cannot accumulate unbounded decisions. (from: BookmarksManager-dm1, -f7c, 2026-10-01)
 - **Focus styling on a text input must not read as a boxed field.** A focus ring/border on the popup title input was mistaken for an editable box regression — when styling focus, prefer the surrounding affordance over a boxed border on the input itself. (from: popup title-input fix, 2026-10-01)
+- **Prerequisite-gated controls soft-block, not hard-disable.** A hard-disabled switch hides *which* prerequisite is missing and can trap an enabled control when a prerequisite later breaks. Keep it focusable with `aria-disabled`, render every unmet prerequisite at once through `aria-describedby` with its own action (disclosure reveal, jump to the provider/budget anchors), route a click on the blocked control to the first unmet step instead of toggling, and never block the OFF direction. (from: BookmarksManager-ky2, 2026-10-01)

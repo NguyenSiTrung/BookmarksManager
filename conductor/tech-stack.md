@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-30 (full refresh after starter tags + paper/course) -->
+<!-- Last refreshed: 2026-10-04 (full refresh; no dependency drift) -->
 
 # Technology Stack
 

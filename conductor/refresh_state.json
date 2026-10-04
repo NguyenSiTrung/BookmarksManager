@@ -1,57 +1,41 @@
 {
-  "lastRefresh": "2026-10-01T19:05:00Z",
+  "lastRefresh": "2026-10-04T00:00:00Z",
   "scope": "all",
   "changes": [
-    "tracks.md: archived the completed Audit Hardening track (now a <!-- Archived --> comment with a full delivery + post-close-fix summary) and replaced the active block with a 'No active track' section pointing at the 12 open Beads issues",
-    "Archive: git mv conductor/tracks/audit_hardening_20261001 -> conductor/archive/audit_hardening_20261001 (all 7 files: spec, plan, learnings, metadata, implement_state, revisions)",
-    "product.md: added 'Audit hardening delivered' (15 bugs B01-B15 + improvements I01-I08, 6 phases, final checkpoint ca754fd green, epic lgd closed) and 'Post-audit fixes' (8qf disclosure reveal, dm1 tag chips, f7c retention leak, popup title-input focus, 0sr CI trigger); extended 'Not yet built' with the 12-item P2/P3 Beads backlog",
-    "patterns.md: elevated 3 post-close-fix patterns under a new 'Elevated from follow-up fixes (2026-10-01, post-audit)' section; refresh markers updated",
-    "tech-stack.md: no drift - the CI trigger change (3337114) already updated it in the same commit; left unchanged",
-    "workflow.md: no drift - same commit updated it identically; left unchanged"
+    "product.md: added BookmarksManager-ky2 (ea43c01, soft-blocked second-opinion switch with per-prerequisite reveal/jump; OFF never blocked) to 'Post-audit fixes'; refresh marker updated",
+    "patterns.md: added 'Prerequisite-gated controls soft-block, not hard-disable' under 'Elevated from follow-up fixes'; refresh markers updated",
+    "tech-stack.md: no drift (package.json, lockfile, wxt.config.ts, workflows unchanged since 231f30d); marker bump only",
+    "workflow.md: no drift - 0fde5f6 already removed the >80% coverage rule; left unchanged",
+    "tracks.md: unchanged - no active track"
   ],
   "learnings": {
     "tracksScanned": 10,
-    "auditTrackPatternsAlreadyElevated": 10,
-    "newPatterns": 3,
-    "archivedLearningsUnchanged": true,
-    "note": "No cross-track duplicates found; all 2+ occurrence patterns were already consolidated."
+    "newLearningsFiles": 0,
+    "newPatterns": 1,
+    "note": "No new track learnings since 2026-10-01; one follow-up-fix pattern (ky2) elevated."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "closedTotal": 285,
-    "totalIssues": 297,
-    "syncDirection": "none (report only)",
+    "closedTotal": 287,
+    "totalIssues": 299,
+    "syncDirection": "none (no active plan.md to compare)",
     "completedThisCycle": [
-      "BookmarksManager-0sr (CI trigger)",
-      "BookmarksManager-dm1 (popup tag chips)",
-      "BookmarksManager-f7c (popup row leak)",
-      "BookmarksManager-8qf (disclosure reveal)",
-      "BookmarksManager-lgd epic + 24 task children (audit hardening)"
+      "BookmarksManager-ky2 (Options second-opinion switch soft-block)"
     ],
     "remainingOpenFollowups": [
-      "BookmarksManager-4fb P2 E2E chrome.permissions.request never resolves under Playwright",
-      "BookmarksManager-2v9 P3 restructure preview should flag managed rows before apply",
-      "BookmarksManager-42k P3 split src/messages/provider.ts into protocol.ts + worker handler",
-      "BookmarksManager-4hw.7 P3 title-quality check before analyze/save-suggest",
-      "BookmarksManager-7k4 P3 per-preset serialization for saveProviderKey",
-      "BookmarksManager-bih P3 extend egress lint rule beyond fetch",
-      "BookmarksManager-dfr P3 E2E positive control + websocket watch",
-      "BookmarksManager-eov P3 FR8: record usage for responses that egressed but fail cross-check",
-      "BookmarksManager-gtv P3 future-protocol multiplexing note for background.ts",
-      "BookmarksManager-mc9 P3 IV-length branch test for keys.ts:178",
-      "BookmarksManager-ope P3 harden scripts/check-bundle.mjs",
-      "BookmarksManager-sb9 P3 move popup<->sidepanel handoff helpers to src/sync/"
+      "BookmarksManager-4fb", "BookmarksManager-2v9", "BookmarksManager-42k", "BookmarksManager-4hw.7",
+      "BookmarksManager-7k4", "BookmarksManager-bih", "BookmarksManager-dfr", "BookmarksManager-eov",
+      "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-ope", "BookmarksManager-sb9"
     ],
     "cosmetic": [
-      "beads.role not configured (GH#2950)",
-      ".beads directory perms 0755 (recommended 0700)"
+      "beads.role not configured (GH#2950)"
     ]
   },
   "verification": {
-    "artifactSmoke": "Backups created (tracks/product/patterns .md.bak); track moved via git mv (history preserved); refresh markers updated in product/patterns; tracks.md now shows zero active tracks; conductor/tracks/ empty.",
-    "scope": "Documentation-only refresh. No build, unit/component/e2e or live/eval suite rerun.",
-    "sourceCommits": "Track closed at ca754fd/92764c4; post-close fixes 3337114, 58665b7, f3f7be8, 5901cf8; all local, unpushed."
+    "scope": "Documentation-only refresh. No build or test suite rerun.",
+    "testSuiteNote": "0fde5f6 consolidated the suite from 3089 to 2385 tests; historical gate counts in product.md describe original deliveries and are intentionally unchanged.",
+    "sourceCommits": "ea43c01, 0fde5f6 (plus beads export syncs bced7d7, 27f7e5d); all local, unpushed."
   }
 }
