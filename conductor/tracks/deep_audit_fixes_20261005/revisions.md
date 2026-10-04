@@ -107,3 +107,15 @@
   accounting and the original owner-drain/Resume assertions.
 - **Reason:** Test the same completed-attempt boundary without hiding a
   dispatched sibling. No Jev production behavior or source ownership change.
+
+## Revision 9 — 2026-10-04 — Shared path minimization contract
+
+- **Trigger:** P09 requires the cleaner and independent CleanedUrl gate schema
+  to agree on matrix/opaque path minimization without importing schema/runtime
+  policy into each other. Disclosure wording is snapshot-checked in store docs.
+- **Change:** Task 8 owns new pure `src/decisions/url-path.ts` plus the two
+  store privacy disclosures. Associated minimization/schema/real-wire and
+  local-resource-identity regressions belong to task 8.
+- **Reason:** Share only the path contract; retain raw local URL identity and
+  all current gate contracts. Clarify what cleaned URL includes without adding
+  fields, recipients or automatic triggers.

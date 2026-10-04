@@ -120,7 +120,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: opening the popup with consent granted sends zero `SAVE_SUGGEST`;
     focusing the tags field or pressing Suggest sends exactly one.
   - Fix: move the effect behind the explicit trigger; update popup copy.
-- [x] Task 6: P06 — no background egress on cold start
+- [x] Task 6: P06 — no background egress on cold start (`6b7e750`)
   <!-- files: src/entrypoints/background.ts, src/jobs/queue.ts, src/consent/disclosure.ts, README.md, store/privacy-policy.md, store/privacy-practices.md, store/reviewer-notes.md -->
   <!-- depends: task4 -->
   - Tests: cold start with a `running` job → `paused`, zero requests;
@@ -136,8 +136,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     the schema rejects oversize.
   - Fix: injected script returns `location.href` + identity; worker
     re-verifies; `maxElemsToParse`/`charThreshold`; `.max()` limits.
-- [ ] Task 8: P09 — path minimization
-  <!-- files: src/decisions/minimize.ts, src/schemas/decision-state.ts, src/consent/disclosure.ts -->
+- [~] Task 8: P09 — path minimization
+  <!-- files: src/decisions/minimize.ts, src/decisions/url-path.ts, src/schemas/decision-state.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md -->
   <!-- depends: task6 -->
   - Tests: `/s/<40-char token>` and `;jsessionid=…` never appear in the
     serialized payload; ordinary short paths unchanged; local identity
