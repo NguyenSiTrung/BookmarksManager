@@ -119,3 +119,14 @@
 - **Reason:** Share only the path contract; retain raw local URL identity and
   all current gate contracts. Clarify what cleaned URL includes without adding
   fields, recipients or automatic triggers.
+
+## Revision 10 — 2026-10-04 — Hosted path disclosure ownership
+
+- **Trigger:** P09's store policy clarifies the remaining-path contract, but
+  its hosted counterpart is outside the original task ownership.
+- **Change:** Add `site/privacy/index.html` to task 8 for the same narrow path
+  clarification. The coordinator owns this documentation edit and `check:site`;
+  no source implementer remains active.
+- **Reason:** Keep the local hosted-policy source and store policy synchronized
+  before completing the task. This does not publish the site or preempt H06's
+  final documentation consolidation.

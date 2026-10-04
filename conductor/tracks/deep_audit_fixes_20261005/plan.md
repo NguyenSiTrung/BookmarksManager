@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-04 — logging and cold-start ownership -->
+<!-- Last Revised: 2026-10-04 — hosted path disclosure ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -137,7 +137,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Fix: injected script returns `location.href` + identity; worker
     re-verifies; `maxElemsToParse`/`charThreshold`; `.max()` limits.
 - [~] Task 8: P09 — path minimization
-  <!-- files: src/decisions/minimize.ts, src/decisions/url-path.ts, src/schemas/decision-state.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md -->
+  <!-- files: src/decisions/minimize.ts, src/decisions/url-path.ts, src/schemas/decision-state.ts, src/consent/disclosure.ts, store/privacy-policy.md, store/privacy-practices.md, site/privacy/index.html -->
   <!-- depends: task6 -->
   - Tests: `/s/<40-char token>` and `;jsessionid=…` never appear in the
     serialized payload; ordinary short paths unchanged; local identity
