@@ -165,10 +165,13 @@ message body are never sent under any scope.
   `response_format` as a fixed synthetic request to check that your
   credentials and endpoint respond. Triggered only when you click
   "Test connection".
-- **Decision explanations** (`llm_explain`) — sends the decision state, the
+- **Decision explanations** (`llm_explain`) — sends the decision state
+  (bookmark title, cleaned URL, and domain), the
   question, the candidate labels, the Jev probabilities, and the selected
   answer to explain a review-queue decision in plain language. Triggered
-  only when you click "Explain" on a pending decision.
+  only when you click "Agree and explain" after reviewing the disclosure, or
+  "Explain" on a pending decision with current consent — opening or dismissing
+  the disclosure does not send.
 - **Automatic second opinions** (`llm_escalate`) — sends the decision state,
   the question, the allowed options, the Jev probabilities, and the Jev
   answer for a second opinion on a low-confidence decision. Runs only inside
@@ -178,8 +181,9 @@ message body are never sent under any scope.
 - **Restructure proposals** (`llm_restructure`) — sends folder paths,
   category counts, tag counts, domains, and representative titles (capped)
   to propose a folder structure. Proposals are plans for your review —
-  nothing is applied automatically. Triggered only when you start
-  "Restructure".
+  nothing is applied automatically. Triggered only when you click "Agree and
+  propose" after reviewing the disclosure, or "Propose a layout" with current
+  consent — opening or dismissing the disclosure does not send.
 - **Page summaries** (`llm_summary`) — sends the page title, cleaned URL,
   headings, bounded page excerpt, and site name and meta description when
   present to summarize the current page. The page is extracted only after
@@ -214,7 +218,17 @@ rates you enter for any other model. When no price is known, automatic
 confirmation before sending. Nothing is sent on install, on a timer, or in
 the background.
 
-The consent is versioned — `consentVersion`, currently 4 — so a change to the
+Explain and Restructure display the recipient, exact origin and endpoint,
+model, fields, trigger, and purpose before an initially unchecked agreement
+checkbox and a separate affirmative action. That action grants only the
+disclosed scope and origin, then retries with the accepted provider, endpoint,
+model, and version binding. Their worker handlers never create grants; they
+recheck current configuration and persisted consent. Unknown-cost confirmation
+is separate and keeps the same binding; a changed provider or revoked grant
+cannot authorize the retry.
+
+The consent is versioned — `consentVersion`, currently 5 for `llm_explain`
+and `llm_restructure`, and 4 for all other scopes — so a change to the
 sent fields or recipients re-shows the disclosure before the next request.
 Older grants remain stored as stale records and authorize no request until
 the user reaccepts for that exact scope and origin; reacquiring one origin

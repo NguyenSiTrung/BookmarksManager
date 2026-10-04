@@ -242,12 +242,16 @@ export const LLM_SCOPE_DISCLOSURES = {
     purpose: "explain a review-queue decision in plain language",
     fields: [
       "decision state",
+      "bookmark title",
+      "cleaned URL",
+      "domain",
       "question",
       "candidate labels",
       "Jev probabilities",
       "selected answer",
     ],
-    trigger: 'only when you click "Explain" on a pending decision',
+    trigger:
+      'only when you click "Agree and explain" after reviewing the disclosure, or "Explain" on a pending decision with current consent — opening or dismissing the disclosure does not send',
     credentialUse: LLM_CREDENTIAL_USE,
   },
   [LLM_ESCALATE_SCOPE]: {
@@ -274,7 +278,8 @@ export const LLM_SCOPE_DISCLOSURES = {
       "domains",
       "representative titles (capped)",
     ],
-    trigger: 'only when you start "Restructure"',
+    trigger:
+      'only when you click "Agree and propose" after reviewing the disclosure, or "Propose a layout" with current consent — opening or dismissing the disclosure does not send',
     credentialUse: LLM_CREDENTIAL_USE,
   },
   [LLM_SUMMARY_SCOPE]: {

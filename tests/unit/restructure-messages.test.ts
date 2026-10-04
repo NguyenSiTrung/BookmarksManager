@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { grantConsentAtOrigin, revokeConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
@@ -138,6 +139,7 @@ describe("RESTRUCTURE_START", () => {
       keySuffix: "1234",
       configuredAt: "2026-09-15T00:00:00.000Z",
     });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
     vi.mocked(proposeLayout).mockResolvedValue({
       proposal: PROPOSAL,
       model: "gpt-4o-mini",
@@ -167,6 +169,97 @@ describe("RESTRUCTURE_START", () => {
       deps,
     );
     expect(reply).toMatchObject({ ok: false, code: "no_provider" });
+    expect(proposeLayout).not.toHaveBeenCalled();
+  });
+});
+
+describe("RESTRUCTURE_START consent admission", () => {
+  const approval = { providerId: "preset:openai", origin: "https://api.openai.com",
+    model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 };
+  async function seed() {
+    await saveLlmProvider({ providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234", configuredAt: NOW });
+    vi.mocked(proposeLayout).mockResolvedValue({ proposal: PROPOSAL, model: "gpt-4o-mini" });
+  }
+  it.each(["missing", "stale", "foreign"] as const)("rejects %s before sensitive reads and job writes", async (mode) => {
+    await seed();
+    if (mode !== "missing") await db.consents.put({ scope: "llm_restructure",
+      origin: mode === "foreign" ? "https://foreign.dev" : approval.origin,
+      consentVersion: mode === "foreign" ? 5 : 4, acceptedAt: NOW });
+    const before = await db.consents.toArray();
+    const tree = vi.spyOn(api, "getTree");
+    const metas = vi.spyOn(db.bookmarkMeta, "toArray");
+    const metadataGet = vi.spyOn(db.metadata, "get");
+    const reply = await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active" }, SENDER, deps);
+    expect(reply).toMatchObject({ ok: false, code: "consent_required",
+      consent: { scope: "llm_restructure", recipient: "OpenAI", approval } });
+    expect(tree).not.toHaveBeenCalled();
+    expect(metas).not.toHaveBeenCalled();
+    expect(metadataGet.mock.calls.flat()).not.toContain("decisions:blocklist");
+    expect(proposeLayout).not.toHaveBeenCalled();
+    expect(runJobCalls).toEqual([]);
+    expect(await db.jobs.count()).toBe(0);
+    expect(await db.consents.toArray()).toEqual(before);
+  });
+  it("starts after exact grant and binding without refreshing acceptedAt", async () => {
+    await seed();
+    await grantConsentAtOrigin("llm_restructure", approval.origin);
+    const before = await db.consents.toArray();
+    expect(await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active",
+      consentApproval: approval }, SENDER, deps)).toMatchObject({ ok: true, code: "job_ok" });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(runJobCalls).toHaveLength(1);
+  });
+  it.each(["revoked", "model", "endpoint", "provider", "version"] as const)("rejects a cost retry after %s changed", async (change) => {
+    await seed();
+    await grantConsentAtOrigin("llm_restructure", approval.origin);
+    if (change === "revoked") await revokeConsentAtOrigin("llm_restructure", approval.origin);
+    const bound = { ...approval };
+    if (change === "model") bound.model = "other-model";
+    if (change === "endpoint") bound.endpoint = "https://api.openai.com/other/chat/completions";
+    if (change === "provider") bound.providerId = "preset:openrouter";
+    if (change === "version") bound.consentVersion = 4;
+    expect(await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active",
+      unknownCostConfirmed: true, consentApproval: bound }, SENDER, deps))
+      .toMatchObject({ ok: false, code: "consent_required" });
+    expect(proposeLayout).not.toHaveBeenCalled();
+    expect(await db.jobs.count()).toBe(0);
+  });
+  it.each(["switch", "reconfigure"] as const)("refuses the old accepted binding after a real provider %s even with current consent", async (change) => {
+    await seed();
+    await grantConsentAtOrigin("llm_restructure", approval.origin);
+    if (change === "switch") {
+      await saveLlmProvider({ providerId: "preset:openrouter",
+        provider: { kind: "preset", preset: "openrouter", model: "openai/gpt-4o-mini" },
+        keySuffix: "1234", configuredAt: NOW });
+      await grantConsentAtOrigin("llm_restructure", "https://openrouter.ai");
+    } else {
+      await saveLlmProvider({ providerId: approval.providerId,
+        provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini-2024-07-18" },
+        keySuffix: "1234", configuredAt: NOW });
+    }
+    const before = await db.consents.toArray();
+    expect(await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active",
+      unknownCostConfirmed: true, consentApproval: approval }, SENDER, deps))
+      .toMatchObject({ ok: false, code: "consent_required" });
+    expect(await db.consents.toArray()).toEqual(before);
+    expect(proposeLayout).not.toHaveBeenCalled();
+    expect(await db.jobs.count()).toBe(0);
+  });
+  it("cost approval alone is not consent or an accepted destination binding", async () => {
+    await seed();
+    await grantConsentAtOrigin("llm_restructure", approval.origin);
+    expect(await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active",
+      unknownCostConfirmed: true }, SENDER, deps))
+      .toMatchObject({ ok: false, code: "consent_required" });
+    expect(proposeLayout).not.toHaveBeenCalled();
+  });
+  it("rejects content added to the closed approval", async () => {
+    await seed();
+    expect(await handleRestructureMessage({ type: "RESTRUCTURE_START", providerId: "active",
+      consentApproval: { ...approval, notes: "private-notes" } }, SENDER, deps))
+      .toMatchObject({ ok: false, code: "malformed_message" });
     expect(proposeLayout).not.toHaveBeenCalled();
   });
 });

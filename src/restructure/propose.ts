@@ -28,6 +28,9 @@ export interface ProposeOptions {
   /** One-shot manual confirmation for an unpriced provider. */
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
+  /** Internal recipient/source authority, checked before provider rereads and
+   * forwarded to the gate before every dispatch, including retries. */
+  readonly beforeSend?: () => Promise<void>;
 }
 
 const MAX_INPUT_TOKENS = 16_000;
@@ -46,6 +49,7 @@ export async function proposeLayout(
   synopsis: LibrarySynopsis,
   options?: ProposeOptions,
 ): Promise<ProposeResult> {
+  await options?.beforeSend?.();
   const record = await readLlmProvider(providerId);
   if (record === null) {
     throw new LlmGateError("invalid_provider", "Unknown LLM provider.");
@@ -63,6 +67,7 @@ export async function proposeLayout(
       ? { unknownCostConfirmed: options.unknownCostConfirmed }
       : {}),
     ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+    ...(options?.beforeSend !== undefined ? { beforeSend: options.beforeSend } : {}),
   });
   const run = await runStructured({
     tier: "json_schema",
@@ -70,7 +75,12 @@ export async function proposeLayout(
     schema: RestructureProposal,
     schemaName: "restructure_proposal",
     messages,
-    send: client.send,
+    send: async (request) => {
+      // Fallbacks/repairs must fail with a renewed disclosure before a gate
+      // model-pin refusal can obscure a changed accepted recipient.
+      await options?.beforeSend?.();
+      return client.send(request);
+    },
   });
   return {
     proposal: run.value,

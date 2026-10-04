@@ -150,6 +150,8 @@ describe("RestructureView idle/start", () => {
           code: "confirmation_required",
           message: "unpriced",
           destinationOrigin: "https://api.openai.com",
+          consentApproval: { providerId: "preset:openai", origin: "https://api.openai.com",
+            model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 },
         };
       }
       if (msg.type === "RESTRUCTURE_START") {
@@ -171,6 +173,8 @@ describe("RestructureView idle/start", () => {
         expect.objectContaining({
           type: "RESTRUCTURE_START",
           unknownCostConfirmed: true,
+          consentApproval: { providerId: "preset:openai", origin: "https://api.openai.com",
+            model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 },
         }),
       ),
     );

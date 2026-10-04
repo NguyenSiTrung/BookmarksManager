@@ -1,4 +1,10 @@
-import { grantConsentAtOrigin } from "../consent/records";
+import { hasConsentAtOrigin } from "../consent/records";
+import {
+  FeatureConsentApproval,
+  FeatureConsentDisclosure,
+  featureConsentDisclosure,
+  matchesFeatureConsentApproval,
+} from "../schemas/feature-consent";
 import { db } from "../db/database";
 import { BlocklistReadError } from "../decisions/blocklist";
 import { budgetChoiceOf, monthlyBudgetSnapshot } from "../llm/budget";
@@ -10,7 +16,6 @@ import {
 } from "../llm/escalate";
 import { LlmHttpError } from "../llm/client";
 import { resolveProviderPricing } from "../llm/pricing";
-import { resolveLlmDestination } from "../llm/providers";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import type { TokenUsage } from "../llm/wire";
@@ -50,6 +55,7 @@ export const LlmFeatureMessage = z.discriminatedUnion("type", [
     type: z.literal("LLM_EXPLAIN"),
     decisionId: z.string().min(1),
     unknownCostConfirmed: z.boolean().optional(),
+    consentApproval: FeatureConsentApproval.optional(),
   }),
   z.strictObject({ type: z.literal("LLM_ESCALATION_STATUS") }),
   z.strictObject({
@@ -91,6 +97,7 @@ export const LlmFeatureErrorCode = z.enum([
   "request_not_allowed",
   "unlisted_model",
   "no_consent",
+  "consent_required",
   "no_permission",
   "no_key",
   "pricing_required",
@@ -183,6 +190,8 @@ export const LlmFeatureMessageResult = z.union([
      * content.
      */
     destinationOrigin: z.string().optional(),
+    consent: FeatureConsentDisclosure.optional(),
+    consentApproval: FeatureConsentApproval.optional(),
   }),
 ]);
 export type LlmFeatureMessageResult = z.infer<typeof LlmFeatureMessageResult>;
@@ -350,26 +359,58 @@ async function featureBudget(): Promise<LlmFeatureMessageResult> {
 async function explain(message: {
   decisionId: string;
   unknownCostConfirmed?: boolean;
+  consentApproval?: FeatureConsentApproval;
 }): Promise<LlmFeatureMessageResult> {
   const active = await readActiveLlmProvider();
   if (active === null) {
     return failure("no_provider", "No LLM provider is configured.");
   }
-  // The Explain click is the consent trigger for `llm_explain` — write the
-  // grant at the provider's origin before the gated send.
-  await grantConsentAtOrigin(
-    "llm_explain",
-    resolveLlmDestination(active.provider).origin,
-  );
+  const consent = featureConsentDisclosure("llm_explain", active);
+  if (
+    (message.consentApproval !== undefined &&
+      !matchesFeatureConsentApproval(message.consentApproval, consent.approval)) ||
+    (message.unknownCostConfirmed === true && message.consentApproval === undefined) ||
+    !(await hasConsentAtOrigin(consent.scope, consent.approval.origin))
+  ) {
+    return {
+      ok: false,
+      code: "consent_required",
+      message: "Review and accept the explanation disclosure for the current provider.",
+      consent,
+    };
+  }
+  const beforeSend = () => db.transaction("r", db.metadata, db.consents, async () => {
+    const current = await readActiveLlmProvider();
+    if (current === null) {
+      throw new ReplyError(failure("no_provider", "No LLM provider is configured."));
+    }
+    const currentConsent = featureConsentDisclosure("llm_explain", current);
+    if (
+      !matchesFeatureConsentApproval(consent.approval, currentConsent.approval) ||
+      !(await hasConsentAtOrigin(currentConsent.scope, currentConsent.approval.origin))
+    ) {
+      throw new ReplyError({
+        ok: false,
+        code: "consent_required",
+        message: "Review and accept the explanation disclosure for the current provider.",
+        consent: currentConsent,
+      });
+    }
+  });
   const result = await explainDecision(
     message.decisionId,
     active.providerId,
     {
+      beforeSend,
       ...(message.unknownCostConfirmed !== undefined
         ? { unknownCostConfirmed: message.unknownCostConfirmed }
         : {}),
     },
-  ).catch((cause: unknown) => {
+  ).catch(async (cause: unknown) => {
+    // An internal transport retry can refuse at the gate's model/consent
+    // preflight before reaching its dispatch callback. Renew the disclosure
+    // for changed authority; preserve unrelated gate errors unchanged.
+    if (cause instanceof LlmGateError) await beforeSend();
     // Attach the destination origin to a confirmation refusal so the page
     // can name it in the dialog — a target, never content.
     if (
@@ -380,7 +421,8 @@ async function explain(message: {
         ok: false,
         code: cause.code,
         message: cause.message,
-        destinationOrigin: resolveLlmDestination(active.provider).origin,
+        destinationOrigin: consent.approval.origin,
+        consentApproval: consent.approval,
       });
     }
     throw cause;

@@ -59,6 +59,9 @@ export interface ExplainOptions {
   /** One-shot manual confirmation for a provider with no pricing — never persisted. */
   readonly unknownCostConfirmed?: boolean;
   readonly signal?: AbortSignal;
+  /** Internal caller authority, composed with bookmark admission and rerun
+   * at the gate's actual dispatch boundary for every paid attempt. */
+  readonly beforeSend?: () => Promise<void>;
 }
 /** Conservative admission bounds — the payload is a handful of short fields. */
 const MAX_INPUT_TOKENS = 8_192;
@@ -182,6 +185,7 @@ export async function explainDecision(
       `Every bookmark of decision "${decisionId}" is gone or unsendable.`,
     );
   }
+  await options?.beforeSend?.();
   const record = await readLlmProvider(providerId);
   if (record === null) {
     throw new LlmGateError("invalid_provider", "Unknown LLM provider.");
@@ -203,6 +207,8 @@ export async function explainDecision(
     if (live.length === 0) {
       throw new ExplainError("stale", "No referenced bookmark remains sendable.");
     }
+    // Last: native/blocklist IO must not outlive the accepted recipient check.
+    await options?.beforeSend?.();
   };
   const client = createLlmClient(providerId, {
     scope: "llm_explain",

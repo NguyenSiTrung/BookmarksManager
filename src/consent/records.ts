@@ -11,7 +11,8 @@ import {
 export type { ConsentScope };
 
 /**
- * Version of the consent grant, shared by every scope. Bump this whenever the
+ * Base version of the consent grant. Scope-specific disclosures may override
+ * it through `consentVersionForScope`. Bump the applicable version whenever the
  * set of sent fields or the set of recipients changes (plan §Global
  * Constraints): rows recorded under older versions then fail `hasConsent`
  * and the user must re-accept the disclosure. Clarifying disclosure wording
@@ -24,6 +25,14 @@ export type { ConsentScope };
  * Older grants remain stored but cannot authorize sends until reacquired.
  */
 export const CONSENT_VERSION = 4;
+
+/** Version 5 requires the rendered, affirmative Explain/Restructure disclosure.
+ * Summary and unrelated scopes retain their version-4 grants and bindings. */
+export function consentVersionForScope(scope: ConsentScope): number {
+  return scope === "llm_explain" || scope === "llm_restructure"
+    ? 5
+    : CONSENT_VERSION;
+}
 
 /**
  * Record the user's affirmative consent for a scope at an origin. Uses
@@ -39,7 +48,7 @@ export async function grantConsentAtOrigin(
   const record: ConsentRecord = ConsentRecord.parse({
     scope,
     origin,
-    consentVersion: CONSENT_VERSION,
+    consentVersion: consentVersionForScope(scope),
     acceptedAt: new Date().toISOString(),
   });
   await db.consents.put(record);
@@ -68,7 +77,7 @@ export async function hasConsentAtOrigin(
     record !== undefined &&
     record.scope === scope &&
     record.origin === origin &&
-    record.consentVersion === CONSENT_VERSION
+    record.consentVersion === consentVersionForScope(scope)
   );
 }
 

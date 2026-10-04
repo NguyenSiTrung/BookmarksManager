@@ -298,12 +298,27 @@ describe("stale v1/v2/v3 records after the CONSENT_VERSION 4 bump", () => {
       await grantConsentAtOrigin(scope, origin);
       expect(await hasConsentAtOrigin(scope, origin)).toBe(true);
       expect(await db.consents.get([scope, origin])).toMatchObject({
-        scope, origin, consentVersion: 4,
+        scope, origin, consentVersion: ["llm_explain", "llm_restructure"].includes(scope) ? 5 : 4,
       });
       expect(await hasConsentAtOrigin(scope, otherOrigin)).toBe(false);
       expect(await db.consents.get([scope, otherOrigin])).toEqual(other);
       expect(await db.consents.count()).toBe(2);
     }
+  });
+});
+
+describe("feature-specific consent disclosure versions", () => {
+  it("invalidates only version4 Explain and Restructure grants until explicit reacceptance", async () => {
+    const origin = "https://api.example.com";
+    for (const scope of CONSENT_SCOPES) {
+      await db.consents.put(consentRow({ scope, origin, consentVersion: 4 }));
+      expect(await hasConsentAtOrigin(scope, origin)).toBe(!["llm_explain", "llm_restructure"].includes(scope));
+      await grantConsentAtOrigin(scope, origin);
+      expect(await hasConsentAtOrigin(scope, origin)).toBe(true);
+      expect((await db.consents.get([scope, origin]))?.consentVersion)
+        .toBe(["llm_explain", "llm_restructure"].includes(scope) ? 5 : 4);
+    }
+    expect(CONSENT_VERSION).toBe(4);
   });
 });
 

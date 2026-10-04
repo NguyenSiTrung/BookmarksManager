@@ -149,16 +149,20 @@ every request goes only to the origin you configured.
   - LLM test connection (`llm_test`): `model`, `messages`,
     `response_format` — a fixed synthetic request, only when you click
     "Test connection".
-  - Decision explanations (`llm_explain`): decision state, question,
-    candidate labels, Jev probabilities, selected answer — only when you
-    click "Explain" on a pending decision.
+  - Decision explanations (`llm_explain`): decision state (bookmark title,
+    cleaned URL, domain), question, candidate labels, Jev probabilities,
+    selected answer — only when you click "Agree and explain" after reviewing
+    the disclosure, or "Explain" on a pending decision with current consent —
+    opening or dismissing the disclosure does not send.
   - Automatic second opinions (`llm_escalate`): decision state, question,
     allowed options, Jev probabilities, Jev answer — only inside a Save,
     Analyze, or library scan you started, within the spending ceiling you
     chose (a monthly cap or an explicit "no cap"); never applies changes.
   - Restructure proposals (`llm_restructure`): folder paths, category
     counts, tag counts, domains, representative titles (capped) — only when
-    you start "Restructure"; proposals are review-only.
+    you click "Agree and propose" after reviewing the disclosure, or "Propose
+    a layout" with current consent — opening or dismissing the disclosure
+    does not send; proposals are review-only.
   - Page summaries (`llm_summary`): page title, cleaned URL, headings,
     bounded page excerpt, and site name and meta description when present —
     extracted and sent only after you click "Summarize", never in the
@@ -177,6 +181,13 @@ every request goes only to the origin you configured.
   The worker freshly checks those recipients/version before granting.
   Provider changes require reviewing again, and any separate unknown-cost
   confirmation retains the accepted binding.
+  Explain and Restructure likewise render the recipient, exact origin and
+  endpoint, model, fields, trigger, and purpose before an unchecked checkbox
+  and separate affirmative action. Only that action grants its disclosed
+  scope/origin and retries with the accepted provider, endpoint, model, and
+  version binding. Their worker handlers never write grants; they check
+  current configuration and persisted consent, including on cost retries.
+  Those two scopes require `consentVersion` 5; all others retain version 4.
 - **Everything else: not collected.** Beyond these disclosed flows, the Jev
   test connection sends only its fixed synthetic payload (`model`, `state`,
   `questions`), which contains no user data.

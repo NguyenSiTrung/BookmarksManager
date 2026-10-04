@@ -3,7 +3,7 @@ import { webcrypto } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   grantConsentAtOrigin,
-  hasConsentAtOrigin,
+  revokeConsentAtOrigin,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { getDecision, persistDecision } from "../../src/decisions/store";
@@ -321,7 +321,9 @@ describe("handleLlmFeatureMessage", () => {
       expect((await getDecision(UUID))?.rationale).toBeUndefined();
 
       const second = await handleLlmFeatureMessage(
-        { type: "LLM_EXPLAIN", decisionId: UUID, unknownCostConfirmed: true },
+        { type: "LLM_EXPLAIN", decisionId: UUID, unknownCostConfirmed: true,
+          consentApproval: { providerId: PROVIDER_ID, origin: ORIGIN, model: "gpt-4o-mini-2024-07-18",
+            endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5 } },
         TRUSTED,
       );
       expect(second).toMatchObject({
@@ -357,9 +359,11 @@ describe("handleLlmFeatureMessage", () => {
       await seedProvider();
       await persistDecision(pendingDecision());
       const reply = await handleLlmFeatureMessage(
-        { type: "LLM_EXPLAIN", decisionId: UUID, unknownCostConfirmed: true },
+        { type: "LLM_EXPLAIN", decisionId: UUID },
         TRUSTED,
       );
+      expect(reply).toMatchObject({ ok: true, code: "explain_ok" });
+      expect(server.requests).toHaveLength(1);
       const text = JSON.stringify(reply);
       expect(text).not.toContain("a-site.com");
       expect(text).not.toContain("sk-test-1234");
@@ -386,22 +390,95 @@ describe("handleLlmFeatureMessage", () => {
       expect(server.requests).toHaveLength(0);
     });
 
-    it("grants llm_explain at the click, then hits the next gate", async () => {
-      await seedProvider({ consent: false, model: "gpt-4o-mini-2024-07-18" });
+    it.each(["missing", "stale", "foreign"] as const)("refuses %s consent without creating a grant or sending", async (mode) => {
+      await seedProvider({ consent: false });
       await persistDecision(pendingDecision());
-      const reply = await handleLlmFeatureMessage(
-        { type: "LLM_EXPLAIN", decisionId: UUID },
-        TRUSTED,
-      );
-      // The click IS the consent trigger (spec FR3): the origin-scoped
-      // grant is written, and the unpriced model then stops on
-      // confirmation_required — never on a missing consent row.
-      expect(reply).toMatchObject({ ok: false, code: "confirmation_required" });
-      await expect(hasConsentAtOrigin("llm_explain", ORIGIN)).resolves.toBe(true);
-      // The decision is untouched — an explanation never mutates state.
-      const row = await getDecision(UUID);
-      expect(row?.status).toBe("pending");
-      expect(row?.rationale).toBeUndefined();
+      if (mode !== "missing") await db.consents.put({
+        scope: "llm_explain", origin: mode === "foreign" ? "https://foreign.dev" : ORIGIN,
+        consentVersion: mode === "foreign" ? 5 : 4, acceptedAt: "2020-01-01T00:00:00.000Z",
+      });
+      const before = await db.consents.toArray();
+      const reply = await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID }, TRUSTED);
+      expect(reply).toMatchObject({ ok: false, code: "consent_required", consent: {
+        scope: "llm_explain", recipient: "OpenAI", approval: {
+          providerId: PROVIDER_ID, origin: ORIGIN, model: "gpt-4o-mini",
+          endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5,
+        },
+      } });
+      expect(await db.consents.toArray()).toEqual(before);
+      expect(server.requests).toHaveLength(0);
+      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+      expect(await db.jobs.count()).toBe(0);
+    });
+
+    it("honors an affirmative exact-origin grant and bound retry without refreshing it", async () => {
+      await seedProvider({ consent: false });
+      await persistDecision(pendingDecision());
+      await grantConsentAtOrigin("llm_explain", ORIGIN);
+      const before = await db.consents.toArray();
+      const reply = await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID,
+        consentApproval: { providerId: PROVIDER_ID, origin: ORIGIN, model: "gpt-4o-mini",
+          endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5 } }, TRUSTED);
+      expect(reply).toMatchObject({ ok: true, code: "explain_ok" });
+      expect(server.requests).toHaveLength(1);
+      expect(await db.consents.toArray()).toEqual(before);
+    });
+
+    it.each(["revoked", "model", "endpoint", "provider", "version"] as const)("refuses a bound retry after %s changed", async (change) => {
+      await seedProvider();
+      await persistDecision(pendingDecision());
+      if (change === "revoked") await revokeConsentAtOrigin("llm_explain", ORIGIN);
+      const approval = { providerId: PROVIDER_ID, origin: ORIGIN, model: "gpt-4o-mini",
+        endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5 };
+      if (change === "model") approval.model = "different-model";
+      if (change === "endpoint") approval.endpoint = `${ORIGIN}/other/chat/completions`;
+      if (change === "provider") approval.providerId = "preset:openrouter";
+      if (change === "version") approval.consentVersion = 4;
+      expect(await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID,
+        unknownCostConfirmed: true, consentApproval: approval }, TRUSTED))
+        .toMatchObject({ ok: false, code: "consent_required" });
+      expect(server.requests).toHaveLength(0);
+      expect((await getDecision(UUID))?.rationale).toBeUndefined();
+    });
+
+    it.each(["switch", "reconfigure"] as const)("re-resolves the current provider after a cost challenge and refuses %s", async (change) => {
+      await seedProvider({ model: "gpt-4o-mini-2024-07-18" });
+      await persistDecision(pendingDecision());
+      const first = await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID }, TRUSTED);
+      const bound = { providerId: PROVIDER_ID, origin: ORIGIN,
+        model: "gpt-4o-mini-2024-07-18", endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5 };
+      expect(first).toMatchObject({ ok: false, code: "confirmation_required", consentApproval: bound });
+      if (change === "switch") {
+        await saveLlmProvider({ providerId: "preset:openrouter", keySuffix: "1234",
+          provider: { kind: "preset", preset: "openrouter", model: "openai/gpt-4o-mini" },
+          configuredAt: "2026-09-15T00:00:00.000Z" });
+        await grantConsentAtOrigin("llm_explain", "https://openrouter.ai");
+      } else {
+        await seedProvider({ model: "gpt-4o-mini" });
+      }
+      const before = await db.consents.toArray();
+      expect(await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID,
+        consentApproval: bound, unknownCostConfirmed: true }, TRUSTED))
+        .toMatchObject({ ok: false, code: "consent_required" });
+      expect(server.requests).toHaveLength(0);
+      expect(await db.consents.toArray()).toEqual(before);
+    });
+
+    it("cost approval without a destination binding cannot authorize even a granted recipient", async () => {
+      await seedProvider();
+      await persistDecision(pendingDecision());
+      expect(await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID,
+        unknownCostConfirmed: true }, TRUSTED)).toMatchObject({ ok: false, code: "consent_required" });
+      expect(server.requests).toHaveLength(0);
+    });
+
+    it("rejects content smuggled into the closed approval before any send", async () => {
+      await seedProvider();
+      expect(await handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID,
+        consentApproval: { providerId: PROVIDER_ID, origin: ORIGIN, model: "gpt-4o-mini",
+          endpoint: `${ORIGIN}/v1/chat/completions`, consentVersion: 5, notes: "private-notes" } }, TRUSTED))
+        .toMatchObject({ ok: false, code: "malformed_message" });
+      expect(server.requests).toHaveLength(0);
     });
   });
 });

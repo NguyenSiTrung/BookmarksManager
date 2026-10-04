@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
   collectOutboundRequests,
   openSurface,
@@ -24,7 +25,7 @@ import {
 import { enableTypesafe, readStoreRows } from "./helpers/provider";
 import { createBookmark, createFolder } from "./helpers/seed";
 import { jobRows } from "./helpers/decisions";
-import { openOptionsPanel } from "./helpers/surfaces";
+import { openMoreView, openOptionsPanel } from "./helpers/surfaces";
 import { SummaryConsentPreflight, SummarizeMessageResult } from "../../src/messages/summaries";
 
 /**
@@ -62,6 +63,29 @@ declare const chrome: {
 const PROPOSAL = JSON.stringify({
   folders: [{ path: "dev", description: "Developer tools" }],
 });
+
+/** Exercise the real unchecked dialog — never seed feature grants. */
+async function acceptFeatureConsent(page: Page, action: string) {
+  const dialog = page.getByRole("dialog", { name: /^Allow/ });
+  await expect(dialog).toBeVisible();
+  const checkbox = dialog.getByRole("checkbox");
+  await expect(checkbox).toHaveAttribute("aria-checked", "false");
+  const approve = dialog.getByRole("button", { name: action, exact: true });
+  await expect(approve).toBeDisabled();
+  await checkbox.click();
+  await approve.click();
+}
+
+async function startRestructureFromUi(panel: Page) {
+  await openMoreView(panel, "Restructure");
+  await panel.getByRole("button", { name: "Propose a layout…", exact: true }).click();
+  await acceptFeatureConsent(panel, "Agree and propose");
+  await panel.getByRole("dialog").getByRole("button", { name: "Send anyway", exact: true }).click();
+  await expect.poll(async () => (await jobRows(panel)).length, { timeout: 15_000 }).toBeGreaterThan(0);
+  const job = (await jobRows(panel)).find((row) => row.kind === "restructure");
+  expect(job).toBeDefined();
+  return job!;
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -308,19 +332,15 @@ test("restructure: propose → assign → preview → apply → undo", async () 
     code: string;
     destinationOrigin?: string;
   };
-  // The unpriced model needs an explicit unknown-cost confirmation first —
-  // the reply names the destination origin (a target, never content).
+  // Missing consent is a read-only refusal: the worker never writes grants.
   expect(refused.ok).toBe(false);
-  expect(refused.code).toBe("confirmation_required");
-  expect(refused.destinationOrigin).toBe(OPENAI_ORIGIN);
+  expect(refused.code).toBe("consent_required");
+  expect(openai.requests).toHaveLength(0);
+  expect((await readStoreRows<{ scope: string }>(panel, "consents"))
+    .some((row) => row.scope === "llm_restructure")).toBe(false);
 
-  const start = (await sendLlmMessage(panel, {
-    type: "RESTRUCTURE_START",
-    providerId: "preset:openai",
-    unknownCostConfirmed: true,
-  })) as { ok: boolean; code: string; job?: { id: string } };
-  expect(start.ok, JSON.stringify(start)).toBe(true);
-  expect(start.job?.id).toBeDefined();
+  const start = await startRestructureFromUi(panel);
+  expect(start.id).toBeDefined();
 
   // Poll until the job completes — Jev assigns via the fake.
   const deadline = Date.now() + 30_000;
@@ -333,7 +353,7 @@ test("restructure: propose → assign → preview → apply → undo", async () 
   while (Date.now() < deadline) {
     status = (await sendLlmMessage(panel, {
       type: "RESTRUCTURE_STATUS",
-      jobId: start.job!.id,
+      jobId: start.id,
     })) as StatusReply;
     if (status.ok && status.result?.job.status === "completed") break;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -346,7 +366,7 @@ test("restructure: propose → assign → preview → apply → undo", async () 
 
   const confirmed = (await sendLlmMessage(panel, {
     type: "RESTRUCTURE_CONFIRM",
-    jobId: start.job!.id,
+    jobId: start.id,
   })) as { ok: boolean; code: string; moved?: number };
   expect(confirmed).toMatchObject({ ok: true, code: "applied", moved: 1 });
   const moved = await panel.evaluate(async (id: string) => {
@@ -394,12 +414,10 @@ test("budget exhaustion and revoke refuse further sends", async () => {
   const panel = await openSurface(ext.context, ext.id, "sidepanel");
   await createBookmark(panel, { title: "B", url: "https://b.io/" });
 
-  const refused = (await sendLlmMessage(panel, {
-    type: "RESTRUCTURE_START",
-    providerId: "custom:https://llm-custom.test/v1",
-  })) as { ok: boolean; code: string };
-  expect(refused.ok).toBe(false);
-  expect(refused.code).toBe("budget_exceeded");
+  await openMoreView(panel, "Restructure");
+  await panel.getByRole("button", { name: "Propose a layout…", exact: true }).click();
+  await acceptFeatureConsent(panel, "Agree and propose");
+  await expect(panel.getByText(/monthly.*budget|budget.*exceed/i)).toBeVisible();
   expect(openai.requests).toHaveLength(0);
 
   // Revoke through the real UI. Consent-first ordering removes the grant
@@ -452,17 +470,12 @@ test("structured tiers fall back on capability rejection", async () => {
   const panel = await openSurface(ext.context, ext.id, "sidepanel");
   await createBookmark(panel, { title: "B", url: "https://b.io/" });
 
-  const start = (await sendLlmMessage(panel, {
-    type: "RESTRUCTURE_START",
-    providerId: "preset:openai",
-    unknownCostConfirmed: true,
-  })) as { ok: boolean; job?: { id: string } };
-  expect(start.ok, JSON.stringify(start)).toBe(true);
+  const start = await startRestructureFromUi(panel);
   const deadline = Date.now() + 30_000;
   let status = "";
   while (Date.now() < deadline) {
     const rows = await jobRows(panel);
-    status = rows.find((r) => r.id === start.job!.id)?.status ?? "";
+    status = rows.find((r) => r.id === start.id)?.status ?? "";
     if (status === "completed" || status === "failed") break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -522,20 +535,27 @@ test("Explain answers a pending decision over the gated wire", async () => {
     decisionId: pending!.id,
   })) as { ok: boolean; code: string };
   expect(refused.ok).toBe(false);
-  expect(refused.code).toBe("confirmation_required");
-
-  const explained = (await sendLlmMessage(panel, {
-    type: "LLM_EXPLAIN",
-    decisionId: pending!.id,
-    unknownCostConfirmed: true,
-  })) as {
-    ok: boolean;
-    code: string;
-    result?: { rationale: string; decisionId: string };
-  };
-  expect(explained.ok, JSON.stringify(explained)).toBe(true);
-  expect(explained.result?.rationale).toContain("docs page");
-  expect(explained.result?.decisionId).toBe(pending!.id);
+  expect(refused.code).toBe("consent_required");
+  expect(openai.requests).toHaveLength(0);
+  await openMoreView(panel, "Review suggestions");
+  const reviewRow = panel.locator(`[data-decision-id="${pending!.id}"]`);
+  await reviewRow.getByRole("button", { name: /^Explain/ }).click();
+  const disclosure = panel.getByRole("dialog", { name: /^Allow/ });
+  await expect(disclosure).toContainText(OPENAI_ORIGIN);
+  await expect(disclosure).toContainText("cleaned URL");
+  // Dismissing a checked disclosure grants and sends nothing.
+  await disclosure.getByRole("checkbox").click();
+  await disclosure.getByRole("button", { name: "Don’t send", exact: true }).click();
+  expect(openai.requests).toHaveLength(0);
+  expect((await readStoreRows<{ scope: string }>(panel, "consents"))
+    .some((row) => row.scope === "llm_explain")).toBe(false);
+  await reviewRow.getByRole("button", { name: /^Explain/ }).click();
+  await acceptFeatureConsent(panel, "Agree and explain");
+  await panel.getByRole("dialog").getByRole("button", { name: "Send anyway", exact: true }).click();
+  await expect(reviewRow).toContainText("docs page", { timeout: 15_000 });
+  const explained = (await readStoreRows<{ id: string; rationale?: string }>(panel, "decisions"))
+    .find((row) => row.id === pending!.id);
+  expect(explained?.rationale).toContain("docs page");
   expect(openai.requests).toHaveLength(1);
 
   await ext.context.close();
@@ -891,13 +911,8 @@ test("worker restart resumes a restructure job from committed progress", async (
       await createBookmark(panel, { title: `B${i}`, url: `https://b${i}.io/` });
     }
 
-    const start = (await sendLlmMessage(panel, {
-      type: "RESTRUCTURE_START",
-      providerId: "preset:openai",
-      unknownCostConfirmed: true,
-    })) as { ok: boolean; job?: { id: string } };
-    expect(start.ok, JSON.stringify(start)).toBe(true);
-    const jobId = start.job!.id;
+    const start = await startRestructureFromUi(panel);
+    const jobId = start.id;
     // Wait for batch 1 to commit before pausing.
     const commitDeadline = Date.now() + 15_000;
     while (Date.now() < commitDeadline) {

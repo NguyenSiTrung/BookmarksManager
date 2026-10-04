@@ -968,6 +968,8 @@ describe("Explain and second opinions", () => {
           code: "confirmation_required",
           message: "Cost cannot be estimated — confirm to send.",
           destinationOrigin: "https://api.openai.com",
+          consentApproval: { providerId: "preset:openai", origin: "https://api.openai.com",
+            model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 },
         });
       }
       if (msg.type === "LLM_EXPLAIN") {
@@ -999,6 +1001,8 @@ describe("Explain and second opinions", () => {
         type: "LLM_EXPLAIN",
         decisionId: D_TAGS,
         unknownCostConfirmed: true,
+        consentApproval: { providerId: "preset:openai", origin: "https://api.openai.com",
+          model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 },
       }),
     );
     await waitFor(() =>
@@ -1017,6 +1021,8 @@ describe("Explain and second opinions", () => {
           code: "confirmation_required",
           message: "Cost cannot be estimated — confirm to send.",
           destinationOrigin: "https://api.openai.com",
+          consentApproval: { providerId: "preset:openai", origin: "https://api.openai.com",
+            model: "gpt-4o-mini", endpoint: "https://api.openai.com/v1/chat/completions", consentVersion: 5 },
         });
       }
       return defaultWorker(raw);

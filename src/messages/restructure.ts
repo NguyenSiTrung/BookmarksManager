@@ -1,5 +1,6 @@
 import { db } from "../db/database";
 import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
+import { domainOf, isSensitiveUrl } from "../decisions/minimize";
 import { listMeta } from "../db/meta";
 import {
   cancelJob,
@@ -11,8 +12,13 @@ import {
 } from "../jobs/queue";
 import type { Job } from "../schemas/job";
 import { LlmHttpError } from "../llm/client";
-import { grantConsentAtOrigin } from "../consent/records";
-import { resolveLlmDestination } from "../llm/providers";
+import { hasConsentAtOrigin } from "../consent/records";
+import {
+  FeatureConsentApproval,
+  FeatureConsentDisclosure,
+  featureConsentDisclosure,
+  matchesFeatureConsentApproval,
+} from "../schemas/feature-consent";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import { LlmGateError } from "../net/llm-send";
@@ -21,7 +27,7 @@ import { buildRestructureDiff } from "../restructure/diff";
 import type { RestructureDiff } from "../restructure/diff";
 import { proposeLayout } from "../restructure/propose";
 import { buildLibrarySynopsis } from "../restructure/synopsis";
-import { getSubTree, ROOT_NODE_ID } from "../sync/chrome-bookmarks";
+import { getSubTree, ROOT_NODE_ID, type BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import { undoRestructurePlan } from "../restructure/apply";
 import { z } from "../schemas/z";
 
@@ -57,6 +63,7 @@ export const RestructureMessage = z.discriminatedUnion("type", [
     type: z.literal("RESTRUCTURE_START"),
     providerId: z.string().min(1),
     unknownCostConfirmed: z.boolean().optional(),
+    consentApproval: FeatureConsentApproval.optional(),
   }),
   // Latest (or named) job state + its diff when completed.
   z.strictObject({
@@ -123,6 +130,7 @@ export const RestructureErrorCode = z.enum([
   "request_not_allowed",
   "unlisted_model",
   "no_consent",
+  "consent_required",
   "no_permission",
   "no_key",
   "pricing_required",
@@ -174,6 +182,8 @@ export const RestructureMessageResult = z.union([
     message: z.string(),
     /** See llm-features: a target origin, never content. */
     destinationOrigin: z.string().optional(),
+    consent: FeatureConsentDisclosure.optional(),
+    consentApproval: FeatureConsentApproval.optional(),
   }),
 ]);
 export type RestructureMessageResult = z.infer<
@@ -253,6 +263,7 @@ function jobStateReply(job: Job, diff?: RestructureDiff): RestructureMessageResu
 async function startRestructure(
   providerId: string,
   unknownCostConfirmed: boolean | undefined,
+  consentApproval: FeatureConsentApproval | undefined,
   deps: RestructureDeps,
 ): Promise<RestructureMessageResult> {
   // The sidepanel view sends the sentinel "active" — resolve it to the
@@ -265,34 +276,85 @@ async function startRestructure(
   if (record === null) {
     return failure("no_provider", "No LLM provider is configured for restructure.");
   }
+  const consent = featureConsentDisclosure("llm_restructure", record);
+  // Admission precedes every tree/metadata/blocklist read and all side effects.
+  // The worker never creates or refreshes grants, even on a bound retry.
+  if (
+    (consentApproval !== undefined &&
+      !matchesFeatureConsentApproval(consentApproval, consent.approval)) ||
+    (unknownCostConfirmed === true && consentApproval === undefined) ||
+    !(await hasConsentAtOrigin(consent.scope, consent.approval.origin))
+  ) {
+    return {
+      ok: false,
+      code: "consent_required",
+      message: "Review and accept the restructure disclosure for the current provider.",
+      consent,
+    };
+  }
   const [tree, metas, userBlocklist] = await Promise.all([
     getSubTree(ROOT_NODE_ID),
     listMeta(),
     readBlocklist(),
   ]);
   const leafIds: string[] = [];
-  const walk = (nodes: readonly { id: string; url?: string; children?: readonly unknown[] }[]) => {
-    for (const n of nodes) {
-      if (n.url !== undefined) leafIds.push(n.id);
-      if (n.children !== undefined) {
-        walk(n.children as typeof nodes);
+  // Complete LOCAL provenance, before any synopsis caps. Even a host omitted
+  // from `domains` can contribute counts/tags/titles and ancestor folder paths.
+  // Already-blocked leaves contributed nothing and must not poison later sends.
+  const sourceUrls: string[] = [];
+  const pending: BookmarksTreeNode[] = [...tree].reverse();
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (node.url !== undefined) {
+      leafIds.push(node.id);
+      if (!isSensitiveUrl(node.url, userBlocklist) && domainOf(node.url) !== null) {
+        sourceUrls.push(node.url);
       }
     }
-  };
-  walk(tree);
+    for (const child of [...(node.children ?? [])].reverse()) pending.push(child);
+  }
   if (leafIds.length === 0) {
     return failure("not_found", "The library has no bookmarks to restructure.");
   }
   const synopsis = buildLibrarySynopsis(tree, metas, { userBlocklist });
+  const beforeSend = () => db.transaction("r", db.metadata, db.consents, async () => {
+    // Read policy and recipient/consent in one local snapshot, then re-admit
+    // every original contributing URL. No source identifiers reach the wire.
+    const currentBlocklist = await readBlocklist();
+    if (sourceUrls.some((url) => isSensitiveUrl(url, currentBlocklist))) {
+      throw new LlmGateError(
+        "request_not_allowed",
+        "A source bookmark is no longer allowed for restructure sending.",
+      );
+    }
+    const current = providerId === "active"
+      ? await readActiveLlmProvider()
+      : await readLlmProvider(providerId);
+    if (current === null) {
+      throw new ReplyError(failure("no_provider", "No LLM provider is configured for restructure."));
+    }
+    const currentConsent = featureConsentDisclosure("llm_restructure", current);
+    if (
+      !matchesFeatureConsentApproval(consent.approval, currentConsent.approval) ||
+      !(await hasConsentAtOrigin(currentConsent.scope, currentConsent.approval.origin))
+    ) {
+      throw new ReplyError({
+        ok: false,
+        code: "consent_required",
+        message: "Review and accept the restructure disclosure for the current provider.",
+        consent: currentConsent,
+      });
+    }
+  });
   try {
-    // The affirmative "Propose a layout" click is the consent trigger for
-    // this scope — write the grant so the gate's per-scope check passes.
-    await grantConsentAtOrigin(
-      "llm_restructure",
-      resolveLlmDestination(record.provider).origin,
-    );
     const { proposal } = await proposeLayout(record.providerId, synopsis, {
+      beforeSend,
       ...(unknownCostConfirmed !== undefined ? { unknownCostConfirmed } : {}),
+    }).catch(async (cause: unknown) => {
+      // Retry preflight may short-circuit before its dispatch callback.
+      // Prefer the renewed authority/policy refusal over a stale gate code.
+      if (cause instanceof LlmGateError) await beforeSend();
+      throw cause;
     });
     const job = await enqueueJob({
       kind: "restructure",
@@ -309,7 +371,8 @@ async function startRestructure(
     if (!reply.ok && reply.code === "confirmation_required") {
       return {
         ...reply,
-        destinationOrigin: resolveLlmDestination(record.provider).origin,
+        destinationOrigin: consent.approval.origin,
+        consentApproval: consent.approval,
       };
     }
     return reply;
@@ -369,6 +432,7 @@ export async function handleRestructureMessage(
         return await startRestructure(
           parsed.data.providerId,
           parsed.data.unknownCostConfirmed,
+          parsed.data.consentApproval,
           deps,
         );
       case "RESTRUCTURE_STATUS":

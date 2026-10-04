@@ -91,7 +91,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Fix: `readBlocklist` returns a discriminated result (or throws a typed
     error); update every caller found via `xd://lsp` references; pass
     `userBlocklist` in `startRestructure`.
-- [x] Task 2: P03 — per-scope payload guards at both gates
+- [x] Task 2: P03 — per-scope payload guards at both gates (`c19acb5`)
   <!-- files: src/net/send.ts, src/net/llm-send.ts, src/llm/client.ts, src/llm/prompt-contracts.ts, src/llm/explain.ts, src/llm/escalate.ts, src/llm/summarize.ts, src/restructure/propose.ts, src/llm/structured.ts, src/messages/llm-provider.ts -->
   <!-- depends: task1 -->
   - Tests: LLM scope body carrying a notes marker, a blocklisted/sensitive
@@ -106,7 +106,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     row; failed append cannot suppress the request result.
   - Fix: append before/at dispatch per attempt with `outcome`; extend the
     sent-log schema additively; Options renders the outcome.
-- [~] Task 4: P04 — real consent for explain and restructure
+- [x] Task 4: P04 — real consent for explain and restructure
   <!-- files: src/messages/llm-features.ts, src/messages/restructure.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/feature-consent.ts, src/ui/components/FeatureConsentDialog.tsx, src/entrypoints/sidepanel/RestructureView.tsx, src/entrypoints/sidepanel/ReviewView.tsx, src/llm/explain.ts, src/restructure/propose.ts -->
   <!-- depends: task1 -->
   - Tests: handlers return a typed `consent_required` and send nothing without

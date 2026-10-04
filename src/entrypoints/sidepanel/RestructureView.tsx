@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
+import { FeatureConsentDialog } from "../../ui/components/FeatureConsentDialog";
+import type { FeatureConsentApproval, FeatureConsentDisclosure } from "../../schemas/feature-consent";
 import { RestructureMessageResult } from "../../messages/restructure";
 import type { Job } from "../../schemas/job";
 import type { RestructureDiff, DiffRow } from "../../restructure/diff";
@@ -44,11 +46,20 @@ declare const chrome: {
 };
 
 async function send(message: unknown): Promise<RestructureMessageResult> {
-  const runtime = chrome.runtime;
-  if (runtime?.sendMessage === undefined) {
-    return { ok: false, code: "internal_error", message: "Messaging unavailable." };
+  let raw: unknown;
+  try {
+    const runtime = chrome.runtime;
+    if (runtime?.sendMessage === undefined) {
+      return { ok: false, code: "internal_error", message: "Messaging unavailable." };
+    }
+    raw = await runtime.sendMessage(message);
+  } catch {
+    return {
+      ok: false,
+      code: "internal_error",
+      message: "The extension worker is not reachable — nothing was changed.",
+    };
   }
-  const raw = await runtime.sendMessage(message);
   const parsed = RestructureMessageResult.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -63,7 +74,8 @@ async function send(message: unknown): Promise<RestructureMessageResult> {
 type Phase =
   | { kind: "idle" }
   | { kind: "starting" }
-  | { kind: "confirm_cost"; providerId: string; destinationOrigin: string }
+  | { kind: "consent"; consent: FeatureConsentDisclosure }
+  | { kind: "confirm_cost"; destinationOrigin: string; approval: FeatureConsentApproval }
   | { kind: "active"; job: Job; diff?: RestructureDiff }
   | { kind: "arm_apply"; job: Job; diff: RestructureDiff }
   | { kind: "applied"; moved: number }
@@ -289,6 +301,7 @@ export function RestructureView(props: { className?: string }) {
   const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
   const mounted = useRef(true);
+  const starting = useRef(false);
 
   const refresh = useCallback(async () => {
     const reply = await send({ type: "RESTRUCTURE_STATUS" });
@@ -330,20 +343,28 @@ export function RestructureView(props: { className?: string }) {
     };
   }, [refresh]);
 
-  const start = async (unknownCostConfirmed?: boolean) => {
+  const start = async (unknownCostConfirmed?: boolean, approval?: FeatureConsentApproval) => {
+    if (starting.current) return;
+    starting.current = true;
     setError(null);
     setPhase({ kind: "starting" });
     const reply = await send({
       type: "RESTRUCTURE_START",
       providerId: "active",
       ...(unknownCostConfirmed === true ? { unknownCostConfirmed } : {}),
+      ...(approval !== undefined ? { consentApproval: approval } : {}),
     });
+    starting.current = false;
     if (!reply.ok) {
-      if (reply.code === "confirmation_required" && reply.destinationOrigin !== undefined) {
+      if (reply.code === "consent_required" && reply.consent?.scope === "llm_restructure") {
+        setPhase({ kind: "consent", consent: reply.consent });
+        return;
+      }
+      if (reply.code === "confirmation_required" && reply.destinationOrigin !== undefined && reply.consentApproval !== undefined) {
         setPhase({
           kind: "confirm_cost",
-          providerId: "active",
           destinationOrigin: reply.destinationOrigin,
+          approval: reply.consentApproval,
         });
         return;
       }
@@ -471,9 +492,10 @@ export function RestructureView(props: { className?: string }) {
         </p>
       )}
 
-      {phase.kind === "idle" && (
+      {(phase.kind === "idle" || phase.kind === "starting" || phase.kind === "consent" || phase.kind === "confirm_cost") && (
         <button
           type="button"
+          disabled={phase.kind === "starting"}
           onClick={() => void start()}
           className="w-fit rounded-sm bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
@@ -642,8 +664,18 @@ export function RestructureView(props: { className?: string }) {
           phase.kind === "confirm_cost" ? phase.destinationOrigin : ""
         }
         onCancel={() => setPhase({ kind: "idle" })}
-        onConfirm={() => void start(true)}
+        onConfirm={() => {
+          if (phase.kind === "confirm_cost") void start(true, phase.approval);
+        }}
       />
+      {phase.kind === "consent" && (
+        <FeatureConsentDialog
+          key={JSON.stringify(phase.consent)}
+          consent={phase.consent}
+          onCancel={() => setPhase({ kind: "idle" })}
+          onApproved={(approval) => start(false, approval)}
+        />
+      )}
     </div>
   );
 }

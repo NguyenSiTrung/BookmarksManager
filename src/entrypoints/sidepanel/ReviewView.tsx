@@ -19,6 +19,8 @@ import {
   LlmFeatureMessageResult,
 } from "../../messages/llm-features";
 import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
+import { FeatureConsentDialog } from "../../ui/components/FeatureConsentDialog";
+import type { FeatureConsentApproval, FeatureConsentDisclosure } from "../../schemas/feature-consent";
 import type { Decision } from "../../schemas/decision";
 import type { DecisionStatus } from "../../schemas/audit";
 import type { FlattenedTree } from "../../sync/tree";
@@ -494,7 +496,13 @@ export function ReviewView({
   const [confirming, setConfirming] = useState<{
     decisionId: string;
     origin: string;
+    approval: FeatureConsentApproval;
   } | null>(null);
+  const [consenting, setConsenting] = useState<{
+    decisionId: string;
+    consent: FeatureConsentDisclosure;
+  } | null>(null);
+  const explainingIds = useRef(new Set<string>());
   /** Row id → the redacted failure message it last reported. */
   const [failures, setFailures] = useState<ReadonlyMap<string, string>>(
     () => new Map(),
@@ -619,21 +627,32 @@ export function ReviewView({
   const explain = async (
     decisionId: string,
     confirmed: boolean,
+    approval?: FeatureConsentApproval,
   ): Promise<void> => {
+    if (explainingIds.current.has(decisionId)) return;
+    explainingIds.current.add(decisionId);
     setBusy(decisionId, true);
     const result = await sendLlmFeatureMessage(
       LlmFeatureMessage.parse({
         type: "LLM_EXPLAIN",
         decisionId,
         ...(confirmed ? { unknownCostConfirmed: true } : {}),
+        ...(approval !== undefined ? { consentApproval: approval } : {}),
       }),
     );
     setBusy(decisionId, false);
+    explainingIds.current.delete(decisionId);
     if (!result.ok) {
-      if (result.code === "confirmation_required") {
+      if (result.code === "consent_required" && result.consent?.scope === "llm_explain") {
+        setConfirming(null);
+        setConsenting({ decisionId, consent: result.consent });
+        return;
+      }
+      if (result.code === "confirmation_required" && result.consentApproval !== undefined) {
         setConfirming({
           decisionId,
           origin: result.destinationOrigin ?? "the configured provider",
+          approval: result.consentApproval,
         });
         return;
       }
@@ -812,10 +831,22 @@ export function ReviewView({
         onConfirm={() => {
           const pending = confirming;
           setConfirming(null);
-          if (pending !== null) void explain(pending.decisionId, true);
+          if (pending !== null) void explain(pending.decisionId, true, pending.approval);
         }}
         onCancel={() => setConfirming(null)}
       />
+      {consenting !== null && (
+        <FeatureConsentDialog
+          key={JSON.stringify(consenting)}
+          consent={consenting.consent}
+          onCancel={() => setConsenting(null)}
+          onApproved={async (approval) => {
+            const decisionId = consenting.decisionId;
+            setConsenting(null);
+            await explain(decisionId, false, approval);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -285,3 +285,29 @@ claim that any audit finding has been fixed or reproduced.
 - Exact staged P03 snapshot passed typecheck and **529 tests / 14 files**,
   including the three newly added late-Jev regressions. This independently
   validates the contract-only producer stage without P04 callback additions.
+- **Local commit:** `c19acb5`, with Git note; mapped Bead closed.
+
+## 2026-10-04 — Phase 1 task 4: P04
+
+- Worker handlers never grant or refresh Explain/Restructure consent. Missing,
+  stale or foreign exact-origin grants yield `consent_required` and rendered
+  closed recipient/model/endpoint/version disclosure. The unchecked UI action
+  writes only the accepted scope/origin and retries with that binding.
+- Only the two changed scopes use version 5; base and unchanged scopes remain
+  version 4. Opening, dismissing or canceling a disclosure does not grant/send.
+  Cost approval remains separate and bound to the same accepted recipient.
+- Initial RED reproduced silent grants and missing UI disclosure. Independent
+  review then reproduced per-attempt authority gaps; 101 real dispatch
+  regressions cover held native/preflight IO and subsequent fallback, repair,
+  transport/HTTP/cost retries. Complete synopsis source provenance stays local
+  and prevents capped/omitted domains from retaining newly blocked contributions.
+- Internal service callbacks compose with existing bookmark admission and
+  reach the real gate after its asynchronous preflight. Readonly
+  metadata/consent transactions keep recipient and grant checks consistent.
+  Early retry gate refusals recheck authority rather than hiding redisclosure
+  behind obsolete model/consent codes.
+- Final worker slice passed **431 tests / 12 files**. Fresh full gate passed
+  **2810 tests / 164 files** plus **43 e2e / one intentional skip** and every
+  applicable lint/type/build/store/site check. Follow-up independent review
+  closed all findings. Separate task commit contains callback additions only,
+  not the already committed P03 canonical producer imports.
