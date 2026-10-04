@@ -103,3 +103,34 @@ claim that any audit finding has been fixed or reproduced.
   `src/messages/llm-features.ts`; its ownership is added to task 1 before
   implementation. Task 4 already depends on task 1, so no concurrent writer
   is introduced. Scope-specific payload validation remains task 2.
+
+## 2026-10-04 — Phase 1 task 1: P01/P02
+
+- **Implemented:** Typed, redacted blocklist-read refusal for DB errors and
+  malformed persisted rows. Both gates independently refuse before credentials,
+  reservations or dispatch. Explain/restructure map the safe refusal through
+  total message results. Restructure passes the persisted blocklist and omits
+  blocked-only folder paths, leaf fields and aggregate counts.
+- **Files:** `src/decisions/blocklist.ts`, `src/net/{send,llm-send}.ts`,
+  `src/messages/{llm-features,restructure}.ts`,
+  `src/restructure/synopsis.ts`; `tests/unit/{blocklist,blocklist-egress,
+  restructure-synopsis}.test.ts`.
+- **RED:** Final regression fixtures run against archived `c4ed0d8` failed
+  107 tests and passed 69 controls. Initial RED preceded production edits;
+  the archived run also verified corrected fixture plumbing without
+  reverting the working tree.
+- **GREEN:** Targeted 14 files / 428 tests passed. Coordinator reviewed the
+  implementation and ran the full gate over task 1 plus independent task 5:
+  `taskset -c 3 npm run lint`; `taskset -c 3 npm run typecheck`;
+  `taskset -c 3 npm run test -- --run --maxWorkers=1` (161 files,
+  2564 tests passed); `taskset -c 3 npm run build`;
+  `npm run check:manifest`; `npm run check:bundle`;
+  `npm run check:store`; `npm run check:site`;
+  `taskset -c 3 xvfb-run -a npm run test:e2e` (43 passed, one intentional
+  store-screenshot skip). All commands exited 0. Existing React `act`
+  warnings remain; live/eval and native permission prompts were not covered.
+- **Learnings:** Missing policy differs from unreadable policy. Keep the reader
+  independent of network classes, and translate at each trust boundary.
+  Classify descendant admission before applying synopsis path caps. Preserve
+  unrelated empty folders and walk structural roots even in an all-blocked
+  library, so privacy filtering does not incidentally erase harmless paths.

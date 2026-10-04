@@ -1,5 +1,5 @@
 import { domainOf, isSensitiveUrl } from "../decisions/minimize";
-import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
+import { ROOT_NODE_ID, type BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import type { BookmarkMeta } from "../schemas/meta";
 import {
   LibrarySynopsis,
@@ -64,6 +64,37 @@ export function buildLibrarySynopsis(
   const domains = new Map<string, number>();
   let bookmarkCount = 0;
 
+  // Classify descendants before listing a folder. A subtree with bookmarks
+  // but no sendable leaves must contribute no path (including paths of empty
+  // children carrying that ancestor's name). Truly empty unrelated subtrees
+  // keep their existing semantics. Object keys avoid conflating equal paths.
+  const admission = new Map<BookmarksTreeNode, {
+    hasBookmarks: boolean;
+    hasAllowed: boolean;
+  }>();
+  const pending = [...tree];
+  const ordered: BookmarksTreeNode[] = [];
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    ordered.push(node);
+    for (const child of node.children ?? []) pending.push(child);
+  }
+  for (const node of ordered.reverse()) {
+    if (node.url !== undefined) {
+      admission.set(node, {
+        hasBookmarks: true,
+        hasAllowed: typeof node.url === "string" &&
+          !isSensitiveUrl(node.url, limits.userBlocklist) && domainOf(node.url) !== null,
+      });
+    } else {
+      const children = node.children ?? [];
+      admission.set(node, {
+        hasBookmarks: children.some((child) => admission.get(child)!.hasBookmarks),
+        hasAllowed: children.some((child) => admission.get(child)!.hasAllowed),
+      });
+    }
+  }
+
   interface Frame {
     node: BookmarksTreeNode;
     /** Path from the root, "a/b" — empty for the root itself. */
@@ -77,9 +108,15 @@ export function buildLibrarySynopsis(
     const { node, path } = stack.pop()!;
     const isFolder = node.url === undefined;
     if (isFolder) {
+      const descendants = admission.get(node)!;
+      const blockedOnly = descendants.hasBookmarks && !descendants.hasAllowed;
+      // Native roots are structural containers, not blocked-only user paths:
+      // still walk them so unrelated empty folders/roots are not lost.
+      const structuralRoot = node.parentId === undefined || node.parentId === ROOT_NODE_ID;
+      if (blockedOnly && !structuralRoot) continue;
       const folderPath =
         path === "" ? (node.title ?? "") : `${path}/${node.title}`;
-      if (node.parentId !== undefined) {
+      if (node.parentId !== undefined && !blockedOnly) {
         // Skip the synthetic root "0" — it has no parentId.
         folderPaths.push(folderPath);
         titlesByFolder.set(folderPath, { titles: [] });
@@ -91,7 +128,7 @@ export function buildLibrarySynopsis(
     }
     // Bookmark node — include only if sendable.
     const cleaned = node.url;
-    if (typeof cleaned !== "string" || isSensitiveUrl(cleaned, limits.userBlocklist)) {
+    if (typeof cleaned !== "string" || !admission.get(node)!.hasAllowed) {
       continue;
     }
     const domain = domainOf(cleaned);

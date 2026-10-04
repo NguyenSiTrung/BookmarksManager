@@ -1,5 +1,5 @@
 import { hasConsentAtOrigin, type ConsentScope } from "../consent/records";
-import { readBlocklist } from "../decisions/blocklist";
+import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 import { resolveStoredJevDestination } from "../jev/settings";
 import type { JevDestination } from "../jev/providers";
@@ -340,10 +340,15 @@ export async function sendConsented(
   assertDestinationUrl(destination);
 
   // Defense-in-depth: re-read the user's persisted blocklist on every call so
-  // ANY `jev_decisions` caller is covered, even if a service-level check were
-  // bypassed. `readBlocklist` fails closed to `[]`, so a broken lookup can
-  // never block every send.
-  const userBlocklist = await readBlocklist();
+  // ANY caller is covered, even if a service-level check were bypassed.
+  // Unverifiable policy is a gate refusal, never transport or a raw DB error.
+  let userBlocklist: string[];
+  try {
+    userBlocklist = await readBlocklist();
+  } catch (cause) {
+    if (!(cause instanceof BlocklistReadError)) throw cause;
+    throw new NetworkGateError("request_not_allowed", cause.message);
+  }
   if (!scopeEntry.admits(request, model, userBlocklist)) {
     throw new NetworkGateError(
       "request_not_allowed",

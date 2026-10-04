@@ -1,4 +1,5 @@
 import { db } from "../db/database";
+import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { listMeta } from "../db/meta";
 import {
   cancelJob,
@@ -216,6 +217,7 @@ export interface RestructureDeps {
 
 function mapError(cause: unknown): RestructureMessageResult {
   if (cause instanceof ReplyError) return cause.reply;
+  if (cause instanceof BlocklistReadError) return failure(cause.code, cause.message);
   if (cause instanceof ApplyError) return failure(cause.code, cause.message);
   if (cause instanceof LlmGateError) return failure(cause.code, cause.message);
   if (cause instanceof LlmCapabilityError) {
@@ -263,9 +265,10 @@ async function startRestructure(
   if (record === null) {
     return failure("no_provider", "No LLM provider is configured for restructure.");
   }
-  const [tree, metas] = await Promise.all([
+  const [tree, metas, userBlocklist] = await Promise.all([
     getSubTree(ROOT_NODE_ID),
     listMeta(),
+    readBlocklist(),
   ]);
   const leafIds: string[] = [];
   const walk = (nodes: readonly { id: string; url?: string; children?: readonly unknown[] }[]) => {
@@ -280,7 +283,7 @@ async function startRestructure(
   if (leafIds.length === 0) {
     return failure("not_found", "The library has no bookmarks to restructure.");
   }
-  const synopsis = buildLibrarySynopsis(tree, metas);
+  const synopsis = buildLibrarySynopsis(tree, metas, { userBlocklist });
   try {
     // The affirmative "Propose a layout" click is the consent trigger for
     // this scope — write the grant so the gate's per-scope check passes.

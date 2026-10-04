@@ -1,4 +1,6 @@
 import { db } from "../db/database";
+import { z } from "../schemas/z";
+import { normalizeBlocklistEntry } from "./minimize";
 
 /**
  * The persisted user blocklist (spec FR2, PROJECT_PLAN.md §12): the hosts the
@@ -13,18 +15,33 @@ import { db } from "../db/database";
 /** The namespaced `metadata` key under which the user blocklist is stored. */
 export const DECISION_BLOCKLIST_KEY = "decisions:blocklist";
 
+/** A privacy-policy read failure, independent of either network gate. */
+export class BlocklistReadError extends Error {
+  readonly code = "request_not_allowed";
+
+  constructor() {
+    super("The current blocklist could not be verified; sending is refused.");
+    this.name = "BlocklistReadError";
+  }
+}
+
+const PersistedBlocklist = z.array(
+  z.string().refine((entry) => normalizeBlocklistEntry(entry) !== null),
+);
+
 /**
- * The persisted user blocklist (normalized hosts), or `[]` when unset or
- * unreadable. Fails closed to an empty list: a broken lookup must not block
- * every send, and a missing list means the user has added no entries.
+ * The persisted user blocklist, or `[]` when the row is unset. An unreadable
+ * or malformed row refuses the whole send, never silently drops policy
+ * entries. Native errors and validation details are not retained as causes.
  */
 export async function readBlocklist(): Promise<string[]> {
   try {
     const row = await db.metadata.get(DECISION_BLOCKLIST_KEY);
-    const value = row?.value;
-    if (!Array.isArray(value)) return [];
-    return value.filter((entry): entry is string => typeof entry === "string");
+    if (row === undefined) return [];
+    const parsed = PersistedBlocklist.safeParse(row.value);
+    if (!parsed.success) throw new BlocklistReadError();
+    return parsed.data;
   } catch {
-    return [];
+    throw new BlocklistReadError();
   }
 }

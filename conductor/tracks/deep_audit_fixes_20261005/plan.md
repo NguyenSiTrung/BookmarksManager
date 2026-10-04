@@ -82,7 +82,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 1: Privacy and consent enforcement
 <!-- execution: parallel -->
 
-- [~] Task 1: P01 + P02 — fail-closed blocklist and restructure synopsis
+- [x] Task 1: P01 + P02 — fail-closed blocklist and restructure synopsis
   <!-- files: src/decisions/blocklist.ts, src/net/send.ts, src/net/llm-send.ts, src/restructure/synopsis.ts, src/messages/restructure.ts, src/messages/llm-features.ts -->
   - Tests: throwing `db.metadata.get` and a non-array row make every sender
     (pipeline, explain, summaries, both gates) refuse with a typed error and
@@ -115,7 +115,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     default; granting then retrying succeeds.
   - Fix: `consentApproval` payload like `LLM_SUMMARIZE`; disclosure dialogs;
     bump consent versions for `llm_explain`/`llm_restructure`.
-- [ ] Task 5: P05 — popup suggest only on explicit action
+- [~] Task 5: P05 — popup suggest only on explicit action
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Suggestions.tsx -->
   - Tests: opening the popup with consent granted sends zero `SAVE_SUGGEST`;
     focusing the tags field or pressing Suggest sends exactly one.

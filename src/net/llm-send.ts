@@ -19,6 +19,7 @@ import { LLM_CONSENT_SCOPES } from "../schemas/provider";
 import { z } from "../schemas/z";
 import { readCredential } from "../security/credentials";
 import { db } from "../db/database";
+import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 
 /**
  * `chrome` is provided by the extension runtime; as in `net/send.ts`,
@@ -339,6 +340,15 @@ export async function sendLlmConsented(
   // Validate the caller's closed payload before adding a gate-owned control.
   // Never mutate the caller or allow another limit key to evade this ceiling.
   const request = { ...parsed.data, max_tokens: maxOutputTokens };
+
+  // Independent of feature admission: an unreadable privacy policy refuses
+  // every attempt, including internal retries, before credentials or budget.
+  try {
+    await readBlocklist();
+  } catch (cause) {
+    if (!(cause instanceof BlocklistReadError)) throw cause;
+    throw new LlmGateError("request_not_allowed", cause.message);
+  }
 
   if (!(await hasConsentAtOrigin(input.scope, destination.origin))) {
     throw new LlmGateError(

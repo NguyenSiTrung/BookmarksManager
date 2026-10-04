@@ -114,6 +114,67 @@ describe("buildLibrarySynopsis", () => {
     });
   });
 
+  it("removes blocked-only paths before caps but keeps allowed ancestors and unrelated empty folders", () => {
+    const tree = [
+      folder("private", "A blocked", [
+        folder("private-child", "Child", [
+          bm("secret", "Private title", "https://blocked-site.dev/private"),
+        ]),
+        // Keeping this path would still disclose its blocked-only ancestor.
+        folder("private-empty", "Empty"),
+      ]),
+      folder("mixed", "B mixed", [
+        bm("secret2", "Private title 2", "https://blocked-site.dev/other"),
+        folder("allowed", "Nested", [bm("public", "Allowed title", "https://allowed-site.dev/")]),
+        folder("mixed-empty", "Empty"),
+      ]),
+      folder("empty", "C empty", [folder("nested-empty", "Nested empty")]),
+    ];
+    const metas = [
+      meta({ id: "secret", tags: ["private-tag"], category: "tool" }),
+      meta({ id: "secret2", tags: ["private-tag"], category: "tool" }),
+      meta({ id: "public", tags: ["allowed-tag"], category: "article" }),
+    ];
+    expect(buildLibrarySynopsis(tree, metas, { userBlocklist: ["blocked-site.dev"] })).toEqual({
+      folderPaths: ["B mixed", "B mixed/Empty", "B mixed/Nested", "C empty", "C empty/Nested empty"],
+      categories: { article: 1 }, tags: { "allowed-tag": 1 },
+      domains: [{ domain: "allowed-site.dev", count: 1 }],
+      representativeTitles: { "B mixed/Nested": ["Allowed title"] }, bookmarkCount: 1,
+    });
+    expect(buildLibrarySynopsis(tree, metas, {
+      userBlocklist: ["blocked-site.dev"], folderPaths: 1,
+    }).folderPaths).toEqual(["B mixed"]);
+  });
+
+  it("omits paths supported only by builtin-sensitive or unparseable bookmarks", () => {
+    const tree = [
+      folder("bank", "Bank-only path", [bm("bankmark", "Bank title", "https://chase.com/")]),
+      folder("invalid", "Invalid-only path", [bm("invalidmark", "Invalid title", "not a URL")]),
+      folder("empty", "Empty"),
+    ];
+    expect(buildLibrarySynopsis(tree, []).folderPaths).toEqual(["Empty"]);
+  });
+
+  it("keeps unrelated empty roots and folders when every bookmark is blocked", () => {
+    const tree: BookmarksTreeNode[] = [{
+      id: "0", title: "", children: [
+        { id: "1", parentId: "0", title: "Bookmarks bar", children: [
+          folder("private", "Blocked-only path", [
+            bm("secret", "Private title", "https://blocked-site.dev/private"),
+          ]),
+          folder("empty", "Harmless empty"),
+        ] },
+        { id: "2", parentId: "0", title: "Other bookmarks", children: [] },
+        { id: "3", parentId: "0", title: "Mobile bookmarks", children: [] },
+      ],
+    }];
+    const synopsis = buildLibrarySynopsis(tree, [], { userBlocklist: ["blocked-site.dev"] });
+    expect(synopsis.folderPaths).toEqual([
+      "Bookmarks bar/Harmless empty", "Mobile bookmarks", "Other bookmarks",
+    ]);
+    expect(synopsis.bookmarkCount).toBe(0);
+  });
+
   it("is deterministic — same tree in, same synopsis out", () => {
     const a = buildLibrarySynopsis(SIMPLE_TREE, []);
     const b = buildLibrarySynopsis(SIMPLE_TREE, []);

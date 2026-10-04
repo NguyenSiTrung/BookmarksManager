@@ -1,5 +1,6 @@
 import { grantConsentAtOrigin } from "../consent/records";
 import { db } from "../db/database";
+import { BlocklistReadError } from "../decisions/blocklist";
 import { budgetChoiceOf, monthlyBudgetSnapshot } from "../llm/budget";
 import type { MonthlyBudgetSnapshot } from "../llm/budget";
 import { ExplainError, explainDecision } from "../llm/explain";
@@ -220,6 +221,9 @@ function isTrustedExtensionSender(sender: LlmFeatureMessageSender): boolean {
 function mapError(cause: unknown): LlmFeatureMessageResult {
   if (cause instanceof ReplyError) {
     return cause.reply;
+  }
+  if (cause instanceof BlocklistReadError) {
+    return failure(cause.code, cause.message);
   }
   if (cause instanceof ExplainError) {
     return failure(cause.code, cause.message);
