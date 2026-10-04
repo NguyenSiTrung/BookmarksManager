@@ -1,10 +1,11 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { ContextMenu } from "radix-ui";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { FlattenedTree, FolderNode } from "../../sync/tree";
 import { cn } from "../../ui/lib/cn";
 import { FolderRowDnd, useDndState } from "./dnd";
+import { useFolderExpansion } from "./folder-expansion";
 
 /**
  * ARIA folder tree for the side panel's left pane.
@@ -26,10 +27,11 @@ import { FolderRowDnd, useDndState } from "./dnd";
  * The synthetic root `"0"` is NEVER rendered — the tree's top level is the
  * fixed roots `"1","2","3"` (they render when present in the tree).
  *
- * Expansion is local UI state: a `Map<id, boolean>` of overrides — Chrome's
- * fixed roots default to expanded, every other folder to collapsed. An
- * override-based map (rather than a Set of ids) means the defaults still
- * apply after the tree loads asynchronously.
+ * Expansion is a `Map<id, boolean>` of overrides — Chrome's fixed roots
+ * default to expanded, every other folder to collapsed. It lives in
+ * `./folder-expansion`: a selection change from outside the tree expands the
+ * selected folder's ancestors (and scrolls the row into view), and the
+ * overrides persist in `chrome.storage.session` across panel close/reopen.
  *
  * P4.T3 hooks (optional, additive): `renderFolderActions` renders a trailing
  * per-row control (the shell's kebab menu) and `renderFolderContextMenu`
@@ -151,9 +153,8 @@ export function FolderTree({
   className,
   "aria-label": ariaLabel,
 }: FolderTreeProps) {
-  const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(
-    () => new Map(),
-  );
+  const { overrides, setExpanded: setExpandedById, revealedFor } =
+    useFolderExpansion(tree, selectedFolderId);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const itemEls = useRef(new Map<string, HTMLElement>());
   // While a drag is live, dnd-kit owns the arrow/Space/Esc keys — the tree
@@ -199,12 +200,25 @@ export function FolderTree({
 
   const setExpanded = (entry: VisibleFolder, expanded: boolean): void => {
     if (!entry.expandable) return;
-    setOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(entry.node.id, expanded);
-      return next;
-    });
+    setExpandedById(entry.node.id, expanded);
   };
+
+  // Scroll a freshly revealed selection into view once its row exists (the
+  // reveal's ancestors render one commit after the selection changes).
+  // `nearest` leaves an already-visible row alone, so ordinary clicks never
+  // jump the list. jsdom has no scrollIntoView.
+  const scrolledFor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (revealedFor === undefined) {
+      scrolledFor.current = undefined;
+      return;
+    }
+    if (scrolledFor.current === revealedFor) return;
+    const el = itemEls.current.get(revealedFor);
+    if (el === undefined) return;
+    scrolledFor.current = revealedFor;
+    el.scrollIntoView?.({ block: "nearest" });
+  }, [revealedFor, visible]);
 
   const handleKeyDown = (
     event: ReactKeyboardEvent<HTMLElement>,

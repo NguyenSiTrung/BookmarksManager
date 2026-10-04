@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScopePane } from "../../src/entrypoints/sidepanel/ScopePane";
 import type { ScopePaneProps } from "../../src/entrypoints/sidepanel/ScopePane";
@@ -47,7 +53,10 @@ beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function renderPane(overrides: Partial<ScopePaneProps> = {}) {
   const onSelect = vi.fn();
@@ -110,5 +119,85 @@ describe("ScopePane", () => {
     expect(
       screen.getByRole("button", { name: /^Docs/ }).getAttribute("aria-pressed"),
     ).toBe("false");
+  });
+});
+
+describe("ScopePane section collapse", () => {
+  const TAGS = [devTag];
+  const CATEGORIES = [{ category: "docs" as const, count: 2 }];
+
+  function pane(view: ScopePaneProps["view"]) {
+    return (
+      <ScopePane
+        tree={tree}
+        view={view}
+        tagDefs={TAGS}
+        categories={CATEGORIES}
+        onSelect={vi.fn()}
+      />
+    );
+  }
+
+  function heading(name: string): HTMLElement {
+    return screen.getByRole("button", { name });
+  }
+
+  it("collapses one section from its heading without touching the others", () => {
+    render(pane({ kind: "all" }));
+    expect(heading("Tags").getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(heading("Tags"));
+    expect(heading("Tags").getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Ops" })).toBeNull();
+    expect(screen.getByRole("treeitem", { name: "Dev" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Docs/ })).toBeTruthy();
+
+    fireEvent.click(heading("Tags"));
+    expect(screen.getByRole("button", { name: "Ops" })).toBeTruthy();
+  });
+
+  it("reopens the section of a selection that arrives from outside, once", () => {
+    const { rerender } = render(pane({ kind: "all" }));
+    fireEvent.click(heading("Tags"));
+    expect(screen.queryByRole("button", { name: "Ops" })).toBeNull();
+
+    rerender(pane({ kind: "tag", nameKey: "ops" }));
+    expect(heading("Tags").getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: "Ops" })).toBeTruthy();
+
+    // Same selection re-rendered: the user's collapse sticks.
+    fireEvent.click(heading("Tags"));
+    rerender(pane({ kind: "tag", nameKey: "ops" }));
+    expect(heading("Tags").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("restores collapsed sections after a remount", async () => {
+    const data: Record<string, unknown> = {};
+    vi.stubGlobal("chrome", {
+      storage: {
+        session: {
+          get: (key: string) => Promise.resolve({ [key]: data[key] }),
+          set: (items: Record<string, unknown>) => {
+            Object.assign(data, items);
+            return Promise.resolve();
+          },
+        },
+      },
+    });
+    const first = render(pane({ kind: "all" }));
+    // Hydration (empty) finishes first and writes through.
+    await waitFor(() => expect(Object.keys(data)).toHaveLength(2));
+
+    fireEvent.click(heading("Categories"));
+    await waitFor(() =>
+      expect(Object.values(data)).toContainEqual({ categories: true }),
+    );
+    first.unmount();
+
+    render(pane({ kind: "all" }));
+    await waitFor(() =>
+      expect(heading("Categories").getAttribute("aria-expanded")).toBe("false"),
+    );
+    expect(heading("Tags").getAttribute("aria-expanded")).toBe("true");
   });
 });
