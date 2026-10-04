@@ -1,6 +1,6 @@
 # Deep Audit Fixes Implementation Plan
 
-<!-- Last Revised: 2026-10-04 — task 2 transport-seam ownership -->
+<!-- Last Revised: 2026-10-04 — task 4 shared disclosure ownership -->
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > `subagent-driven-development` or `executing-plans` to implement this plan
@@ -106,8 +106,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     row; failed append cannot suppress the request result.
   - Fix: append before/at dispatch per attempt with `outcome`; extend the
     sent-log schema additively; Options renders the outcome.
-- [ ] Task 4: P04 — real consent for explain and restructure
-  <!-- files: src/messages/llm-features.ts, src/messages/restructure.ts, src/consent/disclosure.ts, src/consent/records.ts, src/entrypoints/sidepanel/RestructureView.tsx, src/entrypoints/sidepanel/ReviewView.tsx -->
+- [~] Task 4: P04 — real consent for explain and restructure
+  <!-- files: src/messages/llm-features.ts, src/messages/restructure.ts, src/consent/disclosure.ts, src/consent/records.ts, src/schemas/feature-consent.ts, src/ui/components/FeatureConsentDialog.tsx, src/entrypoints/sidepanel/RestructureView.tsx, src/entrypoints/sidepanel/ReviewView.tsx -->
   <!-- depends: task1 -->
   - Tests: handlers return a typed `consent_required` and send nothing without
     exact-origin consent; handlers never write a grant; component tests show

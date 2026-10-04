@@ -20,3 +20,17 @@
 - **Reason:** Remove the production bypass end-to-end, using test-only
   transport helpers rather than leaving a production configuration seam.
   No spec or phase dependency change.
+
+## Revision 3 — 2026-10-04 — Plan ownership
+
+- **Trigger:** P04 needs the same destination/version binding and affirmative
+  disclosure in two independent UI panes, while neither worker handler may
+  write consent.
+- **Change:** Task 4 owns new shared `src/schemas/feature-consent.ts` and
+  `src/ui/components/FeatureConsentDialog.tsx`, plus the already listed
+  handlers, records, disclosure and panes. Associated unit/component/e2e
+  tests and two store disclosure documents may be updated.
+- **Reason:** Keep the approved UI action separate from worker egress. Reuse
+  the closed content-free binding and accessible unchecked-default dialog;
+  reject provider changes on retry. The changed scopes need renewed consent
+  without invalidating unchanged scopes. No overlap with running task 2.
