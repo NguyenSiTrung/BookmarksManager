@@ -142,3 +142,17 @@
 - **Reason:** Fix the actual baseline defect instead of hiding a gate failure
   with timing retries. Preserve an honest result for the destructive reset,
   without changing deletion semantics or expanding the audited feature scope.
+
+## Revision 12 — 2026-10-04 — Shared abort classification ownership
+
+- **Trigger:** A01 covers both gates, while Jev's internal deadline currently
+  aborts with the same default reason as a user's AbortController. Adding
+  duplicated gate-local classifiers would drift; accurate dispatch outcomes
+  need a distinguishable internal deadline reason.
+- **Change:** Phase 2 task 1 owns new pure `src/net/abort.ts` for common
+  classification and `src/jev/client.ts` for the narrow internal deadline
+  reason/caller adaptation. Associated gate/client/retry regressions belong
+  to that task. No other Phase 2 implementation is active.
+- **Reason:** Distinguish timeout from caller abort without inspecting error
+  text, changing Jev's intended retry policy, or duplicating rules. Preserve
+  existing wait caps and per-attempt authority/accounting.
