@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CandidateFolder,
   CandidateTag,
@@ -6,6 +6,7 @@ import {
   DecisionState,
   SentBookmark,
 } from "../../src/schemas/decision-state";
+import { cleanUrl } from "../../src/decisions/minimize";
 
 // The consent gate strict-parses every outgoing `jev_decisions` request state
 // against this schema (spec FR1): unknown keys, dirty URLs, and malformed
@@ -86,6 +87,66 @@ describe("CleanedUrl", () => {
       expect(CleanedUrl.safeParse(url).success).toBe(false);
     }
   });
+
+  it.each([
+    `/s/${"A".repeat(40)}`, `/s/${"A".repeat(32)}`,
+    "/p;jsessionid=synthetic-session", "/;jsessionid=synthetic-session",
+    "/p%3Bjsessionid=synthetic-session", "/p%253bjsessionid=synthetic-session",
+    "/p%25%33%42jsessionid=synthetic-session", "/bad%ZZ%3Bprivate",
+    `/s/${"%41".repeat(32)}`, `/s/${"A".repeat(31)}%41`,
+    `/s/${"%2541".repeat(32)}`, `/s/${"%25%34%31".repeat(32)}`,
+    `/s/short%2F${"A".repeat(40)}%2fnext`, `/s/short%255C${"A".repeat(40)}`,
+    "/p;jsessionid=synthetic-session/../short",
+    `/s/${"A".repeat(40)}/../short`,
+    "/p%3Bjsessionid=synthetic-session/%2e%2e/short",
+    `/s/${"A".repeat(40)}\\..\\short`,
+  ])("independently refuses raw path secrets in %s", (path) => {
+    const raw = `https://example.com${path}`;
+    expect(CleanedUrl.safeParse(raw).success).toBe(false);
+    expect(CleanedUrl.safeParse(cleanUrl(raw)).success).toBe(true);
+  });
+
+  it("keeps semantic cleanliness rather than requiring byte-canonical URLs", () => {
+    for (const url of [
+      "HTTPS://EXAMPLE.COM", "HTTPS://EXAMPLE.COM/Short",
+      "HTTPS://EXAMPLE.COM/s/_redacted_", "https://example.com/a%3fb",
+      `https://example.com/s/${"%41".repeat(31)}`, "https://example.com/a%2Fb",
+    ]) {
+      expect(CleanedUrl.safeParse(url).success, url).toBe(true);
+    }
+  });
+
+  it("refuses over-limit input before any URL parsing or path inspection", () => {
+    const parse = vi.spyOn(globalThis, "URL").mockImplementation(function () {
+      throw new Error("Over-limit admission must not parse a URL.");
+    });
+    try {
+      for (const raw of [
+        `https://example.com/${"a/".repeat(1_015)}`,
+        `https://example.com/%${"25".repeat(10_000)}41`,
+      ]) {
+        expect(raw.length).toBeGreaterThan(2_048);
+        expect(CleanedUrl.safeParse(raw).success).toBe(false);
+      }
+      expect(parse.mock.calls.length).toBe(0);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it("retains the exact 2,048-character admission boundary", () => {
+    const raw = `https://example.com/${"a/".repeat(1_014)}`;
+    expect(raw.length).toBe(2_048);
+    expect(CleanedUrl.safeParse(raw).success).toBe(true);
+    expect(CleanedUrl.safeParse(`${raw}/`).success).toBe(false);
+  });
+
+  it("refuses unresolved nested escapes even below the admission size cap", () => {
+    const raw = `https://example.com/%${"25".repeat(1_000)}41`;
+    expect(raw.length).toBeLessThan(2_048);
+    expect(CleanedUrl.safeParse(raw).success).toBe(false);
+    expect(CleanedUrl.safeParse(cleanUrl(raw)).success).toBe(true);
+  });
 });
 
 describe("SentBookmark", () => {
@@ -161,6 +222,22 @@ describe("DecisionState", () => {
     ];
     for (const state of dirtyCases) {
       expect(DecisionState.safeParse(state).success).toBe(false);
+    }
+  });
+
+  it("refuses path secrets in bookmark, candidate and partner positions", () => {
+    for (const url of [
+      `https://example.com/s/${"A".repeat(40)}`,
+      "https://example.com/p%3Bjsessionid=synthetic-session",
+    ]) {
+      const bookmark = { title: "Synthetic page", url, domain: "example.com" };
+      for (const state of [
+        { bookmark },
+        { candidateBookmarks: [bookmark] },
+        { pairPartner: bookmark },
+      ]) {
+        expect(DecisionState.safeParse(state).success).toBe(false);
+      }
     }
   });
 

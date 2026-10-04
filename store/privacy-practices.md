@@ -97,6 +97,14 @@ Conservative declaration — under-declaring is the risky direction:
 This extension has no server of its own — the developer receives nothing;
 every request goes only to the origin you configured.
 
+When a cleaned URL is sent, it includes the remaining path after removing
+matrix parameters and replacing opaque segments (32 or more ASCII letters, digits,
+underscores, or hyphens) with _redacted_; query strings, fragments, and embedded
+usernames/passwords are removed. Encoded equivalents are also removed or
+redacted. This applies to bookmark decisions, explanations, second opinions,
+and both summary hops. Ordinary short paths remain; native bookmark URLs and
+local summary resource matching are unchanged.
+
 - **Authentication information: yes, only if you set up the optional AI
   provider.** The user's own API key is stored encrypted on the device and sent
   only to the provider that issued it, in the `Authorization: Bearer` header,
@@ -175,7 +183,9 @@ every request goes only to the origin you configured.
     summary — sent to your Jev provider only as part of a Summarize action
     you started. No page title, site name, or meta description is added.
   Both summary hops remove query strings, fragments, and embedded URL
-  usernames/passwords. Original URLs stay local for admission and matching.
+  usernames/passwords, strip path matrix parameters, and replace opaque path
+  segments with `_redacted_` before sending the remaining path. Original URLs
+  stay local for admission and matching.
   Notes, the extraction's byline, and the full page DOM are not in either
   summary payload. Only a Jev-supported summary is saved, not the excerpt.
   Opening Summarize performs a read-only consent preflight and displays both

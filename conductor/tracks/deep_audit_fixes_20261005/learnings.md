@@ -397,3 +397,46 @@ claim that any audit finding has been fixed or reproduced.
   `/tmp/audit-phase1-fix-gate-oowbCG.log`.
 - Existing React `act` warnings remain in the full gate. No live/eval/paid
   requests, native permission-prompt coverage or remote synchronization.
+- **Local commit:** `7709846`, with Git note; mapped Bead closed. Exact
+  standalone index snapshot passed types and all 33 reset tests.
+
+## 2026-10-04 — Phase 1 task 8: P09
+
+- Outbound URL copies strip literal/encoded matrix suffixes and replace
+  segments matching `^[A-Za-z0-9_-]{32,}$` with `_redacted_`. A pure shared
+  path contract keeps the cleaner and independent `CleanedUrl` admission in
+  agreement. Retained short paths keep their original escape spelling.
+- Independent admission checks raw as well as parsed paths: WHATWG dot
+  normalization can hide a secret-bearing segment even though the gate sends
+  the original string. Original 2,048-character bookmark bounds remain
+  enforced before redaction can shrink an overlong URL.
+- Native URLs and local summary resource identity are unchanged. Real-wire
+  tests verify minimized decision/explain/summary/verification requests and
+  raw-gate refusals without requests, log rows or reservations. Distinct raw
+  resources may share an outbound copy but never become locally equivalent.
+- Meaningful initial RED: 51 failures / 44 controls, with additional raw
+  normalization and independent gate regressions. Initial wider slice passed
+  934 tests; search timing failures were recorded, not silently excluded from
+  full-gate claims. Offline evaluation inspection found exactly three long
+  descriptive slugs now redacted among 315 URL records / 294 cases; the
+  committed corpus, expected decisions and release thresholds stay unchanged.
+  Their quality impact was not measured with paid evaluation.
+- Independent review found quadratic nested percent decoding, including
+  over-limit Zod inputs whose refinement still ran. Fix round 1 reproduced
+  that defect, adds an explicit early 2,048-character refusal and at most
+  eight shrinking decoding passes. Unresolved segments redact entirely;
+  no partially decoded potential secret is retained. The same adversarial
+  three-inspection probe improved from 14,123 ms to 34.4 ms. Boundary,
+  spelling, idempotence, and large encoded suffix controls remain green.
+- Final owned slice: 114 tests; real-gate/privacy/identity slice: 513 tests;
+  scoped lint/types pass. Scoped re-review closed the finding with no new
+  blocking breakage. Additional unchanged 10k-corpus worst-of-ten analyze:
+  maximum 280.9 ms versus 1,500 ms. Original performance fixtures/thresholds
+  were not edited.
+- Both store documents and hosted privacy source describe the remaining
+  path after minimization. This narrows/clarifies an existing field, adding no
+  recipient, field or automatic trigger; scoped versions remain unchanged.
+- Fresh full combined gate passed **2919 tests / 167 files**, all checks
+  and **43 browser tests / one intentional screenshot skip**, with exact
+  commands/log under the baseline-reset entry above. Live/eval/paid requests
+  and native permission prompts remain excluded.

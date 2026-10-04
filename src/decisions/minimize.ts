@@ -1,12 +1,13 @@
 import type { SentBookmark } from "../schemas/decision-state";
+import { minimizeUrlPath } from "./url-path";
 
 /**
  * Data minimization for outbound Jev states (spec FR2, PROJECT_PLAN.md §12).
  * Pure module — no `chrome`, DOM, React, or `fetch`.
  *
- * - `cleanUrl` strips query strings, fragments, and `user:password@`
- *   credentials and returns the canonical WHATWG serialization — exactly the
- *   form `CleanedUrl` in `src/schemas/decision-state.ts` validates.
+ * - `cleanUrl` strips query strings, fragments, `user:password@`
+ *   credentials and path matrix parameters, and redacts opaque path segments
+ *   through the same pure path contract that `CleanedUrl` validates.
  * - `isSensitiveUrl` is the sensitive-site blocklist: banking, health
  *   portals, and webmail domains ({@link BUILTIN_SENSITIVE_SITES}), `file:`
  *   URLs, private/loopback IP ranges (v4 and v6, including IPv4-mapped and
@@ -27,13 +28,19 @@ const CLEANED_URL_MAX = 2_048;
 
 /**
  * Strip the parts of a URL that must never leave the device: query string,
- * fragment, and `user[:pass]@` credentials. Returns the canonical WHATWG
+ * fragment, `user[:pass]@` credentials and path matrix parameters; replace
+ * opaque path segments with `_redacted_`. Returns the canonical WHATWG
  * serialization (lowercase scheme/host, punycode IDN, default port dropped,
  * trailing bare `?`/`#` markers removed) or `null` when the input is not an
  * absolute URL. Scheme-agnostic — whether a scheme is sendable is the
  * blocklist's call, not the cleaner's.
  */
 export function cleanUrl(raw: string): string | null {
+  return cleanUrlWithinBound(raw, Infinity);
+}
+
+/** Preserve bookmark admission's existing pre-path URL size cap. */
+function cleanUrlWithinBound(raw: string, maxLength: number): string | null {
   let url: URL;
   try {
     url = new URL(raw);
@@ -44,6 +51,8 @@ export function cleanUrl(raw: string): string | null {
   url.password = "";
   url.search = "";
   url.hash = "";
+  if (url.toString().length > maxLength) return null;
+  url.pathname = minimizeUrlPath(url.pathname);
   return url.toString();
 }
 
@@ -540,7 +549,7 @@ export function minimizeBookmark(
   input: { readonly title: string; readonly url: string; readonly notes?: string },
   userBlocklist?: readonly string[],
 ): SentBookmark | null {
-  const cleaned = cleanUrl(input.url);
+  const cleaned = cleanUrlWithinBound(input.url, CLEANED_URL_MAX);
   if (
     cleaned === null ||
     cleaned.length > CLEANED_URL_MAX ||

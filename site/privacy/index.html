@@ -197,6 +197,18 @@
           (<a href="https://nguyensitrung.github.io/BookmarksManager/privacy/">nguyensitrung.github.io/BookmarksManager/privacy/</a>).</li>
       </ul>
 
+      <p>
+        When a cleaned URL is sent, it includes the remaining path after
+        removing matrix parameters and replacing opaque segments (32 or
+        more ASCII letters, digits, underscores, or hyphens) with
+        <code>_redacted_</code>; query strings, fragments, and embedded
+        usernames/passwords are removed. Encoded equivalents are also
+        removed or redacted. This applies to bookmark decisions,
+        explanations, second opinions, and both summary hops. Ordinary
+        short paths remain; native bookmark URLs and local summary
+        resource matching are unchanged.
+      </p>
+
       <h3>Optional LLM provider features (<code>llm_test</code>, <code>llm_explain</code>, <code>llm_escalate</code>, <code>llm_restructure</code>, <code>llm_summary</code>, <code>jev_summary_verify</code>)</h3>
       <p>
         You may optionally configure one OpenAI-compatible LLM provider — an
@@ -254,7 +266,9 @@
       </ul>
       <p>
         Both summary hops remove the URL's query string, fragment, and
-        embedded username/password before sending. The original URL stays
+        embedded username/password, strip path matrix parameters, and
+        replace opaque path segments with <code>_redacted_</code> before
+        sending the remaining path. The original URL stays
         local for admission and matching. Notes, the extraction's byline,
         and the full page DOM are not included in either summary payload;
         only a Jev-supported summary is saved, not the excerpt.

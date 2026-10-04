@@ -124,6 +124,14 @@ folder pre-select, near-duplicates, misfiled scan, and search re-rank). It is
 a separate consent scope, `jev_decisions`, granted per provider, and it is off
 until you enable it.
 
+When a cleaned URL is sent, it includes the remaining path after removing
+matrix parameters and replacing opaque segments (32 or more ASCII letters, digits,
+underscores, or hyphens) with _redacted_; query strings, fragments, and embedded
+usernames/passwords are removed. Encoded equivalents are also removed or
+redacted. This applies to bookmark decisions, explanations, second opinions,
+and both summary hops. Ordinary short paths remain; native bookmark URLs and
+local summary resource matching are unchanged.
+
 - **What is sent:** bookmark metadata only — the bookmark title, cleaned URL,
   domain, and folder path; tag names and descriptions; candidate folder
   paths; candidate bookmarks; the near-duplicate partner; and the Ask search
@@ -198,10 +206,11 @@ message body are never sent under any scope.
   the page title, site name, and meta description are not added to this hop.
 
 Both summary hops remove the URL's query string, fragment, and embedded
-username/password before sending. The original URL stays local for admission
-and matching. Notes, the extraction's byline, and the full page DOM are not
-included in either summary payload; only a Jev-supported summary is saved,
-not the excerpt.
+username/password, strip path matrix parameters, and replace opaque path
+segments with `_redacted_` before sending the remaining path. The original
+URL stays local for admission and matching. Notes, the extraction's byline, and
+the full page DOM are not included in either summary payload; only a
+Jev-supported summary is saved, not the excerpt.
 
 Opening the Summarize dialog only reads the configured recipients and current
 consent status. It displays both exact origins, their field lists, and the

@@ -9,7 +9,8 @@ import {
   normalizeBlocklistEntry,
   removeBlocklistEntry,
 } from "../../src/decisions/minimize";
-import { SentBookmark } from "../../src/schemas/decision-state";
+import { CleanedUrl, SentBookmark } from "../../src/schemas/decision-state";
+import { isMinimizedUrlPath, minimizeUrlPath } from "../../src/decisions/url-path";
 
 // minimize.ts is the FR2 data-minimization layer: `cleanUrl` strips query,
 // fragment, and userinfo before anything is sent, and `isSensitiveUrl`
@@ -106,6 +107,115 @@ describe("cleanUrl", () => {
     for (const input of unparseable) {
       expect(cleanUrl(input), input).toBeNull();
     }
+  });
+
+  it.each([
+    ["/p;jsessionid=synthetic-session/next;mode=private", "/p/next"],
+    ["/;jsessionid=synthetic-session", "/"],
+    ["/p%3Bjsessionid=synthetic-session/next", "/p/next"],
+    ["/p%3bjsessionid%3Dsynthetic-session", "/p"],
+    ["/p%253Bjsessionid=synthetic-session", "/p"],
+    ["/p%25%33%42jsessionid=synthetic-session", "/p"],
+    ["/caf%C3%A9%3Bjsessionid=synthetic-session", "/caf%C3%A9"],
+    ["/bad%ZZ%3Bjsessionid=synthetic-session", "/bad%ZZ"],
+    ["/p%2Fnext%3Bjsessionid=synthetic-session", "/p%2Fnext"],
+  ])("strips literal/encoded matrix parameters in %s", (path, expected) => {
+    const raw = `https://user:pass@example.com${path}?q=private#private`;
+    const cleaned = cleanUrl(raw);
+    expect(cleaned).toBe(`https://example.com${expected}`);
+    expect(cleanUrl(cleaned!)).toBe(cleaned);
+    expect(SentBookmark.safeParse({
+      title: "Synthetic page", url: cleaned, domain: "example.com",
+    }).success).toBe(true);
+  });
+
+  it.each([
+    [`/s/${"A".repeat(40)}`, "/s/_redacted_"],
+    [`/s/${"A".repeat(32)}`, "/s/_redacted_"],
+    [`/s/${"aB0_-".repeat(8)};jsessionid=synthetic-session/next`, "/s/_redacted_/next"],
+    [`/s/${"%41".repeat(32)}`, "/s/_redacted_"],
+    [`/s/${"A".repeat(31)}%41`, "/s/_redacted_"],
+    [`/s/${"%2541".repeat(32)}`, "/s/_redacted_"],
+    [`/s/${"%25%34%31".repeat(32)}`, "/s/_redacted_"],
+    [`/s/short%2F${"A".repeat(40)}%2fnext`, "/s/_redacted_"],
+    [`/s/short%255c${"A".repeat(40)}`, "/s/_redacted_"],
+    [`/s/${"_".repeat(32)}`, "/s/_redacted_"],
+    [`/s/${"-".repeat(32)}`, "/s/_redacted_"],
+  ])("redacts opaque segments without encoding bypasses in %s", (path, expected) => {
+    const cleaned = cleanUrl(`https://example.com${path}`);
+    expect(cleaned).toBe(`https://example.com${expected}`);
+    expect(cleanUrl(cleaned!)).toBe(cleaned);
+    expect(SentBookmark.safeParse({
+      title: "Synthetic page", url: cleaned, domain: "example.com",
+    }).success).toBe(true);
+  });
+
+  it.each([
+    "/docs/guide", "/s/_redacted_", "/s/aB0_-", `/s/${"A".repeat(31)}`,
+    `/s/${"%41".repeat(31)}`, "/caf%C3%A9", "/a%3Fb", "/a%23b",
+    "/a%2Fb", "/bad%ZZ", `/s/${"A".repeat(32)}.html`,
+    "/a//b/", "/s/short%2520name",
+  ])("preserves ordinary short/nonopaque path %s", (path) => {
+    expect(cleanUrl(`https://example.com${path}`)).toBe(`https://example.com${path}`);
+  });
+
+  it("minimizes an outbound bookmark copy without changing its native URL", () => {
+    const bookmark = Object.freeze({
+      title: "Synthetic page",
+      url: `https://example.com/s/${"A".repeat(40)};jsessionid=synthetic-session?q=local#route`,
+    });
+    expect(minimizeBookmark(bookmark)).toEqual({
+      title: bookmark.title, url: "https://example.com/s/_redacted_", domain: "example.com",
+    });
+    expect(bookmark.url).toBe(
+      `https://example.com/s/${"A".repeat(40)};jsessionid=synthetic-session?q=local#route`,
+    );
+  });
+
+  it("cleans a large encoded matrix suffix without exceeding the argument stack", () => {
+    expect(cleanUrl(`https://example.com/p%3Bprivate=${"A".repeat(150_000)}`))
+      .toBe("https://example.com/p");
+  });
+
+  it("preserves original short-path spelling through eight decoding passes", () => {
+    const nestedLetter = `%${"25".repeat(7)}41`;
+    const nestedMatrix = `%${"25".repeat(7)}3B`;
+    const raw = `https://example.com/p/${nestedLetter}/short`;
+    expect(cleanUrl(raw)).toBe(raw);
+    expect(CleanedUrl.safeParse(raw).success).toBe(true);
+    expect(cleanUrl(`https://example.com/p${nestedMatrix}private=synthetic/short`))
+      .toBe("https://example.com/p/short");
+  });
+
+  it.each([
+    `%${"25".repeat(8)}41`,
+    `p%${"25".repeat(8)}3Bprivate=synthetic`,
+    `${"A".repeat(31)}%${"25".repeat(8)}41`,
+    `short%${"25".repeat(8)}2F${"A".repeat(40)}`,
+  ])("redacts the whole unresolved segment after eight passes: %s", (segment) => {
+    const raw = `https://example.com/p/${segment}/short`;
+    expect(minimizeUrlPath(`/p/${segment}/short`)).toBe("/p/_redacted_/short");
+    const cleaned = cleanUrl(raw);
+    expect(cleaned).toBe("https://example.com/p/_redacted_/short");
+    expect(cleanUrl(cleaned!)).toBe(cleaned);
+    expect(CleanedUrl.safeParse(raw).success).toBe(false);
+    expect(CleanedUrl.safeParse(cleaned).success).toBe(true);
+  });
+
+  it("bounds deeply nested inspection in the shared and public cleaner", () => {
+    const segment = `%${"25".repeat(10_000)}41`;
+    const path = `/p/${segment}/short`;
+    const raw = `https://example.com${path}`;
+    const start = performance.now();
+    const minimized = minimizeUrlPath(path);
+    const cleaned = cleanUrl(raw);
+    const admitted = isMinimizedUrlPath(raw, path);
+    const elapsed = performance.now() - start;
+    console.log(`[P09 adversarial] three shared/public inspections of ${raw.length} characters: ${elapsed.toFixed(1)}ms`);
+    expect(minimized).toBe("/p/_redacted_/short");
+    expect(cleaned).toBe("https://example.com/p/_redacted_/short");
+    expect(admitted).toBe(false);
+    expect(elapsed).toBeLessThan(500);
   });
 });
 

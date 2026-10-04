@@ -1,4 +1,5 @@
 import { z } from "./z";
+import { isMinimizedUrlPath } from "../decisions/url-path";
 
 /**
  * `DecisionState` is the closed description of everything a Jev question set
@@ -39,19 +40,26 @@ function hasAsciiWhitespaceOrControl(value: string): boolean {
  * raw-string check rejects them). Literal ASCII whitespace/control bytes are
  * also refused up front — the URL parser silently strips tab/newline, which
  * would otherwise let `https://exa\tmple.com/` pass verbatim.
+ * Matrix parameters and opaque path segments (including encoded equivalents
+ * and raw segments hidden by URL normalization) are independently refused.
  *
  * Note the contract is *semantic* cleanliness, not byte-canonical form:
  * `https://example.com` (no trailing slash) and `HTTPS://EXAMPLE.COM/x` are
- * accepted because they carry no query/fragment/userinfo — `cleanUrl` always
- * emits the canonical serialization, but the gate must refuse only dirty
- * URLs, not unfamiliar spellings.
+ * accepted because they carry no query/fragment/userinfo/path secrets —
+ * `cleanUrl` always emits the canonical serialization, but the gate must
+ * refuse only dirty URLs, not unfamiliar spellings.
  */
+const CLEANED_URL_MAX = 2_048;
+
 export const CleanedUrl = z
   .string()
   .min(1)
-  .max(2_048)
+  .max(CLEANED_URL_MAX)
   .refine(
     (value) => {
+      // Zod still runs this refinement after .max fails. Refuse before
+      // parsing or inspecting an already-invalid, potentially huge URL.
+      if (value.length > CLEANED_URL_MAX) return false;
       if (/[?#]/.test(value) || hasAsciiWhitespaceOrControl(value)) {
         return false;
       }
@@ -63,7 +71,8 @@ export const CleanedUrl = z
           url.search === "" &&
           url.hash === "" &&
           url.username === "" &&
-          url.password === ""
+          url.password === "" &&
+          isMinimizedUrlPath(value, url.pathname)
         );
       } catch {
         return false;
@@ -71,7 +80,7 @@ export const CleanedUrl = z
     },
     {
       message:
-        "url must be already cleaned: an absolute URL with no query, fragment, or userinfo",
+        "url must be already cleaned: an absolute URL with no query, fragment, userinfo, matrix parameters, or opaque path segments",
     },
   );
 export type CleanedUrl = z.infer<typeof CleanedUrl>;
