@@ -60,3 +60,21 @@
   different message modules; task 7 owns extraction and summary orchestration.
   Coordinator reserves the three extraction-related unit test files;
   task 2 owns blocklist-egress fixture adaptation.
+
+## Revision 6 — 2026-10-04 — Review remediation ownership
+
+- **Trigger:** Independent review found that message-level recipient binding
+  was not retained through later asynchronous admission; the capped synopsis
+  domain list could not re-admit an omitted source host; summary's Jev wrapper
+  did not forward final-gate admission.
+- **Verified:** Explain/propose reread provider settings after handler checks.
+  Their options lacked a per-attempt authority callback. Summary's Jev client
+  supported that callback, but orchestration supplied only a transport wrapper.
+  Synopsis domain admission saw only the top 50 domains.
+- **Change:** After task 2's worker finished, task 4 may add optional
+  `beforeSend` to `ExplainOptions` and `ProposeOptions`, preserving task 2's
+  canonical imports. It owns the recipient and full-source synopsis admission
+  fixes plus associated message/proposal regressions. Coordinator owns the
+  summary final-gate callback forwarding and its regressions under task 7.
+- **Reason:** Each privacy authority must survive every await through actual
+  dispatch. No concurrent source-file ownership conflict remains.

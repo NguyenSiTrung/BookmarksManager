@@ -171,3 +171,62 @@ claim that any audit finding has been fixed or reproduced.
 - Valid structured-output fallback and bounded repair transcripts must remain
   compatible with scope admission. Tests must cover the real feature payloads,
   not just generic chat bodies that will now be intentionally refused.
+
+## 2026-10-04 — Phase 1 task 7: P08, targeted verification
+
+- **RED:** Ten failures before extraction edits: navigation accepted under
+  the old tab URL, missing document identity accepted, seven oversize
+  injected shapes accepted, and a 2,624,006-character article crossed the
+  in-page boundary. A second RED run reproduced two same-URL replacement
+  exposures, before the first send and between LLM and Jev.
+- **Implemented, not yet closed:** The injected result carries its own URL
+  and `performance.timeOrigin`; the worker checks the current main document.
+  Chrome's document id stays local and pins content-free identity probes.
+  Summary admission rechecks the captured document before each provider
+  attempt, in addition to the existing live bookmark/blocklist/consent checks.
+  New pure extraction limits are shared with in-page caps and `.max()` worker
+  validation. Readability receives `maxElemsToParse` and `charThreshold`.
+- **GREEN:** Latest targeted run passed 74 tests across
+  `page-extraction`, `llm-summarize`, and `summary-messages`. Scoped ESLint and
+  scoped diff checks passed. Full gate/e2e remains pending the two concurrent
+  workers. A prior typecheck exposed one coordinator mock-type error, now
+  fixed, plus temporary task 2 `fetchImpl` fixture errors owned by that worker.
+- **Nonreproduction:** A blocklist added during injection was already refused
+  by existing summary admission with zero LLM/Jev sends. Preserve the
+  permanent regression rather than adding a redundant policy reader.
+- **Integration:** P03 now rejects newly blocked retry payloads before another
+  reservation, using `request_not_allowed`; the summary fixture asserts that
+  early refusal and one settled reservation. Live-bookmark changes still
+  reach feature admission and release the second reservation.
+- **Testing:** Distinguish the one `extract.js` injection from subsequent
+  content-free probes. Count actual provider requests and persisted state,
+  not an obsolete total `executeScript` call count. The new multi-megabyte
+  fixture has its own 20-second limit; existing performance thresholds and
+  fixtures remain unchanged.
+
+## 2026-10-04 — Combined gate and independent review
+
+- Full lint and typecheck passed. Initial full unit/component run:
+  2703 passed / 3 failed across 163 files. Failures were unchanged
+  search-index timing (509.8 ms > 500 ms), an unchanged Options shell timeout,
+  and unchanged dismissed-delete error visibility. Focused rerun passed all
+  46 tests across those three files; no thresholds/source/fixtures changed.
+- Build, manifest, bundle, store and site checks passed. Playwright passed
+  43 tests with one intentional store-screenshot skip. These are pre-review
+  evidence, not completion of tasks or Phase 1.
+- Independent read-only review found three actionable gaps: retain accepted
+  Explain/Restructure recipient binding through each dispatch; forward summary
+  admission into the Jev gate's final callback; re-admit all synopsis sources,
+  including hosts omitted from its capped domain list. Source inspection
+  confirmed each gap. Revision 6 assigns fixes; regression/verification pending.
+
+- **Summary review gap reproduced and fixed:** Three final-gate tests held
+  Jev permission preflight after the LLM response, then replaced the document,
+  revoked verification consent, or changed the Jev model. The first fixture
+  run stopped at a missing synthetic Jev key, so it was not valid RED evidence.
+  With the key seeded, all three incorrectly succeeded and persisted.
+  Forwarding the existing `beforeSend` option through `createJevClient`
+  closes that gap without a new gate API or duplicated wrapper. Fresh targeted
+  extraction/summary/Jev-client run passed 118 tests across four files; scoped
+  lint and typecheck passed. Other two review gaps remain with the resumed
+  task 4 worker.
