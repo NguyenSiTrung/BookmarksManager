@@ -1503,3 +1503,23 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - Reviewer verified: plaintext re-save is the right restore (raw-envelope
   bytes could reattach to a rotated key) and verbatim active-pointer
   restore is strictly better than delete-if-pointing-here.
+
+## Phase 7 Task 2 (H03 — wider egress lint)
+
+- `restrictedEgressGlobals` mechanically generates both rule sets, so the
+  five names cannot drift apart: `no-restricted-globals` for bare
+  references, `no-restricted-properties` for `globalThis`/`self`/`window`
+  member forms. `navigator.sendBeacon` is property-only.
+- `no-restricted-properties` requires a bare-identifier object —
+  `window.navigator.sendBeacon(...)` chains past it. A
+  `no-restricted-syntax` CallExpression selector keyed on
+  `*.navigator.sendBeacon` closes that hole (reviewer's Info note, adopted).
+- Lint-rule tests run the REAL flat config: `new ESLint({cwd})` +
+  `lintText(code, {filePath})` matches `files:` globs against the virtual
+  path — no fixture files on disk, no re-implemented config.
+- `/* global importScripts */` (not `declare function`) keeps a worker
+  global a global reference — a module-scope `declare` shadows it and the
+  restriction rule legitimately skips it.
+- `tsc` gap: tests/unit/credentials.test.ts's `globalThis as` cast needed
+  `as unknown as` — tsc had not been re-run after the test-file addition
+  in the previous task; run tsc AFTER test edits, not before.
