@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { parseCsv } from "../../io/csv";
 import { parseExport } from "../../io/export-json";
 import {
@@ -9,8 +9,17 @@ import {
   planImport,
 } from "../../io/import-plan";
 import type { ImportItem } from "../../io/import-plan";
-import { writeImport } from "../../io/import-write";
-import type { ImportSummary } from "../../io/import-write";
+import {
+  discardImportState,
+  listInterruptedImports,
+  resumeImport,
+  writeImport,
+} from "../../io/import-write";
+import type {
+  ImportProgress,
+  ImportSummary,
+} from "../../io/import-write";
+import type { ImportState } from "../../schemas/import-state";
 import {
   isBlockedScheme,
   MAX_FILE_BYTES,
@@ -60,7 +69,7 @@ import { useToast } from "./UndoToast";
  */
 
 type ImportFormat = "json" | "netscape" | "csv";
-type Stage = "pick" | "preview" | "importing" | "summary";
+type Stage = "pick" | "preview" | "importing" | "resume" | "summary";
 
 interface UiError {
   code: string;
@@ -247,7 +256,40 @@ export function ImportDialog({
   const [deleting, setDeleting] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** Interrupted imports offered for resume when the dialog opens (I01). */
+  const [interrupted, setInterrupted] = useState<ImportState[]>([]);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const toast = useToast();
+  /**
+   * I02: `importingRef` is the synchronous re-entrancy guard — it flips
+   * before the first await, so a double-confirm can never start a second
+   * writeImport. `runRef` versions each run: `reset` bumps it, and a late
+   * resolution from a superseded run checks the captured id and drops its
+   * result instead of overwriting the new state. `abortRef` is the live
+   * run's cancel handle.
+   */
+  const importingRef = useRef(false);
+  const runRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Reopening the dialog surfaces any persisted import state as a Resume
+  // offer before the file pick (I01): a surviving row is resumable by
+  // definition — completed/cancelled runs delete their rows themselves.
+  useEffect(() => {
+    if (!open) return;
+    let stale = false;
+    void listInterruptedImports().then((rows) => {
+      if (stale || rows.length === 0) return;
+      setInterrupted(rows);
+      // Only offer resume from the pick stage — a late resolution must not
+      // hijack a preview/import already in flight.
+      setStage((current) => (current === "pick" ? "resume" : current));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [open]);
 
   /** Normalized URLs already in the library — the dupe-detection domain. */
   const existingUrls = useMemo(
@@ -272,6 +314,7 @@ export function ImportDialog({
   );
 
   const reset = (): void => {
+    runRef.current += 1; // I02: late results from a superseded run die here
     setStage("pick");
     setSource(null);
     setImportDuplicates(false);
@@ -280,8 +323,14 @@ export function ImportDialog({
     setDeleting(false);
     setDeleted(false);
     setDeleteError(null);
+    setInterrupted([]);
+    setProgress(null);
+    setCancelled(false);
   };
   const handleOpenChange = (next: boolean): void => {
+    // I02: while an import writes, Esc/overlay/X are all inert — the dialog
+    // cannot close or reset mid-write. Cancel is the only way out.
+    if (!next && importingRef.current) return;
     if (!next) reset();
     onOpenChange(next);
   };
@@ -332,25 +381,137 @@ export function ImportDialog({
   };
 
   const handleConfirm = async (): Promise<void> => {
-    if (plan === null || source === null) return;
+    // I02: the guard flips synchronously — a second click in the same tick
+    // already sees true and returns before any async work starts.
+    if (plan === null || source === null || importingRef.current) return;
+    importingRef.current = true;
+    const run = runRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setStage("importing");
     setError(null);
-    const result = await writeImport(
-      plan,
-      source.tagDefs === undefined ? {} : { tagDefs: source.tagDefs },
-    );
-    if (!result.ok) {
-      // Total failure (the import root could not be created) — back to the
-      // preview with the typed code so the user can retry/adjust.
-      setError({ code: result.code, message: result.message });
+    setProgress(null);
+    // try/finally: `writeImport` can reject outside its typed results
+    // (e.g. the Dexie put before driveImport's try/catch) — clearing the
+    // refs in `finally` keeps the dialog usable (Esc/overlay/X, retry)
+    // instead of bricking it behind a stuck `importingRef`.
+    try {
+      const result = await writeImport(
+        plan,
+        source.tagDefs === undefined
+          ? { signal: controller.signal, onProgress: setProgress }
+          : {
+              tagDefs: source.tagDefs,
+              signal: controller.signal,
+              onProgress: setProgress,
+            },
+      );
+      // A reset/reopen while the write was in flight bumped the run id —
+      // the stale result must not overwrite the new dialog state.
+      if (runRef.current !== run) return;
+      setProgress(null);
+      if (!result.ok) {
+        if (result.code === "cancelled") {
+          // Clean cancel: the partial summary is honest — what was written
+          // stays. Show it as a cancelled summary rather than an error.
+          setCancelled(true);
+          setSummary(result.summary ?? null);
+          setDeleting(false);
+          setDeleted(false);
+          setDeleteError(null);
+          setStage("summary");
+          return;
+        }
+        // Total failure (the import root could not be created) — back to
+        // the preview with the typed code so the user can retry/adjust.
+        setError({ code: result.code, message: result.message });
+        setStage("preview");
+        return;
+      }
+      setCancelled(false);
+      setSummary(result.summary);
+      setDeleting(false);
+      setDeleted(false);
+      setDeleteError(null);
+      setStage("summary");
+    } catch (cause) {
+      if (runRef.current !== run) return;
+      setProgress(null);
+      setError({
+        code: "interrupted",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
       setStage("preview");
-      return;
+    } finally {
+      importingRef.current = false;
+      abortRef.current = null;
     }
-    setSummary(result.summary);
-    setDeleting(false);
-    setDeleted(false);
-    setDeleteError(null);
-    setStage("summary");
+  };
+
+  const handleCancel = (): void => {
+    abortRef.current?.abort();
+  };
+
+  /** Resume a persisted import (I01) — same re-entrancy/run-id discipline. */
+  const handleResume = async (state: ImportState): Promise<void> => {
+    if (importingRef.current) return;
+    importingRef.current = true;
+    const run = runRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setStage("importing");
+    setError(null);
+    setProgress(null);
+    try {
+      const result = await resumeImport(state.id, {
+        signal: controller.signal,
+        onProgress: setProgress,
+      });
+      if (runRef.current !== run) return;
+      setProgress(null);
+      if (!result.ok) {
+        if (result.code === "cancelled") {
+          setCancelled(true);
+          setSummary(result.summary ?? null);
+          setDeleting(false);
+          setDeleted(false);
+          setDeleteError(null);
+          setStage("summary");
+          return;
+        }
+        setError({ code: result.code, message: result.message });
+        setInterrupted(await listInterruptedImports());
+        setStage("resume");
+        return;
+      }
+      setCancelled(false);
+      setInterrupted([]);
+      setSummary(result.summary);
+      setDeleting(false);
+      setDeleted(false);
+      setDeleteError(null);
+      setStage("summary");
+    } catch (cause) {
+      if (runRef.current !== run) return;
+      setProgress(null);
+      setError({
+        code: "interrupted",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+      setInterrupted(await listInterruptedImports());
+      setStage("resume");
+    } finally {
+      importingRef.current = false;
+      abortRef.current = null;
+    }
+  };
+
+  /** Decline a resume offer — the persisted state is discarded outright. */
+  const handleDiscard = async (state: ImportState): Promise<void> => {
+    await discardImportState(state.id);
+    const rows = interrupted.filter((row) => row.id !== state.id);
+    setInterrupted(rows);
+    if (rows.length === 0) setStage("pick");
   };
 
   const handleDelete = async (): Promise<void> => {
@@ -407,6 +568,49 @@ export function ImportDialog({
             inputTestId="import-file-input"
             onFile={(file) => void handleFile(file)}
           />
+        )}
+
+        {stage === "resume" && (
+          <div data-testid="import-resume" className="space-y-3">
+            <p className="text-sm">
+              A previous import was interrupted — resume it where it left
+              off, or discard it and start over.
+            </p>
+            <ul className="space-y-2">
+              {interrupted.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex items-center justify-between gap-2
+                    rounded-md border border-input px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">
+                      {row.title}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {row.cursor} of {row.total} written
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleResume(row)}
+                      className={secondaryButtonClass}
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDiscard(row)}
+                      className={secondaryButtonClass}
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {(stage === "preview" || busy) && plan !== null && source !== null && (
@@ -520,7 +724,9 @@ export function ImportDialog({
 
             {busy && (
               <p role="status" className="text-sm text-muted-foreground">
-                Importing…
+                {progress === null || progress.total === 0
+                  ? "Importing…"
+                  : `Importing… ${progress.done} of ${progress.total}`}
               </p>
             )}
           </div>
@@ -529,7 +735,9 @@ export function ImportDialog({
         {stage === "summary" && summary !== null && (
           <div data-testid="summary" className="space-y-3">
             <p role="status" className="text-sm font-medium">
-              Import complete.
+              {cancelled
+                ? "Import cancelled — the items written so far were kept."
+                : "Import complete."}
             </p>
             <dl className="grid grid-cols-3 gap-2 text-sm">
               <div>
@@ -599,18 +807,28 @@ export function ImportDialog({
         <DialogFooter>
           {stage === "preview" || busy ? (
             <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setStage("pick");
-                  setSource(null);
-                  setError(null);
-                }}
-                className={secondaryButtonClass}
-              >
-                Back
-              </button>
+              {busy ? (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className={secondaryButtonClass}
+                >
+                  Cancel import
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setStage("pick");
+                    setSource(null);
+                    setError(null);
+                  }}
+                  className={secondaryButtonClass}
+                >
+                  Back
+                </button>
+              )}
               <button
                 type="button"
                 disabled={busy}
@@ -620,6 +838,18 @@ export function ImportDialog({
                 {busy ? "Importing…" : "Confirm import"}
               </button>
             </>
+          ) : null}
+          {stage === "resume" ? (
+            <button
+              type="button"
+              onClick={() => {
+                setInterrupted([]);
+                setStage("pick");
+              }}
+              className={secondaryButtonClass}
+            >
+              Start over
+            </button>
           ) : null}
           {stage === "summary" && summary !== null ? (
             <>

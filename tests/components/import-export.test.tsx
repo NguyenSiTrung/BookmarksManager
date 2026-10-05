@@ -17,6 +17,7 @@ import {
 } from "vitest";
 import { db } from "../../src/db/database";
 import { getMeta, getTag } from "../../src/db/meta";
+import { writeImport } from "../../src/io/import-write";
 import { undoLatest } from "../../src/undo/restore";
 import { ExportDialog } from "../../src/entrypoints/sidepanel/ExportDialog";
 import { ImportDialog } from "../../src/entrypoints/sidepanel/ImportDialog";
@@ -99,6 +100,8 @@ beforeEach(async () => {
   await db.bookmarkMeta.clear();
   await db.tags.clear();
   await db.undo.clear();
+  await db.importStates.clear();
+  await db.importQueues.clear();
 
   clickedAnchor = undefined;
   exportedBlobs = [];
@@ -483,6 +486,191 @@ describe("ImportDialog — confirm writes and summary", () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Phase 5 Task 4 — I02 dialog busy guards / resume, I07 notes + revoke delay
+// ---------------------------------------------------------------------------
+
+describe("ImportDialog — I02 busy guards and resume", () => {
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+  } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  const TWO_ITEM_JSON = JSON.stringify({
+    version: 1,
+    exportedAt: "2026-09-26T12:00:00.000Z",
+    tree: [
+      { id: "x1", title: "X1", url: "https://x1.example/" },
+      { id: "x2", title: "X2", url: "https://x2.example/" },
+    ],
+    tags: [],
+    meta: [],
+  });
+  const THREE_ITEM_JSON = JSON.stringify({
+    version: 1,
+    exportedAt: "2026-09-26T12:00:00.000Z",
+    tree: [
+      { id: "x1", title: "X1", url: "https://x1.example/" },
+      { id: "x2", title: "X2", url: "https://x2.example/" },
+      { id: "x3", title: "X3", url: "https://x3.example/" },
+    ],
+    tags: [],
+    meta: [],
+  });
+
+  it("Esc is inert while a write is in flight; the dialog cannot close", async () => {
+    const onOpenChange = vi.fn();
+    const gate = deferred<BookmarksTreeNode>();
+    const original = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) =>
+      details.title === "X2" ? gate.promise : original(details),
+    );
+    render(<ImportDialog open onOpenChange={onOpenChange} tree={tree} />);
+    upload("two.json", TWO_ITEM_JSON);
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+    clickAndFlush(/confirm import/i);
+    // Wait until the write actually started (X1 lands first).
+    await vi.waitFor(async () => {
+      expect((await importRoot()) !== undefined).toBe(true);
+    });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    gate.resolve({
+      id: "x2n",
+      parentId: "2",
+      title: "X2",
+      url: "https://x2.example/",
+    } as BookmarksTreeNode);
+    expect(await screen.findByText(/import complete/i)).toBeTruthy();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("a thrown persist keeps the dialog closable and retryable", async () => {
+    // I02 fix pin: writeImport can reject OUTSIDE its typed results (the
+    // importStates.put lands before driveImport's try/catch) — the ref
+    // must clear in `finally` or the dialog bricks behind a stuck
+    // importing flag.
+    const onOpenChange = vi.fn();
+    const put = vi
+      .spyOn(db.importStates, "put")
+      .mockRejectedValueOnce(new Error("simulated put failure"));
+    render(<ImportDialog open onOpenChange={onOpenChange} tree={tree} />);
+    upload("two.json", TWO_ITEM_JSON);
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+    clickAndFlush(/confirm import/i);
+    expect(
+      await screen.findByText(/interrupted: simulated put failure/i),
+    ).toBeTruthy();
+    // The ref cleared in `finally`: a retry on the same preview starts a
+    // fresh run (the mock only rejected once)…
+    clickAndFlush(/confirm import/i);
+    expect(await screen.findByText(/import complete/i)).toBeTruthy();
+    // …and the finished dialog is closable again.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    put.mockRestore();
+  });
+
+  it("double Confirm starts exactly one import", async () => {
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    upload("two.json", TWO_ITEM_JSON);
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+    // Two clicks in the same tick — raw dispatch bypasses the act flush so
+    // the second hits the synchronous re-entrancy guard (not just the
+    // disabled attr), while the first click's handler has already run.
+    const confirm = screen.getByRole("button", { name: /confirm import/i });
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(await screen.findByText(/import complete/i)).toBeTruthy();
+    // Exactly one import root with two bookmarks.
+    const children = await fake.getChildren(OTHER_BOOKMARKS_ID);
+    const roots = children.filter((c) => c.title.startsWith("Imported "));
+    expect(roots).toHaveLength(1);
+    const written = await subtree(roots[0]!.id);
+    expect(written.children?.map((c) => c.title)).toEqual(["X1", "X2"]);
+  });
+
+  it("Cancel import aborts the run and shows the partial summary", async () => {
+    const gate = deferred<BookmarksTreeNode>();
+    const original = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) =>
+      details.title === "X2" ? gate.promise : original(details),
+    );
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    // Three items: the gate blocks X2 while X3 still waits, so the aborted
+    // run stops at the next item boundary instead of finishing the queue.
+    upload("three.json", THREE_ITEM_JSON);
+    expect(await screen.findByTestId("import-preview")).toBeTruthy();
+    clickAndFlush(/confirm import/i);
+    await vi.waitFor(async () => {
+      expect((await importRoot()) !== undefined).toBe(true);
+    });
+    clickAndFlush(/cancel import/i);
+    // The in-flight create resolves but the aborted run stops after it.
+    gate.resolve({
+      id: "x2n",
+      parentId: "2",
+      title: "X2",
+      url: "https://x2.example/",
+    } as BookmarksTreeNode);
+    expect(
+      await screen.findByText(/import cancelled/i),
+    ).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+
+  it("reopen offers Resume for an interrupted import; Resume completes it", async () => {
+    // Seed a genuinely interrupted import through the io layer.
+    const seeded = await writeImport(
+      [
+        { kind: "folder", title: "D", children: [] },
+        { kind: "bookmark", title: "Y1", url: "https://y1.example/" },
+        { kind: "bookmark", title: "Y2", url: "https://y2.example/" },
+      ],
+      {
+        onProgress: ({ done }) => {
+          if (done === 1) throw new Error("simulated crash");
+        },
+      },
+    );
+    expect(seeded.ok).toBe(false);
+
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    // The resume offer lists the row with its position.
+    const resumePanel = await screen.findByTestId("import-resume");
+    expect(resumePanel.textContent).toMatch(/1 of 3/);
+    clickAndFlush(/resume/i);
+    expect(await screen.findByText(/import complete/i)).toBeTruthy();
+    // No duplicates: D + Y1 + Y2 exactly once.
+    const children = await fake.getChildren(OTHER_BOOKMARKS_ID);
+    const roots = children.filter((c) => c.title.startsWith("Imported "));
+    expect(roots).toHaveLength(1);
+    const written = await subtree(roots[0]!.id);
+    expect(written.children?.map((c) => c.title)).toEqual(["D", "Y1", "Y2"]);
+  });
+
+  it("Discard drops the interrupted state and returns to pick", async () => {
+    await writeImport([{ kind: "bookmark", title: "Y", url: "https://y.example/" }], {
+      onProgress: () => {
+        throw new Error("simulated crash");
+      },
+    });
+    render(<ImportDialog open onOpenChange={noop} tree={tree} />);
+    expect(await screen.findByTestId("import-resume")).toBeTruthy();
+    clickAndFlush(/discard/i);
+    // Back at the file pick; the persisted row is gone.
+    expect(await screen.findByTestId("import-file-input")).toBeTruthy();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // ExportDialog
 // ---------------------------------------------------------------------------
@@ -556,6 +744,8 @@ describe("ExportDialog", () => {
   it("exports CSV with folder_path, tag names, category, notes and ISO created", async () => {
     renderDialog();
     fireEvent.click(screen.getByRole("radio", { name: /^csv/i }));
+    // I07: notes are OFF by default for the interop formats — opt in.
+    fireEvent.click(screen.getByTestId("include-notes"));
     fireEvent.click(exportButton());
 
     expect(clickedAnchor?.download).toMatch(/\.csv$/);
@@ -597,5 +787,68 @@ describe("ExportDialog", () => {
     renderDialog();
     const radio = screen.getByRole("radio", { name: /current folder/i });
     expect(radio).toHaveProperty("disabled", true);
+  });
+
+  it("JSON includes notes by default and omits them when unchecked (I07)", async () => {
+    renderDialog();
+    fireEvent.click(exportButton());
+    const withNotes = JSON.parse(await exportedBlobs[0]!.text()) as {
+      meta: { id: string; notes?: string }[];
+    };
+    expect(withNotes.meta).toEqual([
+      expect.objectContaining({ id: "kb", notes: "note-kb" }),
+    ]);
+
+    exportedBlobs = [];
+    fireEvent.click(screen.getByTestId("include-notes"));
+    fireEvent.click(exportButton());
+    const withoutNotes = JSON.parse(await exportedBlobs[0]!.text()) as {
+      meta: { id: string; notes?: string }[];
+    };
+    // The notes FIELD is gone entirely — not just emptied.
+    expect(withoutNotes.meta).toEqual([
+      expect.objectContaining({ id: "kb" }),
+    ]);
+    expect(withoutNotes.meta[0] && "notes" in withoutNotes.meta[0]).toBe(false);
+  });
+
+  it("CSV omits notes by default (I07)", async () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: /^csv/i }));
+    // Default for the interop formats is OFF — no checkbox click.
+    fireEvent.click(exportButton());
+    const text = await exportedBlobs[0]!.text();
+    const kept = text.split("\r\n").find((line) => line.includes("kept.example"));
+    expect(kept).toBeDefined();
+    expect(kept).not.toContain("note-kb");
+    // Column position preserved: category, empty notes, created.
+    expect(kept).toContain("docs,,2023-11-14");
+  });
+
+  it("the notes checkbox is disabled for Netscape (no notes field) (I07)", () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: /netscape html/i }));
+    const checkbox = screen.getByTestId("include-notes");
+    expect(checkbox).toHaveProperty("disabled", true);
+  });
+
+  it("revokes the object URL only after the download grace delay (I07)", async () => {
+    vi.useFakeTimers();
+    const revoked: string[] = [];
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: (url: string) => {
+        revoked.push(url);
+      },
+    });
+    renderDialog();
+    fireEvent.click(exportButton());
+    // The download fired but the URL still lives — revoking in the same
+    // task would race the browser's own fetch of the blob.
+    expect(exportedBlobs).toHaveLength(1);
+    expect(revoked).toHaveLength(0);
+    vi.advanceTimersByTime(31_000);
+    expect(revoked).toEqual(["blob:mock-1"]);
+    vi.useRealTimers();
   });
 });

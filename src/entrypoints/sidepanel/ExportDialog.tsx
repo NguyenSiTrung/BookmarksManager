@@ -203,6 +203,7 @@ function collectCsvRows(
   metaById: ReadonlyMap<string, BookmarkMeta>,
   tagNameByKey: ReadonlyMap<string, string>,
   scopeFolderId: string | undefined,
+  includeNotes: boolean,
 ): CsvBookmarkRow[] {
   const rows: CsvBookmarkRow[] = [];
   const push = (bookmark: BookmarkItem, ancestors: string[]): void => {
@@ -214,7 +215,7 @@ function collectCsvRows(
       tags: tagDisplayNames(meta, tagNameByKey),
     };
     if (meta?.category !== undefined) row.category = meta.category;
-    if (meta?.notes !== undefined) row.notes = meta.notes;
+    if (includeNotes && meta?.notes !== undefined) row.notes = meta.notes;
     if (
       bookmark.dateAdded !== undefined &&
       Number.isFinite(bookmark.dateAdded)
@@ -260,14 +261,18 @@ function buildFile(
   metaById: ReadonlyMap<string, BookmarkMeta>,
   tagNameByKey: ReadonlyMap<string, string>,
   scopeFolderId: string | undefined,
+  includeNotes: boolean,
 ): BuiltFile {
   switch (format) {
     case "json": {
-      // Whole library passes the full forest — root "0" is unwrapped
-      // internally; folder scope finds the node by id inside it.
+      // I07: notes stay out when unchecked — strip them off the meta rows
+      // before the envelope is built so nothing private leaks into the file.
+      const metaForExport = includeNotes
+        ? meta
+        : meta.map((row) => ({ ...row, notes: undefined }));
       const built = buildExport({
         tree: unflattenTree(tree),
-        meta,
+        meta: metaForExport,
         tags: tagDefs,
         ...(scopeFolderId === undefined ? {} : { folderId: scopeFolderId }),
       });
@@ -310,6 +315,7 @@ function buildFile(
         metaById,
         tagNameByKey,
         scopeFolderId,
+        includeNotes,
       );
       return {
         ok: true,
@@ -331,6 +337,15 @@ function fileStamp(now: Date): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * Grace period before the object URL is revoked (I07): revoking in the
+ * same task as `anchor.click()` races the browser's own download handoff —
+ * on some engines the fetch of the blob URL hasn't started yet and the
+ * download silently fails. The blob is small; a delayed revoke costs
+ * nothing and cannot break a started download.
+ */
+const REVOKE_URL_DELAY_MS = 30_000;
+
 function downloadTextFile(text: string, fileName: string, mime: string): void {
   const blob = new Blob([text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);
@@ -341,7 +356,7 @@ function downloadTextFile(text: string, fileName: string, mime: string): void {
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_URL_DELAY_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +404,10 @@ export function ExportDialog({
   const [error, setError] = useState<UiError | null>(null);
   const [exportedFile, setExportedFile] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  // I07: notes ride along in JSON backups by default (full-fidelity export)
+  // but stay out of CSV/Netscape unless the user asks — those formats are
+  // for interop, and notes are extension-private data.
+  const [includeNotes, setIncludeNotes] = useState(true);
 
   const metaById = useMemo(
     () => new Map(meta.map((row) => [row.id, row])),
@@ -412,6 +431,7 @@ export function ExportDialog({
     setError(null);
     setExportedFile(null);
     setWarnings([]);
+    setIncludeNotes(true);
   };
   const handleOpenChange = (next: boolean): void => {
     if (!next) reset();
@@ -438,6 +458,7 @@ export function ExportDialog({
       metaById,
       tagNameByKey,
       scopeFolderId,
+      includeNotes,
     );
     if (!built.ok) {
       setError({ code: built.code, message: built.message });
@@ -480,7 +501,12 @@ export function ExportDialog({
                 name="export-format"
                 value={value}
                 checked={format === value}
-                onChange={() => setFormat(value)}
+                onChange={() => {
+                  setFormat(value);
+                  // I07: JSON defaults notes ON (backup fidelity); the
+                  // interop formats default OFF.
+                  setIncludeNotes(value === "json");
+                }}
                 className="size-4 accent-primary"
               />
               {label}
@@ -518,6 +544,26 @@ export function ExportDialog({
               : `Current folder — ${folderTitle}`}
           </label>
         </fieldset>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            data-testid="include-notes"
+            checked={includeNotes}
+            disabled={format === "netscape"}
+            onChange={(event) => setIncludeNotes(event.target.checked)}
+            className="size-4 accent-primary disabled:opacity-50"
+          />
+          <span>
+            Include notes
+            {format === "netscape" && (
+              <span className="text-muted-foreground">
+                {" "}
+                — Netscape HTML has no notes field
+              </span>
+            )}
+          </span>
+        </label>
 
         {error !== null && (
           <p role="alert" className="text-sm text-destructive">
