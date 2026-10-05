@@ -1045,3 +1045,36 @@ claim that any audit finding has been fixed or reproduced.
   in the replay path — a `vi.spyOn(db.undo, "where")` counts flushes
   without touching Dexie internals. `fake.getChildren` counts all reads
   through mutations too (the module wraps the same fake).
+
+## Task 6 — D12 + D13 (metadata tombstones + row schema versions)
+
+- **Tombstone model:** `metaTombstones` pk `url` — the witnessed-remove path
+  keys by the node's snapshot URL (freshest); the reconcile path falls back
+  to the row's own `meta.url` (only URL available for unwitnessed orphans).
+  `BookmarkMeta` therefore carries an optional `url` field — populated
+  opportunistically at write paths that know the node (merge survivor,
+  import sidecar, EditDialog post-edit url, popup save, restore).
+- **Re-attach:** `reattachTombstone` consumes unconditionally — expired
+  tombstone, valid live incumbent, or successful attach all end with the
+  row gone, so a second same-URL create can't inherit stale data. An
+  UNPARSEABLE incumbent counts as absent (reviewer note applied): the
+  attach proceeds and `commitMeta`'s corrupt-retention keeps its copy.
+- **D13:** `schemaVersion: z.literal(1).optional()` — new writes stamp 1,
+  absent = pre-D13 (still read), any other failure is counted +
+  surfaced under the `metaIntegrity` metadata key and retained to
+  `corruptMeta` (cap 50) before any overwrite/delete. `url` is not a
+  lazy-row field — a url-only write still produces no row.
+- **Dexie nested-tx rule bit again:** every ambient `rw` transaction
+  covering `bookmarkMeta` now also covers `corruptMeta` (patchMeta's
+  retain fires inside the ambient scope) — tag-ops bulk paths,
+  deleteTagWithUndo, the cascade tx all widened.
+- **Undo:** `nodeExists(id, ctx?, expectedUrl?)` — a live id whose node
+  url differs counts as dead: snapshot nodes pass `node.url`, meta rows
+  pass `meta.url`, folders stay id-only. Repointed ids take the recreate
+  path and meta follows via idMap.
+- **Slept-create gap:** reconcile offers every live URL to
+  `reattachTombstone` on the CONFIRMING tree read — an MV3 worker that
+  slept through a create still re-attaches within retention.
+- Decisions are not re-attached — tombstones carry meta only; a removed
+  bookmark's pending suggestions stay deleted (J14) — semantic seam
+  noted for the track file.

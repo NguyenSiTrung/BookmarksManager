@@ -303,7 +303,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: 5k-node subtree restore on the fake performs one `getChildren` per
     folder and batched `idMap` writes (spies); resume still works.
   - Fix: batch persistence, local child counts, skip repeated ancestor walk.
-- [ ] Task 6: D12 + D13 — metadata tombstones and row schema versions
+- [x] Task 6: D12 + D13 — metadata tombstones and row schema versions (d7af6b4)
   <!-- files: src/sync/listeners.ts, src/sync/reconcile.ts, src/db/database.ts, src/db/meta.ts, src/undo/restore.ts -->
   <!-- depends: task5 -->
   - Tests: removing then re-creating a bookmark with the same URL within 30
