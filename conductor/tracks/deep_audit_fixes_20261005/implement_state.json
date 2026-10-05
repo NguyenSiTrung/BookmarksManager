@@ -1,7 +1,7 @@
 {
   "current_phase": "Phase 6: UI correctness and safety",
   "current_phase_index": 5,
-  "current_task_index": 4,
+  "current_task_index": 5,
   "completed_phases": [
     "Phase 1: Privacy and consent enforcement",
     "Phase 2: Accounting and egress robustness",
@@ -9,11 +9,11 @@
     "Phase 4: Duplicates, undo and data integrity",
     "Phase 5: Import and export"
   ],
-  "last_updated": "2026-10-05T15:02:22Z",
+  "last_updated": "2026-10-05T15:35:00Z",
   "status": "in_progress",
   "checkpoint_blockers": [],
   "task_review": {
-    "task": "p6task4",
+    "task": "p6task5",
     "status": "closed"
   },
   "section_count": 1,

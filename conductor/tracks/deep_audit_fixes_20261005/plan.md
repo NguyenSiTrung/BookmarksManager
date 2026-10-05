@@ -389,7 +389,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     list; key repeat deletes once; same-parent forward multi-move lands in
     order.
   - Fix: target containment check, deleting ref, post-removal index math.
-- [ ] Task 5: U06 — worker-side quick save and popup errors
+- [x] Task 5: U06 — worker-side quick save and popup errors (36e3f62)
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/chrome.ts, src/entrypoints/popup/Suggestions.tsx, src/entrypoints/background.ts, src/messages/save.ts -->
   - Tests: popup context destroyed after the message is sent still yields
     bookmark + meta; failure shows an error; suggestions use an indexed query;

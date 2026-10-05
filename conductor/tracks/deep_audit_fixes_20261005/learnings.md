@@ -1318,3 +1318,33 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   position undisturbed. Backward/cross-parent keep forward index+moved.
 - **Spy the method the path actually calls**: deleteNodesWithUndo uses
   removeTree uniformly (leaf or folder) — spying fake.remove saw 0 calls.
+
+## Phase 6 Task 5 — U06 worker-side quick save + popup errors
+
+- **One worker message per destructive sequence**: the popup is a
+  destroyable context — any multi-step write run from it can die
+  mid-chain. Moving the whole quick save behind one SAVE message makes
+  "popup closed" unobservable to the write path; the test proves it with
+  a slow fake.create + cleanup() while the send is in flight.
+- **Message bounds must match store bounds**: a field valid at the
+  protocol but invalid at the store unwinds a created bookmark into a
+  bare internal_error (reviewer Warning). Cap message fields at the
+  store's constants (NOTES_MAX_LENGTH, TagDef name 64) and bound the
+  inputs at the source (maxLength) so malformed input never leaves the
+  form.
+- **Derived data must be re-derived or re-checked, never trusted**:
+  tag chips carry {key,label}; validating key === tagNameKey(label)
+  at the schema stops a mismatched pair from writing a meta reference
+  to a def that was never created.
+- **Dexie multiEntry for "rows that mention X"**: *bookmarkIds on
+  decisions lets the popup ask "rows for THIS bookmark" via where()
+  instead of scanning pending+unsure — same row set/order as
+  listReviewable (rows without bookmarkIds are simply unindexed).
+- **Promise<boolean>, not throw, across UI chrome helpers**:
+  openSidePanel/sendSaveMessage return results so failures surface via
+  setError uniformly; the sidePanel open call still dispatches
+  synchronously inside the gesture tick (async fn runs sync to first
+  await).
+- **Table-level mocks leak**: spying db.tags.get swallows EVERY caller
+  (createTag's own existence check, patchMeta validation). Scope to
+  mockResolvedValueOnce so only the call under test misses.
