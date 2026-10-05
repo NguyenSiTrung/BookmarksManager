@@ -9,6 +9,10 @@ import type {
   MetaTombstone,
   TagDef,
 } from "../schemas/meta";
+import type {
+  ImportQueueRow,
+  ImportState,
+} from "../schemas/import-state";
 import type { ConsentRecord } from "../schemas/provider";
 import type { RestructureAssignment } from "../schemas/restructure";
 import type { UndoSnapshot } from "../schemas/undo";
@@ -99,6 +103,8 @@ export class BookmarksManagerDB extends Dexie {
   declare restructureAssignments: Table<RestructureAssignmentRow, [string, string]>;
   declare metaTombstones: Table<MetaTombstone, string>;
   declare corruptMeta: Table<CorruptMetaRow, number>;
+  declare importStates: Table<ImportState, string>;
+  declare importQueues: Table<ImportQueueRow, string>;
 
   constructor() {
     super("BookmarksManager");
@@ -197,6 +203,14 @@ export class BookmarksManagerDB extends Dexie {
       // D13: forensic copies of schema-invalid bookmarkMeta rows — never
       // overwritten/deleted without a copy landing here first; bounded.
       corruptMeta: "++id,retainedAt",
+    });
+    this.version(8).stores({
+      // I01: resumable imports. `importStates` is the small per-item cursor
+      // row (status/updatedAt indexed for the interrupted-imports list);
+      // `importQueues` carries the flattened work list, written once before
+      // the first node create and deleted with the state on completion.
+      importStates: "id,status,updatedAt",
+      importQueues: "id",
     });
   }
 }

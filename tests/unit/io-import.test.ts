@@ -27,7 +27,13 @@ import type {
   ImportItem,
   ImportMeta,
 } from "../../src/io/import-plan";
-import { importRootTitle, writeImport } from "../../src/io/import-write";
+import {
+  cancelImport,
+  importRootTitle,
+  listInterruptedImports,
+  resumeImport,
+  writeImport,
+} from "../../src/io/import-write";
 import { parseNetscape } from "../../src/io/netscape";
 import type { TagDef } from "../../src/schemas/meta";
 import { OTHER_BOOKMARKS_ID } from "../../src/sync/chrome-bookmarks";
@@ -1211,5 +1217,185 @@ describe("writeImport — I03 tag defs and I04 duplicate merge", () => {
     // No meta row created for the dead id — nothing dangles.
     expect(await getMeta("existing")).toBeUndefined();
     expect(await db.bookmarkMeta.count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I01 — resumable import
+// ---------------------------------------------------------------------------
+
+describe("writeImport — I01 resumable import", () => {
+  const forest = (): ImportItem[] => [
+    {
+      kind: "folder",
+      title: "outer",
+      children: [
+        bm("b1", "https://b1.example/"),
+        bm("b2", "https://b2.example/"),
+      ],
+    },
+    bm("b3", "https://b3.example/"),
+    bm("b4", "https://b4.example/"),
+  ]; // preorder: outer, b1, b2, b3, b4 → total 5
+
+  it("an interrupted run persists root id + cursor and resumes without duplicates", async () => {
+    // Interrupt after 3 items by throwing out of the progress callback.
+    let fired = 0;
+    const first = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: ({ done }) => {
+        fired = done;
+        if (done === 3) throw new Error("simulated crash");
+      },
+    });
+    expect(fired).toBe(3);
+    expect(first.ok).toBe(false);
+    if (first.ok) return;
+    expect(first.code).toBe("interrupted");
+
+    const interrupted = await listInterruptedImports();
+    expect(interrupted).toHaveLength(1);
+    const state = interrupted[0]!;
+    expect(state.importRootId).not.toBe("");
+    expect(state.cursor).toBe(3);
+    expect(state.total).toBe(5);
+
+    const resumed = await resumeImport(state.id, { now: IMPORT_NOW });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.summary.foldersCreated).toBe(1);
+    expect(resumed.summary.bookmarksCreated).toBe(4);
+    expect(resumed.summary.failures).toEqual([]);
+
+    // No duplicates: the import root holds outer + b3 + b4 exactly once.
+    const root = await subtree(resumed.summary.importRootId);
+    expect(root.children?.map((c) => c.title)).toEqual(["outer", "b3", "b4"]);
+    expect(root.children?.[0]?.children?.map((c) => c.title)).toEqual([
+      "b1",
+      "b2",
+    ]);
+    // The row is gone — nothing left to resume.
+    expect(await listInterruptedImports()).toHaveLength(0);
+  });
+
+  it("Cancel via AbortSignal stops cleanly and deletes the state row", async () => {
+    const controller = new AbortController();
+    const result = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      signal: controller.signal,
+      onProgress: ({ done }) => {
+        if (done === 2) controller.abort();
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("cancelled");
+    // Partial work kept, row deleted — nothing resumable remains.
+    expect(result.summary?.bookmarksCreated).toBe(1);
+    expect(await listInterruptedImports()).toHaveLength(0);
+    const lost = await resumeImport("whatever");
+    expect(lost.ok).toBe(false);
+    if (lost.ok) return;
+    expect(lost.code).toBe("state_lost");
+  });
+
+  it("Cancel via cancelImport() flips the persisted status the driver polls", async () => {
+    let importId = "";
+    const result = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: async ({ done }) => {
+        if (done === 2) {
+          importId = (await listInterruptedImports())[0]!.id;
+          await cancelImport(importId);
+        }
+      },
+    });
+    expect(importId).not.toBe("");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("cancelled");
+    expect(await listInterruptedImports()).toHaveLength(0);
+  });
+
+  it("progress callbacks fire once per item and once up front", async () => {
+    const seen: { done: number; total: number }[] = [];
+    const result = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: ({ done, total }) => seen.push({ done, total }),
+    });
+    expect(result.ok).toBe(true);
+    // one opening callback + one per item (5 items)
+    expect(seen.map((p) => p.done)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(seen.every((p) => p.total === 5)).toBe(true);
+  });
+
+  it("a resumed drive records new failures on the persisted row", async () => {
+    // Interrupt after the first of three items, then let the remaining
+    // create fail — the resumed drive must record it (the old
+    // summary-shadowing bug lost resumed failures).
+    let importId = "";
+    const seeded = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: ({ done }) => {
+        if (done === 1) throw new Error("simulated crash");
+      },
+    });
+    expect(seeded.ok).toBe(false);
+    importId = (await listInterruptedImports())[0]!.id;
+
+    const original = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) =>
+      details.title === "b2"
+        ? Promise.reject(new Error("simulated create failure"))
+        : original(details),
+    );
+    const resumed = await resumeImport(importId, { now: IMPORT_NOW });
+    vi.restoreAllMocks();
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) return;
+    expect(resumed.summary.failures).toEqual([
+      {
+        kind: "bookmark",
+        title: "b2",
+        message: expect.stringContaining("simulated create failure"),
+      },
+    ]);
+    expect(resumed.summary.bookmarksCreated).toBe(3);
+  });
+
+  it("a second resumeImport on a live claim reports already_running", async () => {
+    const seeded = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: ({ done }) => {
+        if (done === 1) throw new Error("simulated crash");
+      },
+    });
+    expect(seeded.ok).toBe(false);
+    const importId = (await listInterruptedImports())[0]!.id;
+
+    const [first, second] = await Promise.all([
+      resumeImport(importId, { now: IMPORT_NOW }),
+      resumeImport(importId, { now: IMPORT_NOW }),
+    ]);
+    // Exactly one driver wins the claim; the other is refused.
+    const outcomes = [first, second].map((r) => (r.ok ? "ok" : r.code));
+    expect(outcomes.sort()).toEqual(["already_running", "ok"]);
+    expect(await listInterruptedImports()).toHaveLength(0);
+  });
+
+  it("a cancelled run leaves its partial folder usable for the undo path", async () => {
+    const controller = new AbortController();
+    const result = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      signal: controller.signal,
+      onProgress: ({ done }) => {
+        if (done === 1) controller.abort();
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.summary?.importRootId).not.toBe("");
+    const removed = await removeTree(result.summary!.importRootId);
+    expect(removed).toBeUndefined(); // removeTree resolves; no throw
   });
 });

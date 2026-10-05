@@ -26,13 +26,15 @@ describe("BookmarksManager database", () => {
     // the A08 rollup tables and `month`/compound indexes; version(6) added
     // the J13 `restructureAssignments` table and the jobs `[kind+createdAt]`
     // index without touching the earlier stores.
-    expect(db.verno).toBe(7);
+    expect(db.verno).toBe(8);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",
       "consents",
       "corruptMeta",
       "decisions",
+      "importQueues",
+      "importStates",
       "jobs",
       "keyMaterials",
       "llmReservations",

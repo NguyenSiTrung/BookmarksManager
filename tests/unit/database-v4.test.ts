@@ -100,13 +100,15 @@ describe("BookmarksManagerDB v3 → v4 migration", () => {
     // The class now carries the A08 v5 upgrade on top of v4: the v3→v4
     // assertions below verify the v4 tables arrived intact through the
     // chain (Dexie applies every intermediate version).
-    expect(db.verno).toBe(7);
+    expect(db.verno).toBe(8);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",
       "consents",
       "corruptMeta",
       "decisions",
+      "importQueues",
+      "importStates",
       "jobs",
       "keyMaterials",
       "llmReservations",
