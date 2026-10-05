@@ -1127,3 +1127,26 @@ claim that any audit finding has been fixed or reproduced.
 - Omnibox suggestion flow filters non-openable hits entirely (existing
   behavior, review Info) — sidepanel/palette show rows with disabled
   opens instead.
+
+## Phase 5 Task 1 — I05+I06 (CSV round trip / deep export)
+
+- **`'`-strip is the inverse escape**, applied in the row `cell()` accessor:
+  one leading `'` only when followed by a formula trigger. Same regex on
+  both sides keeps the two directions exactly paired.
+- **Unterminated-`"` recovery**: split the EOF-quoted cell at its first
+  physical newline; head record reports `unterminated quoted field; N
+  following record(s) recovered`; tail re-parses once with recovery OFF —
+  a second bad quote forfeits only its own tail, no recursion.
+- **Delimiter escapes**: `\`-escape ONLY `\` and the delimiter (`/` in
+  folder_path, `;` in tag cells). Unknown `\x` stays literal — foreign
+  files lose nothing. `joinFolderPath`/`splitFolderPath`/`joinTags`/
+  `splitTags` are THE wire helpers; the import writer splits via them.
+- **pathKey must not be a joined string** (reviewer Warning): decoded
+  segments joined on `/` collides a literal `A/B` title with nested A → B.
+  Key on `JSON.stringify(segments)` instead.
+- **Depth flatten boundary**: `depth + 1 >= MAX_TREE_DEPTH` — the children
+  array at the cap must be ALL-childless; childless children (bookmarks
+  AND empty folders) keep their nodes, deeper subtrees hoist bookmarks
+  depth-first. Inbound `exceedsMaxDepth` unchanged.
+- **e2e open-paths**: allowlist-era targets must be `context.route`-faked
+  https, not `chrome-extension://` (D15 precedent reused here).

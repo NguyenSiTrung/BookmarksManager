@@ -331,7 +331,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 5: Import and export
 <!-- execution: parallel -->
 
-- [ ] Task 1: I05 + I06 — CSV round trip and deep export
+- [x] Task 1: I05 + I06 — CSV round trip and deep export (`2d43bb6`)
   <!-- files: src/io/csv.ts, src/io/export-json.ts -->
   - Tests: export→import round trip keeps `-5 degrees`, `+1 tip`, `@handle`;
     an unmatched quote reports swallowed rows and recovers on the next record;
