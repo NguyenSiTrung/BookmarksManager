@@ -625,3 +625,26 @@ claim that any audit finding has been fixed or reproduced.
   (plan reuse, RESTRUCTURE preflight, totalBatches drift).
 - Full gate green at commit: lint, typecheck, 2995 unit/169 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+- Retention discipline: write + prune share ONE rw transaction and every
+  sweep hits an index, never materializes the table (`where("status")`,
+  `recordedAt`-range, `[providerId+month]`) — the pattern already proven
+  by `appendSentLog`'s count+orderBy-limit trim.
+- Rollups must reproduce the raw-read aggregates exactly, INCLUDING
+  quirks: `monthlyBudgetSnapshot` counts a cost-less row (which a
+  `notBilled` row is) as `unknown` — so the llmUsage rollup keeps
+  `notBilledRequests` as its own field; the snapshot-mirror read is
+  `unknownCostRequests + notBilledRequests` and A05's provably-unsent
+  distinction survives the fold.
+- Dexie compound `[providerId+month]` silently drops rows lacking
+  `month`: writers must materialize it at write time, and the version
+  upgrade's `.upgrade()` backfill is what re-indexes pre-v5 rows.
+- Caps that must hold continuously hook EVERY transition to terminal
+  (both `enqueueJob` and `setJobStatus`), not just creation — rows that
+  reach terminal state by mutation would otherwise bypass the bound.
+- Component reads that must stay lazy: gate the liveQuery itself on the
+  collapsed flag (`Promise.resolve([])`), page with `orderBy().limit()`,
+  and read `count()` separately — don't fetch all rows to derive either.
+- Independent review (child `7ac8d994`): PASS/PASS after one fix round
+  (notBilledRequests preserves the A05 semantic in rollups).
+- Full gate green at commit: lint, typecheck, 3009 unit/171 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).

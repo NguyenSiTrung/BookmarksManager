@@ -195,7 +195,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: second `JOB_START`/`RESTRUCTURE_START` while one is non-terminal →
     typed rejection; id-count cap; estimate returned before run.
   - Fix: server-side guard; README states which paths the USD cap covers.
-- [ ] Task 6: A08 — retention and indexed reads
+- [x] Task 6: A08 — retention and indexed reads (`cadd8a8`)
   <!-- files: src/db/database.ts, src/net/llm-send.ts, src/decisions/store.ts, src/jobs/queue.ts, src/entrypoints/options/SentLog.tsx, src/schemas/usage.ts -->
   <!-- depends: task3, task5 -->
   - Tests: caps hold after N inserts (audit, jobs, non-popup decisions,
