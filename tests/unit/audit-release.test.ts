@@ -18,6 +18,7 @@ const MANIFEST = {
   version: "1.0.0",
   permissions: [
     "activeTab",
+    "alarms",
     "bookmarks",
     "contextMenus",
     "favicon",

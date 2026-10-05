@@ -20,9 +20,13 @@ describe("extension scaffold", () => {
     // active tab's title/URL on the user's action); `contextMenus` joined in
     // Phase 5 Task 3 (the right-click "Save page"/"Save link" items).
     // `scripting` joined in the Phase 5 LLM track (opt-in page extraction
-    // injects `extract.js` into the active tab, on explicit action only).
+    // injects `extract.js` into the active tab, on explicit action only);
+    // `alarms` joined the J03 keepalive task (a 30s alarm re-drives a
+    // this-session job after service-worker eviction; cold starts still
+    // follow P06).
     expect(manifest?.permissions).toEqual([
       "activeTab",
+      "alarms",
       "bookmarks",
       "contextMenus",
       "favicon",

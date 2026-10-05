@@ -12,6 +12,10 @@ export default defineConfig({
     version: "1.0.0",
     permissions: [
       "activeTab",
+      // J03 keepalive: a periodic alarm re-drives a job started this session
+      // after a service-worker eviction (session markers live in
+      // chrome.storage.session; cold starts still follow the P06 pause rule).
+      "alarms",
       "bookmarks",
       "contextMenus",
       "favicon",

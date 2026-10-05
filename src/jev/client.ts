@@ -6,6 +6,7 @@ import {
   isRetryableHttpStatus,
   parseRetryAfter,
   retryDelay,
+  sleepCapped,
 } from "./retry";
 import { UsageMeter } from "./usage";
 import { SystemOneRequest, SystemOneResponse } from "./wire";
@@ -424,8 +425,12 @@ export function createJevClient(options: JevClientOptions): JevClient {
       if (!failure.retryable || attempt >= maxRetries) {
         throw failure.error;
       }
-      await sleep(
+      // J03: the wait itself is chunked under the MV3 idle limit — a
+      // long honored `retry-after` still holds in full, but no single
+      // in-worker sleep can outlive worker eviction.
+      await sleepCapped(
         retryDelay(attempt, { retryAfterMs: failure.retryAfterMs, random }),
+        sleep,
       );
       attempt += 1;
     }

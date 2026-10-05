@@ -509,10 +509,18 @@ export function pauseJob(id: string, now?: () => string): Promise<PersistedJob> 
  * the interrupted owner's queued callbacks; ordinary user Pause may drain its
  * current batch, but an owner from the previous worker may not dispatch again.
  */
-export async function pauseInterruptedJobs(now?: () => string): Promise<void> {
+export async function pauseInterruptedJobs(
+  now?: () => string,
+  excludeIds?: ReadonlySet<string>,
+): Promise<void> {
   await db.transaction("rw", db.jobs, async () => {
     const jobs = await db.jobs.where("status").anyOf("running", "pending").toArray();
     for (const row of jobs) {
+      // J03 keepalive: a job marked in `chrome.storage.session` belongs to
+      // THIS browser session — a worker restart that finds its marker is an
+      // eviction, not a cold start, so the row is left live for the
+      // keepalive drain to re-drive rather than paused for manual Resume.
+      if (excludeIds?.has(row.id)) continue;
       let job: PersistedJob;
       try {
         job = parseJob(row);

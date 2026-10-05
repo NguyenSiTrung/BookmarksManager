@@ -18,6 +18,7 @@ manifest's `host_permissions` / `optional_host_permissions`; plain names map to
 | Permission | Level | Justification |
 |---|---|---|
 | `activeTab` | required | Read the current tab's title and URL for the quick-save popup when the user opens it; the grant is scoped to that one user action and expires when the tab navigates |
+| `alarms` | required | Wake the service worker on a 30s period while a user-started job is live so a mid-job worker eviction is resumed in the same browser session (`chrome.storage.session` markers — a cold start still pauses jobs and requires an explicit Resume); the alarm is cleared as soon as no live job remains |
 | `bookmarks` | required | Read the native bookmark tree for the side-panel manager UI and write user-initiated create/update/move/remove plus quick-save |
 | `contextMenus` | required | Add the right-click "Save page to Bookmarks Manager" and "Save link to Bookmarks Manager" items that quick-save into the last-used folder |
 | `favicon` | required | Serve cached page favicons via Chrome's built-in `chrome-extension://<id>/_favicon/?pageUrl=...&size=...` renderer so the manager UI can show site icons without host access or any network request |
@@ -61,7 +62,6 @@ manifest in the same change._
 
 ## Not requested in this release
 
-`alarms`,
 `history`, `tabs`, `cookies`, `webRequest`, `offscreen`, `unlimitedStorage`,
 `<all_urls>`, and the broad `http://*/*` wildcard. None of them ship in this
 release — the opt-in link checker that would need the `http://*/*` pattern

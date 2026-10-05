@@ -33,6 +33,7 @@ describe("manifest host permissions", () => {
   it("keeps the required permission set unchanged", () => {
     expect(manifest?.permissions).toEqual([
       "activeTab",
+      "alarms",
       "bookmarks",
       "contextMenus",
       "favicon",

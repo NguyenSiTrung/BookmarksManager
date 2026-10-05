@@ -118,3 +118,28 @@ export function retryDelay(
   const random = opts.random ?? Math.random;
   return random() * Math.min(maxMs, baseMs * 2 ** attempt);
 }
+
+/**
+ * Longest single in-worker wait (J03): MV3 evicts an idle service worker
+ * around 30s, so no one `setTimeout` may park it past that boundary. Job
+ * waits use the same cap ({@link BREAKER_WAIT_CHUNK_MS} in the runner).
+ */
+export const MAX_IN_WORKER_SLEEP_MS = 15_000;
+
+/**
+ * Await `ms` through `sleep` in slices no longer than
+ * {@link MAX_IN_WORKER_SLEEP_MS}. The total delay is preserved — an honored
+ * `retry-after` is still waited in full, just never as one over-long
+ * in-worker wait that eviction could cut short.
+ */
+export async function sleepCapped(
+  ms: number,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  let remaining = ms;
+  while (remaining > 0) {
+    const chunk = Math.min(remaining, MAX_IN_WORKER_SLEEP_MS);
+    await sleep(chunk);
+    remaining -= chunk;
+  }
+}

@@ -4,6 +4,7 @@ import { productionHandlers, resumeJobs, runPersistedJob } from "../../src/entry
 import { grantConsent, grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
+import { readSessionJobIds } from "../../src/jobs/keepalive";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -563,6 +564,73 @@ describe("runPersistedJob guards", () => {
     expect((await getJob(paused.id))?.status, kind).toBe("paused");
     expect(requests, kind).toEqual(["B3", "B4"]);
     }
+  });
+
+  it("same-session restart re-drives a keepalive-marked job instead of pausing it (J03)", async () => {
+    const job = await seedWork("analyze_selection");
+    await setJobStatus(job.id, "running", {
+      progress: { totalBatches: 3, committedBatches: 1, processedCount: 1 },
+    });
+    // Simulate the marker a live drive wrote before the worker was evicted:
+    // `chrome.storage.session` survives the restart, so it is still there.
+    const sessionStore = new Map<string, unknown>();
+    sessionStore.set("jobs:sessionKeepalive", [job.id]);
+    vi.stubGlobal("chrome", {
+      ...chrome,
+      storage: {
+        session: {
+          get: async (key: string) => ({ [key]: sessionStore.get(key) }),
+          set: async (items: Record<string, unknown>) => {
+            for (const [key, value] of Object.entries(items)) sessionStore.set(key, value);
+          },
+        },
+      },
+    });
+    const requests: string[] = [];
+    installWire(async (request) => {
+      requests.push((request.state as { bookmark: { title: string } }).bookmark.title);
+      return providerResponse(request);
+    });
+
+    await resumeJobs();
+    // The drain launches the drive fire-and-forget (it must not hold the
+    // startup message barrier); wait on the coordinated owner for it.
+    await coordinator.waitForJob(job.id);
+
+    // P06's pause sweep skipped the marked row; the keepalive drain then
+    // re-drove it live through the normal claim path — from committedBatches.
+    expect((await getJob(job.id))?.status).toBe("completed");
+    expect((await getJob(job.id))?.progress.committedBatches).toBe(3);
+    expect(requests).toEqual(["B3", "B4"]);
+    // The marker self-pruned once the row left pending/running.
+    expect(await readSessionJobIds()).toEqual([]);
+  });
+
+  it("cold start pauses an unmarked running job even when the session area exists (P06)", async () => {
+    const job = await seedWork("analyze_selection");
+    await setJobStatus(job.id, "running", {
+      progress: { totalBatches: 3, committedBatches: 1, processedCount: 1 },
+    });
+    // Session storage exists but holds no marker — a browser restart cleared
+    // it, so this is a cold start and P06's pause rule still applies.
+    const sessionStore = new Map<string, unknown>();
+    vi.stubGlobal("chrome", {
+      ...chrome,
+      storage: {
+        session: {
+          get: async (key: string) => ({ [key]: sessionStore.get(key) }),
+          set: async (items: Record<string, unknown>) => {
+            for (const [key, value] of Object.entries(items)) sessionStore.set(key, value);
+          },
+        },
+      },
+    });
+    const wire = installWire(async (request) => providerResponse(request));
+
+    await resumeJobs();
+
+    expect((await getJob(job.id))?.status).toBe("paused");
+    expect(wire).not.toHaveBeenCalled();
   });
 
   it("releases a failed production drive and does not automatically retry a failed batch", async () => {

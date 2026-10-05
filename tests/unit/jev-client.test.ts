@@ -524,7 +524,11 @@ describe("retries", () => {
     await client(transport, { maxRetries: 1, sleep, now: () => 0 }).run(
       requestOf({ q: noulQuestion() }),
     );
-    expect(sleep).toHaveBeenCalledWith(30_000);
+    // J03: the full 30s wait is honored but chunked — no single in-worker
+    // sleep may park past MV3's ~30s idle-eviction boundary.
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenNthCalledWith(1, 15_000);
+    expect(sleep).toHaveBeenNthCalledWith(2, 15_000);
   });
 
   it("honors retry-after HTTP dates", async () => {

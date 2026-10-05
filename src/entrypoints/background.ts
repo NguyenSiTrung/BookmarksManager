@@ -40,6 +40,14 @@ import {
 import { coordinateJob } from "../jobs/coordinator";
 import { estimateJobCost } from "../jobs/estimate";
 import {
+  armKeepaliveAlarm,
+  drainSessionJobs,
+  KEEPALIVE_ALARM_NAME,
+  markSessionJob,
+  readSessionJobIds,
+  unmarkSessionJob,
+} from "../jobs/keepalive";
+import {
   JobRunner,
   createDuplicateScanner,
   createPipelineAnalyzer,
@@ -98,6 +106,11 @@ declare const chrome: {
           sendResponse: (response?: unknown) => void,
         ) => boolean,
       ): void;
+    };
+  };
+  alarms?: {
+    onAlarm: {
+      addListener(callback: (alarm: { name: string }) => void): void;
     };
   };
 };
@@ -313,6 +326,9 @@ async function drivePersistedJob(jobId: string): Promise<void> {
   if (provider === null) return; // no consented provider — leave the job be
   const owner = await claimJobOwner(jobId);
   if (owner === undefined) return; // pause/cancel during provider setup wins
+  // J03: this worker now owns the drive — the session marker survives an
+  // eviction so the keepalive drain (or the next worker start) re-drives it.
+  await markSessionJob(jobId);
   try {
     // Work-set resolution and runner construction are INSIDE the try: any
     // unexpected failure must degrade this job to `failed` with a redacted
@@ -339,6 +355,18 @@ async function drivePersistedJob(jobId: string): Promise<void> {
     // original error it needs to answer `request_not_allowed` (or any other
     // typed outcome) — a failed row AND a propagated refusal, not either/or.
     throw error;
+  } finally {
+    // Keepalive owns only `pending`/`running` rows: once the drive settles
+    // to terminal or paused the marker is dropped so the alarm is cleared
+    // (a paused row stays user-held — explicit Resume re-marks it).
+    try {
+      const row = await getJob(jobId);
+      if (row === undefined || (row.status !== "running" && row.status !== "pending")) {
+        await unmarkSessionJob(jobId);
+      }
+    } catch {
+      // A stale marker just no-ops the next drain — never block the drive.
+    }
   }
 }
 
@@ -546,7 +574,19 @@ export function productionHandlers(
  */
 export async function resumeJobs(): Promise<void> {
   try {
-    await pauseInterruptedJobs();
+    // J03: session markers discriminate a same-session worker restart from
+    // a cold start — `chrome.storage.session` survives eviction but not a
+    // browser restart. Marked jobs stay live (the sweep skips them) and are
+    // re-driven immediately rather than waiting out the alarm period; every
+    // unmarked `pending`/`running` row is paused exactly as before (P06).
+    const keepaliveIds = new Set(await readSessionJobIds());
+    await pauseInterruptedJobs(undefined, keepaliveIds);
+    if (keepaliveIds.size > 0) {
+      await drainSessionJobs(runPersistedJob);
+      // The alarm survived the same eviction the marker did, but re-arm
+      // anyway — the drain may have pruned the last marker and cleared it.
+      if ((await readSessionJobIds()).length > 0) await armKeepaliveAlarm();
+    }
   } catch {
     // Recovery failure never falls back to driving the jobs.
   }
@@ -603,6 +643,18 @@ export default defineBackground(() => {
       // Best-effort; the next interval retries.
     });
   }, JOB_WATCHDOG_INTERVAL_MS);
+
+  // J03 keepalive: the alarm is a browser-level MV3 event — it fires even
+  // after worker eviction, waking the worker, and each tick re-drives the
+  // jobs this session marked (drain also prunes settled/deleted markers).
+  // Missing `chrome.alarms` (Firefox, tests) degrades to the P06 behavior.
+  chrome.alarms?.onAlarm.addListener((alarm) => {
+    if (alarm.name === KEEPALIVE_ALARM_NAME) {
+      void drainSessionJobs(runPersistedJob).catch(() => {
+        // Best-effort; the next tick retries.
+      });
+    }
+  });
 
   const decisionsHandlers = productionHandlers();
 
