@@ -307,7 +307,9 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
   // pending, running, or paused must refuse, never strand the first job's
   // bookkeeping mid-flight. The check and the insert share one transaction,
   // so two racing starts cannot both pass.
-  return db.transaction("rw", db.jobs, async () => {
+  // `restructureAssignments` joins the transaction so the terminal-job
+  // prune can cascade-delete a victim job's assignment rows atomically.
+  return db.transaction("rw", db.jobs, db.restructureAssignments, async () => {
     const live = await findLiveJobByKind(options.kind);
     if (live !== undefined) {
       throw new JobQueueError(
@@ -462,7 +464,7 @@ export async function setJobStatus(
   now?: () => string,
   ownerGeneration?: number,
 ): Promise<PersistedJob> {
-  return db.transaction("rw", db.jobs, async () => {
+  return db.transaction("rw", db.jobs, db.restructureAssignments, async () => {
     const job = await requireJob(id);
     if (ownerGeneration !== undefined && !ownedWritable(job, ownerGeneration)) return job;
     if (patch.progress !== undefined && progressRegresses(job, patch.progress)) return job;
@@ -553,7 +555,9 @@ export async function resumeJob(
   // Shared by JOB_RESUME and RESTRUCTURE_RESUME: never flip intent or read
   // the restart offset until the existing owner's paused batch has settled.
   await waitForJob(id);
-  return db.transaction("rw", db.jobs, async () => {
+  // `restructureAssignments` is in scope because the nested `setJobStatus`
+  // may cascade-delete a pruned job's rows (J13).
+  return db.transaction("rw", db.jobs, db.restructureAssignments, async () => {
     const job = await requireJob(id);
     if (job.controlRevision !== revision ||
       (job.status !== "paused" && job.status !== "pending" &&
@@ -617,10 +621,14 @@ export async function commitJobProgress(
 }
 
 /**
- * Merge committed per-bookmark restructure assignments into the job's plan —
- * keyed by `bookmarkId`, last write wins, so a resume after a mid-batch
- * suspension never duplicates an assignment. Rejects non-restructure jobs
- * and unknown rows via `Job.parse`.
+ * Persist committed per-bookmark restructure assignments — J13: rows live in
+ * the dedicated `restructureAssignments` table keyed `(jobId, bookmarkId)`
+ * (last write wins on the compound PK), so each item's merge is one
+ * constant-cost upsert instead of rewriting the whole assignments array on
+ * the job row; job-row writes stay O(batches). The same ordering, guard, and
+ * last-write-wins semantics as the inline merge it replaces — a resume after
+ * a mid-batch suspension neither duplicates nor loses a committed row.
+ * Rejects non-restructure jobs; rows were already vetted by the assigner.
  */
 export async function mergeRestructureAssignments(
   id: string,
@@ -628,7 +636,8 @@ export async function mergeRestructureAssignments(
   now?: () => string,
   ownerGeneration?: number,
 ): Promise<PersistedJob> {
-  return db.transaction("rw", db.jobs, async () => {
+  void now; // The job row is untouched: no updatedAt bump, no O(N) rewrite.
+  return db.transaction("rw", db.jobs, db.restructureAssignments, async () => {
     const job = await requireJob(id);
     if (ownerGeneration !== undefined && job.ownerGeneration !== ownerGeneration) return job;
     if (job.status !== "running" && job.status !== "paused" && job.status !== "pending") return job;
@@ -638,21 +647,39 @@ export async function mergeRestructureAssignments(
         "Only a restructure job carries assignments.",
       );
     }
-    const merged = new Map(
-      job.restructure.assignments.map((a) => [a.bookmarkId, a]),
+    await db.restructureAssignments.bulkPut(
+      rows.map((row) => ({ jobId: id, ...row })),
     );
-    for (const row of rows) merged.set(row.bookmarkId, row);
-    const updated = parseJob({
-      ...job,
-      restructure: {
-        proposal: job.restructure.proposal,
-        assignments: [...merged.values()],
-      },
-      updatedAt: nowIso(now),
-    });
-    await db.jobs.put(updated);
-    return updated;
+    return job;
   });
+}
+
+/**
+ * The effective `restructure` plan for reads (J13): the job row's inline
+ * `restructure` (proposal + `applied` + any inline assignments persisted
+ * before the dedicated table existed) merged with the committed assignment
+ * rows — a table row wins on a shared `bookmarkId` because it is the newer
+ * write. Returns `undefined` for a job carrying no restructure plan.
+ */
+export async function restructurePlanFor(
+  job: Job,
+): Promise<RestructureJobPlan | undefined> {
+  const inline = job.restructure;
+  if (inline === undefined) return undefined;
+  const stored = await db.restructureAssignments
+    .where("jobId")
+    .equals(job.id)
+    .toArray();
+  if (stored.length === 0) return inline;
+  const merged = new Map(inline.assignments.map((a) => [a.bookmarkId, a]));
+  for (const row of stored) {
+    merged.set(row.bookmarkId, {
+      bookmarkId: row.bookmarkId,
+      proposedPath: row.proposedPath,
+      confidence: row.confidence,
+    });
+  }
+  return { ...inline, assignments: [...merged.values()] };
 }
 
 /**

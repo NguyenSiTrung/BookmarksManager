@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, afterEach, afterAll, describe, expect, it, vi } 
 import { productionHandlers, resumeJobs, runPersistedJob } from "../../src/entrypoints/background";
 import { grantConsent, grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
-import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
+import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, restructurePlanFor, setJobStatus } from "../../src/jobs/queue";
 import { readSessionJobIds } from "../../src/jobs/keepalive";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
@@ -72,6 +72,7 @@ const resetEnv = async () => {
   await db.consents.clear();
   await db.metadata.clear();
   await db.jobs.clear();
+  await db.restructureAssignments.clear();
   await db.usage.clear();
   await db.decisions.clear();
   await db.llmUsage.clear();
@@ -488,7 +489,9 @@ describe("runPersistedJob guards", () => {
       expect(finished.usage.requests).toBe(4);
       if (kind === "restructure") {
         expect(finished.restructure?.proposal).toEqual(job.restructure?.proposal);
-        expect(finished.restructure?.assignments.map((row) => row.bookmarkId)).toEqual(["b1", "b3", "b4"]);
+        // J13: committed rows live in `restructureAssignments`.
+        const plan = (await restructurePlanFor(finished))!;
+        expect(plan.assignments.map((row) => row.bookmarkId)).toEqual(["b1", "b3", "b4"]);
       }
 
       // A later startup/manual drive and terminal resume may not restart completed work.
@@ -733,6 +736,7 @@ describe("runPersistedJob guards", () => {
     expect(row.progress.committedBatches).toBe(0);
     // The real assigner must pass the captured owner's fence when persisting.
     expect(row.restructure?.assignments).toEqual([]);
+    expect(await db.restructureAssignments.where("jobId").equals(job.id).count()).toBe(0);
     // Already-sent usage is still retained; fencing is not free billing.
     expect(await db.usage.where("jobId").equals(job.id).count()).toBe(1);
   });

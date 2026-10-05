@@ -12,7 +12,7 @@ import {
   indexForKey,
   KEEP_FOLDER_KEY,
 } from "../../src/jev/tasks/restructure";
-import { enqueueJob, getJob } from "../../src/jobs/queue";
+import { enqueueJob, getJob, restructurePlanFor } from "../../src/jobs/queue";
 import type { Job } from "../../src/schemas/job";
 import type { RestructureProposal } from "../../src/schemas/restructure";
 import type { JevTransport } from "../../src/jev/client";
@@ -133,7 +133,7 @@ describe("assignProposedFolder", () => {
     expect(result.sent).toBe(true);
 
     const updated = (await getJob(job.id))!;
-    expect(updated.restructure?.assignments).toEqual([
+    expect((await restructurePlanFor(updated))!.assignments).toEqual([
       { bookmarkId: BOOKMARK.id, proposedPath: "news", confidence: 0.9 },
     ]);
     expect(await db.usage.count()).toBe(1);
@@ -146,7 +146,7 @@ describe("assignProposedFolder", () => {
       { ...OPTS, transport: transportFor("p0", 0.4) },
     );
     const updated = (await getJob(job.id))!;
-    expect(updated.restructure?.assignments).toEqual([
+    expect((await restructurePlanFor(updated))!.assignments).toEqual([
       { bookmarkId: BOOKMARK.id, proposedPath: null, confidence: null },
     ]);
   });
@@ -158,7 +158,7 @@ describe("assignProposedFolder", () => {
       { ...OPTS, transport: transportFor(KEEP_FOLDER_KEY, 0.95) },
     );
     const updated = (await getJob(job.id))!;
-    expect(updated.restructure?.assignments[0]?.proposedPath).toBeNull();
+    expect((await restructurePlanFor(updated))!.assignments[0]?.proposedPath).toBeNull();
   });
 
   it("skips a blocklisted bookmark without egress", async () => {
@@ -175,7 +175,7 @@ describe("assignProposedFolder", () => {
     expect(result).toEqual({ sent: false, reason: "blocklisted" });
     expect(transport).not.toHaveBeenCalled();
     const updated = (await getJob(job.id))!;
-    expect(updated.restructure?.assignments).toEqual([]);
+    expect((await restructurePlanFor(updated))!.assignments).toEqual([]);
   });
 
   it("rejects a non-restructure job", async () => {
@@ -201,6 +201,6 @@ describe("assignProposedFolder", () => {
     const result = await analyze({ bookmark: BOOKMARK, job, checks: [] });
     expect(result.sent).toBe(true);
     const updated = (await getJob(job.id))!;
-    expect(updated.restructure?.assignments[0]?.proposedPath).toBe("dev/tools");
+    expect((await restructurePlanFor(updated))!.assignments[0]?.proposedPath).toBe("dev/tools");
   });
 });

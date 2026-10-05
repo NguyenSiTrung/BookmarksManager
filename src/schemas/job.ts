@@ -129,9 +129,11 @@ export type JobUsage = z.infer<typeof JobUsage>;
 /**
  * The `restructure` job's carried plan (spec FR8.10): the LLM proposal that
  * was vetted once at enqueue (never re-sent on resume) plus the per-bookmark
- * assignments Jev has committed so far — keyed by bookmarkId, last write
- * wins, so resuming after a mid-batch suspension can neither duplicate an
- * assignment nor lose a committed one.
+ * assignments Jev committed before J13 — committed assignments now live in
+ * the dedicated `restructureAssignments` table keyed (jobId, bookmarkId);
+ * this inline array persists only on rows written before that table existed
+ * and the read path (`restructurePlanFor`) merges both, last write wins, so
+ * a resumed job can neither duplicate nor lose a committed assignment.
  */
 export const RestructureJobPlan = z.strictObject({
   proposal: RestructureProposal,

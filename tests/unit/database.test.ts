@@ -23,9 +23,10 @@ describe("BookmarksManager database", () => {
   it("declares the version-1/2 tables alongside the version-3 additions", () => {
     // `verno` reports the highest declared version: version(4) added
     // llmUsage/llmReservations for the Phase 5 LLM layer; version(5) added
-    // the A08 rollup tables and `month`/compound indexes without touching
-    // the earlier stores.
-    expect(db.verno).toBe(5);
+    // the A08 rollup tables and `month`/compound indexes; version(6) added
+    // the J13 `restructureAssignments` table and the jobs `[kind+createdAt]`
+    // index without touching the earlier stores.
+    expect(db.verno).toBe(6);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",
@@ -37,6 +38,7 @@ describe("BookmarksManager database", () => {
       "llmUsage",
       "llmUsageMonths",
       "metadata",
+      "restructureAssignments",
       "sentLog",
       "tags",
       "undo",

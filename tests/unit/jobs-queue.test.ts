@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/database";
 import { Job, MAX_JOB_BOOKMARK_IDS } from "../../src/schemas/job";
 import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
@@ -21,6 +21,7 @@ import {
   pauseJob,
   reDriveStaleJobs,
   resumeJob,
+  restructurePlanFor,
   setJobStatus,
   mergeRestructureAssignments,
   STALE_RUNNING_JOB_MS,
@@ -42,6 +43,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.jobs.clear();
+  await db.restructureAssignments.clear();
   await db.usage.clear();
 });
 
@@ -401,10 +403,12 @@ describe("lifecycle transitions", () => {
     const second = (await claimJobOwner(job.id, now))!;
     const rows = [{ bookmarkId: "bm-1", proposedPath: "news", confidence: 0.9 }];
     await mergeRestructureAssignments(job.id, rows, now, first.ownerGeneration);
-    expect((await getJob(job.id))?.restructure?.assignments).toEqual([]);
+    const stored = (await getJob(job.id))!;
+    expect((await restructurePlanFor(stored))!.assignments).toEqual([]);
     await cancelJob(job.id, now);
     await mergeRestructureAssignments(job.id, rows, now, second.ownerGeneration);
-    expect((await getJob(job.id))?.restructure?.assignments).toEqual([]);
+    expect((await restructurePlanFor(stored))!.assignments).toEqual([]);
+    expect(await db.restructureAssignments.where("jobId").equals(job.id).count()).toBe(0);
   });
 
   it("accepts the compatible generation-zero assignment interface on an unclaimed pending job", async () => {
@@ -412,7 +416,60 @@ describe("lifecycle transitions", () => {
       restructureProposal: { folders: [{ path: "news", description: "News." }] } });
     const rows = [{ bookmarkId: "bm-1", proposedPath: "news", confidence: 0.9 }];
     await mergeRestructureAssignments(job.id, rows, now, 0);
-    expect((await getJob(job.id))?.restructure?.assignments).toEqual(rows);
+    const stored = (await getJob(job.id))!;
+    // J13: rows land in `restructureAssignments`, not on the job row; the
+    // merged plan is what status/apply reads.
+    expect(stored.restructure?.assignments).toEqual([]);
+    expect((await restructurePlanFor(stored))!.assignments).toEqual(rows);
+  });
+
+  it("merges committed assignments without touching the job row (J13)", async () => {
+    const job = await enqueueJob({ kind: "restructure", now,
+      bookmarkIds: Array.from({ length: 250 }, (_, i) => `bm-${i}`),
+      restructureProposal: { folders: [{ path: "news", description: "News." }] } });
+    const puts = vi.spyOn(db.jobs, "put");
+    for (let i = 0; i < 250; i += 1) {
+      await mergeRestructureAssignments(job.id, [
+        { bookmarkId: `bm-${i}`, proposedPath: "news", confidence: 0.9 },
+      ]);
+    }
+    // Per-item merges are constant-cost table upserts — zero job-row writes,
+    // so a large library's assignment phase is O(batches), not O(N²).
+    expect(puts).not.toHaveBeenCalled();
+    const stored = (await getJob(job.id))!;
+    expect((await restructurePlanFor(stored))!.assignments).toHaveLength(250);
+    expect(await db.restructureAssignments.where("jobId").equals(job.id).count()).toBe(250);
+    // Last write wins per bookmarkId — a re-sent item upserts, never dupes.
+    await mergeRestructureAssignments(job.id, [
+      { bookmarkId: "bm-0", proposedPath: "news", confidence: 0.5 },
+    ]);
+    const merged = (await restructurePlanFor(stored))!;
+    expect(merged.assignments).toHaveLength(250);
+    expect(merged.assignments.find((a) => a.bookmarkId === "bm-0")?.confidence).toBe(0.5);
+  });
+
+  it("merges legacy inline assignments with table rows, table wins", async () => {
+    const job = await enqueueJob({ kind: "restructure", bookmarkIds: ["bm-1", "bm-2"], now,
+      restructureProposal: { folders: [{ path: "news", description: "News." }] } });
+    // A pre-J13 row: assignments inline on the job, no table rows.
+    const stored = (await getJob(job.id))!;
+    await db.jobs.update(job.id, {
+      restructure: {
+        ...stored.restructure!,
+        assignments: [
+          { bookmarkId: "bm-1", proposedPath: "news", confidence: 0.7 },
+          { bookmarkId: "bm-2", proposedPath: "news", confidence: 0.8 },
+        ],
+      },
+    });
+    // Newer table writes override the shared bookmarkId.
+    await db.restructureAssignments.put({
+      jobId: job.id, bookmarkId: "bm-2", proposedPath: null, confidence: null,
+    });
+    const merged = (await restructurePlanFor((await getJob(job.id))!))!;
+    expect(merged.assignments).toHaveLength(2);
+    expect(merged.assignments.find((a) => a.bookmarkId === "bm-1")?.confidence).toBe(0.7);
+    expect(merged.assignments.find((a) => a.bookmarkId === "bm-2")?.proposedPath).toBeNull();
   });
 
   it("pauses, resumes, and cancels a job, persisting each transition", async () => {

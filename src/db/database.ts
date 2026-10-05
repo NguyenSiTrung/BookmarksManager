@@ -5,6 +5,7 @@ import type { Decision } from "../schemas/decision";
 import type { Job } from "../schemas/job";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
+import type { RestructureAssignment } from "../schemas/restructure";
 import type { UndoSnapshot } from "../schemas/undo";
 import type {
   LlmUsageMonthRollup,
@@ -53,6 +54,17 @@ export interface SentLogEntry {
 }
 
 /**
+ * One committed Jev folder assignment for a `restructure` job (J13). The
+ * compound primary key (jobId, bookmarkId) makes the per-item merge a
+ * constant-cost upsert — last write wins — instead of rewriting the whole
+ * inline `job.restructure.assignments` array per item; `jobId` is indexed so
+ * one job's rows list without a table scan.
+ */
+export interface RestructureAssignmentRow extends RestructureAssignment {
+  jobId: string;
+}
+
+/**
  * Non-extractable WebCrypto key material. `id` is a stable string such as
  * `"provider:<preset>"` so the worker can find and delete a preset's key.
  */
@@ -79,6 +91,7 @@ export class BookmarksManagerDB extends Dexie {
   declare llmUsage: Table<LlmUsageRecord, number>;
   declare llmUsageMonths: Table<LlmUsageMonthRollup, string>;
   declare llmReservations: Table<BudgetReservation, string>;
+  declare restructureAssignments: Table<RestructureAssignmentRow, [string, string]>;
 
   constructor() {
     super("BookmarksManager");
@@ -159,6 +172,16 @@ export class BookmarksManagerDB extends Dexie {
           row.month = monthOf(row.recordedAt);
         });
       });
+    this.version(6).stores({
+      // J13: restructure assignments live in their own table keyed
+      // (jobId, bookmarkId) — per-item writes are constant-cost upserts, so
+      // job-row writes drop to O(batches) instead of O(assignments²).
+      // `jobId` lists one job's rows; rows cascade with the job on prune.
+      restructureAssignments: "[jobId+bookmarkId],jobId",
+      // `[kind+createdAt]` serves latestRestructureJob with a single index
+      // read (`.last()`) — no full jobs-table scan.
+      jobs: "id,status,createdAt,[kind+createdAt]",
+    });
   }
 }
 

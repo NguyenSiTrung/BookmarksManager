@@ -7,6 +7,7 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import {
   enqueueJob,
   mergeRestructureAssignments,
+  restructurePlanFor,
   setJobStatus,
 } from "../../src/jobs/queue";
 import {
@@ -118,7 +119,7 @@ describe("buildRestructureDiff", () => {
       ],
     );
     const tree = await api.getSubTree("1");
-    const diff = buildRestructureDiff(tree, job.restructure!);
+    const diff = buildRestructureDiff(tree, (await restructurePlanFor(job))!);
     expect(diff.rows.map((r) => r.bookmarkId)).toEqual([
       "11",
       "12",
@@ -153,7 +154,7 @@ describe("buildRestructureDiff", () => {
         { bookmarkId: "71", proposedPath: "dev", confidence: 0.9 },
       ],
     );
-    const diff = buildRestructureDiff(await api.getTree(), job.restructure!);
+    const diff = buildRestructureDiff(await api.getTree(), (await restructurePlanFor(job))!);
     const byId = Object.fromEntries(diff.rows.map((r) => [r.bookmarkId, r]));
     expect(byId["41"]).toMatchObject({
       status: "unresolved",
@@ -269,7 +270,7 @@ describe("applyRestructurePlan", () => {
       ],
     );
     // The preview the user reviewed resolves rows from every root...
-    const preview = buildRestructureDiff(await api.getTree(), job.restructure!);
+    const preview = buildRestructureDiff(await api.getTree(), (await restructurePlanFor(job))!);
     expect(preview.resolved).toBe(3);
     expect(
       Object.fromEntries(preview.rows.map((r) => [r.bookmarkId, r.fromPath])),
@@ -359,7 +360,7 @@ describe("applyRestructurePlan", () => {
       [{ bookmarkId: "11", proposedPath: "dev", confidence: 0.9 }],
     );
     // What the user reviewed: "11" under the bar's "Old" folder.
-    const preview = buildRestructureDiff(await api.getTree(), job.restructure!);
+    const preview = buildRestructureDiff(await api.getTree(), (await restructurePlanFor(job))!);
     expect(preview.rows[0]).toMatchObject({
       fromPath: "Bookmarks bar/Old",
       status: "resolved",
@@ -685,6 +686,44 @@ describe("apply idempotency (J10)", () => {
     expect((await api.get("11"))[0]?.parentId).toBe(
       dev.children!.find((c) => c.title === "tools")!.id,
     );
+  });
+});
+
+describe("assignment storage (J13)", () => {
+  it("applies a legacy job whose assignments are inline on the job row", async () => {
+    // Pre-J13 rows committed assignments inside `job.restructure` and never
+    // wrote `restructureAssignments` rows — the read merge must still serve
+    // them so an in-flight job survives the schema upgrade.
+    const job = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: ["11", "21"],
+      restructureProposal: PROPOSAL,
+      batchSize: 10,
+      now,
+    });
+    await setJobStatus(job.id, "running", {}, now);
+    const stored = (await db.jobs.get(job.id))!;
+    await db.jobs.update(job.id, {
+      restructure: {
+        ...stored.restructure!,
+        assignments: [
+          { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+          { bookmarkId: "21", proposedPath: "dev", confidence: 0.9 },
+        ],
+      },
+    });
+    await setJobStatus(job.id, "completed", {}, now);
+    expect(await db.restructureAssignments.count()).toBe(0);
+
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(2);
+    const dev = (await api.getSubTree("1"))[0]!.children!.find(
+      (c) => c.title === "dev",
+    )!;
+    expect((await api.get("11"))[0]?.parentId).toBe(
+      dev.children!.find((c) => c.title === "tools")!.id,
+    );
+    expect((await api.get("21"))[0]?.parentId).toBe(dev.id);
   });
 });
 

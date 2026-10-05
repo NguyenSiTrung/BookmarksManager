@@ -93,11 +93,11 @@ describe("BookmarksManagerDB v4 → v5 migration", () => {
     db.close();
   });
 
-  it("opens at version 5 with the rollup tables declared", () => {
-    expect(db.verno).toBe(5);
+  it("opens at version 6 with the rollup tables declared", () => {
+    expect(db.verno).toBe(6);
     // Dexie stores version × 10 natively; 50 proves the class upgraded the
     // existing v4 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(50);
+    expect(db.backendDB()?.version).toBe(60);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",
@@ -109,6 +109,7 @@ describe("BookmarksManagerDB v4 → v5 migration", () => {
       "llmUsage",
       "llmUsageMonths",
       "metadata",
+      "restructureAssignments",
       "sentLog",
       "tags",
       "undo",

@@ -37,6 +37,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.jobs.clear();
+  await db.restructureAssignments.clear();
   await db.usage.clear();
   await db.decisions.clear();
 });
@@ -1124,10 +1125,13 @@ describe("restructure jobs", () => {
     const done = await runner.run(job.id, { bookmarks: work });
     expect(done.status).toBe("completed");
     expect(seen).toEqual(["bm-1", "bm-2", "bm-3"]);
-    const { getJob } = await import("../../src/jobs/queue");
+    const { getJob, restructurePlanFor } = await import("../../src/jobs/queue");
     const stored = (await getJob(job.id))!;
     expect(stored.restructure?.proposal).toEqual(proposal);
-    expect(stored.restructure?.assignments).toHaveLength(3);
+    // J13: committed rows live in `restructureAssignments`; the merged plan
+    // is what status/apply reads — the inline field stays empty.
+    expect(stored.restructure?.assignments).toHaveLength(0);
+    expect((await restructurePlanFor(stored))!.assignments).toHaveLength(3);
   });
 
   it("resumes without re-sending committed batches", async () => {
@@ -1164,9 +1168,9 @@ describe("restructure jobs", () => {
     expect(done.status).toBe("completed");
     // bm-1/bm-2's committed batch is not re-sent; only bm-3's batch ran.
     expect(seen).toEqual(["bm-1", "bm-2", "bm-3"]);
-    const { getJob } = await import("../../src/jobs/queue");
+    const { getJob, restructurePlanFor } = await import("../../src/jobs/queue");
     const stored = (await getJob(job.id))!;
-    expect(stored.restructure?.assignments).toHaveLength(3);
+    expect((await restructurePlanFor(stored))!.assignments).toHaveLength(3);
   });
 
   it("rejects enqueue of a restructure job without a proposal", async () => {

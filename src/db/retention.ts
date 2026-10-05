@@ -251,8 +251,10 @@ export async function pruneExpiredReservationsLocked(
 /**
  * Keep at most {@link JOB_RETENTION_CAP} TERMINAL job rows — oldest-first
  * by `createdAt`, id tiebreak for determinism. Non-terminal rows are never
- * reaped (a live job is unprunable state, not garbage). MUST run inside a
- * `rw` transaction covering `jobs`.
+ * reaped (a live job is unprunable state, not garbage). A victim job's
+ * `restructureAssignments` rows are deleted in the same transaction — a
+ * pruned job must not leave committed assignments orphaned (J13). MUST run
+ * inside a `rw` transaction covering `jobs` and `restructureAssignments`.
  */
 export async function pruneTerminalJobsLocked(): Promise<number> {
   const terminal = await db.jobs
@@ -265,7 +267,9 @@ export async function pruneTerminalJobsLocked(): Promise<number> {
     return byCreatedAt !== 0 ? byCreatedAt : a.id.localeCompare(b.id);
   });
   const victims = terminal.slice(0, terminal.length - JOB_RETENTION_CAP);
-  await db.jobs.bulkDelete(victims.map((row) => row.id));
+  const victimIds = victims.map((row) => row.id);
+  await db.restructureAssignments.where("jobId").anyOf(victimIds).delete();
+  await db.jobs.bulkDelete(victimIds);
   return victims.length;
 }
 

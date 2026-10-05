@@ -1,3 +1,4 @@
+import Dexie from "dexie";
 import { db } from "../db/database";
 import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { domainOf, isSensitiveUrl } from "../decisions/minimize";
@@ -10,6 +11,7 @@ import {
   getJob,
   pauseJob,
   resumeJob,
+  restructurePlanFor,
   setJobStatus,
 } from "../jobs/queue";
 import { MAX_JOB_BOOKMARK_IDS } from "../schemas/job";
@@ -437,19 +439,21 @@ async function statusReply(jobId?: string): Promise<RestructureMessageResult> {
   }
   if (job.status === "completed" && job.restructure !== undefined) {
     const tree = await getSubTree(ROOT_NODE_ID);
-    return jobStateReply(job, buildRestructureDiff(tree, job.restructure));
+    // J13: committed assignments live in `restructureAssignments`; the
+    // merged plan also carries any legacy inline assignments.
+    const plan = (await restructurePlanFor(job))!;
+    return jobStateReply(job, buildRestructureDiff(tree, plan));
   }
   return jobStateReply(job);
 }
 
 async function latestRestructureJob(): Promise<Job | undefined> {
   // Latest restructure job by creation time — the view's resume target.
-  // Restructure jobs are few and this runs only when the view opens, so a
-  // filtered scan is fine.
-  const rows = await db.jobs.toArray();
-  return rows
-    .filter((j) => j.kind === "restructure")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  // `[kind+createdAt]` (J13) answers this with a single index read.
+  return db.jobs
+    .where("[kind+createdAt]")
+    .between(["restructure", Dexie.minKey], ["restructure", Dexie.maxKey])
+    .last();
 }
 
 export async function handleRestructureMessage(

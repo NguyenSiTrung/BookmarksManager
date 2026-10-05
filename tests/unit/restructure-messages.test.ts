@@ -376,6 +376,37 @@ describe("RESTRUCTURE_STATUS", () => {
     expect(reply).toMatchObject({ ok: true, code: "job_state" });
   });
 
+  it("finds the latest restructure job through the [kind+createdAt] index (J13)", async () => {
+    // The compound index is what makes this an index read, not a table scan.
+    expect(
+      db.jobs.schema.indexes.some(
+        (spec) =>
+          Array.isArray(spec.keyPath) &&
+          spec.keyPath[0] === "kind" &&
+          spec.keyPath[1] === "createdAt",
+      ),
+    ).toBe(true);
+    const job = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: ["11"],
+      restructureProposal: PROPOSAL,
+      now,
+    });
+    // A NEWER non-restructure job must not shadow the restructure row.
+    await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["11"],
+      now: () => "2026-09-28T01:00:00.000Z",
+    });
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_STATUS" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: true, code: "job_state" });
+    expect((reply as { result: { job: { id: string } } }).result.job.id).toBe(job.id);
+  });
+
   it("attaches the live diff once the job completes", async () => {
     const job = await enqueueJob({
       kind: "restructure",

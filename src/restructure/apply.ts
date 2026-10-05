@@ -13,7 +13,7 @@ import {
   removeNode,
   MutationError,
 } from "../sync/mutations";
-import { getJob } from "../jobs/queue";
+import { getJob, restructurePlanFor } from "../jobs/queue";
 import { captureNodes, pushSnapshot } from "../undo/snapshot";
 import { buildRestructureDiff } from "./diff";
 import type { RestructureProposal } from "../schemas/restructure";
@@ -196,7 +196,10 @@ export async function applyRestructurePlan(
       `A restructure plan applies only after the job completes (now ${job.status}).`,
     );
   }
-  const plan = job.restructure;
+  // J13: the effective plan merges committed `restructureAssignments` rows
+  // with any legacy inline assignments — `restructure` itself was checked
+  // above, so the merged plan is present.
+  const plan = (await restructurePlanFor(job))!;
   // Live-tree revalidation over the FULL library (bar + Other + Mobile), the
   // same scope the preview/status replies build their diff from, so moves act
   // on current positions and no reviewed assignment is dropped for living
