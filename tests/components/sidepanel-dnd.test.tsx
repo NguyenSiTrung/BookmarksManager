@@ -494,6 +494,36 @@ describe("drag and drop (keyboard sensor)", () => {
     await waitFor(() => expect(toast().textContent).toContain("Reordered"));
   });
 
+  it("lands a same-parent forward multi-move in order (post-removal index)", async () => {
+    // Grow "Other bookmarks" to four siblings: [b4 Delta, b5 Epsilon, X, Y].
+    await fake.create({
+      parentId: "2",
+      title: "Foxtrot",
+      url: "https://f.example/",
+    });
+    await fake.create({ parentId: "2", title: "Golf", url: "https://g2.example/" });
+    const [,, foxtrot, golf] = (await fake.getChildren("2")).map((c) => c.id);
+
+    await renderApp();
+    fireEvent.click(option(/Delta/));
+    fireEvent.click(option(/Epsilon/), { ctrlKey: true });
+
+    // Drop [Delta, Epsilon] on Golf's slot ("insert before Golf") — a
+    // forward move past Foxtrot: [b6, b4, b5, b7].
+    await keyboardDragTo(handle("Delta"), `slot:${golf}`);
+
+    await waitFor(async () => {
+      const children = await fake.getChildren("2");
+      expect(children.map((node) => node.id)).toEqual([
+        foxtrot,
+        "b4",
+        "b5",
+        golf,
+      ]);
+    });
+    await waitFor(() => expect(toast().textContent).toContain("Reordered"));
+  });
+
   it("reorders folders among their siblings", async () => {
     await renderApp();
     // Expand "Dev" so its child folders are visible drop targets.

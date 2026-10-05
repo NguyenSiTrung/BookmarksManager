@@ -22,6 +22,7 @@ import { moveNode } from "../../sync/mutations";
 import type { FolderNode, FlattenedTree } from "../../sync/tree";
 import { discardById } from "../../undo/restore";
 import { captureNodes, pushSnapshot } from "../../undo/snapshot";
+import type { UndoNode } from "../../schemas/undo";
 import { cn } from "../../ui/lib/cn";
 import type { BookmarkSelection } from "./BookmarkList";
 import { moveDeniedIds, moveNodesWithUndo } from "./MoveToDialog";
@@ -232,14 +233,35 @@ export async function moveNodesToIndexWithUndo(
     });
     let moved = 0;
     let firstError: string | undefined;
-    for (const node of capture.nodes) {
-      try {
-        // Each subsequent item lands after the previous one so a multi-item
-        // reorder keeps its relative order.
-        await moveNode(node.id, { parentId, index: index + moved });
-        moved += 1;
-      } catch (cause) {
-        firstError ??= errorMessage(cause);
+    // Chrome indexes the destination on the POST-removal child list. For a
+    // same-parent move where dragged siblings sit before the slot, each of
+    // them disappears from that list first — the slot index must be
+    // rebased, and the block placed descending so every insert lands at
+    // its final position undisturbed by later ones.
+    const removedBefore = capture.nodes.filter(
+      (node) => node.parentId === parentId && node.index < index,
+    ).length;
+    const base = index - removedBefore;
+    if (removedBefore > 0) {
+      for (let i = capture.nodes.length - 1; i >= 0; i -= 1) {
+        const node = capture.nodes[i] as UndoNode;
+        try {
+          await moveNode(node.id, { parentId, index: base + i });
+          moved += 1;
+        } catch (cause) {
+          firstError ??= errorMessage(cause);
+        }
+      }
+    } else {
+      for (const node of capture.nodes) {
+        try {
+          // Each subsequent item lands after the previous one so a
+          // multi-item reorder keeps its relative order.
+          await moveNode(node.id, { parentId, index: index + moved });
+          moved += 1;
+        } catch (cause) {
+          firstError ??= errorMessage(cause);
+        }
       }
     }
     if (moved === 0) {

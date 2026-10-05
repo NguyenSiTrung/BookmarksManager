@@ -1026,7 +1026,7 @@ export function App(props?: {
                     metaById={metaById}
                     tagNameByKey={tagNameByKey}
                     onActivateItem={openItem}
-                    onDeleteSelection={(ids) => void handleDeleteIds(ids)}
+                    onDeleteSelection={(ids) => handleDeleteIds(ids)}
                     reorderable={
                       activeView.kind === "all" || activeView.kind === "folder"
                     }

@@ -563,8 +563,10 @@ export interface BookmarkListProps {
   selection?: BookmarkSelection;
   /** Fired on Enter/double-click — the "open" affordance. */
   onActivateItem?: (item: BookmarkItem) => void;
-  /** Fired when Delete is pressed over the listbox with a live selection. */
-  onDeleteSelection?: (ids: readonly string[]) => void;
+  /** Fired when Delete is pressed over the listbox with a live selection.
+   *  May return a promise — while it is in flight further Delete presses
+   *  are ignored (single bulk delete at a time). */
+  onDeleteSelection?: (ids: readonly string[]) => void | Promise<unknown>;
   /**
    * Whether rows expose reorder drop slots. Only tree-ordered views
    * (`all`/`folder`) are reorderable; a view that re-sorts the list (tag,
@@ -628,6 +630,9 @@ export function BookmarkList({
   // Keyboard nav targeting an off-screen row parks a focus request here;
   // `useApplyFocusRequest` applies it once the row has mounted.
   const focusRequestRef = useRef<number | null>(null);
+  // One bulk delete in flight at a time — cleared when the handler's
+  // promise settles (or the microtask after a synchronous handler).
+  const deletingRef = useRef(false);
 
   const columns = layout === "grid" ? GRID_COLUMNS : 1;
   const rows = useMemo(() => chunkRows(items, columns), [items, columns]);
@@ -698,6 +703,17 @@ export function BookmarkList({
   const handleListKeyDown = (
     event: ReactKeyboardEvent<HTMLElement>,
   ): void => {
+    // A portaled context menu bubbles keys up the React tree even though
+    // its DOM lives outside the listbox — anything whose target is not
+    // inside this subtree is not the list's key (menu Escape must not
+    // clear the selection, menu Delete must not delete).
+    if (
+      !(event.currentTarget as HTMLElement).contains(
+        event.target as Node,
+      )
+    ) {
+      return;
+    }
     // A key dnd-kit already handled (the Space/arrows/Esc that drive a drag)
     // must not ALSO move roving focus or toggle the selection. `dragging` is
     // stale during the render the lifting key arrives in, so the
@@ -788,10 +804,25 @@ export function BookmarkList({
         break;
       }
       case "Delete": {
+        // Held-key repeats and presses while a delete is still in flight
+        // must not fire again (the snapshot + per-id delete loop is async).
+        if (event.repeat || deletingRef.current) break;
         // Bulk delete of the current selection (the shell snapshots first).
         if (selection.selectedIds.size > 0 && onDeleteSelection !== undefined) {
           event.preventDefault();
-          onDeleteSelection([...selection.selectedIds]);
+          deletingRef.current = true;
+          // Defer into a promise so a synchronously-throwing handler becomes
+          // a rejection (cleared below) instead of leaving the guard stuck.
+          void Promise.resolve()
+            .then(() => onDeleteSelection([...selection.selectedIds]))
+            .then(
+              () => {
+                deletingRef.current = false;
+              },
+              () => {
+                deletingRef.current = false;
+              },
+            );
         }
         break;
       }

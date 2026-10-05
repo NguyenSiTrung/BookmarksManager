@@ -673,6 +673,59 @@ describe("item actions", () => {
     await expect(fake.get("b3")).rejects.toThrow();
   });
 
+  it("never lets keys inside the row context menu reach the list", async () => {
+    await renderApp();
+
+    fireEvent.click(option(/Alpha/));
+    fireEvent.click(option(/Gamma/), { ctrlKey: true });
+    const bar = screen.getByRole("toolbar", { name: "Selection actions" });
+    expect(bar.textContent).toContain("2 selected");
+
+    // Open Alpha's context menu — its items are portaled outside the
+    // listbox, but React still bubbles their keydowns up to it.
+    fireEvent.contextMenu(option(/Alpha/));
+    const openItem = await screen.findByRole("menuitem", { name: "Open" });
+    fireEvent.keyDown(openItem, { key: "Delete" });
+    fireEvent.keyDown(openItem, { key: "a", ctrlKey: true });
+    fireEvent.keyDown(openItem, { key: "Escape" });
+
+    // Escape must not clear the selection, Ctrl+A must not grow it, and
+    // Delete must not have deleted anything (give a leaked delete time
+    // to land so the assertions below mean something).
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(bar.textContent).toContain("2 selected");
+    await expect(fake.get("b1")).resolves.toBeTruthy();
+    await expect(fake.get("b3")).resolves.toBeTruthy();
+    expect(screen.queryByTestId("undo-toast")).toBeNull();
+  });
+
+  it("ignores Delete key repeat and a second press while deleting", async () => {
+    // Slow the fake's removeTree (the delete path's per-node call) so the
+    // first delete is observably in flight.
+    const origRemoveTree = fake.removeTree.bind(fake);
+    let removeCalls = 0;
+    vi.spyOn(fake, "removeTree").mockImplementation(async (id: string) => {
+      removeCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return origRemoveTree(id);
+    });
+    await renderApp();
+
+    fireEvent.click(option(/Alpha/));
+    fireEvent.click(option(/Gamma/), { ctrlKey: true });
+    const listbox = screen.getByRole("listbox");
+    fireEvent.keyDown(listbox, { key: "Delete" });
+    fireEvent.keyDown(listbox, { key: "Delete", repeat: true });
+    fireEvent.keyDown(listbox, { key: "Delete" });
+
+    await waitFor(() =>
+      expect(toast().textContent).toContain("Deleted 2 bookmarks"),
+    );
+    // One removeTree per selected id — no doubled snapshot, no second pass.
+    expect(removeCalls).toBe(2);
+    expect(await db.undo.count()).toBe(1);
+  });
+
   it("offers row actions from a right-click context menu", async () => {
     await renderApp();
 
