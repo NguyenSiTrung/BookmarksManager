@@ -338,7 +338,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     `/` and `;` in folder/tag text round-trip; depth > 64 exports with a
     warning.
   - Fix: single-quote unescape rule, recovery/reporting, escaping, flatten.
-- [ ] Task 2: I03 + I04 — tags and duplicate metadata on import
+- [x] Task 2: I03 + I04 — tags and duplicate metadata on import (`2ada2ac`)
   <!-- files: src/io/import-plan.ts, src/io/import-write.ts, src/db/meta.ts -->
   - Tests: CSV/Netscape tags appear in `listTags()` and can be renamed;
     65-char tag is truncated/skipped without losing the row; duplicate skip

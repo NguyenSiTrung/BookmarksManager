@@ -1150,3 +1150,25 @@ claim that any audit finding has been fixed or reproduced.
   depth-first. Inbound `exceedsMaxDepth` unchanged.
 - **e2e open-paths**: allowlist-era targets must be `context.route`-faked
   https, not `chrome-extension://` (D15 precedent reused here).
+
+## Phase 5 Task 2 — I03+I04 (tags / duplicate merge)
+
+- **`existingUrls` Set→Map (normKey→nodeId)** is what lets a skipped dup
+  merge into its live twin — collect first-occurrence wins, the plan
+  records `skipped[]` entries carrying file meta + `existingId`.
+- **Two merge paths, different field coverage by design**: plan-time
+  `mergeImportMeta` (file-side siblings) keeps `summary`; write-time
+  `existingId` merge stays spec-precise (tags/category/notes only) — a
+  file's summary is often machine-generated and shouldn't stick to a
+  curated library bookmark.
+- **`patchMeta` lazily creates rows** → a dead `existingId` must be
+  liveness-checked via `getBookmarkNodes` first or the merge writes a
+  dangling meta row.
+- **`sanitizeImportTags` returns {name,key}**: `name` feeds `createTag`
+  (first-seen display wins), `key` is what meta rows store — defs must be
+  created from item AND skipped-dup metas or imported tags exist but are
+  invisible/unrenamable.
+- **Commit-splitting a shared file**: `git stash -- <file>` +
+  `git apply --cached` of a hunk-subset patch stages part of one file;
+  when a LATER task already rewrote the file, restore the earlier content
+  verbatim from context, verify tests, commit, then reapply the new work.

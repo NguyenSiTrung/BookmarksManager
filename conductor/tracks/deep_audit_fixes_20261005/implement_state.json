@@ -1,18 +1,18 @@
 {
   "current_phase": "Phase 5: Import and export",
   "current_phase_index": 4,
-  "current_task_index": 1,
+  "current_task_index": 2,
   "completed_phases": [
     "Phase 1: Privacy and consent enforcement",
     "Phase 2: Accounting and egress robustness",
     "Phase 3: Jobs and decisions resilience",
     "Phase 4: Duplicates, undo, import/export safety"
   ],
-  "last_updated": "2026-10-05T12:26:00Z",
+  "last_updated": "2026-10-05T12:40:00Z",
   "status": "in_progress",
   "checkpoint_blockers": [],
   "task_review": {
-    "task": "p5task1",
+    "task": "p5task2",
     "status": "closed"
   },
   "section_count": 1,
