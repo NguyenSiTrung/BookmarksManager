@@ -899,3 +899,10 @@ claim that any audit finding has been fixed or reproduced.
   (Critical) + reconcile gap (Warning); r2 PASS/PASS.
 - Full gate green at commit: lint, typecheck, 3077 unit, build, manifest,
   bundle, 43 e2e (1 intentional screenshot skip).
+
+### Phase 3 checkpoint
+- Full local gate + e2e verified on the committed tree `406de89`
+  (post-J14, which is the last Phase 3 code change): lint, typecheck,
+  3077 unit / 173 files, build, manifest, bundle, 43 e2e + 1 intentional
+  screenshot skip — including the job pause/resume/cold-restart
+  restructure resume specs. No manual checks (per plan).

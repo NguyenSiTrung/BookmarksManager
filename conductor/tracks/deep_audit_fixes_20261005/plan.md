@@ -262,7 +262,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: deleted/retargeted bookmark cannot receive a summary or orphan
     meta row; deleting a bookmark removes its pending decisions.
   - Fix: re-admit before `setBookmarkSummary`; cascade on `onRemoved`.
-- [ ] Task: Conductor - Automated Verification 'Phase 3: Jobs and decisions resilience' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 3: Jobs and decisions resilience' — full gate green at `406de89` (lint, tsc, 3077 unit/173 files, build, manifest, bundle, 43 e2e +1 skip incl. job pause/resume/restart specs)
   - Full local gate + e2e (job pause/resume/eviction simulation).
 
 ## Phase 4: Duplicates, undo and data integrity
