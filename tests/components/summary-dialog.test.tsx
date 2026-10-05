@@ -150,4 +150,55 @@ describe("SummaryDialog disclosed consent", () => {
     expect(onClose).toHaveBeenCalledOnce();
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
+
+  it("labels the dismiss control 'Continue in background' while a send is in flight", async () => {
+    const held = deferred();
+    const onClose = vi.fn();
+    sendMessage.mockResolvedValueOnce(PREFLIGHT).mockReturnValueOnce(held.promise);
+    render(<SummaryDialog {...PROPS} onClose={onClose} />);
+    await approve();
+    // The worker request is fire-and-forget — closing cannot cancel it, so
+    // the only dismiss control says so.
+    const dismiss = await screen.findByRole("button", { name: "Continue in background" });
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    fireEvent.click(dismiss);
+    expect(onClose).toHaveBeenCalledOnce();
+    await act(async () => held.resolve(SUCCESS));
+  });
+
+  it("uses theme tokens, not hardcoded light-theme colors", async () => {
+    renderDialog();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toContain("bg-background");
+    const walker = document.createTreeWalker(dialog, NodeFilter.SHOW_ELEMENT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const cls = (node as Element).getAttribute("class") ?? "";
+      expect(cls).not.toMatch(/bg-white|text-slate|bg-slate/);
+    }
+  });
+
+  it("traps focus inside the dialog while open", async () => {
+    renderDialog();
+    const dialog = await screen.findByRole("dialog");
+    const close = await screen.findByRole("button", { name: "Close" });
+    await screen.findByRole("button", { name: "Agree and summarize" });
+    // Radix's focus scope owns Tab cycling; Tabbing past the last control
+    // wraps back inside instead of escaping to the page.
+    const sentinel = document.createElement("button");
+    document.body.appendChild(sentinel);
+    sentinel.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    await vi.waitFor(() => {
+      const active = document.activeElement;
+      expect(dialog.contains(active)).toBe(true);
+    });
+    sentinel.focus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    await vi.waitFor(() => {
+      const active = document.activeElement;
+      expect(dialog.contains(active)).toBe(true);
+    });
+    expect(close).toBeDefined();
+    sentinel.remove();
+  });
 });

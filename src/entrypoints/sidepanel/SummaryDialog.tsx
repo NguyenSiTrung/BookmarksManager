@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../ui/components/dialog";
+import {
   SummarizeMessageResult,
   type SummarizeMessage,
   type SummaryConsentApproval,
@@ -10,7 +18,15 @@ import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
 
 /** Read-only preflight on open; only the disclosed affirmative send may
  * authorize extraction/egress. Unknown-cost confirmation is separate and
- * retains exactly the accepted provider/version binding. */
+ * retains exactly the accepted provider/version binding.
+ *
+ * Built on the shared Radix Dialog: focus is trapped while open and restored
+ * on close, and all colors come from theme tokens. The summarize request is
+ * fire-and-forget on the worker — there is no cancellation message — so while
+ * a send is in flight the footer control is labeled "Continue in background";
+ * the work keeps running and its result is persisted by the worker. The
+ * icon-only close is always hidden so the labeled button is the single
+ * dismiss control. */
 
 declare const chrome: {
   runtime?: {
@@ -74,8 +90,17 @@ type Phase =
   | { kind: "done"; summary: string; model: string }
   | { kind: "error"; message: string };
 
-const TITLE_ID = "summary-dialog-title";
 const ANNOUNCE_ID = "summary-dialog-announce";
+
+const CLOSE_BUTTON_CLASS =
+  "rounded-md border border-input px-4 py-2 text-sm font-medium " +
+  "hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring " +
+  "focus-visible:outline-hidden";
+const PRIMARY_BUTTON_CLASS =
+  "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
+  "text-primary-foreground hover:bg-primary/90 " +
+  "focus-visible:ring-2 focus-visible:ring-ring " +
+  "focus-visible:outline-hidden";
 
 export function SummaryDialog(props: SummaryDialogProps) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -89,16 +114,6 @@ export function SummaryDialog(props: SummaryDialogProps) {
     setPreviousInput(inputKey);
     setPhase({ kind: "loading" });
   }
-
-  useEffect(() => {
-    if (props.open) {
-      previousFocus.current = document.activeElement as HTMLElement;
-      cancelRef.current?.focus();
-    } else if (previousFocus.current !== null) {
-      previousFocus.current.focus();
-      previousFocus.current = null;
-    }
-  }, [props.open]);
 
   useEffect(() => {
     const gen = ++generation.current;
@@ -146,32 +161,47 @@ export function SummaryDialog(props: SummaryDialogProps) {
     });
   }
 
-  if (!props.open) {
-    return null;
-  }
-
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      close();
-    }
-  };
+  const running = phase.kind === "running";
 
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+    <Dialog
+      open={props.open}
+      onOpenChange={(next) => {
+        if (!next) close();
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={TITLE_ID}
-        onKeyDown={onKeyDown}
-        className="mx-4 flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-lg bg-white p-5 shadow-xl"
+      <DialogContent
+        className="flex max-h-[calc(100dvh-2rem)] flex-col"
+        showCloseButton={false}
+        onOpenAutoFocus={(event) => {
+          // Still the pre-open element at this point — capture it so close
+          // can return focus (there is no Radix trigger to restore to).
+          previousFocus.current =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+          event.preventDefault();
+          cancelRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          // No Radix trigger exists, so restore to the element that held
+          // focus before open; skip Radix's trigger-focused default.
+          event.preventDefault();
+          if (previousFocus.current?.isConnected) {
+            previousFocus.current.focus();
+          }
+          previousFocus.current = null;
+        }}
       >
-        <h2 id={TITLE_ID} className="shrink-0 text-base font-semibold">
-          Summarize “{props.bookmarkTitle}”
-        </h2>
+        <DialogHeader>
+          <DialogTitle>
+            Summarize “{props.bookmarkTitle}”
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Send this bookmark’s page to your configured AI provider and save
+            the summary on the bookmark.
+          </DialogDescription>
+        </DialogHeader>
         <p
           id={ANNOUNCE_ID}
           role="status"
@@ -189,7 +219,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
           role="region"
           aria-label="Summary disclosure and result"
           tabIndex={0}
-          className="mt-3 min-h-0 flex-1 overflow-y-auto overscroll-contain break-words"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain break-words"
         >
           {phase.kind === "loading" && <p>Loading summary disclosure…</p>}
           {phase.kind === "disclosure" && (
@@ -214,10 +244,10 @@ export function SummaryDialog(props: SummaryDialogProps) {
             </div>
           )}
           {phase.kind === "running" && (
-            <p className="text-sm text-slate-600">Summarizing the page…</p>
+            <p className="text-sm text-muted-foreground">Summarizing the page…</p>
           )}
           {phase.kind === "done" && (
-            <p className="text-sm text-slate-800" data-testid="summary-text">
+            <p className="text-sm text-foreground" data-testid="summary-text">
               {phase.summary}
             </p>
           )}
@@ -227,21 +257,21 @@ export function SummaryDialog(props: SummaryDialogProps) {
             </p>
           )}
         </div>
-        <div className="mt-4 flex shrink-0 justify-end gap-2">
+        <DialogFooter>
           <button
             ref={cancelRef}
             type="button"
             onClick={close}
-            className="rounded-md border px-3 py-1.5 text-sm"
+            className={CLOSE_BUTTON_CLASS}
           >
-            Close
+            {running ? "Continue in background" : "Close"}
           </button>
           {phase.kind === "disclosure" && (
-            <button type="button" className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => sendApproved(phase.consent.approval)}>
+            <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => sendApproved(phase.consent.approval)}>
               Agree and summarize
             </button>
           )}
-        </div>
+        </DialogFooter>
         {phase.kind === "confirm" && (
           <CostConfirmationDialog
             open
@@ -251,7 +281,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
             onCancel={close}
           />
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

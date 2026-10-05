@@ -60,8 +60,12 @@ describe("SummaryDialog accessibility", () => {
       <SummaryDialog open {...DIALOG} onClose={() => {}} />,
     );
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.getAttribute("aria-labelledby")).toBe("summary-dialog-title");
+    // Radix owns the labelledby wiring — the referenced element must be the
+    // rendered title, not a hardcoded id.
+    const labelledby = dialog.getAttribute("aria-labelledby");
+    expect(labelledby).not.toBeNull();
+    const title = document.getElementById(labelledby!);
+    expect(title?.textContent).toContain("Summarize");
     // Focus moved inside on open — the Close button.
     const close = screen.getByRole("button", { name: "Close" });
     await waitFor(() => {
