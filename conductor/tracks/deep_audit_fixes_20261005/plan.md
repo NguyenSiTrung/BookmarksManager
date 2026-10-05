@@ -440,7 +440,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     clear code; concurrent `saveProviderKey` and envelope save/delete do not
     leave an undecryptable envelope (`BookmarksManager-7k4`).
   - Fix: snapshot-and-restore; boundary validation; per-material-id queue.
-- [x] Task 2: H03 — wider egress lint (`dbe11a9`)
+- [x] Task 2: H03 — wider egress lint (`dbde5de`)
   <!-- files: eslint.config.mjs -->
   - Tests: lint fixture using `XMLHttpRequest`, `WebSocket`, `EventSource`,
     `navigator.sendBeacon`, `importScripts` outside `src/net/**` fails; code
