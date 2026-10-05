@@ -930,3 +930,27 @@ claim that any audit finding has been fixed or reproduced.
 - Independent review (child 7ac8d994): PASS/PASS first round, 8 info notes.
 - Full gate green at commit: lint, typecheck, 3084 unit, build, manifest,
   bundle, 43 e2e + 1 intentional screenshot skip.
+
+### Task 2 (D02+D03+D04 — safe merge) `82f8eb9`
+- Drift anchor is the kept node's LIVE url — not the group key: comparing
+  members to the recorded key could merge them onto a kept node that
+  itself drifted to a different page.
+- Dropped members must be excluded from BOTH snapshot meta and the union:
+  snapshotting their rows would let undo clobber a still-live bookmark's
+  newer edits.
+- patchMeta survivor write LAST (after removals + loser-meta cleanup) is
+  what makes retry idempotent: if it ran, no loser rows remain to
+  re-append; if the merge failed earlier, the kept row is original.
+- `discardById` (never "latest") when removedIds==[] — a nothing-changed
+  merge leaves no phantom snapshot for undo to replay/duplicate.
+- All-vanished/drifted → no-op success, `snapshotId: undefined` — pushing
+  an empty snapshot would only let undo clobber kept meta.
+- Fixture trap: managed-loser test needed a REAL duplicate URL — under
+  D02 a non-matching URL is legitimately dropped before removeTree ever
+  runs.
+- db.undo.add spy pattern for interleave tests: wrap the table's add, fire
+  the foreign pushSnapshot inside it (kind check prevents recursion).
+- Independent review (child 7ac8d994): PASS/PASS first round; double-append
+  reasoning stress-tested and held under all retry shapes.
+- Full gate green at commit: lint, typecheck, 3089 unit, build, manifest,
+  bundle, 43 e2e + 1 intentional screenshot skip.

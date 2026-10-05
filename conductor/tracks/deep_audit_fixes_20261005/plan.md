@@ -275,7 +275,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     true tracking-param duplicates still group; "normalized" groups are
     suggestion-only in the UI contract.
   - Fix: keep route fragments, host-scoped `ref`, scheme-aware keys.
-- [ ] Task 2: D02 + D03 + D04 — safe merge
+- [x] Task 2: D02 + D03 + D04 — safe merge (`82f8eb9`)
   <!-- files: src/duplicates/merge.ts, src/decisions/apply.ts, src/undo/snapshot.ts -->
   - Tests: member URL edited after grouping is refused/dropped; notes over
     10,000 chars are refused before any snapshot or write; `removeTree`
