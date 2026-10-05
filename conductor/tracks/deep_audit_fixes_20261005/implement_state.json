@@ -1,31 +1,31 @@
 {
-  "current_phase": "Phase 6: UI correctness and safety",
-  "current_phase_index": 5,
-  "current_task_index": 11,
-  "completed_phases": [
-    "Phase 1: Privacy and consent enforcement",
-    "Phase 2: Accounting and egress robustness",
-    "Phase 3: Jobs and decisions resilience",
-    "Phase 4: Duplicates, undo and data integrity",
-    "Phase 5: Import and export",
-    "Phase 6: UI correctness and safety"
-  ],
-  "last_updated": "2026-10-05T17:22:20Z",
-  "status": "in_progress",
-  "checkpoint_blockers": [],
-  "task_review": {
-    "task": "p6checkpoint",
-    "status": "closed"
-  },
-  "section_count": 1,
-  "last_handoff": "2026-10-04T23:07:31Z",
-  "handoff_history": [
-    {
-      "section": 1,
-      "timestamp": "2026-10-04T23:07:31Z",
-      "phase_at_handoff": "Phase 2: Accounting and egress robustness",
-      "task_at_handoff": 1,
-      "handoff_file": "handoff_20261004_230731.md"
-    }
-  ]
+ "current_phase": "Phase 7: Provider hardening and documentation",
+ "current_phase_index": 6,
+ "current_task_index": 0,
+ "completed_phases": [
+  "Phase 1: Privacy and consent enforcement",
+  "Phase 2: Accounting and egress robustness",
+  "Phase 3: Jobs and decisions resilience",
+  "Phase 4: Duplicates, undo and data integrity",
+  "Phase 5: Import and export",
+  "Phase 6: UI correctness and safety"
+ ],
+ "last_updated": "2026-10-05T17:57:38Z",
+ "status": "in_progress",
+ "checkpoint_blockers": [],
+ "task_review": {
+  "task": "p7t1",
+  "status": "closed"
+ },
+ "section_count": 1,
+ "last_handoff": "2026-10-04T23:07:31Z",
+ "handoff_history": [
+  {
+   "section": 1,
+   "timestamp": "2026-10-04T23:07:31Z",
+   "phase_at_handoff": "Phase 2: Accounting and egress robustness",
+   "task_at_handoff": 1,
+   "handoff_file": "handoff_20261004_230731.md"
+  }
+ ]
 }

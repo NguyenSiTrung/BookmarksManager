@@ -433,7 +433,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 7: Provider hardening and documentation
 <!-- execution: parallel -->
 
-- [ ] Task 1: H01 + H02 — provider setup rollback and key hygiene
+- [x] Task 1: H01 + H02 — provider setup rollback and key hygiene (`26008e3`)
   <!-- files: src/messages/provider.ts, src/messages/llm-provider.ts, src/security/credentials.ts, src/security/keys.ts -->
   - Tests: failed re-enable/re-configure restores credential, settings,
     consent and budget; keys with newline/space are trimmed or rejected with a

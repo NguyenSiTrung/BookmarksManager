@@ -1471,3 +1471,35 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - **Spy on `db.<table>.toArray` to prove "no live queries"** — module
   spies cannot intercept direct ESM bindings, but the Dexie table method
   is the observable sink every repo list goes through.
+
+## Phase 7 Task 1 (H01+H02 — provider setup rollback, key hygiene)
+
+- `unwindEnable`/`unwindConfigure` became snapshot-then-restore: capture raw
+  `db.metadata` rows, `readProviderKey`/`readCredential` plaintext (catch →
+  null), and a scoped `hasConsentAtOrigin` flag BEFORE the first write, then
+  put-back-or-delete per piece. The raw-row restore keeps even a malformed
+  prior row byte-for-byte. A fresh enable's empty snapshot collapses to the
+  old unconditional delete — existing unwind tests keep passing.
+- Consent restore is scoped to exactly the scope the flow grants — never
+  `revokeConsentsAtOrigin` on the failure path, which would wipe sibling
+  scopes a real send consented to earlier.
+- LLM carry-forward: `messageHasBudget` (either field present) gates
+  monthlyBudgetUsd/Unlimited; prior `provider.pricing` merges into
+  `message.settings` only when the message omits pricing. `LLM_BUDGET_SET`
+  stays the sole way to clear.
+- Envelope ops serialize per material id via a self-draining
+  `Map<id, Promise<void>>` chain (`prev.then(op, op)`; entry removed on
+  settle) — the `7k4` TOCTOU where a save writes under a since-deleted
+  CryptoKey is unreachable; reads serialize too so a mid-delete read sees
+  before-or-after, never torn.
+- `ProviderApiKey` (`trim().min(1).regex(/^[\x21-\x7e]+$/)`) lives in
+  `schemas/provider.ts` and feeds both `ENABLE_PROVIDER.key` and
+  `LLM_CONFIGURE.key` — trimmed value flows to `keyDisplaySuffix` and the
+  credential store; rejects surface as `malformed_message` with zero writes.
+- vi.hoisted-backed stateful key-store double: mocking `readProviderKey` to
+  always-truthy would have made every snapshot look key-backed and broken
+  the restore-vs-delete distinction — the map must actually persist what
+  `saveProviderKey` writes.
+- Reviewer verified: plaintext re-save is the right restore (raw-envelope
+  bytes could reattach to a rotated key) and verbatim active-pointer
+  restore is strictly better than delete-if-pointing-here.
