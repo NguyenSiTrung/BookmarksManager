@@ -982,6 +982,11 @@ function ReviewRow({
             Unsure — low confidence; needs a decision.
           </div>
         )}
+        {row.escalationSkipped === "budget" && (
+          <div className="mt-0.5 text-xs italic text-muted-foreground">
+            Second opinion skipped — the monthly budget cap was reached.
+          </div>
+        )}
         {verdict !== null && (
           <div className="mt-0.5 text-xs text-muted-foreground">
             Second opinion ({row.escalation?.llmModel}): {verdict}.

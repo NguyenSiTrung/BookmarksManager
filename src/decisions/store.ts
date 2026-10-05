@@ -65,6 +65,8 @@ export type DecisionStoreErrorCode =
   | "not_found"
   /** The requested status change is not allowed from the current status. */
   | "illegal_transition"
+  /** A live claim already owns the decision (J06). */
+  | "claimed"
   /** Unexpected storage-level failure (Dexie / IndexedDB). */
   | "api";
 
@@ -110,6 +112,19 @@ export type DecisionRow = DecisionDocument & {
   guard?: DecisionGuard;
   /** Undo row pushed when this decision was applied — the revert target. */
   undoSnapshotId?: number;
+  /**
+   * Live claim held by an in-flight approve/reject (J06): the conditional
+   * store-level half of the decision's mutual exclusion — the other half is
+   * the in-worker map in `apply.ts`. Cleared by any successful transition or
+   * by the holder releasing it after a failed apply.
+   */
+  claim?: { token: string; at: string };
+  /**
+   * Set when an eligible low-confidence decision's LLM second opinion was
+   * skipped because the monthly budget cap refused the reservation (J08).
+   * Advisory — the row still lands `unsure` for the user to decide.
+   */
+  escalationSkipped?: "budget";
 };
 
 // ---------------------------------------------------------------------------
@@ -226,12 +241,13 @@ async function captureGuard(
  * first — re-analysis supersedes it whatever job produced it. `guard` is
  * the send-time snapshot the caller captured (J05); absent, the
  * decision-time placement is read live — the fallback for non-send callers.
- * Rejects `invalid` for a schema violation and `api` for a storage failure;
- * nothing is written in either case.
+ * `escalationSkipped` marks a row whose second opinion the budget refused
+ * (J08). Rejects `invalid` for a schema violation and `api` for a storage
+ * failure; nothing is written in either case.
  */
 export async function persistDecision(
   document: DecisionDocument,
-  options?: { guard?: DecisionGuard },
+  options?: { guard?: DecisionGuard; escalationSkipped?: "budget" },
 ): Promise<DecisionRow> {
   const parsed = Decision.safeParse(document);
   if (!parsed.success) {
@@ -241,7 +257,13 @@ export async function persistDecision(
     );
   }
   const guard = options?.guard ?? (await captureGuard(parsed.data.bookmarkIds));
-  const row: DecisionRow = { ...parsed.data, guard };
+  const row: DecisionRow = {
+    ...parsed.data,
+    guard,
+    ...(options?.escalationSkipped === undefined
+      ? {}
+      : { escalationSkipped: options.escalationSkipped }),
+  };
   try {
     return await db.transaction("rw", db.decisions, async () => {
       const existing = await db.decisions.get(row.id);
@@ -478,6 +500,14 @@ export function isLegalTransition(
 export interface TransitionExtra {
   /** Undo row pushed by the apply path — the revert target. */
   undoSnapshotId?: number;
+  /**
+   * J06: the token {@link claimDecision} returned for this transition. When
+   * provided, the row's live claim must match — a transition attempted by a
+   * non-holder, or after the claim was stolen/released, is refused
+   * `illegal_transition` (nothing is written). A successful transition
+   * always deletes `claim` regardless.
+   */
+  claimToken?: string;
 }
 
 /**
@@ -508,10 +538,23 @@ export async function transitionStatus(
         `Cannot move decision "${id}" from "${row.status}" to "${to}".`,
       );
     }
+    // J06: a live claim means only its holder may transition — a tokenless
+    // or foreign-token call is refused even when the status legality is
+    // fine. An expired claim is abandoned garbage: it blocks nothing and is
+    // cleared by the write below.
+    if (claimLive(row.claim) || extra?.claimToken !== undefined) {
+      if (row.claim?.token !== extra?.claimToken) {
+        throw new DecisionStoreError(
+          "illegal_transition",
+          `Decision "${id}" is claimed by another operation.`,
+        );
+      }
+    }
     const updated: DecisionRow = { ...row, status: to };
     if (extra?.undoSnapshotId !== undefined) {
       updated.undoSnapshotId = extra.undoSnapshotId;
     }
+    delete updated.claim;
     await db.decisions.put(updated);
     const audit = AuditEvent.parse({
       decisionId: id,
@@ -524,5 +567,98 @@ export async function transitionStatus(
     // A08: keep the decision-audit log bounded — oldest-first, in-transaction.
     await pruneAuditLocked();
     return { row: updated, audit };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Claims (J06)
+// ---------------------------------------------------------------------------
+
+/**
+ * How long a claim lives before it is treated as abandoned. An approve's
+ * hold spans a mutation plus a status write — seconds, not minutes — so a
+ * claim older than this belongs to a crashed context and is reclaimable.
+ */
+export const DECISION_CLAIM_TTL_MS = 120_000;
+
+function claimLive(claim: DecisionRow["claim"]): boolean {
+  if (claim === undefined) return false;
+  const at = Date.parse(claim.at);
+  return Number.isFinite(at) && at + DECISION_CLAIM_TTL_MS > Date.now();
+}
+
+/**
+ * Conditionally claim decision `id` for a transition toward `to` — the
+ * store-level half of J06 mutual exclusion (the other half is the in-worker
+ * serialization map in `apply.ts`, which keeps same-context calls from
+ * reaching this contention). Inside one `rw` transaction: `not_found` when
+ * the id is unknown, `illegal_transition` when `to` isn't legal from the
+ * row's current status, `claimed` when a LIVE claim already owns it; on
+ * success the row carries `claim = {token, at}` and the holder must pass
+ * `token` as `claimToken` to {@link transitionStatus} (which clears it) or
+ * release it via {@link releaseDecisionClaim} on any failure. An expired
+ * or malformed claim is simply overwritten — a crashed context never
+ * wedges the row.
+ */
+export async function claimDecision(
+  id: string,
+  to: "applied" | "auto_applied" | "rejected",
+): Promise<{ row: DecisionRow; token: string }> {
+  const token = crypto.randomUUID();
+  try {
+    return await db.transaction("rw", db.decisions, async () => {
+      const raw = await db.decisions.get(id);
+      if (raw === undefined) {
+        throw new DecisionStoreError(
+          "not_found",
+          `No decision exists for id "${id}".`,
+        );
+      }
+      const row = raw as DecisionRow;
+      if (!isLegalTransition(row.status, to)) {
+        throw new DecisionStoreError(
+          "illegal_transition",
+          `Cannot move decision "${id}" from "${row.status}" to "${to}".`,
+        );
+      }
+      if (claimLive(row.claim)) {
+        throw new DecisionStoreError(
+          "claimed",
+          `Decision "${id}" is already being handled.`,
+        );
+      }
+      const claimed: DecisionRow = {
+        ...row,
+        claim: { token, at: new Date().toISOString() },
+      };
+      await db.decisions.put(claimed);
+      return { row: claimed, token };
+    });
+  } catch (cause) {
+    if (cause instanceof DecisionStoreError) throw cause;
+    throw new DecisionStoreError(
+      "api",
+      `failed to claim decision "${id}"`,
+      { cause },
+    );
+  }
+}
+
+/**
+ * Release the claim `token` holds on decision `id`. Conditional on
+ * ownership: a claim that was stolen after expiry — or already cleared by
+ * a completed transition — is never touched. Silent no-op on an unknown id.
+ */
+export async function releaseDecisionClaim(
+  id: string,
+  token: string,
+): Promise<void> {
+  await db.transaction("rw", db.decisions, async () => {
+    const raw = await db.decisions.get(id);
+    const row = raw as DecisionRow | undefined;
+    if (row?.claim?.token !== token) return;
+    const released: DecisionRow = { ...row };
+    delete released.claim;
+    await db.decisions.put(released);
   });
 }

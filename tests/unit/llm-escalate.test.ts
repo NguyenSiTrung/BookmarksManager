@@ -9,6 +9,7 @@ import {
   writeLlmEscalationSettings,
   type EscalationContext,
 } from "../../src/llm/escalate";
+import { JobQueueError } from "../../src/jobs/queue";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
 import { Decision } from "../../src/schemas/decision";
@@ -103,9 +104,12 @@ async function seedProvider(
     consent?: boolean;
     pricing?: boolean;
     budget?: "capped" | "unlimited" | "unset";
+    /** Override cap in USD — a tiny value trips `budget_exceeded`. */
+    budgetUsd?: number;
   } = {},
 ) {
   const { consent = true, pricing = true, budget = "capped" } = opts;
+  const capUsd = opts.budgetUsd ?? 5;
   const record: LlmProviderRecord = {
     providerId: PROVIDER_ID,
     provider: {
@@ -116,7 +120,7 @@ async function seedProvider(
       ...(pricing ? { pricing: { inputPerMillion: 1, outputPerMillion: 2 } } : {}),
     },
     configuredAt: "2026-09-15T00:00:00.000Z",
-    ...(budget === "capped" ? { monthlyBudgetUsd: 5 } : {}),
+    ...(budget === "capped" ? { monthlyBudgetUsd: capUsd } : {}),
     ...(budget === "unlimited" ? { monthlyBudgetUnlimited: true as const } : {}),
   };
   await saveLlmProvider(record);
@@ -350,5 +354,34 @@ describe("maybeEscalateDecision", () => {
     await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
     const result = await maybeEscalateDecision(lowConfidence(), CONTEXT);
     expect(result).toBeNull();
+  });
+
+  it("returns {skipped:'budget'} when the monthly cap refuses the spend (J08)", async () => {
+    // A cap below any possible reservation estimate: the gate refuses
+    // `budget_exceeded` before a request exists.
+    await seedProvider({ budgetUsd: 0.0000001 });
+    await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    const result = await maybeEscalateDecision(lowConfidence(), CONTEXT);
+    expect(result).toEqual({ skipped: "budget" });
+    expect(server.requests).toHaveLength(0);
+    expect(await db.llmUsage.count()).toBe(0);
+  });
+
+  it("rethrows a JobQueueError from beforeSend — a lost job is not a silent skip (J08)", async () => {
+    await seedProvider();
+    await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    const beforeSend = async (): Promise<void> => {
+      throw new JobQueueError(
+        "illegal_transition",
+        "the job was superseded mid-escalation",
+      );
+    };
+    await expect(
+      maybeEscalateDecision(lowConfidence(), { ...CONTEXT, beforeSend }),
+    ).rejects.toMatchObject({
+      name: "JobQueueError",
+      code: "illegal_transition",
+    });
+    expect(server.requests).toHaveLength(0);
   });
 });

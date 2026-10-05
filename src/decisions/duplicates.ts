@@ -138,7 +138,7 @@ export interface ScanDuplicatePairsOptions extends ScanCommonOptions {
   readonly pairs: readonly NearDuplicatePair[];
 }
 
-/** One pair's persisted outcome. */
+/** One pair's outcome. */
 export interface DuplicatePairResult {
   /** The pair's local Chrome ids, `[a.id, b.id]` (never sent to Jev). */
   readonly ids: readonly [string, string];
@@ -148,8 +148,14 @@ export interface DuplicatePairResult {
   readonly confidence: number;
   /** The §10.2 outcome for a `merge_duplicates` at that confidence. */
   readonly outcome: PolicyOutcome;
-  /** The persisted `merge_duplicates` decision row. */
-  readonly decision: DecisionRow;
+  /**
+   * The persisted `merge_duplicates` decision row — present only for a
+   * `review` outcome. A sub-floor pair (level 1–2: the model said the two
+   * sides are NOT the same content) persists NOTHING approvable (J07):
+   * a merge proposal for non-duplicates must not sit in the queue where
+   * `unsure → applied` could reach it.
+   */
+  readonly decision?: DecisionRow;
 }
 
 /** A completed scan: one result per sendable pair plus one usage row each. */
@@ -424,9 +430,21 @@ async function runPairs(
     const confidence = levelToConfidence(level);
 
     const outcome = evaluatePolicy({ kind: "merge_duplicates", confidence });
+    // J07: levels 1–2 (unrelated / same-topic-different-content) are NOT
+    // duplicates — persist nothing. An `unsure` merge row is still
+    // approvable (`unsure → applied` is legal), and a merge proposal for a
+    // non-duplicate must never be approvable.
+    if (outcome === "unsure") {
+      results.push({
+        ids: [entry.pair.a.id, entry.pair.b.id],
+        level,
+        confidence,
+        outcome,
+      });
+      continue;
+    }
     // A merge is never auto-applied; a `review` decision lands `pending`.
-    const status: DecisionDocument["status"] =
-      outcome === "unsure" ? "unsure" : "pending";
+    const status: DecisionDocument["status"] = "pending";
     // J04: one row per (jobId, pair, kind) — a replayed pair batch upserts
     // the same row instead of duplicating the merge proposal.
     const document = toMergeDocument(

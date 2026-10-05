@@ -6,6 +6,8 @@ import type { Decision } from "../schemas/decision";
 import type { SentBookmark } from "../schemas/decision-state";
 import { createLlmClient } from "./client";
 import { budgetChoiceOf } from "./budget";
+import { LlmGateError } from "../net/llm-send";
+import { JobQueueError } from "../jobs/queue";
 import { resolveProviderPricing } from "./pricing";
 import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
@@ -19,11 +21,14 @@ import type { ChatMessage } from "./wire";
  * `REVIEW_FLOOR` may get a second opinion during the user-started operation
  * that produced it.
  *
- * Every refusal is silent: the function returns `null` and the decision
- * falls back to the ordinary review queue. Escalation NEVER changes the
- * decision's status and never applies anything — the verdict, model,
- * optional allowed alternative, and rationale are advisory fields the
- * caller persists on the row.
+ * Almost every refusal is silent: the function returns `null` and the
+ * decision falls back to the ordinary review queue. Two outcomes are not
+ * silent (J08): a budget-cap refusal is reported as
+ * `{skipped: "budget"}` — the review row marks it — and a lost job
+ * authority is rethrown so the owning job can stop. Escalation NEVER
+ * changes the decision's status and never applies anything — the verdict,
+ * model, optional allowed alternative, and rationale are advisory fields
+ * the caller persists on the row.
  */
 
 /** One allowed option: `id` is what the model must echo back; `label` is shown. */
@@ -56,6 +61,19 @@ export interface LlmEscalation {
   /** The budget reservation this call settled — the usage trail's anchor. */
   readonly usageRef?: string;
 }
+
+/**
+ * J08: the one silent-refusal outcome the caller must surface. A
+ * `budget_exceeded` gate refusal means escalation was configured and
+ * eligible but the monthly cap refused the spend — the decision row
+ * records this so the review UI can say why no second opinion arrived.
+ */
+export interface BudgetSkipped {
+  readonly skipped: "budget";
+}
+
+/** What `maybeEscalateDecision` resolves to. */
+export type LlmEscalationAttempt = LlmEscalation | BudgetSkipped | null;
 
 // ---------------------------------------------------------------------------
 // Escalation settings (metadata key `llmEscalation`)
@@ -100,12 +118,16 @@ const MAX_OUTPUT_TOKENS = 1_024;
  * ineligible or failed path — not-yet-enabled settings, confidence at or
  * above the review floor, a missing/unpriced/uncapped provider, a refused
  * gate check, an invalid response, or an alternative that is not an offered
- * option id. This function never throws.
+ * option id. Two exceptions (J08): a `budget_exceeded` gate refusal
+ * returns `{skipped: "budget"}` so the caller can mark the row, and a
+ * {@link JobQueueError} from `context.beforeSend` — the job that owned the
+ * send was cancelled/superseded mid-escalation — is RETHROWN so the runner
+ * can stop the job rather than continuing on stale authority.
  */
 export async function maybeEscalateDecision(
   decision: Decision,
   context: EscalationContext,
-): Promise<LlmEscalation | null> {
+): Promise<LlmEscalationAttempt> {
   try {
     if (decision.confidence >= REVIEW_FLOOR) return null;
     const settings = await readLlmEscalationSettings();
@@ -172,7 +194,14 @@ export async function maybeEscalateDecision(
         : {}),
     };
     return result;
-  } catch {
+  } catch (cause) {
+    // J08: lost job authority is a control signal, not an escalation
+    // failure — rethrow so the runner sees the job's real stop reason.
+    if (cause instanceof JobQueueError) throw cause;
+    // J08: the cap refused the spend — the one skip worth surfacing.
+    if (cause instanceof LlmGateError && cause.code === "budget_exceeded") {
+      return { skipped: "budget" };
+    }
     return null;
   }
 }

@@ -77,12 +77,16 @@ export type PolicyInput =
       settings?: DecisionSettings;
     };
 
-function assertConfidence(confidence: number): void {
-  if (Number.isNaN(confidence) || confidence < 0 || confidence > 1) {
-    throw new RangeError(
-      `confidence must lie within [0, 1]; received ${confidence}`,
-    );
-  }
+/**
+ * Whether `confidence` is a usable §10.1 value — finite and inside [0, 1].
+ * An out-of-range or NaN answer is a provider contract violation the policy
+ * must not trust and must not crash on (J07): it is reported as `unsure`,
+ * the always-human outcome.
+ */
+function confidenceUsable(confidence: number): boolean {
+  return (
+    Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
+  );
 }
 
 /**
@@ -92,11 +96,12 @@ function assertConfidence(confidence: number): void {
  * `mark_dead`, `rename`, and `create_folder` never auto-apply at any
  * confidence; `create_folder` always lands in review.
  *
- * @throws {RangeError} unless `confidence` lies within [0, 1].
+ * An out-of-range or NaN confidence is `unsure` for every kind (J07) —
+ * never a `RangeError`, never auto-apply.
  */
 export function evaluatePolicy(input: PolicyInput): PolicyOutcome {
   const { confidence } = input;
-  assertConfidence(confidence);
+  if (!confidenceUsable(confidence)) return "unsure";
 
   switch (input.kind) {
     case "add_tags":

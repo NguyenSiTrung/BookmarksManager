@@ -46,7 +46,7 @@ import {
 import type { DecisionGuard, DecisionRow } from "./store";
 import { maybeEscalateDecision } from "../llm/escalate";
 import type { EscalationOption } from "../llm/escalate";
-import { assertJobAuthority } from "../jobs/queue";
+import { assertJobAuthority, JobQueueError } from "../jobs/queue";
 import type { Job } from "../schemas/job";
 
 /**
@@ -177,6 +177,9 @@ export type DecisionPipelineErrorCode =
   /** The guarded apply refused a decision whose bookmark moved/changed
    * mid-scan — a per-item outcome the job runner records and skips. */
   | "stale"
+  /** The owning job no longer admits work — relayed from a J08
+   * job-authority rethrow so the runner stops the job (fatal code). */
+  | "illegal_transition"
   | "provider";
 
 /** Rejection for every failure this module produces. Messages stay redacted. */
@@ -198,6 +201,12 @@ function toPipelineError(cause: unknown): DecisionPipelineError {
     return new DecisionPipelineError(cause.code, cause.message);
   }
   if (cause instanceof NetworkGateError) {
+    return new DecisionPipelineError(cause.code, cause.message);
+  }
+  // J08: a job-authority refusal from the escalation hook keeps its real
+  // code — it is a control signal (cancelled/superseded), not a provider
+  // failure, and the runner treats it as fatal.
+  if (cause instanceof JobQueueError && cause.code === "illegal_transition") {
     return new DecisionPipelineError(cause.code, cause.message);
   }
   return new DecisionPipelineError(
@@ -651,6 +660,18 @@ function policyOutcome(
   });
 }
 
+/**
+ * The persisted confidence when the model's value is usable — else 0.
+ * `evaluatePolicy` already forces an out-of-range/NaN answer to `unsure`
+ * (J07); this clamps the stored field to the schema's [0, 1] bound so the
+ * row never carries an invented-confidence reading.
+ */
+function persistedConfidence(confidence: number): number {
+  return Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
+    ? confidence
+    : 0;
+}
+
 /** Build the §7 `Decision` document for a draft at the policy-derived status. */
 function toDocument(
   draft: DecisionDraft,
@@ -662,7 +683,7 @@ function toDocument(
   const base = {
     id,
     bookmarkIds: [options.bookmark.id],
-    confidence: draft.confidence,
+    confidence: persistedConfidence(draft.confidence),
     probabilities: draft.probabilities,
     status,
     source: {
@@ -716,8 +737,9 @@ async function persistDraft(
   // Second opinion (spec FR6): only the unsure band is eligible, and the
   // result never changes the outcome — it rides the row as advisory
   // escalation fields plus the rationale. `null` = ordinary review.
+  let escalationSkipped: "budget" | undefined;
   if (outcome === "unsure") {
-    const escalation = await maybeEscalateDecision(document, {
+    const attempt = await maybeEscalateDecision(document, {
       bookmarks: [sent],
       question: draft.escalation.question,
       options: draft.escalation.options,
@@ -725,15 +747,21 @@ async function persistDraft(
       jevAnswer: draft.escalation.jevAnswer,
       ...(options.job === undefined ? {} : { beforeSend: () => assertJobAuthority(options.job!) }),
     });
-    if (escalation !== null) {
-      document.escalation = {
-        llmVerdict: escalation.verdict,
-        llmModel: escalation.model,
-        ...(escalation.alternative !== undefined
-          ? { llmAlternative: escalation.alternative }
-          : {}),
-      };
-      document.rationale = escalation.rationale;
+    if (attempt !== null) {
+      if ("skipped" in attempt) {
+        // J08: the budget cap refused the second opinion — mark the row so
+        // the review UI can say why no verdict arrived.
+        escalationSkipped = attempt.skipped;
+      } else {
+        document.escalation = {
+          llmVerdict: attempt.verdict,
+          llmModel: attempt.model,
+          ...(attempt.alternative !== undefined
+            ? { llmAlternative: attempt.alternative }
+            : {}),
+        };
+        document.rationale = attempt.rationale;
+      }
     }
   }
   // J05: the freshness guard is the snapshot the request was BUILT from —
@@ -753,7 +781,10 @@ async function persistDraft(
   };
   let row: DecisionRow;
   try {
-    row = await persistDecision(document, { guard });
+    row = await persistDecision(document, {
+      guard,
+      ...(escalationSkipped === undefined ? {} : { escalationSkipped }),
+    });
   } catch (cause) {
     if (cause instanceof DecisionStoreError) {
       throw new DecisionPipelineError(
@@ -776,6 +807,11 @@ async function persistDraft(
     return await approveDecision(row.id, "policy", "auto_applied");
   } catch (cause) {
     if (cause instanceof DecisionApplyError) {
+      // J06: losing the claim or legality race to another approver is not a
+      // failure — the decision already landed through the winner.
+      if (cause.code === "claimed" || cause.code === "illegal_transition") {
+        return row;
+      }
       // J05: propagate the honest code — `stale`/`bookmark_gone` in the job
       // path is a per-item skip, not a job failure.
       throw new DecisionPipelineError(

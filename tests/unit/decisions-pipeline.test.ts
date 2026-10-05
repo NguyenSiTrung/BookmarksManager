@@ -593,6 +593,34 @@ describe("analyzeBookmark", () => {
     expect(await db.decisions.count()).toBe(0);
   });
 
+  it("treats an out-of-range answer confidence as unsure, never a throw (J07)", async () => {
+    // The wire bounds `confidence` as a bare number — a contract-violating
+    // provider can send 1.4. The policy demotes it to `unsure` and the row
+    // clamps the unusable value to 0 rather than failing the analysis.
+    server.queue({
+      kind: "answer",
+      answers: {
+        category: {
+          type: "choice",
+          choice: "docs",
+          probabilities: { docs: 0.9, other: 0.1 },
+          confidence: 1.4,
+        },
+      },
+    });
+
+    const result = await analyzeBookmark(options({ checks: ["categorize"] }));
+
+    if (!result.sent) throw new Error("expected sent");
+    expect(result.decisions).toHaveLength(1);
+    const row = result.decisions[0];
+    expect(row?.kind).toBe("set_category");
+    expect(row?.status).toBe("unsure");
+    expect(row?.confidence).toBe(0);
+    // The persisted row carries the same clamped value.
+    expect((await db.decisions.get(row!.id))?.confidence).toBe(0);
+  });
+
   it("surfaces provider failures typed and without content", async () => {
     server.queue({ kind: "status", status: 401 });
 
@@ -830,5 +858,70 @@ describe("low-confidence escalation", () => {
     expect(result.decisions[0]?.status).toBe("pending");
     expect(result.decisions[0]?.escalation).toBeUndefined();
     expect(llmServer.requests).toHaveLength(0);
+  });
+
+  it("marks the row escalationSkipped:'budget' when the cap refuses the second opinion (J08)", async () => {
+    await seedEscalation();
+    // Reprice the cap below any reservation estimate — the gate refuses
+    // `budget_exceeded`, which the row must surface rather than swallow.
+    await saveLlmProvider({
+      providerId: LLM_PROVIDER_ID,
+      provider: {
+        kind: "custom",
+        baseUrl: "https://llm.example.com/v1",
+        model: "m",
+        auth: "none",
+        pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      },
+      configuredAt: "2026-09-15T00:00:00.000Z",
+      monthlyBudgetUsd: 0.0000001,
+    });
+
+    const result = await analyzeBookmark(lowConfidenceOptions());
+    if (!result.sent) throw new Error("expected sent");
+    const row = result.decisions[0];
+    expect(row?.status).toBe("unsure");
+    expect(row?.escalationSkipped).toBe("budget");
+    expect(row?.escalation).toBeUndefined();
+    expect(llmServer.requests).toHaveLength(0);
+    // The sidecar persists on the row the review UI reads.
+    const stored = (await db.decisions.get(row!.id)) as DecisionRow | undefined;
+    expect(stored?.escalationSkipped).toBe("budget");
+  });
+
+  it("a job superseded mid-flow stops the escalation and aborts illegal_transition (J08)", async () => {
+    await seedEscalation();
+    await db.jobs.clear();
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1"],
+      batchSize: 1,
+    });
+    const owner = { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 };
+    // Valid at the Jev send's authority check; superseded by the time the
+    // escalation's own beforeSend re-checks — the only two reads of
+    // db.jobs.get in this flow are the two assertJobAuthority calls.
+    const realGet = db.jobs.get.bind(db.jobs);
+    let calls = 0;
+    vi.spyOn(db.jobs, "get").mockImplementation(((id: string) =>
+      calls++ === 0
+        ? realGet(id)
+        : Promise.resolve({
+            ...job,
+            ownerGeneration: owner.ownerGeneration + 1,
+          })) as never);
+
+    server.queue({
+      kind: "answer",
+      answers: { category: LOW_CONFIDENCE.category },
+    });
+    const error = await analyzeBookmark(
+      options({ checks: ["categorize"], job: owner }),
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("illegal_transition");
+    // No second opinion, no decision row, no reservation left behind.
+    expect(llmServer.requests).toHaveLength(0);
+    expect(await db.decisions.count()).toBe(0);
   });
 });

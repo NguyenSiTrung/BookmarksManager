@@ -11,8 +11,10 @@ import {
 } from "vitest";
 import { db } from "../../src/db/database";
 import {
+  DECISION_CLAIM_TTL_MS,
   DecisionStoreError,
   POPUP_DECISION_LIMIT,
+  claimDecision,
   getDecision,
   isLegalTransition,
   listByStatus,
@@ -21,6 +23,7 @@ import {
   persistDecision,
   persistDecisionRationale,
   prunePopupDecisions,
+  releaseDecisionClaim,
   transitionStatus,
 } from "../../src/decisions/store";
 import type { DecisionRow, DecisionStoreErrorCode } from "../../src/decisions/store";
@@ -610,5 +613,123 @@ describe("prunePopupDecisions", () => {
 
     expect(ambient.length).toBeGreaterThan(0);
     expect(ambient).toEqual(ambient.map(() => "readwrite"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claims (J06)
+// ---------------------------------------------------------------------------
+
+/** Read a row WITH its additive sidecars — the table's type is the schema document. */
+const getRow = (id: string): Promise<DecisionRow | undefined> =>
+  db.decisions.get(id) as Promise<DecisionRow | undefined>;
+
+/** Write a `claim` sidecar directly — the update path cannot type sidecars. */
+async function seedClaim(
+  id: string,
+  claim: { token: string; at: string },
+): Promise<void> {
+  const row = (await db.decisions.get(id)) as DecisionRow | undefined;
+  if (row === undefined) throw new Error("no such decision");
+  await db.decisions.put({ ...row, claim } as DecisionRow);
+}
+
+describe("claimDecision", () => {
+  it("claims a transition-legal row and hands back its token", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+
+    const { row, token } = await claimDecision(d.id, "applied");
+
+    expect(token).toBeTruthy();
+    expect(row.claim?.token).toBe(token);
+    expect((await getRow(d.id))?.claim?.token).toBe(token);
+  });
+
+  it("refuses a second live claim, an illegal target, and an unknown id", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+    const done = await persistDecision(
+      decision({ id: UUID2, status: "applied" }),
+    );
+
+    await claimDecision(d.id, "applied");
+    await expectStoreError(() => claimDecision(d.id, "rejected"), "claimed");
+    // `applied` cannot reach applied/rejected again — status checked first.
+    await expectStoreError(
+      () => claimDecision(done.id, "rejected"),
+      "illegal_transition",
+    );
+    await expectStoreError(() => claimDecision("nope", "applied"), "not_found");
+  });
+
+  it("reclaims an expired claim", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+    await seedClaim(d.id, {
+      token: "crashed",
+      at: new Date(Date.now() - DECISION_CLAIM_TTL_MS - 1000).toISOString(),
+    });
+
+    const { token } = await claimDecision(d.id, "applied");
+    expect(token).not.toBe("crashed");
+    expect((await getRow(d.id))?.claim?.token).toBe(token);
+  });
+});
+
+describe("claim-gated transitionStatus", () => {
+  it("requires the claim token on a claimed row and clears the claim", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+    const { token } = await claimDecision(d.id, "applied");
+
+    // Tokenless and foreign-token transitions are refused, claim intact.
+    await expectStoreError(
+      () => transitionStatus(d.id, "applied", "user"),
+      "illegal_transition",
+    );
+    await expectStoreError(
+      () =>
+        transitionStatus(d.id, "applied", "user", { claimToken: "wrong" }),
+      "illegal_transition",
+    );
+    expect((await getRow(d.id))?.claim?.token).toBe(token);
+    expect((await getRow(d.id))?.status).toBe("pending");
+    expect(await db.audit.count()).toBe(0);
+
+    // The holder's transition lands and clears the claim.
+    const { row } = await transitionStatus(d.id, "applied", "user", {
+      claimToken: token,
+    });
+    expect(row.status).toBe("applied");
+    expect(row.claim).toBeUndefined();
+    expect((await getRow(d.id))?.claim).toBeUndefined();
+    expect(await db.audit.count()).toBe(1);
+  });
+
+  it("clears an abandoned claim on a tokenless transition", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+    await seedClaim(d.id, {
+      token: "crashed",
+      at: new Date(Date.now() - DECISION_CLAIM_TTL_MS - 1000).toISOString(),
+    });
+
+    const { row } = await transitionStatus(d.id, "rejected", "user");
+    expect(row.status).toBe("rejected");
+    expect(row.claim).toBeUndefined();
+  });
+});
+
+describe("releaseDecisionClaim", () => {
+  it("clears only the holder's claim", async () => {
+    const d = await persistDecision(decision({ status: "pending" }));
+    const { token } = await claimDecision(d.id, "applied");
+
+    // A non-holder's release is a no-op.
+    await releaseDecisionClaim(d.id, "not-the-token");
+    expect((await getRow(d.id))?.claim?.token).toBe(token);
+
+    await releaseDecisionClaim(d.id, token);
+    expect((await getRow(d.id))?.claim).toBeUndefined();
+
+    // Releasing again, or on an unknown id, is silently fine.
+    await releaseDecisionClaim(d.id, token);
+    await releaseDecisionClaim("missing", token);
   });
 });

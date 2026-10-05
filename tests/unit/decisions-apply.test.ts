@@ -18,6 +18,7 @@ import {
   revertDecision,
 } from "../../src/decisions/apply";
 import { persistDecision } from "../../src/decisions/store";
+import type { DecisionRow } from "../../src/decisions/store";
 import { getMeta, putMeta } from "../../src/db/meta";
 import { Decision } from "../../src/schemas/decision";
 import { get } from "../../src/sync/chrome-bookmarks";
@@ -582,5 +583,144 @@ describe("bulkApprove", () => {
     const result = await bulkApprove([d.id, d.id]);
     expect(result.applied).toHaveLength(1);
     expect((await bulkApprove([])).applied).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// J06 — per-decision mutual exclusion
+// ---------------------------------------------------------------------------
+
+describe("mutual exclusion (J06)", () => {
+  /** Read a row WITH its additive sidecars — the table's type is the schema doc. */
+  const getRow = (id: string): Promise<DecisionRow | undefined> =>
+    db.decisions.get(id) as Promise<DecisionRow | undefined>;
+
+  /** Write a `claim` sidecar directly — the update path cannot type sidecars. */
+  async function seedClaim(
+    id: string,
+    claim: { token: string; at: string },
+  ): Promise<void> {
+    const row = await getRow(id);
+    if (row === undefined) throw new Error("no such decision");
+    await db.decisions.put({ ...row, claim } as DecisionRow);
+  }
+
+  it("serializes a concurrent double approve — one applies, one refuses", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["once"] }),
+    );
+
+    const settled = await Promise.allSettled([
+      approveDecision(d.id),
+      approveDecision(d.id),
+    ]);
+
+    const applied = settled.filter((s) => s.status === "fulfilled");
+    const refused = settled.filter((s) => s.status === "rejected");
+    expect(applied).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    const loser = (refused[0] as PromiseRejectedResult).reason;
+    expect(loser).toBeInstanceOf(DecisionApplyError);
+    // The loser serialized behind the winner, re-read the row, and saw
+    // `applied` — or met a live store claim. Either refusal is honest.
+    expect(["illegal_transition", "claimed"]).toContain(
+      (loser as DecisionApplyError).code,
+    );
+
+    // Exactly one mutation, one status write, one audit row.
+    expect((await getMeta("bm-a"))?.tags).toEqual(["once"]);
+    expect((await db.decisions.get(d.id))?.status).toBe("applied");
+    const audit = await db.audit.toArray();
+    expect(audit).toHaveLength(1);
+    expect((await db.undo.toArray()).length).toBe(1);
+  });
+
+  it("serializes approve-vs-reject — exactly one side lands", async () => {
+    const d = await persistDecision(
+      decision({ kind: "set_category", bookmarkIds: ["bm-a"], category: "article" }),
+    );
+
+    const settled = await Promise.allSettled([
+      approveDecision(d.id),
+      rejectDecision(d.id),
+    ]);
+
+    const applied = settled.filter((s) => s.status === "fulfilled");
+    expect(applied).toHaveLength(1);
+    const loser = (settled.find((s) => s.status === "rejected") as PromiseRejectedResult).reason;
+    expect(loser).toBeInstanceOf(DecisionApplyError);
+    expect(["illegal_transition", "claimed"]).toContain(
+      (loser as DecisionApplyError).code,
+    );
+
+    const row = await getRow(d.id);
+    expect(["applied", "rejected"]).toContain(row?.status);
+    expect(await db.audit.count()).toBe(1);
+    // No claim residue on the decided row.
+    expect(row?.claim).toBeUndefined();
+  });
+
+  it("refuses with `claimed` when a live store claim owns the row", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    // Another context's in-flight op — a fresh claim nobody here holds.
+    await seedClaim(d.id, {
+      token: "foreign-token",
+      at: new Date().toISOString(),
+    });
+
+    await expectApplyError(() => approveDecision(d.id), "claimed");
+    await expectApplyError(() => rejectDecision(d.id), "claimed");
+    const row = await getRow(d.id);
+    expect(row?.status).toBe("pending");
+    // The foreign claim was never touched.
+    expect(row?.claim?.token).toBe("foreign-token");
+    expect((await getMeta("bm-a"))?.tags).toBeUndefined();
+    expect(await db.audit.count()).toBe(0);
+  });
+
+  it("reclaims an expired claim — a crashed context never wedges the row", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    await seedClaim(d.id, {
+      token: "abandoned",
+      at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+
+    const row = await approveDecision(d.id);
+    expect(row.status).toBe("applied");
+    expect(row.claim).toBeUndefined();
+    expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
+  });
+
+  it("releases its claim when the apply is refused stale", async () => {
+    // A send-time guard snapshotting the URL the decision was made from.
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+      {
+        guard: {
+          placements: {},
+          snapshots: { "bm-a": { url: "https://a.example/", title: "A" } },
+        },
+      },
+    );
+    // Edit the bookmark after the decision — the guard goes stale.
+    installBookmarksFake({
+      bookmarksBar: [
+        { id: "f-target", title: "Target" },
+        { id: "bm-a", title: "A", url: "https://edited.example/" },
+      ],
+    });
+
+    await expectApplyError(() => approveDecision(d.id), "stale");
+    const row = await getRow(d.id);
+    expect(row?.status).toBe("pending");
+    // The failed approve released its claim — the row is clean and a later
+    // caller (e.g. reject) is not wedged.
+    expect(row?.claim).toBeUndefined();
+    await rejectDecision(d.id);
+    expect((await getRow(d.id))?.status).toBe("rejected");
   });
 });

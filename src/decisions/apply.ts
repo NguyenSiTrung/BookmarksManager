@@ -15,9 +15,11 @@ import type { UndoFailureCode } from "../undo/restore";
 import { captureNodes, peekLatest, pushSnapshot } from "../undo/snapshot";
 import type { UndoMeta } from "../schemas/undo";
 import {
+  claimDecision,
   DecisionStoreError,
   getDecision,
   isLegalTransition,
+  releaseDecisionClaim,
   transitionStatus,
 } from "./store";
 import type { DecisionRow, DecisionStoreErrorCode } from "./store";
@@ -85,6 +87,13 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   `undoExpected`, which replays the row's recorded `undoSnapshotId` and
  *   reports `conflict` (mapped to `undo_conflict`) when that row is no longer
  *   the stack head — rather than blindly popping an unrelated snapshot.
+ * - **Per-decision mutual exclusion (J06).** Approve and reject serialize on
+ *   the decision id: an in-worker promise chain makes same-context calls run
+ *   one-at-a-time, and a conditional `claim` sidecar in the store makes
+ *   cross-context calls exclusive — the loser of a race sees `claimed` (a
+ *   live claim) or `illegal_transition` (the winner already committed). A
+ *   claim expires after `DECISION_CLAIM_TTL_MS`, is token-verified at the
+ *   transition, and is released on every failure path, so nothing wedges.
  * - **Bulk approve is per-row atomic.** Each id is approved in its own
  *   try/catch; one row's failure (e.g. stale) never affects the others, and
  *   the result reports the applied rows and the per-row failures.
@@ -384,15 +393,61 @@ async function transition(
   to: Parameters<typeof transitionStatus>[1],
   actor: AuditActor,
   undoSnapshotId?: number,
+  claimToken?: string,
 ): Promise<DecisionRow> {
   try {
     const extra =
-      undoSnapshotId === undefined ? undefined : { undoSnapshotId };
+      undoSnapshotId === undefined && claimToken === undefined
+        ? undefined
+        : {
+            ...(undoSnapshotId === undefined ? {} : { undoSnapshotId }),
+            ...(claimToken === undefined ? {} : { claimToken }),
+          };
     const { row } = await transitionStatus(id, to, actor, extra);
     return row;
   } catch (cause) {
     throw toApplyError(cause);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Mutual exclusion (J06)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-flight ops per decision id — the in-worker half of J06 mutual
+ * exclusion. A second approve/reject for the same id from THIS context
+ * queues behind the one already running and re-reads the row fresh when
+ * its turn comes, so it either proceeds legitimately or fails
+ * `illegal_transition` on the winner's committed status. Cross-context
+ * calls (side panel vs. options vs. background) serialize on the persisted
+ * claim instead — see {@link claimDecision}.
+ */
+const inflightByDecision = new Map<string, Promise<unknown>>();
+
+/**
+ * Run `run` after every earlier op for `id` in this context settles — win
+ * or lose — and chain this op's completion onto the same queue. Entries
+ * self-delete on settle, so the map never grows past live work.
+ */
+function serializeDecision<T>(
+  id: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const prior = inflightByDecision.get(id) ?? Promise.resolve();
+  const next = prior.then(run, run);
+  inflightByDecision.set(id, next);
+  // `then(clear, clear)` — not `.finally`, whose derived promise would carry
+  // the rejection unobserved — cleans the map without touching `next`.
+  void next.then(
+    () => {
+      if (inflightByDecision.get(id) === next) inflightByDecision.delete(id);
+    },
+    () => {
+      if (inflightByDecision.get(id) === next) inflightByDecision.delete(id);
+    },
+  );
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -421,29 +476,46 @@ export async function approveDecision(
   actor: AuditActor = "user",
   target: "applied" | "auto_applied" = "applied",
 ): Promise<DecisionRow> {
-  const row = await requireRow(id);
-  if (!isLegalTransition(row.status, target)) {
-    throw new DecisionApplyError(
-      "illegal_transition",
-      `Cannot approve decision "${id}" from "${row.status}".`,
-    );
-  }
-  await assertFresh(row);
-  const snapshotId = await applyAction(row);
-  try {
-    return await transition(id, target, actor, snapshotId);
-  } catch (cause) {
-    // The mutation succeeded but the row could not record it — undo the
-    // mutation so nothing is left applied-but-untracked.
-    const compensated =
-      snapshotId === undefined ? true : await compensate(snapshotId);
-    if (!compensated) {
-      throw new DecisionApplyError(
-        "state_unrecorded",
-        `Decision "${id}" was applied but its status could not be recorded, ` +
-          `and the change could not be compensated.`,
-      );
+  return serializeDecision(id, async () => {
+    // J06: the conditional claim is what makes the mutation below exclusive
+    // — a `claimed` refusal means another context already owns this row.
+    const { row, token } = await claim(id, target);
+    try {
+      await assertFresh(row);
+      const snapshotId = await applyAction(row);
+      try {
+        return await transition(id, target, actor, snapshotId, token);
+      } catch (cause) {
+        // The mutation succeeded but the row could not record it — undo the
+        // mutation so nothing is left applied-but-untracked.
+        const compensated =
+          snapshotId === undefined ? true : await compensate(snapshotId);
+        if (!compensated) {
+          throw new DecisionApplyError(
+            "state_unrecorded",
+            `Decision "${id}" was applied but its status could not be ` +
+              `recorded, and the change could not be compensated.`,
+          );
+        }
+        throw toApplyError(cause);
+      }
+    } catch (cause) {
+      // The transition clears the claim on success; every failure path must
+      // release it so a crashed/refused apply never wedges the row.
+      await releaseDecisionClaim(id, token).catch(() => {});
+      throw cause;
     }
+  });
+}
+
+/** Claim the row for `to`, mapping store errors onto the apply model. */
+async function claim(
+  id: string,
+  to: "applied" | "auto_applied" | "rejected",
+): Promise<{ row: DecisionRow; token: string }> {
+  try {
+    return await claimDecision(id, to);
+  } catch (cause) {
     throw toApplyError(cause);
   }
 }
@@ -457,14 +529,15 @@ export async function rejectDecision(
   id: string,
   actor: AuditActor = "user",
 ): Promise<DecisionRow> {
-  const row = await requireRow(id);
-  if (!isLegalTransition(row.status, "rejected")) {
-    throw new DecisionApplyError(
-      "illegal_transition",
-      `Cannot reject decision "${id}" from "${row.status}".`,
-    );
-  }
-  return transition(id, "rejected", actor);
+  return serializeDecision(id, async () => {
+    const { token } = await claim(id, "rejected");
+    try {
+      return await transition(id, "rejected", actor, undefined, token);
+    } catch (cause) {
+      await releaseDecisionClaim(id, token).catch(() => {});
+      throw cause;
+    }
+  });
 }
 
 /**

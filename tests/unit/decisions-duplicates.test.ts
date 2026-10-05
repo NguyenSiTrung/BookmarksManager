@@ -30,8 +30,9 @@ import type { MockJevServer } from "../mock-servers/jev";
  * `{bookmark, pairPartner}`, both minimized), the `same_content` level is
  * cross-checked and mapped to a confidence, the §10.2 `merge_duplicates`
  * policy decides review vs unsure (never auto-apply), one `merge_duplicates`
- * decision persists per pair with `keepId`, and one `usage` row is recorded
- * per egress. A blocklisted/sensitive pair side is skipped (no request).
+ * decision persists per REVIEW-BAND pair with `keepId` — a sub-floor pair
+ * (level 1–2) persists nothing (J07) — and one `usage` row is recorded per
+ * egress. A blocklisted/sensitive pair side is skipped (no request).
  */
 
 const DOCS_A = "https://docs.rs/async";
@@ -214,7 +215,7 @@ describe("scanNearDuplicates", () => {
     expect(await db.usage.count()).toBe(2);
   });
 
-  it("maps each level to a confidence and lands review vs unsure, persisting keepId", async () => {
+  it("maps each level to a confidence and persists only review-band pairs", async () => {
     // Pair 0 → level 4 (identical page) → 1.0 → review.
     server.queue({ kind: "answer", answerOverrides: { same_content: scoreAnswer(4) } });
     // Pair 1 → level 2 (same topic, different content) → 0.4 → unsure.
@@ -226,28 +227,46 @@ describe("scanNearDuplicates", () => {
     expect(result.results[0]?.level).toBe(4);
     expect(result.results[0]?.confidence).toBe(1);
     expect(result.results[0]?.outcome).toBe("review");
+    expect(result.results[0]?.decision).toBeDefined();
     expect(result.results[1]?.level).toBe(2);
     expect(result.results[1]?.confidence).toBeCloseTo(0.4);
     expect(result.results[1]?.outcome).toBe("unsure");
+    // J07: a sub-floor pair persists nothing — the model said
+    // "not a duplicate", so no approvable merge may sit in the queue.
+    expect(result.results[1]?.decision).toBeUndefined();
 
     const decisions = await db.decisions.toArray();
-    expect(decisions).toHaveLength(2);
-    for (const decision of decisions) {
-      expect(decision.kind).toBe("merge_duplicates");
-      expect(decision.bookmarkIds).toHaveLength(2);
-      // Never auto-applied — the user confirms a merge (§10.2).
-      expect(["pending", "unsure"]).toContain(decision.status);
-      expect(decision.status).not.toBe("auto_applied");
-      expect(decision.status).not.toBe("applied");
-      if (decision.kind !== "merge_duplicates") throw new Error("wrong kind");
-      // keepId is one of the two sides (the canonical `a`).
-      expect(decision.bookmarkIds).toContain(decision.keepId);
+    expect(decisions).toHaveLength(1);
+    const decision = decisions[0]!;
+    expect(decision.kind).toBe("merge_duplicates");
+    expect(decision.bookmarkIds).toHaveLength(2);
+    // Never auto-applied — the user confirms a merge (§10.2).
+    expect(decision.status).toBe("pending");
+    if (decision.kind !== "merge_duplicates") throw new Error("wrong kind");
+    // keepId is one of the two sides (the canonical `a`).
+    expect(decision.bookmarkIds).toContain(decision.keepId);
+    expect(decision.confidence).toBe(1);
+  });
+
+  it("persists nothing approvable for level-1/2 pairs (J07)", async () => {
+    // Both pairs land under the review floor: level 1 → 0, level 2 → 0.4.
+    server.queue({ kind: "answer", answerOverrides: { same_content: scoreAnswer(1) } });
+    server.queue({ kind: "answer", answerOverrides: { same_content: scoreAnswer(2) } });
+
+    const result = await scanNearDuplicates(options());
+
+    if (!result.sent) throw new Error("expected a sent result");
+    expect(result.results).toHaveLength(2);
+    for (const pair of result.results) {
+      expect(pair.outcome).toBe("unsure");
+      expect(pair.decision).toBeUndefined();
     }
-    // review → pending; unsure → unsure.
-    expect(decisions.map((d) => d.status).sort()).toEqual(["pending", "unsure"]);
-    expect(
-      decisions.find((d) => d.confidence === 1)?.status,
-    ).toBe("pending");
+    // Nothing at all is persisted — not even an `unsure` row the queue
+    // could approve (`unsure → applied` is a legal transition).
+    expect(await db.decisions.count()).toBe(0);
+    // Usage is still honest: both responses egressed, both rows recorded.
+    expect(result.usage).toHaveLength(2);
+    expect(await db.usage.count()).toBe(2);
   });
 
   it("skips a pair whose side is blocklisted, sending the rest", async () => {

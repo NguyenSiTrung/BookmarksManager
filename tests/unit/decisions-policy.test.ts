@@ -185,12 +185,42 @@ describe("never-auto-apply kinds", () => {
 });
 
 describe("confidence input validation", () => {
-  it("throws RangeError for confidence outside [0, 1]", () => {
-    for (const confidence of [-0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+  it("reports out-of-range or NaN confidence as unsure, never throwing (J07)", () => {
+    for (const confidence of [
+      -0.1,
+      1.1,
+      1.4,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      // Every kind, toggles on or off: an unusable confidence is the
+      // always-human band, never a throw, never auto-apply.
+      for (const kind of [
+        "add_tags",
+        "set_category",
+        "merge_duplicates",
+        "mark_dead",
+        "rename",
+        "create_folder",
+      ] as const) {
+        expect(
+          evaluatePolicy({ kind, confidence }),
+          `kind=${kind} confidence=${confidence}`,
+        ).toBe("unsure");
+      }
       expect(
-        () => evaluatePolicy({ kind: "add_tags", confidence }),
-        `confidence=${confidence}`,
-      ).toThrow(RangeError);
+        evaluatePolicy({ kind: "move", occasion: "on_save", confidence }),
+        `move/on_save confidence=${confidence}`,
+      ).toBe("unsure");
+      expect(
+        evaluatePolicy({
+          kind: "move",
+          occasion: "misfiled_scan",
+          confidence,
+        }),
+        `move/misfiled_scan confidence=${confidence}`,
+      ).toBe("unsure");
     }
   });
 });
