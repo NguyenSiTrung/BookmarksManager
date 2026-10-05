@@ -189,7 +189,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: oversize or deeply nested success body is rejected before parse;
     non-2xx bodies are cancelled; `.max()` bounds enforced.
   - Fix: reuse the capped reader pattern from `readLlmErrorBody`.
-- [ ] Task 5: A07 — job start guards
+- [x] Task 5: A07 — job start guards (`50bde6b`)
   <!-- files: src/messages/decisions.ts, src/messages/restructure.ts, src/jobs/queue.ts, src/jobs/estimate.ts, src/entrypoints/background.ts, README.md -->
   <!-- depends: task2 -->
   - Tests: second `JOB_START`/`RESTRUCTURE_START` while one is non-terminal →

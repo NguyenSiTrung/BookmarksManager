@@ -592,3 +592,36 @@ claim that any audit finding has been fixed or reproduced.
   (Jev usage bounds mirrored to LLM).
 - Full gate green at commit: lint, typecheck, 2982 unit/169 files, build,
   manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## 2026-10-05 — A07 completed (`50bde6b`)
+
+- Invariant guards belong at the SOLE write path, inside the write's own
+  transaction: `enqueueJob` checks+inserts in one `db.transaction("rw")`,
+  so racing starts can't both pass and no caller can bypass the rule.
+  Export the same query (`findLiveJobByKind`) for non-authoritative
+  preflights that skip expensive work (a proposal send) — document that
+  the transaction still owns the check.
+- Raw `db.jobs` rows lack the `PersistedJob` overlay fields
+  (`ownerGeneration`, `controlRevision`): any new read path must
+  normalize via `parseJob(row)` exactly like `getJob`, or the table's
+  wider row type fails assignment.
+- `JobQueueError` relays differ per protocol: decisions' `mapError`
+  passes any code-shaped `.code` verbatim; restructure's only admits
+  codes its reply enum declares — a new wire code needs the enum member
+  AND a safeParse fallback to `internal_error` for undeclared codes.
+- Pre-run estimates must mirror the row's own accounting or the panel
+  shows two different `totalBatches` meanings: bookmark batches + pair
+  batches chunked at the same size. Keep the token fold bookmark-only
+  but name/derive the batch counter like `progress.totalBatches`.
+- Passing the persisted plan into the estimate (`options.plan`) kills
+  double-planning AND the asymmetric throw surface: a planner failure
+  then degrades to "no plan, no estimate" — exactly the pre-guard
+  fallback semantics — instead of refusing a previously-allowed start.
+- A07 guard fallout in fixtures: any test that models multiple live
+  same-kind rows (recovery, superseded-owner loops) must seed the
+  extras via `db.jobs.put` or terminate between iterations — the
+  enqueue path will (correctly) refuse.
+- Independent review (child `7ac8d994`): PASS/PASS after one fix round
+  (plan reuse, RESTRUCTURE preflight, totalBatches drift).
+- Full gate green at commit: lint, typecheck, 2995 unit/169 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
