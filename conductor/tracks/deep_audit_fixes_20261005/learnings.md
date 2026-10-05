@@ -1348,3 +1348,26 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - **Table-level mocks leak**: spying db.tags.get swallows EVERY caller
   (createTag's own existence check, patchMeta validation). Scope to
   mockResolvedValueOnce so only the call under test misses.
+
+## Phase 6 Task 6 — U07 (408ec52)
+
+- **Delta-over-snapshot for edit dialogs**: diff the staged state against
+  the OPENING snapshot, then apply deltas through live-row read-modify-write
+  helpers (bulkAddTag/bulkRemoveTag are each one Dexie RMW tx). A whole-list
+  rewrite from a stale snapshot clobbers tags applied externally while the
+  dialog was open; per-op deltas compose with concurrent writers.
+- **patchMeta is a merge**: sending only changed fields means untouched
+  fields keep whatever value is live at write time — the missing-key IS
+  the "leave it alone" signal, `null` is the explicit clear.
+- **Consume-on-resolve handoff**: stash keys (session storage handoffs)
+  should be cleared only after the referenced entity resolves. Keep the
+  key on failure and retry on the next trigger (a tree-change effect
+  re-runs naturally); compare-then-clear guards against a newer stash
+  landing between the read and the remove.
+- **Invisible-tree test observability**: a created node under a collapsed
+  parent never renders a treeitem, and title-only changes may not re-derive
+  the model. Spy on the data layer (fake.getTree) and waitFor the call
+  count to advance past the load-time read to prove the refresh landed.
+- **Verify before writing**: the duplicates banner clause needed zero code —
+  the correct implementation landed under D07+D09 and is pinned by an
+  existing test. Check spec items against current code before implementing.

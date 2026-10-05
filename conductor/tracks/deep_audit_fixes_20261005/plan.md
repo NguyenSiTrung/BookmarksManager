@@ -395,7 +395,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     bookmark + meta; failure shows an error; suggestions use an indexed query;
     `openSidePanel` failure is surfaced.
   - Fix: one `SAVE` message handled in the worker; surface failures.
-- [ ] Task 6: U07 — edit, pending-edit and duplicates banner
+- [x] Task 6: U07 — edit, pending-edit and duplicates banner (408ec52)
   <!-- files: src/entrypoints/sidepanel/EditDialog.tsx, src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/DuplicatesView.tsx -->
   <!-- depends: task1 -->
   - Tests: tag added by an approval while Edit is open survives Save; pending
