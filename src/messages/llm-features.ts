@@ -7,7 +7,11 @@ import {
 } from "../schemas/feature-consent";
 import { db } from "../db/database";
 import { BlocklistReadError } from "../decisions/blocklist";
-import { budgetChoiceOf, monthlyBudgetSnapshot } from "../llm/budget";
+import {
+  budgetChoiceOf,
+  monthlyBudgetSnapshot,
+  utcMonthOf,
+} from "../llm/budget";
 import type { MonthlyBudgetSnapshot } from "../llm/budget";
 import { ExplainError, explainDecision } from "../llm/explain";
 import {
@@ -340,15 +344,25 @@ async function featureBudget(): Promise<LlmFeatureMessageResult> {
   if (record === null) {
     return failure("no_provider", "No LLM provider is configured.");
   }
+  // A08: the snapshot only consults the current month — read exactly that
+  // slice through the `[providerId+month]` compound indexes.
+  const nowDate = new Date();
+  const month = utcMonthOf(nowDate);
   const [usage, reservations] = await Promise.all([
-    db.llmUsage.toArray(),
-    db.llmReservations.toArray(),
+    db.llmUsage
+      .where("[providerId+month]")
+      .equals([record.providerId, month])
+      .toArray(),
+    db.llmReservations
+      .where("[providerId+month]")
+      .equals([record.providerId, month])
+      .toArray(),
   ]);
   const snapshot: MonthlyBudgetSnapshot = monthlyBudgetSnapshot({
     providerId: record.providerId,
     usage,
     reservations,
-    now: new Date(),
+    now: nowDate,
     ...(record.monthlyBudgetUsd !== undefined
       ? { monthlyBudgetUsd: record.monthlyBudgetUsd }
       : {}),

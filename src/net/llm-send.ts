@@ -11,6 +11,7 @@ import {
   reconcileBudget,
   releaseBudget,
   reserveBudget,
+  utcMonthOf,
   type ActualUsage,
   type BudgetReservation,
   type RequestKind,
@@ -25,6 +26,11 @@ import {
 import { z } from "../schemas/z";
 import { readCredential } from "../security/credentials";
 import { db } from "../db/database";
+import {
+  compactLlmUsageMonthsLocked,
+  monthOfIso,
+  pruneExpiredReservationsLocked,
+} from "../db/retention";
 import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { isSensitiveUrl } from "../decisions/minimize";
 
@@ -321,6 +327,7 @@ export async function settleLlmUsage(
     "rw",
     db.llmReservations,
     db.llmUsage,
+    db.llmUsageMonths,
     async () => {
       const reservation = await db.llmReservations.get(reservationId);
       if (reservation === undefined || reservation.status !== "active") {
@@ -335,11 +342,17 @@ export async function settleLlmUsage(
       await db.llmReservations.put(settled);
       const { provenance, ...row } = usageRow;
       void provenance; // derivable, never persisted (schemas/usage.ts)
+      // A08: `month` is materialized for the `[providerId+month]` index,
+      // then expired months fold into `llmUsageMonths` rollups in the same
+      // transaction — the raw table stays bounded by the current window.
+      const usageMonth = monthOfIso(row.recordedAt);
       await db.llmUsage.add({
         ...row,
+        month: usageMonth,
         feature,
         configuredModel: reservation.model,
       });
+      await compactLlmUsageMonthsLocked(utcMonthOf(now));
     },
   );
 }
@@ -547,19 +560,30 @@ async function sendLlmRequest(
   const unknownCostConfirmed =
     input.kind === "manual" && options?.unknownCostConfirmed === true;
   const reservationId = crypto.randomUUID();
+  const nowDate = now();
+  const currentMonth = utcMonthOf(nowDate);
   const reservationResult = await db.transaction(
     "rw",
     db.llmUsage,
     db.llmReservations,
     async () => {
+      // A08: the cap only ever consults the current month — read exactly
+      // `[providerId, month]` through the compound indexes instead of
+      // scanning the provider's whole history.
       const [usageRows, reservationRows] = await Promise.all([
-        db.llmUsage.where("providerId").equals(record.providerId).toArray(),
+        db.llmUsage
+          .where("[providerId+month]")
+          .equals([record.providerId, currentMonth])
+          .toArray(),
         db.llmReservations
-          .where("providerId")
-          .equals(record.providerId)
+          .where("[providerId+month]")
+          .equals([record.providerId, currentMonth])
           .toArray(),
       ]);
-      const nowDate = now();
+      // Terminal reservation rows outside the cap window are swept on
+      // write — same transaction, `month`-indexed range, `active` rows
+      // untouched (the startup sweep owns those).
+      await pruneExpiredReservationsLocked(currentMonth);
       const pricing = resolveProviderPricing(record.provider);
       const result = reserveBudget({
         reservationId,

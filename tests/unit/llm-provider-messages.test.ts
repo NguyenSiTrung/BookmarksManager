@@ -23,6 +23,7 @@ import {
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import { createLlmForTest as createLlmClient, reservedInputBound, scopeRequest } from "../fakes/llm";
 import { pingRequest } from "../../src/llm/prompt-contracts";
+import { utcMonthOf } from "../../src/llm/budget";
 import type { BudgetReservation } from "../../src/llm/budget";
 import { settleLlmUsage } from "../../src/net/llm-send";
 import { deleteAllExtensionData } from "../../src/security/delete-all";
@@ -905,10 +906,21 @@ describe("LLM_REVOKE", () => {
     // Unpriced paid exposure must remain unknown, not become a free request.
     await settleLlmUsage("unknown", "llm_explain", {});
     const rows = await db.llmUsage.toArray();
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
-    expect(rows[1]?.costUsd).toBeUndefined();
-    expect(rows[1]?.estimatedCostUsd).toBeUndefined();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[0]?.costUsd).toBeUndefined();
+    expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+    // A08: the pre-existing September row folded into its monthly rollup
+    // inside the same settle transaction — preserved, not lost.
+    expect(await db.llmUsageMonths.get(`${PROVIDER_ID}|2026-09`)).toMatchObject({
+      providerId: PROVIDER_ID,
+      month: "2026-09",
+      requests: 1,
+      inputTokens: 7,
+      outputTokens: 3,
+      reportedCostUsd: 0.1,
+      unknownCostRequests: 0,
+    });
   });
 
   it("serializes concurrent settlement with revoke and makes the late client settlement inert", async () => {
@@ -1117,6 +1129,9 @@ describe("LLM_BUDGET_SNAPSHOT", () => {
       outputTokens: 5,
       costUsd: 0.001,
       recordedAt: new Date().toISOString(),
+      // A08: only `month`-materialized rows enter the `[providerId+month]`
+      // index the snapshot reads through.
+      month: utcMonthOf(new Date()),
     });
     const result = await call({ type: "LLM_BUDGET_SNAPSHOT" });
     expect(result).toMatchObject({

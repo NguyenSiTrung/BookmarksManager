@@ -2,48 +2,70 @@ import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, type SentLogEntry } from "../../db/database";
 import { clearSentLog, SENT_LOG_RETENTION_CAP } from "../../net/sent-log";
-import type { UsageRecord } from "../../schemas/usage";
+import type { UsageMonthRollup, UsageRecord } from "../../schemas/usage";
 import { cn } from "../../ui/lib/cn";
 import { Alert, Chip } from "./components";
 import { PulseIcon, TrashIcon } from "../../ui/components/icons";
 import { cardClass, ghostDangerButtonClass, sectionHeadingClass } from "./ui";
 
 /**
+ * Sent-log rows rendered before the reader asks for more (A08: the section
+ * loads lazily — no `db.sentLog` read at all while collapsed — and pages by
+ * this count inside the 500-row retention cap).
+ */
+const SENT_LOG_PAGE_SIZE = 50;
+
+/**
  * Options-page "Data sent" surface (spec FR10) plus the FR8 cost totals.
  *
- * - **Usage stats.** `db.usage` rows aggregate live into stat tiles: request
- *   count, input/output tokens, and reported cost — summed only over rows
- *   that reported one. An absent `costUsd` means "not reported", never $0.00;
- *   unpriced requests surface as a count.
+ * - **Usage stats.** `db.usage` holds only the CURRENT month's raw rows —
+ *   expired months fold into `db.usageMonths` rollups at write time (A08).
+ *   The tiles sum both, so totals stay all-time-honest while the read stays
+ *   bounded. `costUsd` absent means "not reported", never $0.00; unpriced
+ *   requests surface as a count (`unpricedRequests` on a rollup carries the
+ *   same meaning).
  * - **Sent log.** `db.sentLog` is metadata-only by construction
  *   (`src/net/sent-log.ts` rebuilds each row from exactly
  *   `sentAt`/`destination`/`feature`/`fieldNames` plus a closed `outcome`), so each row renders those
  *   metadata fields and nothing else — no request bodies, headers, keys, or
  *   bookmark content exist on the rows to leak. Ordered newest-first by
  *   `sentAt`; the retention cap is disclosed with the same
- *   `SENT_LOG_RETENTION_CAP` the writer enforces. Clear calls
+ *   `SENT_LOG_RETENTION_CAP` the writer enforces. The table is only read
+ *   once the reader expands the section, and then one
+ *   {@link SENT_LOG_PAGE_SIZE}-row page at a time. Clear calls
  *   `clearSentLog()`.
  *
  * Both lists degrade to empty when IndexedDB is unavailable; a missing or
  * failing read must not throw the render (`useLiveQuery` rethrows observable
- * errors, so the queriers catch to `[]`).
+ * errors, so the queriers catch to `[]`/`0`).
  */
 export function SentLog() {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [limit, setLimit] = useState(SENT_LOG_PAGE_SIZE);
   const inFlight = useRef(false);
 
   const entries =
     useLiveQuery(
       () =>
-        db.sentLog
-          .orderBy("sentAt")
-          .reverse()
-          .toArray()
-          .catch((): SentLogEntry[] => []),
-      [],
+        expanded
+          ? db.sentLog
+              .orderBy("sentAt")
+              .reverse()
+              .limit(limit)
+              .toArray()
+              .catch((): SentLogEntry[] => [])
+          : Promise.resolve([] as SentLogEntry[]),
+      [expanded, limit],
     ) ?? [];
+
+  const totalEntries =
+    useLiveQuery(
+      () => (expanded ? db.sentLog.count().catch(() => 0) : 0),
+      [expanded],
+    ) ?? 0;
 
   const usage =
     useLiveQuery(
@@ -51,15 +73,31 @@ export function SentLog() {
       [],
     ) ?? [];
 
-  const inputTokens = usage.reduce((sum, row) => sum + row.inputTokens, 0);
-  const outputTokens = usage.reduce((sum, row) => sum + row.outputTokens, 0);
+  const usageMonths =
+    useLiveQuery(
+      () => db.usageMonths.toArray().catch((): UsageMonthRollup[] => []),
+      [],
+    ) ?? [];
+
+  const requestCount =
+    usage.length + usageMonths.reduce((sum, roll) => sum + roll.requests, 0);
+  const inputTokens =
+    usage.reduce((sum, row) => sum + row.inputTokens, 0) +
+    usageMonths.reduce((sum, roll) => sum + roll.inputTokens, 0);
+  const outputTokens =
+    usage.reduce((sum, row) => sum + row.outputTokens, 0) +
+    usageMonths.reduce((sum, roll) => sum + roll.outputTokens, 0);
   // `costUsd` absent means "not reported" — never folded in as $0.
-  const costReported = usage.filter((row) => row.costUsd !== undefined);
-  const costTotal = costReported.reduce(
-    (sum, row) => sum + (row.costUsd ?? 0),
-    0,
-  );
-  const unpriced = usage.length - costReported.length;
+  const costReported =
+    usage.filter((row) => row.costUsd !== undefined).length +
+    usageMonths.reduce(
+      (sum, roll) => sum + (roll.requests - roll.unpricedRequests),
+      0,
+    );
+  const costTotal =
+    usage.reduce((sum, row) => sum + (row.costUsd ?? 0), 0) +
+    usageMonths.reduce((sum, roll) => sum + (roll.costUsd ?? 0), 0);
+  const unpriced = requestCount - costReported;
 
   const onClear = () => {
     if (inFlight.current) {
@@ -100,7 +138,7 @@ export function SentLog() {
         <h3 id="usage-totals-heading" className="text-sm font-medium">
           Usage and cost
         </h3>
-        {usage.length === 0 ? (
+        {requestCount === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">
             No provider requests recorded yet.
           </p>
@@ -112,7 +150,7 @@ export function SentLog() {
             <div className="rounded-lg border border-border bg-muted/40 p-3">
               <dt className="text-xs text-muted-foreground">Requests</dt>
               <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
-                {usage.length}
+                {requestCount}
               </dd>
             </div>
             <div className="rounded-lg border border-border bg-muted/40 p-3">
@@ -130,10 +168,10 @@ export function SentLog() {
             <div className="rounded-lg border border-border bg-muted/40 p-3">
               <dt className="text-xs text-muted-foreground">Reported cost</dt>
               <dd className="mt-1 text-xl font-semibold tracking-tight tabular-nums">
-                {costReported.length > 0 ? `$${costTotal.toFixed(4)}` : "—"}
+                {costReported > 0 ? `$${costTotal.toFixed(4)}` : "—"}
               </dd>
               <dd className="mt-0.5 text-xs text-muted-foreground">
-                {costReported.length} of {usage.length} priced
+                {costReported} of {requestCount} priced
                 {unpriced > 0 && ` · ${unpriced} unpriced`}
               </dd>
             </div>
@@ -141,7 +179,7 @@ export function SentLog() {
         )}
       </section>
 
-      {/* Sent log — structured rows. */}
+      {/* Sent log — structured rows, read lazily on expand. */}
       <section aria-labelledby="sent-log-list-heading" className="mt-6">
         <h3 id="sent-log-list-heading" className="text-sm font-medium">
           Sent log
@@ -152,7 +190,15 @@ export function SentLog() {
           means the outcome was not recorded, including older entries. The log
           keeps the newest {SENT_LOG_RETENTION_CAP} entries when logging succeeds.
         </p>
-        {entries.length === 0 ? (
+        {!expanded ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="mt-3 text-sm font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Show sent log
+          </button>
+        ) : entries.length === 0 ? (
           <div className="mt-3 flex items-center gap-3 rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
             <PulseIcon className="size-5 shrink-0 text-muted-foreground/60" />
             Nothing has been sent yet.
@@ -184,15 +230,26 @@ export function SentLog() {
                 </li>
               ))}
             </ul>
-            <button
-              type="button"
-              onClick={onClear}
-              disabled={busy}
-              className={`mt-4 ${ghostDangerButtonClass}`}
-            >
-              <TrashIcon className="size-3.5" />
-              Clear sent log
-            </button>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {entries.length < totalEntries && (
+                <button
+                  type="button"
+                  onClick={() => setLimit(totalEntries)}
+                  className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Show all {totalEntries} entries
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={busy}
+                className={ghostDangerButtonClass}
+              >
+                <TrashIcon className="size-3.5" />
+                Clear sent log
+              </button>
+            </div>
           </>
         )}
       </section>

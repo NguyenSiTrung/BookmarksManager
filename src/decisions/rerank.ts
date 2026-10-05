@@ -1,4 +1,4 @@
-import { db } from "../db/database";
+import { appendUsage } from "../db/retention";
 import { UsageRecord } from "../schemas/usage";
 import type { SentBookmark } from "../schemas/decision-state";
 import { JevClientError, createJevClient } from "../jev/client";
@@ -192,7 +192,7 @@ async function recordUsage(result: JevRunResult): Promise<UsageRecord> {
     recordedAt: new Date().toISOString(),
   });
   try {
-    const id = await db.usage.add(record);
+    const id = await appendUsage(record);
     return { ...record, id };
   } catch {
     throw new RerankError("persist_failed", "Failed to record request usage.");

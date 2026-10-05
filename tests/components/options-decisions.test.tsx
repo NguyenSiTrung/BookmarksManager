@@ -535,6 +535,10 @@ describe("data sent log", () => {
 
   it("lists only metadata, shows the empty state, and clears", async () => {
     render(<SentLog />);
+    // A08: the sent log reads lazily — expand it before expecting rows.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show sent log" }),
+    );
     await screen.findByText(/nothing has been sent/i);
     // A Dexie write re-fires the live query — wrap it so the state update
     // lands inside act.

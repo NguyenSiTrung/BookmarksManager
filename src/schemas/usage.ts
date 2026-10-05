@@ -26,6 +26,12 @@ export const UsageRecord = z.strictObject({
   outputTokens: z.number().int().min(0),
   costUsd: z.number().min(0).optional(),
   recordedAt: z.iso.datetime(),
+  /**
+   * UTC `YYYY-MM` derived from `recordedAt` at write time (A08). Indexed so
+   * monthly compaction folds only expired months; absent only on rows
+   * persisted before the v5 upgrade — the upgrade backfills it.
+   */
+  month: z.string().regex(/^\d{4}-\d{2}$|NaN-NaN/).optional(),
 });
 export type UsageRecord = z.infer<typeof UsageRecord>;
 
@@ -54,5 +60,52 @@ export const LlmUsageRecord = z.strictObject({
   estimatedCostUsd: z.number().min(0).optional(),
   notBilled: z.boolean().optional(),
   recordedAt: z.iso.datetime(),
+  /** UTC `YYYY-MM` derived from `recordedAt` at write time (A08). */
+  month: z.string().regex(/^\d{4}-\d{2}$|NaN-NaN/).optional(),
 });
 export type LlmUsageRecord = z.infer<typeof LlmUsageRecord>;
+
+/**
+ * One `usageMonths` row (A08): the folded per-(job, month) aggregate of
+ * `usage` rows from an EXPIRED month. `key` is `${jobId}|${month}` or
+ * `|${month}` for job-less rows (Ask rerank, save-suggest). Rows are
+ * written only by the compaction sweep, inside the same transaction as the
+ * usage insert that triggered it, so a month is compacted at most once.
+ */
+export const UsageMonthRollup = z.strictObject({
+  key: z.string().min(1),
+  /** Absent on the job-less rollup rows. */
+  jobId: z.uuid().optional(),
+  month: z.string().min(1),
+  requests: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  /** Sum of the rows' reported costs; absent = none reported one. */
+  costUsd: z.number().min(0).optional(),
+  /** Rows that reported no cost — never rendered as $0. */
+  unpricedRequests: z.number().int().min(0),
+});
+export type UsageMonthRollup = z.infer<typeof UsageMonthRollup>;
+
+/**
+ * One `llmUsageMonths` row (A08): the folded per-(provider, month)
+ * aggregate of `llmUsage` rows from an EXPIRED month, `key` =
+ * `${providerId}|${month}`. Field names mirror
+ * `MonthlyBudgetSnapshot` so all-time totals recompose without raw rows;
+ * `notBilledRequests` stays distinct (a raw snapshot read reproduces as
+ * `unknownCostRequests + notBilledRequests`) so the provably-unsent
+ * A05 semantic survives the fold.
+ */
+export const LlmUsageMonthRollup = z.strictObject({
+  key: z.string().min(1),
+  providerId: z.string().min(1),
+  month: z.string().min(1),
+  requests: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  reportedCostUsd: z.number().min(0),
+  estimatedCostUsd: z.number().min(0),
+  unknownCostRequests: z.number().int().min(0),
+  notBilledRequests: z.number().int().min(0),
+});
+export type LlmUsageMonthRollup = z.infer<typeof LlmUsageMonthRollup>;

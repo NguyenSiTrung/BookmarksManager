@@ -1,4 +1,4 @@
-import { db } from "../db/database";
+import { appendUsage } from "../db/retention";
 import { Category } from "../schemas/bookmark";
 import { Decision } from "../schemas/decision";
 import type { Decision as DecisionDocument } from "../schemas/decision";
@@ -757,7 +757,7 @@ async function recordUsage(result: JevRunResult, jobId?: string): Promise<UsageR
     ...(jobId === undefined ? {} : { jobId }),
   });
   try {
-    const id = await db.usage.add(record);
+    const id = await appendUsage(record);
     return { ...record, id };
   } catch {
     throw new DecisionPipelineError(

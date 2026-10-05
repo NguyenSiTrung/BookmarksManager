@@ -9,6 +9,7 @@ import { db } from "../db/database";
 import {
   budgetChoiceOf,
   monthlyBudgetSnapshot,
+  utcMonthOf,
   type MonthlyBudgetSnapshot,
 } from "../llm/budget";
 import { createLlmClient, LlmHttpError } from "../llm/client";
@@ -743,15 +744,25 @@ async function budgetSnapshot(message: {
       "No LLM provider is configured for that id.",
     );
   }
+  // A08: the snapshot only consults the current month — read exactly that
+  // slice through the `[providerId+month]` compound indexes.
+  const nowDate = new Date();
+  const month = utcMonthOf(nowDate);
   const [usage, reservations] = await Promise.all([
-    db.llmUsage.toArray(),
-    db.llmReservations.toArray(),
+    db.llmUsage
+      .where("[providerId+month]")
+      .equals([record.providerId, month])
+      .toArray(),
+    db.llmReservations
+      .where("[providerId+month]")
+      .equals([record.providerId, month])
+      .toArray(),
   ]);
   const snapshot: MonthlyBudgetSnapshot = monthlyBudgetSnapshot({
     providerId: record.providerId,
     usage,
     reservations,
-    now: new Date(),
+    now: nowDate,
     ...(record.monthlyBudgetUsd !== undefined
       ? { monthlyBudgetUsd: record.monthlyBudgetUsd }
       : {}),

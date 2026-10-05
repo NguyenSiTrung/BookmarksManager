@@ -6,7 +6,12 @@ import type { Job } from "../schemas/job";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
 import type { UndoSnapshot } from "../schemas/undo";
-import type { LlmUsageRecord, UsageRecord } from "../schemas/usage";
+import type {
+  LlmUsageMonthRollup,
+  LlmUsageRecord,
+  UsageMonthRollup,
+  UsageRecord,
+} from "../schemas/usage";
 
 /**
  * Settings row. `key` is a stable lookup string — ProviderSettings rows use
@@ -70,7 +75,9 @@ export class BookmarksManagerDB extends Dexie {
   declare jobs: Table<Job, string>;
   declare audit: Table<AuditEvent, number>;
   declare usage: Table<UsageRecord, number>;
+  declare usageMonths: Table<UsageMonthRollup, string>;
   declare llmUsage: Table<LlmUsageRecord, number>;
+  declare llmUsageMonths: Table<LlmUsageMonthRollup, string>;
   declare llmReservations: Table<BudgetReservation, string>;
 
   constructor() {
@@ -119,6 +126,39 @@ export class BookmarksManagerDB extends Dexie {
       // sweep its pending reservations on revoke.
       llmReservations: "id,providerId,status",
     });
+    this.version(5)
+      .stores({
+        // A08: `month` (UTC YYYY-MM derived from `recordedAt`) is
+        // materialized and indexed so monthly compaction folds expired
+        // months without a full-table scan; `jobId`+`month` index the
+        // folded per-(job, month) rollup rows.
+        usage: "++id,jobId,recordedAt,month",
+        usageMonths: "key,jobId,month",
+        // `[providerId+month]` lets the budget transaction read exactly the
+        // current month for one provider — no all-history scan.
+        llmUsage: "++id,providerId,recordedAt,month,[providerId+month]",
+        llmUsageMonths: "key,providerId,month",
+        // `month` single-keyed so prune-on-write can range over expired
+        // months; `[providerId+month]` narrows the budget read.
+        llmReservations: "id,providerId,status,month,[providerId+month]",
+      })
+      .upgrade(async (tx) => {
+        // Backfill `month` on rows persisted before the index existed, so
+        // they stay readable and compactible; NaN input yields "NaN-NaN",
+        // which sorts but never matches a real month.
+        const monthOf = (recordedAt: unknown): string => {
+          const date = new Date(typeof recordedAt === "string" ? recordedAt : 0);
+          const year = date.getUTCFullYear();
+          const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+          return `${year}-${month}`;
+        };
+        await tx.table("usage").toCollection().modify((row) => {
+          row.month = monthOf(row.recordedAt);
+        });
+        await tx.table("llmUsage").toCollection().modify((row) => {
+          row.month = monthOf(row.recordedAt);
+        });
+      });
   }
 }
 

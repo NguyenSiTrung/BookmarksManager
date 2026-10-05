@@ -5,6 +5,7 @@ import {
 } from "../decisions/near-duplicate-plan";
 import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
 import { db } from "../db/database";
+import { pruneTerminalJobsLocked } from "../db/retention";
 import { Job, JobUsage, MAX_JOB_BOOKMARK_IDS, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
 import type {
   JobKind,
@@ -312,6 +313,8 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
       );
     }
     await db.jobs.add(job);
+    // A08: cap terminal job rows — oldest-first, in the same transaction.
+    await pruneTerminalJobsLocked();
     return job;
   });
 }
@@ -469,6 +472,12 @@ export async function setJobStatus(
       patch.error === undefined ? base : { ...base, error: patch.error },
     );
     await db.jobs.put(updated);
+    // A08: a terminal transition is also a retention write — keep the
+    // terminal set capped inside the same transaction rather than waiting
+    // for the next enqueue to sweep it.
+    if (to === "completed" || to === "failed" || to === "canceled") {
+      await pruneTerminalJobsLocked();
+    }
     return updated;
   });
 }
@@ -606,12 +615,20 @@ export async function mergeRestructureAssignments(
  * ("no cost data" is `undefined`, never `$0.00`).
  */
 export async function jobUsageRollup(id: string): Promise<JobUsage> {
-  const rows = await db.usage.where("jobId").equals(id).toArray();
+  // A08: the job's current-month detail lives in `usage`; any expired
+  // month has already folded into its (jobId, month) `usageMonths` rows —
+  // both carry the `jobId` index, so the job's totals never degrade.
+  const [rows, rollups] = await Promise.all([
+    db.usage.where("jobId").equals(id).toArray(),
+    db.usageMonths.where("jobId").equals(id).toArray(),
+  ]);
   let inputTokens = 0;
   let outputTokens = 0;
   let costUsd = 0;
   let sawCost = false;
+  let requests = 0;
   for (const row of rows) {
+    requests += 1;
     inputTokens += row.inputTokens;
     outputTokens += row.outputTokens;
     if (row.costUsd !== undefined) {
@@ -619,10 +636,19 @@ export async function jobUsageRollup(id: string): Promise<JobUsage> {
       costUsd += row.costUsd;
     }
   }
+  for (const roll of rollups) {
+    requests += roll.requests;
+    inputTokens += roll.inputTokens;
+    outputTokens += roll.outputTokens;
+    if (roll.costUsd !== undefined) {
+      sawCost = true;
+      costUsd += roll.costUsd;
+    }
+  }
   return JobUsage.parse({
     inputTokens,
     outputTokens,
-    requests: rows.length,
+    requests,
     ...(sawCost ? { costUsd } : {}),
   });
 }

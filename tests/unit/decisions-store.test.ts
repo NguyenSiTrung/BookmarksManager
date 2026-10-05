@@ -412,6 +412,7 @@ function dexiePromise<T>(value: T): Promise<T> & {
 interface DecisionsTableSeam {
   toArray(): Promise<unknown[]>;
   bulkDelete(keys: readonly string[]): Promise<void>;
+  where(index: string): unknown;
 }
 
 function decisionsSeam(): DecisionsTableSeam {
@@ -585,22 +586,25 @@ describe("prunePopupDecisions", () => {
 
     // Dexie exposes the ambient transaction on the Dexie constructor while
     // one is open: a sweep that dropped `db.transaction(...)` would observe
-    // `undefined` here and could not roll anything back.
+    // `undefined` here and could not roll anything back. A08: the sweep reads
+    // through the `status` index, so the spy wraps `where` — it delegates to
+    // the real index read while recording the transaction mode it ran under.
     const ambient: (string | undefined)[] = [];
-    const toArray = vi
-      .spyOn(decisionsSeam(), "toArray")
-      .mockImplementation(() => {
+    const realWhere = db.decisions.where.bind(db.decisions);
+    const where = vi
+      .spyOn(decisionsSeam(), "where")
+      .mockImplementation((index: string) => {
         const current = (
           db.constructor as { currentTransaction?: { mode?: string } }
         ).currentTransaction;
         ambient.push(current?.mode);
-        return dexiePromise([]);
+        return realWhere(index);
       });
 
-    expect(await prunePopupDecisions()).toBe(0);
-    toArray.mockRestore();
+    expect(await prunePopupDecisions()).toBe(5);
+    where.mockRestore();
 
-    expect(ambient).toHaveLength(1);
-    expect(ambient[0]).toBe("readwrite");
+    expect(ambient.length).toBeGreaterThan(0);
+    expect(ambient).toEqual(ambient.map(() => "readwrite"));
   });
 });

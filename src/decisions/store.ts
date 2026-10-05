@@ -1,5 +1,9 @@
 import { z } from "../schemas/z";
 import { db } from "../db/database";
+import {
+  pruneAuditLocked,
+  pruneTerminalDecisionsLocked,
+} from "../db/retention";
 import { AuditEvent } from "../schemas/audit";
 import type { AuditActor, DecisionStatus } from "../schemas/audit";
 import { Decision } from "../schemas/decision";
@@ -290,11 +294,19 @@ function isSyntheticPopupRow(row: DecisionRow): boolean {
  */
 export async function prunePopupDecisions(): Promise<number> {
   return db.transaction("rw", db.decisions, async () => {
-    const rows = (await db.decisions.toArray()) as DecisionRow[];
+    // A08: only `pending`/`unsure` rows can ever be prunable, so read them
+    // through the `status` index instead of materializing the whole table.
+    const rows = (await db.decisions
+      .where("status")
+      .anyOf("pending", "unsure")
+      .toArray()) as DecisionRow[];
     const eligible = rows.filter(
       (row) =>
         isSyntheticPopupRow(row) && PRUNABLE_POPUP_STATUSES.has(row.status),
     );
+    // Non-popup terminal rows (rejected/reverted) share this sweep's
+    // cadence — cap them inside the same transaction.
+    await pruneTerminalDecisionsLocked();
     if (eligible.length <= POPUP_DECISION_LIMIT) return 0;
     eligible.sort((a, b) => {
       const byCreatedAt = a.createdAt.localeCompare(b.createdAt);
@@ -382,6 +394,8 @@ export async function transitionStatus(
       changedAt: new Date().toISOString(),
     });
     await db.audit.add(audit);
+    // A08: keep the decision-audit log bounded — oldest-first, in-transaction.
+    await pruneAuditLocked();
     return { row: updated, audit };
   });
 }

@@ -1,4 +1,4 @@
-import { db } from "../db/database";
+import { appendUsage } from "../db/retention";
 import { createJevClient } from "../jev/client";
 import type { JevClient, JevTransport } from "../jev/client";
 import { minimizeBookmark } from "../decisions/minimize";
@@ -104,7 +104,7 @@ async function recordUsage(
     ...(usage.cost === undefined ? {} : { costUsd: usage.cost }),
     recordedAt: new Date().toISOString(),
   });
-  const id = await db.usage.add(parsed);
+  const id = await appendUsage(parsed);
   return { ...parsed, id };
 }
 

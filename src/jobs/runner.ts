@@ -11,6 +11,7 @@ import type {
 } from "../decisions/pipeline";
 import { extractDomain } from "../search/index";
 import { db } from "../db/database";
+import { appendUsage } from "../db/retention";
 import type { Job, NearDuplicateJobPlan } from "../schemas/job";
 import type { UsageRecord } from "../schemas/usage";
 import {
@@ -141,7 +142,7 @@ async function attachUsageToJob(
   if (usage === null) return;
   const { id, ...rest } = usage;
   if (id === undefined) {
-    await db.usage.add({ ...rest, jobId });
+    await appendUsage({ ...rest, jobId });
     return;
   }
   await db.usage.update(id, { jobId });

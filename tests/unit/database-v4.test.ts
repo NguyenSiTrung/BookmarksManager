@@ -96,11 +96,11 @@ describe("BookmarksManagerDB v3 → v4 migration", () => {
     db.close();
   });
 
-  it("opens at version 4 with all thirteen tables declared", () => {
-    expect(db.verno).toBe(4);
-    // Dexie stores version × 10 natively; 40 proves the class upgraded the
-    // existing v3 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(40);
+  it("opens at the current version with every table declared", () => {
+    // The class now carries the A08 v5 upgrade on top of v4: the v3→v4
+    // assertions below verify the v4 tables arrived intact through the
+    // chain (Dexie applies every intermediate version).
+    expect(db.verno).toBe(5);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",
@@ -110,29 +110,38 @@ describe("BookmarksManagerDB v3 → v4 migration", () => {
       "keyMaterials",
       "llmReservations",
       "llmUsage",
+      "llmUsageMonths",
       "metadata",
       "sentLog",
       "tags",
       "undo",
       "usage",
+      "usageMonths",
     ]);
   });
 
-  it("declares llmUsage as ++id,providerId,recordedAt", () => {
+  it("declares llmUsage with its v5 indexes", () => {
     expect(db.llmUsage.schema.primKey.keyPath).toBe("id");
     expect(db.llmUsage.schema.primKey.auto).toBe(true);
-    expect(db.llmUsage.schema.indexes.map((i) => i.name).sort()).toEqual([
-      "providerId",
-      "recordedAt",
-    ]);
+    // v5 added `month` and `[providerId+month]` alongside the v4 indexes.
+    const indexNames = db.llmUsage.schema.indexes.map((i) => i.name);
+    expect(indexNames).toEqual(
+      expect.arrayContaining(["providerId", "recordedAt", "month"]),
+    );
+    expect(
+      db.llmUsage.schema.indexes.some((index) => index.compound),
+    ).toBe(true);
   });
 
-  it("declares llmReservations as id,providerId,status", () => {
+  it("declares llmReservations with its v5 indexes", () => {
     expect(db.llmReservations.schema.primKey.keyPath).toBe("id");
-    expect(db.llmReservations.schema.indexes.map((i) => i.name).sort()).toEqual([
-      "providerId",
-      "status",
-    ]);
+    const indexNames = db.llmReservations.schema.indexes.map((i) => i.name);
+    expect(indexNames).toEqual(
+      expect.arrayContaining(["providerId", "status", "month"]),
+    );
+    expect(
+      db.llmReservations.schema.indexes.some((index) => index.compound),
+    ).toBe(true);
   });
 
   it("preserves every pre-v4 row through the upgrade", async () => {
@@ -145,7 +154,10 @@ describe("BookmarksManagerDB v3 → v4 migration", () => {
     expect(await db.keyMaterials.get("provider:typesafe")).toBeDefined();
     expect(await db.bookmarkMeta.get(seededBookmarkMeta.id)).toBeDefined();
     expect(await db.tags.get(seededTag.nameKey)).toBeDefined();
-    expect(await db.usage.get(seededUsageId)).toBeDefined();
+    // The v5 upgrade backfilled `month` on the seeded usage row.
+    expect(await db.usage.get(seededUsageId)).toMatchObject({
+      month: "2026-09",
+    });
     expect(await db.jobs.count()).toBe(1);
     expect(await db.audit.count()).toBe(1);
     expect(await db.undo.count()).toBe(1);
