@@ -1397,3 +1397,34 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - **git wrapper requires -m**: `-F` is rejected; avoid apostrophes in
   `-m` bodies (they terminate the single-quoted arg early and silently
   truncate the message — verify %B after committing).
+
+### U09 — Options correctness (c9c2520)
+
+- **`.partial()` on a defaulted strictObject re-injects defaults**: for a
+  patch message, `AutoApplyToggles.partial()` still applies each field's
+  `.default(false)` during parse, so `{add_tags: true}` comes back with
+  `set_category: false` — the "patch" clobbers a concurrent toggle with a
+  default it never sent. Write explicit `.optional()` fields in the patch
+  schema.
+- **Patch merges need a serialized write chain, not just RMW**: two
+  options contexts can each read-then-write through the worker; a
+  module-level `chain.then(op, op)` in background.ts makes every patch
+  atomic. Cross-context IndexedDB transactions do not give you that.
+- **Permissions granted after a preset switch leak**: `permissions.request`
+  resolves regardless of which preset panel is live — a grant that lands
+  stale must be explicitly `permissions.remove`d before dropping the
+  reply. But a grant whose ENABLE already persisted must stay: the
+  enabled provider needs it.
+- **`useLiveQuery` count() watches whole tables**: `count()` marks the
+  table range, so any put/add/delete re-fires it — same-key replaces DO
+  propagate. Refresh budget/status panels through the worker protocol on
+  the revision bump rather than reading tables directly.
+- **Live status reloads must not clobber in-progress edits**: a refresh
+  that repopulates a form field while the user types loses their edit —
+  guard with a dirty ref cleared on save.
+- **`Number()` accepts `0x10`, `1e3`, `Infinity`, and padded whitespace**:
+  validate money fields with `/^\d+(?:\.\d+)?$/` before parsing.
+- **Two mounted pages share element ids**: `htmlFor`/`id` label
+  associations are document-global, so per-container by-label queries
+  fail when the same component mounts twice — scope by a unique
+  attribute (e.g. placeholder) instead.

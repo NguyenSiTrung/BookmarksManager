@@ -407,7 +407,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: focus is trapped and restored; dark theme tokens used; Close while
     running cancels or is labeled "continue in background".
   - Fix: rebuild on the Radix Dialog primitive; cancellation plumbing.
-- [ ] Task 8: U09 — Options correctness
+- [x] Task 8: U09 — Options correctness (c9c2520)
   <!-- files: src/entrypoints/options/DecisionSettings.tsx, src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/LlmBudget.tsx, src/messages/decisions.ts -->
   <!-- depends: task2 -->
   - Tests: two stale tabs adding different blocklist entries both persist;
