@@ -161,6 +161,37 @@ function getOrCreateKey(materialId: string): Promise<CryptoKey> {
 }
 
 /**
+ * Serialized envelope operations per CryptoKey material id (H02). An
+ * envelope in `chrome.storage.local` and its CryptoKey in `keyMaterials`
+ * are two stores: a save that resolved its key before a concurrent delete
+ * ran would write an envelope under a since-deleted CryptoKey —
+ * undecryptable forever. Queuing every envelope op for one material id
+ * behind the previous makes each caller observe a before-or-after state,
+ * never a torn one. Failed ops do not poison the queue, and the map entry
+ * is removed once the chain drains.
+ */
+const envelopeChains = new Map<string, Promise<void>>();
+
+function serializeEnvelopeOp<T>(
+  materialId: string,
+  op: () => Promise<T>,
+): Promise<T> {
+  const previous = envelopeChains.get(materialId) ?? Promise.resolve();
+  const next = previous.then(op, op);
+  const stored = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  envelopeChains.set(materialId, stored);
+  void stored.finally(() => {
+    if (envelopeChains.get(materialId) === stored) {
+      envelopeChains.delete(materialId);
+    }
+  });
+  return next;
+}
+
+/**
  * Encrypt and store a credential under explicit storage ids. Generates a
  * fresh non-extractable AES-GCM CryptoKey on first use and writes a
  * unique-IV ciphertext envelope to `chrome.storage.local`.
@@ -170,19 +201,21 @@ export async function saveEnvelope(
   materialId: string,
   plaintext: string,
 ): Promise<void> {
-  const key = await getOrCreateKey(materialId);
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    encoder.encode(plaintext),
-  );
-  const envelope: CredentialEnvelope = {
-    v: 1,
-    iv: bytesToBase64(iv),
-    ct: bytesToBase64(new Uint8Array(ciphertext)),
-  };
-  await chrome.storage.local.set({ [storageKey]: envelope });
+  return serializeEnvelopeOp(materialId, async () => {
+    const key = await getOrCreateKey(materialId);
+    const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      encoder.encode(plaintext),
+    );
+    const envelope: CredentialEnvelope = {
+      v: 1,
+      iv: bytesToBase64(iv),
+      ct: bytesToBase64(new Uint8Array(ciphertext)),
+    };
+    await chrome.storage.local.set({ [storageKey]: envelope });
+  });
 }
 
 /**
@@ -193,6 +226,13 @@ export async function saveEnvelope(
  * ciphertext contents.
  */
 export async function readEnvelope(
+  storageKey: string,
+  materialId: string,
+): Promise<string | null> {
+  return serializeEnvelopeOp(materialId, () => readEnvelopeNow(storageKey, materialId));
+}
+
+async function readEnvelopeNow(
   storageKey: string,
   materialId: string,
 ): Promise<string | null> {
@@ -254,8 +294,10 @@ export async function deleteEnvelope(
   storageKey: string,
   materialId: string,
 ): Promise<void> {
-  await chrome.storage.local.remove(storageKey);
-  await db.keyMaterials.delete(materialId);
+  return serializeEnvelopeOp(materialId, async () => {
+    await chrome.storage.local.remove(storageKey);
+    await db.keyMaterials.delete(materialId);
+  });
 }
 
 /**

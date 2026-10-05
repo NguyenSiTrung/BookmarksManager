@@ -1,6 +1,7 @@
 import {
   grantConsentAtOrigin,
   hasConsentAtOrigin,
+  revokeConsentAtOrigin,
   revokeConsentsAtOrigin,
 } from "../consent/records";
 import { db } from "../db/database";
@@ -16,12 +17,14 @@ import { LlmBaseUrl } from "../schemas/llm";
 import {
   CONSENT_SCOPE,
   JevProviderId,
+  ProviderApiKey,
   ProviderSettings,
 } from "../schemas/provider";
 import { z } from "../schemas/z";
 import {
   deleteProviderKey,
   ProviderKeyError,
+  readProviderKey,
   saveProviderKey,
 } from "../security/keys";
 
@@ -62,7 +65,9 @@ export const ProviderMessage = z.discriminatedUnion("type", [
     type: z.literal("ENABLE_PROVIDER"),
     preset: JevProviderId,
     model: z.string().min(1),
-    key: z.string().min(1),
+    // Boundary-trimmed and ASCII-checked (H02) — a key with embedded
+    // whitespace or a newline is rejected, not silently stored.
+    key: ProviderApiKey,
     // The custom provider's canonical API base URL — ignored for presets,
     // required (and re-validated as ProviderSettings) when preset is
     // "custom".
@@ -290,19 +295,54 @@ async function readStatus(providerId: JevProviderId): Promise<ProviderStatus> {
 }
 
 /**
+ * The provider state a failed enable must restore (H01): the settings row,
+ * the credential plaintext, and whether this flow's consent scope already
+ * held a grant at the resolved origin — all captured BEFORE the first
+ * write. A credential that cannot be read (missing or undecryptable) snaps
+ * as `null` and the restore drops whatever the attempt left behind.
+ */
+interface EnableSnapshot {
+  readonly settingsRow: { key: string; value: unknown } | undefined;
+  readonly keyPlaintext: string | null;
+  readonly consented: boolean;
+}
+
+async function snapshotEnable(
+  providerId: string,
+  origin: string,
+): Promise<EnableSnapshot> {
+  const [settingsRow, keyPlaintext, consented] = await Promise.all([
+    db.metadata.get(providerId).catch(() => undefined),
+    readProviderKey(providerId).catch(() => null),
+    hasConsentAtOrigin(CONSENT_SCOPE, origin).catch(() => false),
+  ]);
+  return { settingsRow, keyPlaintext, consented };
+}
+
+/**
  * Undo a partial enable so a provider can never appear enabled with missing
- * consent: drop every consent scope at the resolved origin, the encrypted
- * key material, and the settings row. Every step is a safe no-op when its
- * record was never written.
+ * consent (H01). Rather than deleting unconditionally, each written piece
+ * is restored to its pre-attempt state: the settings row goes back (or is
+ * dropped when none existed), the credential is re-saved (or dropped when
+ * none existed), and the consent row is deleted only when this attempt
+ * created it — a prior grant at the origin, and every other consent scope
+ * the origin holds, survive the failed enable.
  */
 async function unwindEnable(
   providerId: string,
   origin: string,
+  prior: EnableSnapshot,
 ): Promise<void> {
   await Promise.allSettled([
-    revokeConsentsAtOrigin(origin),
-    deleteProviderKey(providerId),
-    db.metadata.delete(providerId),
+    prior.settingsRow === undefined
+      ? db.metadata.delete(providerId)
+      : db.metadata.put(prior.settingsRow),
+    prior.keyPlaintext === null
+      ? deleteProviderKey(providerId)
+      : saveProviderKey(providerId, prior.keyPlaintext),
+    prior.consented
+      ? Promise.resolve()
+      : revokeConsentAtOrigin(CONSENT_SCOPE, origin),
   ]);
 }
 
@@ -352,6 +392,14 @@ async function enableProvider(message: {
     );
   }
 
+  // Snapshot the provider's current state before the first write: a
+  // re-enable of a working provider must restore it on failure, not strip
+  // it (H01).
+  const prior = await snapshotEnable(
+    destination.providerId,
+    destination.origin,
+  );
+
   try {
     await db.metadata.put({ key: destination.providerId, value: settings });
     await saveProviderKey(destination.providerId, message.key);
@@ -362,7 +410,7 @@ async function enableProvider(message: {
     // what the user had consented to there.
     await grantConsentAtOrigin(CONSENT_SCOPE, destination.origin);
   } catch {
-    await unwindEnable(destination.providerId, destination.origin);
+    await unwindEnable(destination.providerId, destination.origin, prior);
     return failure(
       "enable_failed",
       "Setup could not finish; nothing was saved and the provider was not enabled.",

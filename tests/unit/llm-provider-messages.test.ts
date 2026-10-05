@@ -440,6 +440,97 @@ describe("LLM_CONFIGURE", () => {
     );
     expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
   });
+
+  it("trims padded keys and rejects keys containing spaces or newlines", async () => {
+    const padded = await call({
+      type: "LLM_CONFIGURE",
+      settings: PRESET_SETTINGS,
+      key: "  sk-pad-key \t",
+    });
+    expect(padded).toMatchObject({ ok: true });
+    expect(await readCredential(PROVIDER_ID)).toBe("sk-pad-key");
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.keySuffix).toBe("-key");
+
+    for (const bad of ["sk\nkey", "sk key", "\tsk\tkey"]) {
+      await expectFailure(
+        {
+          type: "LLM_CONFIGURE",
+          settings: PRESET_SETTINGS,
+          key: bad,
+        },
+        "malformed_message",
+      );
+    }
+    // The rejected messages wrote nothing: the first configure's single
+    // credential row is still the only envelope in storage.
+    expect(
+      Object.keys(storageStore).filter((k) => k.startsWith("credential:")),
+    ).toHaveLength(1);
+    expect(await db.consents.count()).toBe(1);
+  });
+
+  it("a failed re-configure restores the previous record, credential, consent and active pointer", async () => {
+    const first = await call({
+      type: "LLM_CONFIGURE",
+      settings: PRESET_SETTINGS,
+      key: "sk-first-key",
+      monthlyBudgetUsd: 5,
+    });
+    expect(first).toMatchObject({ ok: true });
+
+    const putSpy = vi
+      .spyOn(db.consents, "put")
+      .mockRejectedValueOnce(new Error("indexeddb unavailable"));
+    await expectFailure(
+      {
+        type: "LLM_CONFIGURE",
+        settings: { ...PRESET_SETTINGS, model: "gpt-4o" },
+        key: "sk-second-key",
+      },
+      "configure_failed",
+    );
+    putSpy.mockRestore();
+
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.provider.model).toBe(MODEL);
+    expect(record?.monthlyBudgetUsd).toBe(5);
+    // The attempt's overwrite of the credential was rolled back.
+    expect(await readCredential(PROVIDER_ID)).toBe("sk-first-key");
+    expect(await hasConsentAtOrigin("llm_test", ORIGIN)).toBe(true);
+    expect((await readActiveLlmProvider())?.providerId).toBe(PROVIDER_ID);
+  });
+
+  it("a settings-only re-configure keeps the ceiling and pricing override", async () => {
+    await call({
+      type: "LLM_CONFIGURE",
+      settings: PRESET_SETTINGS,
+      key: "sk-first-key",
+      monthlyBudgetUsd: 5,
+    });
+    // The pricing override lives behind LLM_BUDGET_SET — a configure that
+    // does not mention pricing must not silently drop it (H01).
+    await call({
+      type: "LLM_BUDGET_SET",
+      providerId: PROVIDER_ID,
+      budget: { kind: "capped", usd: 5 },
+      pricing: { inputPerMillion: 9, outputPerMillion: 9 },
+    });
+
+    const second = await call({
+      type: "LLM_CONFIGURE",
+      settings: { ...PRESET_SETTINGS, model: "gpt-4o" },
+      key: "sk-second-key",
+    });
+    expect(second).toMatchObject({ ok: true });
+    const record = await readLlmProvider(PROVIDER_ID);
+    expect(record?.provider.model).toBe("gpt-4o");
+    expect(record?.monthlyBudgetUsd).toBe(5);
+    expect(record?.provider.pricing).toEqual({
+      inputPerMillion: 9,
+      outputPerMillion: 9,
+    });
+  });
 });
 
 describe("LLM_BUDGET_SET", () => {

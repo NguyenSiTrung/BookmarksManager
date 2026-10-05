@@ -82,6 +82,22 @@ const CustomProviderSettings = z.strictObject({
   keySuffix: z.string().min(1).max(8),
 });
 
+/**
+ * A raw provider API key as it may cross the message boundary (H02). Outer
+ * whitespace is trimmed before anything stores or displays it, then the key
+ * must be printable non-space ASCII — embedded spaces, newlines, and
+ * control characters are rejected rather than silently stored, so a key
+ * that cannot round-trip is caught here instead of at the provider.
+ */
+export const ProviderApiKey = z
+  .string()
+  .trim()
+  .min(1)
+  .regex(
+    /^[\x21-\x7e]+$/,
+    "API key must contain only printable characters with no spaces",
+  );
+
 export const ProviderSettings = z.discriminatedUnion("preset", [
   PresetProviderSettings,
   CustomProviderSettings,

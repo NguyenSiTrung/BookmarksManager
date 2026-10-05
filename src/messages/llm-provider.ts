@@ -32,10 +32,12 @@ import {
   LlmAuthMode,
   ModelPricing,
 } from "../schemas/llm";
+import { ProviderApiKey } from "../schemas/provider";
 import { z } from "../schemas/z";
 import {
   CredentialError,
   deleteCredential,
+  readCredential,
   saveCredential,
 } from "../security/credentials";
 import { LlmGateError } from "../net/llm-send";
@@ -71,7 +73,9 @@ export const LlmProviderMessage = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("LLM_CONFIGURE"),
     settings: LlmProviderSettings,
-    key: z.string().min(1).optional(),
+    // Boundary-trimmed and ASCII-checked (H02) — a key with embedded
+    // whitespace or a newline is rejected, not silently stored.
+    key: ProviderApiKey.optional(),
     monthlyBudgetUsd: z.number().nonnegative().optional(),
     monthlyBudgetUnlimited: z.literal(true).optional(),
   }),
@@ -434,20 +438,70 @@ function applyPricingOverride(
       : { kind: "preset", preset: provider.preset, model: provider.model };
 }
 
-/** Undo a partial configure: drop only the rows this flow just wrote. */
+/**
+ * The provider state a failed configure must restore (H01): the raw record
+ * and active-pointer rows (restored verbatim so even a malformed prior row
+ * survives byte-for-byte), the prior record re-validated for carry-forward
+ * merges, the credential plaintext, and whether this flow's `llm_test`
+ * scope already held a grant at the resolved origin. A credential that
+ * cannot be read snaps as `null` and the restore drops whatever the
+ * attempt left behind.
+ */
+interface ConfigureSnapshot {
+  readonly recordRow: { key: string; value: unknown } | undefined;
+  readonly record: LlmProviderRecord | null;
+  readonly activeRow: { key: string; value: unknown } | undefined;
+  readonly credentialPlaintext: string | null;
+  readonly consented: boolean;
+}
+
+async function snapshotConfigure(
+  providerId: string,
+  origin: string,
+): Promise<ConfigureSnapshot> {
+  const [recordRow, activeRow, credentialPlaintext, consented] =
+    await Promise.all([
+      db.metadata.get(`llmProvider:${providerId}`).catch(() => undefined),
+      db.metadata.get("llmActiveProvider").catch(() => undefined),
+      readCredential(providerId).catch(() => null),
+      hasConsentAtOrigin("llm_test", origin).catch(() => false),
+    ]);
+  const parsed = LlmProviderRecord.safeParse(recordRow?.value);
+  return {
+    recordRow,
+    record: parsed.success ? parsed.data : null,
+    activeRow,
+    credentialPlaintext,
+    consented,
+  };
+}
+
+/**
+ * Undo a partial configure (H01): each written piece returns to its
+ * pre-attempt state rather than being deleted unconditionally — the record
+ * and active pointer go back verbatim (or are dropped when absent), the
+ * credential is re-saved (or dropped when absent), and the `llm_test`
+ * consent row is deleted only when this attempt created it. A prior grant
+ * and every other consent scope at the origin survive a failed configure.
+ */
 async function unwindConfigure(
   providerId: string,
   origin: string,
+  prior: ConfigureSnapshot,
 ): Promise<void> {
   await Promise.allSettled([
-    db.metadata.delete(`llmProvider:${providerId}`),
-    db.metadata.get("llmActiveProvider").then(async (row) => {
-      if (row?.value === providerId) {
-        await db.metadata.delete("llmActiveProvider");
-      }
-    }),
-    deleteCredential(providerId),
-    revokeConsentAtOrigin("llm_test", origin),
+    prior.recordRow === undefined
+      ? db.metadata.delete(`llmProvider:${providerId}`)
+      : db.metadata.put(prior.recordRow),
+    prior.activeRow === undefined
+      ? db.metadata.delete("llmActiveProvider")
+      : db.metadata.put(prior.activeRow),
+    prior.credentialPlaintext === null
+      ? deleteCredential(providerId)
+      : saveCredential(providerId, prior.credentialPlaintext),
+    prior.consented
+      ? Promise.resolve()
+      : revokeConsentAtOrigin("llm_test", origin),
   ]);
 }
 
@@ -489,16 +543,41 @@ async function configureProvider(message: {
     );
   }
 
+  // Snapshot the provider's current state before the first write (H01):
+  // a re-configure of a working provider restores it on failure, and the
+  // separately-managed ceiling and pricing override carry forward when the
+  // message omits them — they change only through LLM_BUDGET_SET, so a
+  // settings-only configure must not silently drop them.
+  const snapshot = await snapshotConfigure(
+    destination.providerId,
+    destination.origin,
+  );
+  const prior = snapshot.record;
+  const messageHasBudget =
+    message.monthlyBudgetUsd !== undefined ||
+    message.monthlyBudgetUnlimited === true;
+  const monthlyBudgetUsd = messageHasBudget
+    ? message.monthlyBudgetUsd
+    : prior?.monthlyBudgetUsd;
+  const monthlyBudgetUnlimited = messageHasBudget
+    ? message.monthlyBudgetUnlimited
+    : prior?.monthlyBudgetUnlimited;
+  const providerSettings =
+    message.settings.pricing !== undefined ||
+    prior?.provider.pricing === undefined
+      ? message.settings
+      : { ...message.settings, pricing: prior.provider.pricing };
+
   const record = LlmProviderRecord.parse({
     providerId: destination.providerId,
-    provider: message.settings,
+    provider: providerSettings,
     ...(message.key !== undefined
       ? { keySuffix: keyDisplaySuffix(message.key) }
       : {}),
-    ...(message.monthlyBudgetUsd !== undefined
-      ? { monthlyBudgetUsd: message.monthlyBudgetUsd }
+    ...(monthlyBudgetUsd !== undefined
+      ? { monthlyBudgetUsd: monthlyBudgetUsd }
       : {}),
-    ...(message.monthlyBudgetUnlimited === true
+    ...(monthlyBudgetUnlimited === true
       ? { monthlyBudgetUnlimited: true as const }
       : {}),
     configuredAt: new Date().toISOString(),
@@ -519,7 +598,11 @@ async function configureProvider(message: {
     // piece landed.
     await grantConsentAtOrigin("llm_test", destination.origin);
   } catch {
-    await unwindConfigure(record.providerId, destination.origin);
+    await unwindConfigure(
+      record.providerId,
+      destination.origin,
+      snapshot,
+    );
     return failure(
       "configure_failed",
       "Setup could not finish; nothing was saved and the provider was not enabled.",

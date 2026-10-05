@@ -282,3 +282,89 @@ describe("saveCredential / readCredential", () => {
     }
   });
 });
+
+/**
+ * Reach the in-memory `chrome.storage.local` stub so tests can gate one op
+ * mid-flight. The stub object is the same instance the module under test
+ * uses, so replacing a method here intercepts its calls.
+ */
+interface MutableLocalStub {
+  set(items: Record<string, unknown>): Promise<void>;
+  remove(keys: string | string[]): Promise<void>;
+}
+
+function chromeLocal(): MutableLocalStub {
+  return (
+    globalThis as { chrome: { storage: { local: MutableLocalStub } } }
+  ).chrome.storage.local;
+}
+
+describe("per-material serialization (H02)", () => {
+  it("queues a delete behind an in-flight save — no torn state", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const local = chromeLocal();
+    const originalSet = local.set;
+    const originalRemove = local.remove;
+    const order: string[] = [];
+    let setGated = true;
+    local.set = async (items) => {
+      order.push("set");
+      if (setGated) {
+        setGated = false;
+        await gate;
+      }
+      await originalSet(items);
+    };
+    local.remove = async (keys) => {
+      order.push("remove");
+      await originalRemove(keys);
+    };
+
+    const saving = saveCredential("preset:openai", "first-secret");
+    const deleting = deleteCredential("preset:openai");
+    // Let both callers reach their awaited boundaries — the delete must be
+    // queued behind the save's whole op, not interleaved into it.
+    await new Promise((r) => setTimeout(r, 25));
+    expect(order).toEqual(["set"]);
+    release();
+    await Promise.all([saving, deleting]);
+    expect(order).toEqual(["set", "remove"]);
+    expect(await readCredential("preset:openai")).toBeNull();
+  });
+
+  it("queues a save behind an in-flight delete so the envelope never outlives its CryptoKey", async () => {
+    await saveCredential("preset:openai", "first-secret");
+    const writesBefore = chromeStub.writes.length;
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const local = chromeLocal();
+    const originalRemove = local.remove;
+    let removeGated = true;
+    local.remove = async (keys) => {
+      if (removeGated) {
+        removeGated = false;
+        await gate;
+      }
+      await originalRemove(keys);
+    };
+
+    // The delete starts and hangs mid-op. An unserialized save would
+    // resolve the still-present CryptoKey, write its envelope, then have
+    // the delete destroy that key — an undecryptable envelope. Queued, it
+    // runs after the whole delete and mints a fresh key instead.
+    const deleting = deleteCredential("preset:openai");
+    const saving = saveCredential("preset:openai", "second-secret");
+    await new Promise((r) => setTimeout(r, 25));
+    expect(chromeStub.writes.length).toBe(writesBefore);
+    release();
+    await Promise.all([deleting, saving]);
+
+    expect(await readCredential("preset:openai")).toBe("second-secret");
+  });
+});

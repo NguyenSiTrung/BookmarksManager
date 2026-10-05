@@ -25,14 +25,28 @@ import {
  * WebCrypto material; `ProviderKeyError` and the rest of the module stay real.
  * Consent records and metadata use the real Dexie tables on fake-indexeddb.
  */
+/**
+ * Stateful plaintext store behind the key-store mock: reads see exactly
+ * what saves wrote and nothing when nothing was saved, so enable/revoke
+ * flows exercise the real write/read/delete contract (including the H01
+ * snapshot-then-restore path) instead of a fixed fixture value.
+ */
+const keyStore = vi.hoisted(() => new Map<string, string>());
+
 vi.mock("../../src/security/keys", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../src/security/keys")>();
   return {
     ...actual,
-    saveProviderKey: vi.fn(async () => undefined),
-    readProviderKey: vi.fn(async () => "test-provider-key-material"),
-    deleteProviderKey: vi.fn(async () => undefined),
+    saveProviderKey: vi.fn(async (providerId: string, plaintext: string) => {
+      keyStore.set(providerId, plaintext);
+    }),
+    readProviderKey: vi.fn(
+      async (providerId: string) => keyStore.get(providerId) ?? null,
+    ),
+    deleteProviderKey: vi.fn(async (providerId: string) => {
+      keyStore.delete(providerId);
+    }),
   };
 });
 
@@ -66,6 +80,7 @@ beforeEach(async () => {
   saveKey.mockClear();
   readKey.mockClear();
   deleteKey.mockClear();
+  keyStore.clear();
   await db.delete();
   await db.open();
 });
@@ -274,6 +289,93 @@ describe("ENABLE_PROVIDER", () => {
     expect(await storedSettings("typesafe")).toBeUndefined();
     expect(await hasTestConsent("typesafe")).toBe(false);
     expect(deleteKey).toHaveBeenCalledWith("typesafe");
+  });
+
+  it("trims whitespace-padded keys and rejects keys containing spaces or newlines", async () => {
+    const padded = await handleProviderMessage(
+      enableMessage({ key: "  sk-live-9abc \t" }),
+      optionsSender,
+    );
+    expect(padded).toMatchObject({ ok: true, status: { enabled: true } });
+    expect(saveKey).toHaveBeenCalledWith("typesafe", "sk-live-9abc");
+    const status = await handleProviderMessage(
+      { type: "PROVIDER_STATUS", preset: "typesafe" },
+      optionsSender,
+    );
+    expect(status).toMatchObject({ ok: true, status: { keySuffix: "9abc" } });
+
+    keyStore.clear();
+    for (const bad of ["sk\nkey", "sk key", "\tsk	key"]) {
+      const rejected = await handleProviderMessage(
+        enableMessage({ key: bad }),
+        optionsSender,
+      );
+      expect(rejected, bad).toMatchObject({
+        ok: false,
+        code: "malformed_message",
+      });
+    }
+    // The rejects wrote nothing: only the successful enable's rows exist.
+    expect(await db.metadata.count()).toBe(1);
+    expect(await db.consents.count()).toBe(1);
+  });
+
+  it("a failed re-enable restores the previous credential, settings and consent", async () => {
+    const first = await handleProviderMessage(
+      enableMessage({ model: "jev-1.13.0", key: "sk-first-key" }),
+      optionsSender,
+    );
+    expect(first).toMatchObject({ ok: true, status: { enabled: true } });
+    saveKey.mockClear();
+    deleteKey.mockClear();
+
+    // Key write fails mid-enable: everything the attempt overwrote is put
+    // back rather than stripped.
+    saveKey.mockRejectedValueOnce(new Error("crypto subsystem down"));
+    const failed = await handleProviderMessage(
+      enableMessage({ model: "jev-latest", key: "sk-second-key" }),
+      optionsSender,
+    );
+    expect(failed).toMatchObject({ ok: false, code: "enable_failed" });
+
+    const settings = await storedSettings("typesafe");
+    expect(settings?.model).toBe("jev-1.13.0");
+    expect(keyStore.get("typesafe")).toBe("sk-first-key");
+    expect(await hasTestConsent("typesafe")).toBe(true);
+    // The restore re-saved the prior key — it did not delete it.
+    expect(saveKey).toHaveBeenCalledWith("typesafe", "sk-first-key");
+    expect(deleteKey).not.toHaveBeenCalled();
+  });
+
+  it("a failed re-enable at the consent step restores settings and key, and keeps the grant", async () => {
+    await enableProvider();
+    saveKey.mockClear();
+    deleteKey.mockClear();
+
+    const putSpy = vi
+      .spyOn(db.consents, "put")
+      .mockRejectedValueOnce(new Error("indexeddb unavailable"));
+    const failed = await handleProviderMessage(
+      enableMessage({ model: "jev-1.13.0", key: "sk-second-key" }),
+      optionsSender,
+    );
+    putSpy.mockRestore();
+
+    expect(failed).toMatchObject({ ok: false, code: "enable_failed" });
+    const settings = await storedSettings("typesafe");
+    expect(settings?.model).toBe("jev-latest");
+    expect(keyStore.get("typesafe")).toBe(RAW_KEY);
+    expect(await hasTestConsent("typesafe")).toBe(true);
+    expect(deleteKey).not.toHaveBeenCalled();
+  });
+
+  it("a failed first enable still unwinds to nothing", async () => {
+    saveKey.mockRejectedValueOnce(new Error("crypto subsystem down"));
+    const result = await enableProvider();
+    expect(result).toMatchObject({ ok: false, code: "enable_failed" });
+    expect(await storedSettings("typesafe")).toBeUndefined();
+    expect(await hasTestConsent("typesafe")).toBe(false);
+    expect(keyStore.has("typesafe")).toBe(false);
   });
 });
 
