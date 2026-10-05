@@ -1588,3 +1588,26 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - check:site only asserts required strings md→html; mirroring the two
   new sentences into site/privacy/index.html keeps the docs consistent
   beyond what the gate requires.
+
+## Phase 7 Task 5 (H07 — final regression sweep, e959364)
+
+- Map acceptance criteria to the real message surface, not synthetic
+  fetch calls: LLM_TEST (retries=1, 30s deadline) discriminates
+  retry/timeout rows; TEST_PROVIDER on Jev (no retry) pins the
+  redirect=one-row criterion; ANALYZE_BOOKMARK + double APPROVE_DECISION +
+  REVERT_DECISION cover claim serialization and targeted undo.
+- Relaunch needs three independent egress channels: Playwright routing
+  may not rebind to an already-running service worker on a persisted-
+  profile relaunch, so pair routed capture + context.on("request")
+  journal + in-realm self.fetch counter, plus --host-resolver-rules
+  MAP->127.0.0.1 (new launchAuditExtension hostResolverSink option) so
+  even an unobserved escape dies locally. The counter both records AND
+  fail-closed rejects, so the leg is honest even where routing is not.
+- The hang leg is evidence by construction: an unfulfilled route makes
+  the ~30s runtime itself the proof the client deadline fired; a
+  vacuous leg returns instantly.
+- Persisted profile + open-a-surface-first ordering matters for IndexedDB
+  probes: the DB must exist before writeStoreRows can seed a running job.
+- Reviewer grading: seven Infos are notes, not gates — act on
+  Important/Critical only; a bounded blind spot (pre-attach worker send)
+  is still covered by the sink + paused-state assertion.

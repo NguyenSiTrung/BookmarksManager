@@ -460,7 +460,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     about key storage, background egress, budget scope and notes match code;
     consent versions and disclosure text consistent across code and store.
   - Fix: update docs only where behavior changed in this track.
-- [ ] Task 5: H07 — final regression sweep
+- [x] Task 5: H07 — final regression sweep (e959364)
   <!-- files: tests/e2e/audit-deep-fixes.spec.ts -->
   <!-- depends: task4 -->
   - Tests: one wire-level e2e covering the cross-feature acceptance criteria
