@@ -325,7 +325,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     openable; `http`, `https`, `mailto`, `ftp` are; import guard and open guard
     agree on a shared fixture table.
   - Fix: one shared function; allowlist.
-- [ ] Task: Conductor - Automated Verification 'Phase 4: Duplicates, undo and data integrity' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 4: Duplicates, undo and data integrity' (automated gates; no manual wait)
   - Full local gate + e2e (merge/undo/restore specs).
 
 ## Phase 5: Import and export
