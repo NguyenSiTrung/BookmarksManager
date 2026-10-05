@@ -74,10 +74,13 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   lazy-row rule deletes again. Moves use `bulk_move`; merges rely on
  *   `mergeGroup`'s own `merge` snapshot.
  * - **Stale decisions are refused.** Before any mutation the live tree is
- *   re-read and compared against the row's persisted `guard`: a bookmark that
- *   no longer exists is `stale`/`bookmark_gone`; for a `move`, one whose
- *   `parentId` changed since the decision was made is `stale`/`bookmark_moved`.
- *   Nothing is written and no audit row is added.
+ *   re-read and compared against the row's persisted `guard` — the snapshot
+ *   the request was SENT from (J05): a bookmark that no longer exists is
+ *   `stale`/`bookmark_gone`; for a `move`, one whose `parentId` changed
+ *   since the decision was made is `stale`/`bookmark_moved`; for
+ *   `add_tags`/`set_category`/`merge_duplicates`, one whose url or title
+ *   changed is `stale`/`bookmark_edited`. Nothing is written and no audit
+ *   row is added.
  * - **Revert targets its own snapshot.** A revert only runs through
  *   `undoExpected`, which replays the row's recorded `undoSnapshotId` and
  *   reports `conflict` (mapped to `undo_conflict`) when that row is no longer
@@ -114,7 +117,10 @@ export type DecisionApplyErrorCode =
   | "state_unrecorded";
 
 /** Why a decision is stale. */
-export type StaleReason = "bookmark_gone" | "bookmark_moved";
+export type StaleReason =
+  | "bookmark_gone"
+  | "bookmark_moved"
+  | "bookmark_edited";
 
 /** Rejection for every failure this module produces. */
 export class DecisionApplyError extends Error {
@@ -180,9 +186,12 @@ async function lookup(id: string): Promise<BookmarksTreeNode | undefined> {
 }
 
 /**
- * Refuse a decision whose bookmarks no longer match the state captured when
- * it was persisted. Existence is checked for every kind; a `move` also
- * requires the recorded placement to be unchanged.
+ * Refuse a decision whose bookmarks no longer match the snapshot the
+ * request was SENT from (J05). Existence is checked for every kind; a
+ * `move` also requires the recorded placement to be unchanged; an
+ * `add_tags`/`set_category`/`merge_duplicates` also requires the sent
+ * url/title to be unchanged — a retagged or recategorized bookmark whose
+ * content shifted underneath the analysis must not be written over.
  */
 async function assertFresh(row: DecisionRow): Promise<void> {
   const ids = new Set(row.bookmarkIds);
@@ -204,6 +213,24 @@ async function assertFresh(row: DecisionRow): Promise<void> {
           `Decision "${row.id}" is stale: bookmark "${id}" moved since the ` +
             `decision was made.`,
           { staleReason: "bookmark_moved" },
+        );
+      }
+    }
+    if (
+      row.kind === "add_tags" ||
+      row.kind === "set_category" ||
+      row.kind === "merge_duplicates"
+    ) {
+      const snapshot = row.guard?.snapshots?.[id];
+      if (
+        snapshot !== undefined &&
+        ((node.url ?? "") !== snapshot.url || node.title !== snapshot.title)
+      ) {
+        throw new DecisionApplyError(
+          "stale",
+          `Decision "${row.id}" is stale: bookmark "${id}" changed since the ` +
+            `decision was made.`,
+          { staleReason: "bookmark_edited" },
         );
       }
     }

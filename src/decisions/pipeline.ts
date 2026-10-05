@@ -37,8 +37,13 @@ import type {
   PolicyOccasion,
   PolicyOutcome,
 } from "./policy";
-import { DecisionStoreError, persistDecision } from "./store";
-import type { DecisionRow } from "./store";
+import {
+  decisionIdFor,
+  DecisionStoreError,
+  hasDecidedSlotRow,
+  persistDecision,
+} from "./store";
+import type { DecisionGuard, DecisionRow } from "./store";
 import { maybeEscalateDecision } from "../llm/escalate";
 import type { EscalationOption } from "../llm/escalate";
 import { assertJobAuthority } from "../jobs/queue";
@@ -169,6 +174,9 @@ export type DecisionPipelineErrorCode =
   | "invalid_input"
   | "persist_failed"
   | "apply_failed"
+  /** The guarded apply refused a decision whose bookmark moved/changed
+   * mid-scan — a per-item outcome the job runner records and skips. */
+  | "stale"
   | "provider";
 
 /** Rejection for every failure this module produces. Messages stay redacted. */
@@ -649,9 +657,10 @@ function toDocument(
   options: AnalyzeBookmarkOptions,
   model: string,
   status: DecisionDocument["status"],
+  id: string,
 ): DecisionDocument {
   const base = {
-    id: crypto.randomUUID(),
+    id,
     bookmarkIds: [options.bookmark.id],
     confidence: draft.confidence,
     probabilities: draft.probabilities,
@@ -696,7 +705,14 @@ async function persistDraft(
   const outcome = policyOutcome(draft, options.context.settings);
   const status: DecisionDocument["status"] =
     outcome === "unsure" ? "unsure" : "pending";
-  const document = toDocument(draft, options, model, status);
+  // J04: one row per (jobId, bookmarkId, kind) — a replayed batch re-derives
+  // the same id and upserts instead of duplicating.
+  const id = await decisionIdFor({
+    jobId: options.job?.id,
+    bookmarkIds: [options.bookmark.id],
+    kind: draft.kind,
+  });
+  const document = toDocument(draft, options, model, status, id);
   // Second opinion (spec FR6): only the unsure band is eligible, and the
   // result never changes the outcome — it rides the row as advisory
   // escalation fields plus the rationale. `null` = ordinary review.
@@ -720,9 +736,24 @@ async function persistDraft(
       document.rationale = escalation.rationale;
     }
   }
+  // J05: the freshness guard is the snapshot the request was BUILT from —
+  // the bookmark's raw url/title and parent at send time — not a later
+  // live re-read. A mid-scan edit or move is what the guard must catch.
+  const guard: DecisionGuard = {
+    placements:
+      options.bookmark.parentId === undefined
+        ? {}
+        : { [options.bookmark.id]: options.bookmark.parentId },
+    snapshots: {
+      [options.bookmark.id]: {
+        url: options.bookmark.url,
+        title: options.bookmark.title,
+      },
+    },
+  };
   let row: DecisionRow;
   try {
-    row = await persistDecision(document);
+    row = await persistDecision(document, { guard });
   } catch (cause) {
     if (cause instanceof DecisionStoreError) {
       throw new DecisionPipelineError(
@@ -732,13 +763,23 @@ async function persistDraft(
     }
     throw cause;
   }
-  if (outcome !== "auto_apply") return row;
+  // A replay that returned an already-decided row is not re-approved — its
+  // outcome is final (and may already carry the revert target).
+  if (outcome !== "auto_apply" || row.status !== "pending") return row;
+  // J04 resurrection fence: a replayed batch can re-write a pending row its
+  // later job already superseded — if a DECIDED row now occupies this slot
+  // (applied, rejected, …), auto-applying the replayed analysis would write
+  // the older answer over a decision already made. The proposal stays
+  // pending for review instead.
+  if (await hasDecidedSlotRow(row.bookmarkIds, row.kind, row.id)) return row;
   try {
     return await approveDecision(row.id, "policy", "auto_applied");
   } catch (cause) {
     if (cause instanceof DecisionApplyError) {
+      // J05: propagate the honest code — `stale`/`bookmark_gone` in the job
+      // path is a per-item skip, not a job failure.
       throw new DecisionPipelineError(
-        "apply_failed",
+        cause.code === "stale" ? "stale" : "apply_failed",
         `Failed to auto-apply the ${draft.kind} decision.`,
       );
     }

@@ -803,4 +803,51 @@ describe("runPersistedJob guards", () => {
     expect(row?.error).toBe("The job failed while analyzing a bookmark.");
     expect(row?.error).not.toContain("bookmarks backend gone");
   });
+
+  it("skips a bookmark edited mid-scan instead of failing the job (J05)", async () => {
+    const job = await seedWork("analyze_selection", 1); // one item per batch
+    // Auto-apply must run for the staleness guard to refuse the write.
+    await db.metadata.put({
+      key: "decisions:settings",
+      value: {
+        autoApply: { add_tags: true, set_category: true },
+      },
+    });
+    // b1 changes after its request is built (the sent snapshot) but before
+    // the guarded apply runs — the edit lands inside the send itself.
+    let edited = false;
+    vi.spyOn(network, "sendConsented").mockImplementation(
+      async (_scope, _provider, _model, request) => {
+        const state = (request as SystemOneRequest).state as {
+          bookmark?: { url?: string };
+        };
+        if (!edited && state.bookmark?.url?.includes("b11-one.com")) {
+          edited = true;
+          await (chrome.bookmarks as { update: (id: string, changes: { title: string }) => Promise<unknown> })
+            .update("b1", { title: "B1 edited mid-scan" });
+        }
+        return providerResponse(request as SystemOneRequest);
+      },
+    );
+
+    await runPersistedJob(job.id);
+
+    const row = (await getJob(job.id))!;
+    expect(row.status).toBe("completed");
+    // The edited item is a per-item skip with the honest code — not a
+    // job failure and never an applied write.
+    expect(row.itemFailures).toEqual([
+      expect.objectContaining({ item: "b1", code: "stale" }),
+    ]);
+    const b1Rows = (await db.decisions.toArray()).filter((d) =>
+      d.bookmarkIds.includes("b1"),
+    );
+    expect(b1Rows.every((d) => d.status === "pending")).toBe(true);
+    // b3/b4 analyzed and auto-applied undisturbed (no tagDefs seeded, so
+    // each item yields exactly the set_category decision).
+    expect(
+      (await db.decisions.toArray()).filter((d) => d.status === "auto_applied"),
+    ).toHaveLength(2);
+    expect(row.progress.processedCount).toBe(3);
+  });
 });

@@ -26,11 +26,18 @@ import { get } from "../sync/chrome-bookmarks";
  *   and `source.questionSetVersion` come from the caller (the store never
  *   calls Jev). Invalid documents reject `invalid` and nothing is written.
  * - **Additive staleness guard.** Alongside the §7 fields each row carries a
- *   local `guard` sidecar: the placement (`parentId`) of every bookmark id
- *   observed when the decision was persisted. `apply.ts` compares it against
- *   the live tree to refuse a stale decision. The guard is not part of the
- *   wire/decision schema — it is local, derived state, and holds only Chrome
- *   node ids (no title, url, or tags).
+ *   local `guard` sidecar: the placement (`parentId`) and the sent `{url,
+ *   title}` snapshot of every bookmark id, captured from the state the
+ *   request was built from (spec J05). `apply.ts` compares it against the
+ *   live tree to refuse a stale decision. The guard is not part of the
+ *   wire/decision schema — it is local, derived state.
+ * - **Idempotent persistence (J04).** A caller-derived deterministic id —
+ *   one per `(jobId, bookmarkIds, kind)` — makes a replayed batch upsert the
+ *   same row instead of inserting a duplicate. Persisting also supersedes
+ *   every other still-undecided (`pending`/`unsure`) row for the same
+ *   bookmark set and kind, whatever job produced it; a decided row
+ *   (`approved`, `applied`, `auto_applied`, `rejected`, `reverted`) is final
+ *   and returned unchanged instead of being overwritten.
  * - **Additive undo pointer.** A row that has been applied carries the
  *   `undoSnapshotId` pushed by `apply.ts`, so a revert targets the snapshot
  *   THIS decision created rather than the stack head ("discard by row id,
@@ -81,13 +88,16 @@ export class DecisionStoreError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Placement of every bookmark id observed when a decision was persisted.
- * `placements[id]` is the Chrome `parentId`; an id absent from the map had
- * already vanished when the decision was stored. Local, derived state — no
- * bookmark content.
+ * The send-time bookmark state a decision's freshness is checked against
+ * (J05). `placements[id]` is the Chrome `parentId` read when the request
+ * was built; an id absent from the map had no parent to capture.
+ * `snapshots[id]` carries the RAW `{url, title}` read at send time — never
+ * the minimized wire form (its cleaned url drops query/hash, which would
+ * false-stale an unchanged bookmark). Local, derived state.
  */
 export interface DecisionGuard {
   placements: Record<string, string>;
+  snapshots?: Record<string, { url: string; title: string }>;
 }
 
 /**
@@ -101,6 +111,87 @@ export type DecisionRow = DecisionDocument & {
   /** Undo row pushed when this decision was applied — the revert target. */
   undoSnapshotId?: number;
 };
+
+// ---------------------------------------------------------------------------
+// Deterministic id (J04)
+// ---------------------------------------------------------------------------
+
+const textEncoder = new TextEncoder();
+
+/**
+ * The J04 idempotency key: one decision row per `(jobId, bookmarkIds,
+ * kind)` — a SHA-256 of the tuple rendered as a version-5-style UUID, so a
+ * replayed batch upserts the same row instead of inserting a second one.
+ * `jobId` absent (interactive analysis) collapses to `""`, making repeated
+ * manual analysis of the same bookmark land on the same slot. Bookmark ids
+ * are sorted so a merge pair is orientation-free.
+ */
+export async function decisionIdFor(input: {
+  readonly jobId?: string;
+  readonly bookmarkIds: readonly string[];
+  readonly kind: Decision["kind"];
+}): Promise<string> {
+  const sortedIds = [...input.bookmarkIds].sort().join("\u0000");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    textEncoder.encode(`${input.jobId ?? ""}\u0000${sortedIds}\u0000${input.kind}`),
+  );
+  const bytes = new Uint8Array(digest.slice(0, 16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50; // version 5 (name-based)
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Statuses a re-analysis may supersede — rows nobody has decided yet. */
+const UNDECIDED_STATUSES: readonly DecisionStatus[] = ["pending", "unsure"];
+
+/** Statuses that count as "a decision was made" — final for the slot. */
+const DECIDED_STATUSES: readonly DecisionStatus[] = [
+  "approved",
+  "applied",
+  "auto_applied",
+  "rejected",
+  "reverted",
+];
+
+/**
+ * Whether a DECIDED row already occupies `(bookmarkIds, kind)` — the J04
+ * resurrection fence. A superseded row can be re-created by a replayed
+ * batch (its deterministic id is re-derived), so the auto-apply seam must
+ * check for an already-decided same-slot row rather than trusting that the
+ * pending row it just wrote is the slot's only outcome. `excludeId` skips
+ * the row under inspection itself.
+ */
+export async function hasDecidedSlotRow(
+  bookmarkIds: readonly string[],
+  kind: DecisionDocument["kind"],
+  excludeId?: string,
+): Promise<boolean> {
+  const decided = await db.decisions
+    .where("status")
+    .anyOf(DECIDED_STATUSES)
+    .toArray();
+  return decided.some(
+    (row) =>
+      row.id !== excludeId &&
+      row.kind === kind &&
+      sameBookmarkSet(row.bookmarkIds, bookmarkIds),
+  );
+}
+
+/** The sorted-ids slot two decisions share ("same bookmark" for J04). */
+function sameBookmarkSet(
+  a: readonly string[],
+  b: readonly string[],
+): boolean {
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.length === sortedB.length &&
+    sortedA.every((id, index) => id === sortedB[index]);
+}
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -127,13 +218,20 @@ async function captureGuard(
 }
 
 /**
- * Validate `document` against the §7 `Decision` schema, capture its
- * decision-time placement guard, and upsert the row (keyed by `id`). Rejects
- * `invalid` for a schema violation and `api` for a storage failure; nothing
- * is written in either case.
+ * Validate `document` against the §7 `Decision` schema and upsert the row
+ * (keyed by `id`) behind the J04 rules: a same-id row that is already
+ * decided is returned unchanged — a replayed batch reuses its outcome
+ * rather than clobbering `status`/`undoSnapshotId`; every OTHER undecided
+ * (`pending`/`unsure`) row for the same bookmark set and kind is deleted
+ * first — re-analysis supersedes it whatever job produced it. `guard` is
+ * the send-time snapshot the caller captured (J05); absent, the
+ * decision-time placement is read live — the fallback for non-send callers.
+ * Rejects `invalid` for a schema violation and `api` for a storage failure;
+ * nothing is written in either case.
  */
 export async function persistDecision(
   document: DecisionDocument,
+  options?: { guard?: DecisionGuard },
 ): Promise<DecisionRow> {
   const parsed = Decision.safeParse(document);
   if (!parsed.success) {
@@ -142,20 +240,49 @@ export async function persistDecision(
       `decision failed schema validation: ${parsed.error.issues[0]?.message ?? "invalid document"}`,
     );
   }
-  const guard = await captureGuard(parsed.data.bookmarkIds);
+  const guard = options?.guard ?? (await captureGuard(parsed.data.bookmarkIds));
   const row: DecisionRow = { ...parsed.data, guard };
   try {
-    await db.transaction("rw", db.decisions, async () => {
+    return await db.transaction("rw", db.decisions, async () => {
+      const existing = await db.decisions.get(row.id);
+      if (
+        existing !== undefined &&
+        !UNDECIDED_STATUSES.includes((existing as DecisionRow).status)
+      ) {
+        // A decided row is final: a replay of work whose outcome already
+        // landed must not erase the status or its revert target.
+        return existing as DecisionRow;
+      }
+      // Supersession is a re-analysis concern: only an undecided row being
+      // stored clears the older undecided rows for its slot. (Production
+      // rows are always pending/unsure here — a decided row goes through
+      // transitionStatus, never a fresh persist.)
+      if (UNDECIDED_STATUSES.includes(row.status)) {
+        const undecided = await db.decisions
+          .where("status")
+          .anyOf(UNDECIDED_STATUSES)
+          .toArray();
+        const superseded = undecided.filter(
+          (other) =>
+            other.id !== row.id &&
+            other.kind === row.kind &&
+            sameBookmarkSet(other.bookmarkIds, row.bookmarkIds),
+        );
+        if (superseded.length > 0) {
+          await db.decisions.bulkDelete(superseded.map((other) => other.id));
+        }
+      }
       await db.decisions.put(row);
+      return row;
     });
   } catch (cause) {
+    if (cause instanceof DecisionStoreError) throw cause;
     throw new DecisionStoreError(
       "api",
       `failed to persist decision "${row.id}"`,
       { cause },
     );
   }
-  return row;
 }
 
 // ---------------------------------------------------------------------------

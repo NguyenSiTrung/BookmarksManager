@@ -151,7 +151,11 @@ describe("persistDecision", () => {
 describe("queries", () => {
   it("listDecisions returns rows oldest-first by createdAt", async () => {
     await persistDecision(
-      decision({ id: UUID2, createdAt: "2026-09-25T11:00:00.000Z" }),
+      decision({
+        id: UUID2,
+        bookmarkIds: ["bm-002"], // a different slot: J04 supersession by design
+        createdAt: "2026-09-25T11:00:00.000Z",
+      }),
     );
     await persistDecision(decision({ createdAt: "2026-09-25T10:00:00.000Z" }));
     const rows = await listDecisions();

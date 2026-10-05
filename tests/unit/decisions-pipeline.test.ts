@@ -19,6 +19,11 @@ import { grantConsentAtOrigin } from "../../src/consent/records";
 import {
   writeLlmEscalationSettings,
 } from "../../src/llm/escalate";
+import { enqueueJob } from "../../src/jobs/queue";
+import { persistDecision } from "../../src/decisions/store";
+import type { DecisionRow } from "../../src/decisions/store";
+import { Decision } from "../../src/schemas/decision";
+import { decisionBase } from "../fixtures/base-records";
 import { saveLlmProvider } from "../../src/llm/settings";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
 import { makeOpenAiServer } from "../mock-servers/openai";
@@ -278,6 +283,162 @@ describe("analyzeBookmark", () => {
     expect(audit.every((a) => a.actor === "policy")).toBe(true);
     // Auto-apply is `pending → auto_applied`, not the user-approval `applied`.
     expect(audit.every((a) => a.to === "auto_applied")).toBe(true);
+  });
+
+  it("captures the freshness guard from the sent snapshot (J05)", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+
+    await analyzeBookmark(options());
+
+    const rows = (await db.decisions.toArray()) as DecisionRow[];
+    for (const row of rows) {
+      // The RAW values the request was built from — not a later live read,
+      // and not the minimized wire form.
+      expect(row.guard?.placements).toEqual({ "bm-1": "f-dev" });
+      expect(row.guard?.snapshots).toEqual({
+        "bm-1": { url: BOOKMARK_URL, title: BOOKMARK_TITLE },
+      });
+    }
+  });
+
+  it("persists one decision per (job, bookmark, kind) under replay (J04)", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+
+    const first = await analyzeBookmark(options());
+    const second = await analyzeBookmark(options());
+
+    expect(first.sent && second.sent).toBe(true);
+    // Interactive re-analysis lands on the same deterministic ids — two
+    // rows, not four.
+    const decisions = await db.decisions.toArray();
+    expect(decisions).toHaveLength(2);
+    const firstIds = (first.sent ? first.decisions : []).map((d) => d.id).sort();
+    const secondIds = (second.sent ? second.decisions : []).map((d) => d.id).sort();
+    expect(secondIds).toEqual(firstIds);
+  });
+
+  it("a job's replayed batch yields one row per (jobId, bookmarkId, kind)", async () => {
+    await db.jobs.clear();
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1"],
+      batchSize: 1,
+    });
+    const owner = { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 };
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+
+    const first = await analyzeBookmark(options({ job: owner }));
+    const second = await analyzeBookmark(options({ job: owner }));
+
+    expect(await db.decisions.count()).toBe(2);
+    if (first.sent && second.sent) {
+      expect(second.decisions.map((d) => d.id).sort()).toEqual(
+        first.decisions.map((d) => d.id).sort(),
+      );
+    }
+  });
+
+  it("a replay cannot auto-apply over a decided same-slot row (J04)", async () => {
+    // The resurrect sequence: job A's pending row was superseded (deleted)
+    // by a later analysis whose proposal the user then APPLIED. When job
+    // A's batch replays, its deterministic id lands a fresh pending row —
+    // and must stay pending instead of overwriting the applied decision.
+    const DECIDED = "4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a";
+    await persistDecision(
+      Decision.parse({
+        ...decisionBase,
+        id: DECIDED,
+        kind: "set_category",
+        category: "docs",
+        bookmarkIds: ["bm-1"],
+        status: "applied",
+      }),
+    );
+    server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
+    const settings = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+
+    const result = await analyzeBookmark(
+      options({ context: { tagDefs, corpus, tree, settings } }),
+    );
+
+    expect(result.sent).toBe(true);
+    // The resurrected row is parked pending; the decided row is untouched
+    // and nothing was re-applied over it.
+    const rows = await db.decisions.toArray();
+    const setCategory = rows.filter((d) => d.kind === "set_category");
+    expect(setCategory).toHaveLength(2);
+    expect((await db.decisions.get(DECIDED))?.status).toBe("applied");
+    expect(
+      setCategory.filter((d) => d.status === "pending"),
+    ).toHaveLength(1);
+    // The unfenced add_tags draft still auto-applied — exactly one audit
+    // row, and it belongs to add_tags, never the resurrected proposal.
+    const audit = await db.audit.toArray();
+    expect(audit).toHaveLength(1);
+    const tagsRow = rows.find((d) => d.kind === "add_tags");
+    expect(tagsRow?.status).toBe("auto_applied");
+    expect(audit[0]?.decisionId).toBe(tagsRow?.id);
+    const meta = await db.bookmarkMeta.get("bm-1");
+    expect(meta?.category).toBeUndefined(); // set_category apply was fenced
+    expect(meta?.tags.sort()).toEqual(["async", "rust"]);
+  });
+
+  it("a mid-scan edit is `stale` on auto-apply — skipped, never applied (J05)", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
+    const settings = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+    // The bookmark changes AFTER the request is built (the sent snapshot)
+    // but before the guarded apply runs.
+    const transport: JevTransport = async (scope, preset, model, request, opts) => {
+      await fake.update("bm-1", { title: "Edited mid-scan" });
+      return serverTransport()(scope, preset, model, request, opts);
+    };
+
+    const error = await analyzeBookmark(
+      options({
+        context: { tagDefs, corpus, tree, settings },
+        transport,
+      }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("stale");
+    // The item is skipped: its row was persisted but never applied.
+    const rows = await db.decisions.toArray();
+    expect(rows.every((d) => d.status === "pending")).toBe(true);
+    expect(await db.bookmarkMeta.count()).toBe(0);
+    expect(await db.undo.count()).toBe(0);
+    expect(await db.usage.count()).toBe(1); // egress still accounted
+  });
+
+  it("a mid-scan delete is `stale`/`bookmark_gone` on auto-apply (J05)", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
+    const settings = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+    const transport: JevTransport = async (scope, preset, model, request, opts) => {
+      const response = await serverTransport()(scope, preset, model, request, opts);
+      await fake.remove("bm-1");
+      return response;
+    };
+
+    const error = await analyzeBookmark(
+      options({
+        context: { tagDefs, corpus, tree, settings },
+        transport,
+      }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("stale");
+    expect((await db.decisions.toArray()).every((d) => d.status === "pending"))
+      .toBe(true);
+    expect(await db.bookmarkMeta.count()).toBe(0);
   });
 
   it("records the usage row even when persisting a decision fails", async () => {
