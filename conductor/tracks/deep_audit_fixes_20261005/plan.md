@@ -377,7 +377,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: Analyze with N selected starts one job, shows a cost estimate,
     exposes Pause/Cancel, rejects selections over the cap.
   - Fix: route via `JOB_START`; remove the sequential loop.
-- [ ] Task 3: U03 — RestructureView re-entrancy and polling
+- [x] Task 3: U03 — RestructureView re-entrancy and polling (SHA a7906da)
   <!-- files: src/entrypoints/sidepanel/RestructureView.tsx -->
   - Tests: double-click "Yes, apply" sends one confirm; stale poll reply does
     not overwrite a newer phase; `starting` recovers after a transient status

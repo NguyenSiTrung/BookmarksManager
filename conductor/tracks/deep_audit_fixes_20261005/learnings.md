@@ -1274,3 +1274,24 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - **Test flake pattern**: a live-query card's FIRST emission can be an
   intermediate state (`pending` before the worker flips `running`) —
   assert terminal/expected text with `waitFor`, never on first render.
+
+## Phase 6 Task 3 — U03 RestructureView re-entrancy/polling
+
+- **setPhase-as-read is an anti-pattern**: calling the updater purely to
+  observe current state runs a side-effect inside what React treats as a
+  pure function (StrictMode double-invokes → double refresh). Mirror
+  state into a ref via a passive effect for interval/timer readers.
+- **Serialize + coalesce are different needs, and you need both.**
+  `tail.then(fn)` alone still banks every tick — each queued link fires
+  its own send later (self-amplifying on a slow worker, and stale by the
+  time it runs). Caller-driven reads always queue (each intent deserves
+  its own answer); poll ticks get a pending-flag so at most one poll
+  link is outstanding. Reviewer caught this as the only Warning.
+- **A poll that reads "nothing" must not tear down in-flight phases**:
+  not_found → idle only from settled phases (idle/active). A poll
+  landing between send and reply otherwise clobbers consent/confirm/arm.
+- **Test timeouts**: vitest's default 5s test timeout silently kills
+  polling tests that legitimately wait ~9s — pass the per-test timeout
+  argument, don't lower waitFor timeouts below the poll cadence.
+- **Backticks in `git -m` strings get eaten by bash** — use single
+  quotes for commit/notes bodies containing code tokens.
