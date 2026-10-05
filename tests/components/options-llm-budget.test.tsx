@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,6 +17,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { db } from "../../src/db/database";
 import { LlmBudget } from "../../src/entrypoints/options/LlmBudget";
 
 /**
@@ -76,6 +78,8 @@ const SNAPSHOT: FakeSnapshot = {
 };
 
 let status: FakeStatus;
+let snapshot: FakeSnapshot;
+let snapshotFail: boolean;
 let budgetSetError: { code: string; message: string } | null;
 let sendMessageSpy: ReturnType<typeof vi.fn>;
 let budgetSetCalls: Array<Record<string, unknown>>;
@@ -84,10 +88,17 @@ function workerReply(message: unknown): Promise<unknown> {
   const msg = message as Record<string, unknown>;
   switch (msg.type) {
     case "LLM_BUDGET_SNAPSHOT":
+      if (snapshotFail) {
+        return Promise.resolve({
+          ok: false,
+          code: "internal_error",
+          message: "snapshot unavailable",
+        });
+      }
       return Promise.resolve({
         ok: true,
         code: "budget_snapshot",
-        snapshot: SNAPSHOT,
+        snapshot,
       });
     case "LLM_PROVIDER_STATUS":
       return Promise.resolve({ ok: true, status });
@@ -137,7 +148,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   status = {
     configured: true,
     enabled: true,
@@ -151,9 +162,14 @@ beforeEach(() => {
     pricingKnown: true,
     model: "gpt-4o-mini",
   };
+  snapshot = { ...SNAPSHOT };
+  snapshotFail = false;
   budgetSetError = null;
   budgetSetCalls = [];
   sendMessageSpy = vi.fn(workerReply);
+  await db.metadata.clear();
+  await db.llmUsage.clear();
+  await db.llmReservations.clear();
   vi.stubGlobal("chrome", {
     runtime: {
       sendMessage: sendMessageSpy,
@@ -342,5 +358,78 @@ describe("LlmBudget ceiling editor", () => {
   it("names the model when a price is already known", async () => {
     await ready();
     expect(screen.getByText(/prices are known for gpt-4o-mini/i)).toBeTruthy();
+  });
+
+  it("refuses hex and exponent caps without messaging the worker", async () => {
+    await ready();
+    for (const bad of ["0x10", "1e3"]) {
+      fireEvent.change(capInput(), { target: { value: bad } });
+      fireEvent.click(saveButton());
+      await waitFor(() =>
+        expect(
+          screen.getByText(/must be a nonnegative number/i),
+        ).toBeTruthy(),
+      );
+    }
+    expect(budgetSetCalls).toHaveLength(0);
+  });
+});
+
+describe("LlmBudget live refresh", () => {
+  it("re-reads the snapshot when the usage tables change", async () => {
+    const region = await ready();
+    expect(region.textContent).toContain("$4.50");
+    snapshot = { ...snapshot, reportedCostUsd: 9.99, committedUsd: 9.99 };
+    // A write to any table the snapshot derives from re-reads it through
+    // the worker protocol.
+    await act(async () => {
+      await db.llmUsage.put({
+        providerId: PROVIDER_ID,
+        feature: "llm_explain",
+        model: "gpt-4o-mini",
+        configuredModel: "gpt-4o-mini",
+        inputTokens: 10,
+        outputTokens: 2,
+        month: "2026-09",
+        recordedAt: "2026-09-27T10:00:00.000Z",
+      });
+    });
+    await waitFor(() => expect(region.textContent).toContain("$9.99"));
+  });
+
+  it("clears a stale load error once the snapshot answers again", async () => {
+    snapshotFail = true;
+    render(<LlmBudget />);
+    await waitFor(() =>
+      expect(
+        screen.getByText(/budget information is unavailable/i),
+      ).toBeTruthy(),
+    );
+    snapshotFail = false;
+    await act(async () => {
+      await db.metadata.put({ key: "poke", value: 1 });
+    });
+    const region = await panel();
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/budget information is unavailable/i),
+      ).toBeNull(),
+    );
+    expect(region.textContent).toContain("$4.50");
+  });
+
+  it("never clobbers an in-progress cap edit on refresh", async () => {
+    await ready();
+    fireEvent.change(capInput(), { target: { value: "42" } });
+    status = { ...status, monthlyBudgetUsd: 7 };
+    await act(async () => {
+      await db.metadata.put({ key: "poke", value: 1 });
+    });
+    await waitFor(() =>
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "LLM_PROVIDER_STATUS" }),
+      ),
+    );
+    expect(capInput().value).toBe("42");
   });
 });

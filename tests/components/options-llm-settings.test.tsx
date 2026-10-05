@@ -98,8 +98,8 @@ function workerReply(message: unknown): Promise<unknown> {
         settings: ALL_OFF,
         blocklist: [],
       });
-    case "SET_SETTINGS":
-    case "SET_BLOCKLIST":
+    case "PATCH_SETTINGS":
+    case "PATCH_BLOCKLIST":
       return Promise.resolve({
         ok: true,
         code: "settings_ok",

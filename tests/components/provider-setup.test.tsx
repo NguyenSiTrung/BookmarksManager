@@ -42,6 +42,7 @@ afterEach(() => cleanup());
 const DISABLED: ProviderStatus = { enabled: false, consentGranted: false };
 
 let requestSpy: ReturnType<typeof vi.fn>;
+let removeSpy: ReturnType<typeof vi.fn>;
 let sendMessageSpy: ReturnType<typeof vi.fn>;
 let fetchSpy: ReturnType<typeof vi.fn>;
 let statusByPreset: Record<string, ProviderStatus>;
@@ -97,11 +98,12 @@ beforeEach(() => {
     custom: { ...DISABLED },
   };
   requestSpy = vi.fn(async () => true);
+  removeSpy = vi.fn(async () => true);
   sendMessageSpy = vi.fn(workerReply);
   fetchSpy = vi.fn();
   vi.stubGlobal("fetch", fetchSpy);
   vi.stubGlobal("chrome", {
-    permissions: { request: requestSpy },
+    permissions: { request: requestSpy, remove: removeSpy },
     runtime: {
       sendMessage: sendMessageSpy,
       getURL: (path: string) =>
@@ -338,6 +340,72 @@ describe("enable flow", () => {
     ).toBeNull();
     expect(screen.queryByText(/is enabled\./i)).toBeNull();
     expect(screen.getByRole("button", { name: /enable/i })).toBeTruthy();
+  });
+
+  it("removes a grant that lands after the preset was switched", async () => {
+    // The permission prompt outlives the panel: the user grants TypeSafe's
+    // host permission, then switches to OpenRouter before the reply arrives.
+    // The abandoned grant must not linger — keeping it would leak a host
+    // permission for a provider that was never enabled.
+    let resolveRequest: ((granted: boolean) => void) | undefined;
+    requestSpy.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    render(<ProviderSetup />);
+    await fillAndAgree();
+    fireEvent.click(enableButton());
+    expect(requestSpy).toHaveBeenCalledWith({
+      origins: ["https://api.typesafe.ai/*"],
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    await act(async () => {
+      resolveRequest?.(true);
+    });
+    await waitFor(() =>
+      expect(removeSpy).toHaveBeenCalledWith({
+        origins: ["https://api.typesafe.ai/*"],
+      }),
+    );
+    expect(nonStatusCalls()).toEqual([]);
+  });
+
+  it("keeps the grant when only the enable reply lands after a switch", async () => {
+    // Once ENABLE_PROVIDER persisted the provider, the host permission is
+    // required — the stale-reply drop path must not remove it.
+    let resolveEnable: ((r: ProviderMessageResult) => void) | undefined;
+    sendMessageSpy.mockImplementation((message: unknown) => {
+      const msg = message as { type: string };
+      if (msg.type === "ENABLE_PROVIDER") {
+        return new Promise<ProviderMessageResult>((resolve) => {
+          resolveEnable = resolve;
+        });
+      }
+      return workerReply(message);
+    });
+    render(<ProviderSetup />);
+    await fillAndAgree();
+    fireEvent.click(enableButton());
+    await waitFor(() =>
+      expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ENABLE_PROVIDER" }),
+      ),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
+    await act(async () => {
+      resolveEnable?.({
+        ok: true,
+        status: {
+          enabled: true,
+          consentGranted: true,
+          model: "jev-latest",
+          keySuffix: "cdef",
+        },
+      });
+    });
+    expect(removeSpy).not.toHaveBeenCalled();
   });
 
   it("never requests permission while the box stays unchecked, even with a key", async () => {

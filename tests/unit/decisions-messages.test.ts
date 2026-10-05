@@ -1,6 +1,9 @@
 import "fake-indexeddb/auto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { resumeJobs } from "../../src/entrypoints/background";
+import {
+  productionHandlers,
+  resumeJobs,
+} from "../../src/entrypoints/background";
 import { db } from "../../src/db/database";
 import { enqueueJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
 import type { AnalysisBookmark, AnalyzeBookmarkResult } from "../../src/decisions/pipeline";
@@ -13,6 +16,7 @@ import {
   DecisionMessageResult,
   handleDecisionsMessage,
   type DecisionsHandlers,
+  type SettingsPatchValue,
   type SettingsSnapshot,
 } from "../../src/messages/decisions";
 import type { Job } from "../../src/schemas/job";
@@ -104,8 +108,8 @@ interface Recorded {
   resume: string[];
   cancel: string[];
   getSettings: number;
-  setSettings: DecisionSettings[];
-  setBlocklist: (readonly string[])[];
+  patchSettings: SettingsPatchValue[];
+  patchBlocklist: { add?: readonly string[]; remove?: readonly string[] }[];
 }
 
 function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
@@ -126,8 +130,8 @@ function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
     resume: [],
     cancel: [],
     getSettings: 0,
-    setSettings: [],
-    setBlocklist: [],
+    patchSettings: [],
+    patchBlocklist: [],
   };
   const snapshot: SettingsSnapshot = { settings: SETTINGS, blocklist: ["bank.example"] };
   const handlers: DecisionsHandlers = {
@@ -219,13 +223,26 @@ function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
       calls.getSettings += 1;
       return snapshot;
     },
-    async setSettings(settings) {
-      calls.setSettings.push(settings);
-      return { settings, blocklist: snapshot.blocklist };
+    async patchSettings(patch) {
+      calls.patchSettings.push(patch);
+      return {
+        settings: {
+          autoApply: { ...SETTINGS.autoApply, ...(patch.autoApply ?? {}) },
+        },
+        blocklist: snapshot.blocklist,
+      };
     },
-    async setBlocklist(blocklist) {
-      calls.setBlocklist.push(blocklist);
-      return { settings: snapshot.settings, blocklist };
+    async patchBlocklist(delta) {
+      calls.patchBlocklist.push(delta);
+      return {
+        settings: snapshot.settings,
+        blocklist: [
+          ...snapshot.blocklist.filter(
+            (host) => !(delta.remove ?? []).includes(host),
+          ),
+          ...(delta.add ?? []),
+        ],
+      };
     },
     ...over,
   };
@@ -402,8 +419,8 @@ describe("intent dispatch", () => {
       "REVERT_BATCH",
       "BULK_APPROVE",
       "GET_SETTINGS",
-      "SET_SETTINGS",
-      "SET_BLOCKLIST",
+      "PATCH_SETTINGS",
+      "PATCH_BLOCKLIST",
     ]);
   });
 
@@ -565,37 +582,89 @@ describe("intent dispatch", () => {
 
     const written = await handleDecisionsMessage(
       {
-        type: "SET_SETTINGS",
-        settings: { autoApply: { add_tags: true, set_category: false } },
+        type: "PATCH_SETTINGS",
+        patch: { autoApply: { add_tags: true } },
       },
       sender,
       handlers,
     );
-    expect(calls.setSettings).toHaveLength(1);
-    expect(written).toMatchObject({ ok: true, code: "settings_ok" });
+    expect(calls.patchSettings).toHaveLength(1);
+    expect(written).toMatchObject({
+      ok: true,
+      code: "settings_ok",
+      settings: { autoApply: { add_tags: true } },
+    });
 
     const blocked = await handleDecisionsMessage(
-      { type: "SET_BLOCKLIST", blocklist: ["bank.example", "health.example"] },
+      { type: "PATCH_BLOCKLIST", add: ["health.example"] },
       sender,
       handlers,
     );
-    expect(calls.setBlocklist).toEqual([["bank.example", "health.example"]]);
+    expect(calls.patchBlocklist).toEqual([{ add: ["health.example"] }]);
     expect(blocked).toMatchObject({
       ok: true,
       code: "settings_ok",
       blocklist: ["bank.example", "health.example"],
     });
+
+    const removed = await handleDecisionsMessage(
+      { type: "PATCH_BLOCKLIST", remove: ["bank.example"] },
+      sender,
+      handlers,
+    );
+    expect(removed).toMatchObject({ ok: true, blocklist: [] });
   });
 
-  it("rejects a settings write carrying key material", async () => {
+  it("rejects a settings patch carrying key material", async () => {
     const { handlers, calls } = makeHandlers();
     const result = await handleDecisionsMessage(
-      { type: "SET_SETTINGS", settings: { autoApply: {}, key: SECRET_KEY } },
+      { type: "PATCH_SETTINGS", patch: { autoApply: {}, key: SECRET_KEY } },
       sender,
       handlers,
     );
     expect(result).toMatchObject({ ok: false, code: "malformed_message" });
-    expect(calls.setSettings).toEqual([]);
+    expect(calls.patchSettings).toEqual([]);
+  });
+
+  it("merges concurrent patch writes so two stale tabs both persist", async () => {
+    // Two Options tabs each hold a stale snapshot; both PATCH only their own
+    // change against the live record, so neither clobbers the other's write.
+    await db.metadata.clear();
+    const first = await handleDecisionsMessage(
+      { type: "PATCH_BLOCKLIST", add: ["https://Bank.Example/Login"] },
+      sender,
+      productionHandlers(),
+    );
+    const second = await handleDecisionsMessage(
+      { type: "PATCH_BLOCKLIST", add: ["health.example"] },
+      sender,
+      productionHandlers(),
+    );
+    expect(first).toMatchObject({ ok: true, code: "settings_ok" });
+    expect(second).toMatchObject({
+      ok: true,
+      code: "settings_ok",
+      blocklist: ["bank.example", "health.example"],
+    });
+
+    const flipped = await handleDecisionsMessage(
+      { type: "PATCH_SETTINGS", patch: { autoApply: { add_tags: true } } },
+      sender,
+      productionHandlers(),
+    );
+    expect(flipped).toMatchObject({
+      ok: true,
+      settings: {
+        autoApply: { add_tags: true, set_category: false },
+      },
+    });
+
+    const gone = await handleDecisionsMessage(
+      { type: "PATCH_BLOCKLIST", remove: ["bank.example"] },
+      sender,
+      productionHandlers(),
+    );
+    expect(gone).toMatchObject({ ok: true, blocklist: ["health.example"] });
   });
 });
 

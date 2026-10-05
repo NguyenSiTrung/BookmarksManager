@@ -57,11 +57,30 @@ export const DECISION_MESSAGE_TYPES = [
   "REVERT_BATCH",
   "BULK_APPROVE",
   "GET_SETTINGS",
-  "SET_SETTINGS",
-  "SET_BLOCKLIST",
+  "PATCH_SETTINGS",
+  "PATCH_BLOCKLIST",
 ] as const;
 
 const OWNED_TYPES: ReadonlySet<string> = new Set(DECISION_MESSAGE_TYPES);
+
+/**
+ * Field-level settings write: every key is optional and merges into the
+ * live record — absent fields keep their stored values. The fields are
+ * `.optional()`, not `AutoApplyToggles.partial()`: the toggles carry
+ * `.default(false)`, and a defaulted field would re-materialize in the
+ * parsed patch and clobber a concurrent toggle with the default.
+ * `strictObject` keeps unknown keys (e.g. a smuggled `key`) a validation
+ * failure.
+ */
+export const SettingsPatch = z.strictObject({
+  autoApply: z
+    .strictObject({
+      add_tags: z.boolean().optional(),
+      set_category: z.boolean().optional(),
+    })
+    .optional(),
+});
+export type SettingsPatchValue = z.infer<typeof SettingsPatch>;
 
 /**
  * Intents the extension's own pages may send, validated at the trust
@@ -69,7 +88,13 @@ const OWNED_TYPES: ReadonlySet<string> = new Set(DECISION_MESSAGE_TYPES);
  * client, or a bookmark body beyond the save-suggest snapshot the popup
  * already holds. `DecisionSettings` is closed (`strictObject`), so a settings
  * write carrying an extra `key` field fails validation.
+ *
+ * Settings and the blocklist are PATCHES, not whole-value writes: two Options
+ * pages holding different stale snapshots each send only the field they
+ * changed, and the worker merges against the live record — a second writer
+ * can no longer clobber a concurrent change by replaying its stale snapshot.
  */
+
 export const DecisionMessage = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("ANALYZE_BOOKMARK"),
@@ -108,10 +133,11 @@ export const DecisionMessage = z.discriminatedUnion("type", [
     decisionIds: z.array(z.string().min(1)).min(1),
   }),
   z.object({ type: z.literal("GET_SETTINGS") }),
-  z.object({ type: z.literal("SET_SETTINGS"), settings: DecisionSettings }),
+  z.object({ type: z.literal("PATCH_SETTINGS"), patch: SettingsPatch }),
   z.object({
-    type: z.literal("SET_BLOCKLIST"),
-    blocklist: z.array(z.string()),
+    type: z.literal("PATCH_BLOCKLIST"),
+    add: z.array(z.string()).optional(),
+    remove: z.array(z.string()).optional(),
   }),
 ]);
 export type DecisionMessage = z.infer<typeof DecisionMessage>;
@@ -260,8 +286,13 @@ export interface DecisionsHandlers {
   resumeJob(id: string): Promise<JobDocument>;
   cancelJob(id: string): Promise<JobDocument>;
   getSettings(): Promise<SettingsSnapshot>;
-  setSettings(settings: DecisionSettings): Promise<SettingsSnapshot>;
-  setBlocklist(blocklist: readonly string[]): Promise<SettingsSnapshot>;
+  /** Merge a field-level patch into the live settings record. */
+  patchSettings(patch: SettingsPatchValue): Promise<SettingsSnapshot>;
+  /** Merge add/remove deltas into the live blocklist. */
+  patchBlocklist(delta: {
+    add?: readonly string[];
+    remove?: readonly string[];
+  }): Promise<SettingsSnapshot>;
 }
 
 function failure(
@@ -446,10 +477,15 @@ async function dispatch(
     }
     case "GET_SETTINGS":
       return settingsResult(await handlers.getSettings());
-    case "SET_SETTINGS":
-      return settingsResult(await handlers.setSettings(message.settings));
-    case "SET_BLOCKLIST":
-      return settingsResult(await handlers.setBlocklist(message.blocklist));
+    case "PATCH_SETTINGS":
+      return settingsResult(await handlers.patchSettings(message.patch));
+    case "PATCH_BLOCKLIST":
+      return settingsResult(
+        await handlers.patchBlocklist({
+          add: message.add,
+          remove: message.remove,
+        }),
+      );
   }
 }
 

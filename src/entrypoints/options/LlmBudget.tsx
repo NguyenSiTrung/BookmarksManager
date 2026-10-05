@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "../../db/database";
 import {
   LlmProviderMessage,
   LlmProviderMessageResult,
@@ -18,6 +20,11 @@ declare const chrome: {
     sendMessage(message: unknown): Promise<unknown>;
   };
 };
+
+/** A nonnegative decimal in plain notation — `Number()` alone would also
+ * accept `0x10`, `1e3`, `Infinity`, and leading/trailing whitespace, so the
+ * cap is pattern-checked before it is parsed. */
+const USD_DECIMAL = /^\d+(?:\.\d+)?$/;
 
 interface Snapshot {
   month: string;
@@ -80,6 +87,8 @@ export function LlmBudget() {
   const [notice, setNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // A live status refresh must not clobber an in-progress edit.
+  const capDirty = useRef(false);
 
   const loadSnapshot = useCallback(async () => {
     try {
@@ -89,6 +98,7 @@ export function LlmBudget() {
       const result = LlmProviderMessageResult.safeParse(raw);
       if (result.success && result.data.ok && "snapshot" in result.data) {
         setSnapshot(result.data.snapshot);
+        setError(false);
       } else {
         setError(true);
       }
@@ -106,12 +116,14 @@ export function LlmBudget() {
       if (result.success && result.data.ok && "status" in result.data) {
         const next = result.data.status;
         setStatus(next);
-        setUnlimited(next.budget === "unlimited");
-        setCap(
-          next.monthlyBudgetUsd !== undefined
-            ? String(next.monthlyBudgetUsd)
-            : "",
-        );
+        if (!capDirty.current) {
+          setUnlimited(next.budget === "unlimited");
+          setCap(
+            next.monthlyBudgetUsd !== undefined
+              ? String(next.monthlyBudgetUsd)
+              : "",
+          );
+        }
       }
     } catch {
       // The panel renders the snapshot alone; the editor stays hidden.
@@ -127,6 +139,30 @@ export function LlmBudget() {
     });
   }, [loadSnapshot, loadStatus]);
 
+  // Live refresh: the snapshot derives from `llmUsage`/`llmReservations` and
+  // the status from `metadata` provider rows — any write to those tables
+  // (this page's saves, or the worker settling usage/reservations) bumps the
+  // revision and re-reads both through the worker protocol. `loadStatus`
+  // skips the cap fields while an edit is in progress (capDirty).
+  const revision = useLiveQuery(
+    () =>
+      Promise.all([
+        db.metadata.count(),
+        db.llmUsage.count(),
+        db.llmReservations.count(),
+      ]),
+    [],
+  );
+  useEffect(() => {
+    if (revision === undefined) return;
+    // Same microtask boundary as the mount effect — the reads are
+    // subscription callbacks, not synchronous state writes.
+    queueMicrotask(() => {
+      void loadSnapshot();
+      void loadStatus();
+    });
+  }, [revision, loadSnapshot, loadStatus]);
+
   /** Persist the ceiling (and the optional price override) on the record. */
   const onSave = () => {
     if (busy || status?.providerId === undefined) return;
@@ -134,9 +170,15 @@ export function LlmBudget() {
     setSaveError(null);
 
     const trimmedCap = cap.trim();
-    const usd = unlimited || trimmedCap === "" ? undefined : Number(trimmedCap);
-    if (usd !== undefined && (!Number.isFinite(usd) || usd < 0)) {
-      setSaveError("The monthly cap must be a nonnegative number.");
+    const usd =
+      unlimited || trimmedCap === "" ? undefined : Number(trimmedCap);
+    if (
+      usd !== undefined &&
+      (!USD_DECIMAL.test(trimmedCap) || !Number.isFinite(usd) || usd < 0)
+    ) {
+      setSaveError(
+        "The monthly cap must be a nonnegative number like 25 or 12.50.",
+      );
       return;
     }
     const priceIn = inputPrice.trim();
@@ -147,8 +189,8 @@ export function LlmBudget() {
       const inputPerMillion = Number(priceIn);
       const outputPerMillion = Number(priceOut);
       if (
-        priceIn === "" ||
-        priceOut === "" ||
+        !USD_DECIMAL.test(priceIn) ||
+        !USD_DECIMAL.test(priceOut) ||
         !Number.isFinite(inputPerMillion) ||
         !Number.isFinite(outputPerMillion) ||
         inputPerMillion < 0 ||
@@ -187,6 +229,7 @@ export function LlmBudget() {
           return;
         }
         setNotice("Spending ceiling saved.");
+        capDirty.current = false;
         setInputPrice("");
         setOutputPrice("");
         void loadSnapshot();
@@ -273,6 +316,7 @@ export function LlmBudget() {
                   checked={unlimited}
                   disabled={busy}
                   onChange={(event) => {
+                    capDirty.current = true;
                     setUnlimited(event.target.checked);
                     if (event.target.checked) setCap("");
                   }}
@@ -291,7 +335,10 @@ export function LlmBudget() {
                     aria-label="Monthly cap (USD)"
                     disabled={unlimited || busy}
                     value={cap}
-                    onChange={(event) => setCap(event.target.value)}
+                    onChange={(event) => {
+                      capDirty.current = true;
+                      setCap(event.target.value);
+                    }}
                     className={`mt-1 ${inputClass}`}
                   />
                 </label>

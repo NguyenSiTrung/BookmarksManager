@@ -78,6 +78,7 @@ const PROVIDER_CARD_DESCRIPTIONS: Record<JevProviderId, string> = {
 declare const chrome: {
   permissions: {
     request(permissions: { origins?: string[] }): Promise<boolean>;
+    remove(permissions: { origins?: string[] }): Promise<boolean>;
   };
   runtime: {
     sendMessage(message: unknown): Promise<unknown>;
@@ -308,8 +309,21 @@ export function ProviderSetup() {
     void permissionRequest
       .then(async (granted) => {
         // A reply for a preset the user has since switched away from is
-        // dropped — the outcome belongs to the panel that requested it.
+        // dropped — the outcome belongs to the panel that requested it. A
+        // GRANT that landed for the abandoned preset is also removed:
+        // keeping it would leak a host permission for a provider the user
+        // never finished enabling.
         if (presetId !== currentPreset.current) {
+          if (granted) {
+            try {
+              await chrome.permissions.remove({
+                origins: [destinationPattern],
+              });
+            } catch {
+              // A removal failure leaves the grant in place; the next
+              // enable attempt on that preset re-requests it anyway.
+            }
+          }
           return;
         }
         if (!granted) {
@@ -333,6 +347,8 @@ export function ProviderSetup() {
         );
         // The same drop after the worker's reply — a switch during the
         // request must not render this preset's status on the new panel.
+        // The grant stays: ENABLE_PROVIDER already persisted the provider,
+        // so the permission is required, not leaked.
         if (presetId !== currentPreset.current) {
           return;
         }

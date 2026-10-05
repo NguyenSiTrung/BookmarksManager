@@ -86,11 +86,13 @@ import {
  *    simply takes effect once the provider is connected above.
  * 2. **Auto-apply toggles.** Only `add_tags` and `set_category` can ever
  *    auto-apply (`src/decisions/policy.ts`), and only at confidence ≥
- *    `AUTO_APPLY_THRESHOLD`; both default off. Reads/writes go through
- *    GET_SETTINGS/SET_SETTINGS so the worker remains the settings owner.
+ *    `AUTO_APPLY_THRESHOLD`; both default off. Reads go through
+ *    GET_SETTINGS and writes through field-level PATCH_SETTINGS, so the
+ *    worker remains the settings owner and a stale snapshot can't clobber
+ *    a concurrent write from another Options tab.
  * 3. **User blocklist editor.** A dumb list editor over the persisted user
  *    blocklist: entries are normalized/deduped with `normalizeBlocklistEntry`
- *    and round-trip through SET_BLOCKLIST; the frozen
+ *    and round-trip as add/remove deltas through PATCH_BLOCKLIST; the frozen
  *    `BUILTIN_SENSITIVE_SITES` list renders read-only for context.
  * 4. **Second opinions (escalation).** The `llm_escalate` disclosure and its
  *    read-gated consent, plus the off-by-default switch. A switch missing any
@@ -611,15 +613,12 @@ export function DecisionSettings({
     setBusy(true);
     setError(null);
     setNotice(null);
-    const next: DecisionSettingsValue = {
-      autoApply: {
-        ...settings.autoApply,
-        [kind]: !settings.autoApply[kind],
-      },
-    };
+    // Field-level patch: only this kind's toggle leaves the page, so a
+    // stale snapshot can't clobber another Options tab's concurrent write.
+    const patch = { autoApply: { [kind]: !settings.autoApply[kind] } };
     void chrome.runtime
       .sendMessage(
-        DecisionMessage.parse({ type: "SET_SETTINGS", settings: next }),
+        DecisionMessage.parse({ type: "PATCH_SETTINGS", patch }),
       )
       .then((raw) => {
         handleSettingsReply(raw, "Auto-apply setting saved.");
@@ -633,8 +632,12 @@ export function DecisionSettings({
       });
   };
 
-  /** Push one blocklist write through SET_BLOCKLIST. */
-  const writeBlocklist = (entries: readonly string[]) => {
+  /** Push one blocklist delta through PATCH_BLOCKLIST — the worker merges
+   * it into the live list, so an entry added by another tab survives. */
+  const writeBlocklist = (delta: {
+    add?: readonly string[];
+    remove?: readonly string[];
+  }) => {
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -642,8 +645,11 @@ export function DecisionSettings({
     void chrome.runtime
       .sendMessage(
         DecisionMessage.parse({
-          type: "SET_BLOCKLIST",
-          blocklist: [...entries],
+          type: "PATCH_BLOCKLIST",
+          ...(delta.add !== undefined ? { add: [...delta.add] } : {}),
+          ...(delta.remove !== undefined
+            ? { remove: [...delta.remove] }
+            : {}),
         }),
       )
       .then((raw) => {
@@ -684,14 +690,14 @@ export function DecisionSettings({
       setNewEntry("");
       return;
     }
-    writeBlocklist(next);
+    writeBlocklist({ add: [newEntry] });
   };
 
   const onRemoveEntry = (entry: string) => {
     if (blocklist === null || inFlight.current) {
       return;
     }
-    writeBlocklist(blocklist.filter((item) => item !== entry));
+    writeBlocklist({ remove: [entry] });
   };
 
   /**

@@ -57,6 +57,7 @@ import {
 import {
   handleDecisionsMessage,
   type DecisionsHandlers,
+  type SettingsPatchValue,
   type SettingsSnapshot,
 } from "../messages/decisions";
 import { handleLlmProviderMessage } from "../messages/llm-provider";
@@ -177,29 +178,69 @@ async function settingsSnapshot(): Promise<SettingsSnapshot> {
   return { settings, blocklist };
 }
 
-/** Persist the policy settings (validated by the message schema already). */
-async function writeDecisionSettings(
-  settings: DecisionSettings,
-): Promise<SettingsSnapshot> {
-  await db.metadata.put({ key: DECISION_SETTINGS_KEY, value: settings });
-  return settingsSnapshot();
+/**
+ * Serialize settings/blocklist read-modify-write cycles. Every PATCH
+ * message merges against the live record — running two merges
+ * concurrently would reintroduce the stale-snapshot clobber the patch
+ * protocol exists to prevent, so all merges queue on this chain.
+ */
+let settingsWriteChain: Promise<unknown> = Promise.resolve();
+
+function serializeSettingsWrite<T>(op: () => Promise<T>): Promise<T> {
+  const run = settingsWriteChain.then(op, op);
+  settingsWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 /**
- * Persist the user blocklist, normalized to canonical hosts and de-duplicated
- * (mirrors `normalizeBlocklistEntry`'s contract); entries that cannot name a
- * host are dropped rather than failing the whole write.
+ * Merge a field-level patch into the live settings record (validated by the
+ * message schema already): absent fields keep their stored values.
  */
-async function writeBlocklist(
-  entries: readonly string[],
+async function patchDecisionSettings(
+  patch: SettingsPatchValue,
 ): Promise<SettingsSnapshot> {
-  const normalized: string[] = [];
-  for (const raw of entries) {
-    const host = normalizeBlocklistEntry(raw);
-    if (host !== null && !normalized.includes(host)) normalized.push(host);
-  }
-  await db.metadata.put({ key: DECISION_BLOCKLIST_KEY, value: normalized });
-  return settingsSnapshot();
+  return serializeSettingsWrite(async () => {
+    const current = await readDecisionSettings();
+    const next = DecisionSettings.parse({
+      autoApply: {
+        ...current.autoApply,
+        ...(patch.autoApply ?? {}),
+      },
+    });
+    await db.metadata.put({ key: DECISION_SETTINGS_KEY, value: next });
+    return settingsSnapshot();
+  });
+}
+
+/**
+ * Merge add/remove deltas into the live user blocklist. Entries are
+ * normalized to canonical hosts and de-duplicated (mirrors
+ * `normalizeBlocklistEntry`'s contract); entries that cannot name a host
+ * are dropped rather than failing the whole write.
+ */
+async function patchBlocklist(delta: {
+  add?: readonly string[];
+  remove?: readonly string[];
+}): Promise<SettingsSnapshot> {
+  return serializeSettingsWrite(async () => {
+    const removeHosts = new Set(
+      (delta.remove ?? [])
+        .map((raw) => normalizeBlocklistEntry(raw))
+        .filter((host): host is string => host !== null),
+    );
+    const next = (await readBlocklist()).filter(
+      (item) => !removeHosts.has(item),
+    );
+    for (const raw of delta.add ?? []) {
+      const host = normalizeBlocklistEntry(raw);
+      if (host !== null && !next.includes(host)) next.push(host);
+    }
+    await db.metadata.put({ key: DECISION_BLOCKLIST_KEY, value: next });
+    return settingsSnapshot();
+  });
 }
 
 /** Build the `AnalysisContext` from the live tree + extension metadata. */
@@ -559,8 +600,8 @@ export function productionHandlers(
     },
     cancelJob: (id) => cancelJob(id),
     getSettings: () => settingsSnapshot(),
-    setSettings: (settings) => writeDecisionSettings(settings),
-    setBlocklist: (blocklist) => writeBlocklist(blocklist),
+    patchSettings: (patch) => patchDecisionSettings(patch),
+    patchBlocklist: (delta) => patchBlocklist(delta),
   };
 }
 

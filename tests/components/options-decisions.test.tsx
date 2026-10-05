@@ -38,7 +38,10 @@ import {
   revokeConsentsAtOrigin,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
-import { BUILTIN_SENSITIVE_SITES } from "../../src/decisions/minimize";
+import {
+  BUILTIN_SENSITIVE_SITES,
+  normalizeBlocklistEntry,
+} from "../../src/decisions/minimize";
 import type { DecisionSettings as SettingsValue } from "../../src/decisions/policy";
 import { DecisionSettings } from "../../src/entrypoints/options/DecisionSettings";
 import { OptionsApp } from "../../src/entrypoints/options/OptionsApp";
@@ -84,21 +87,19 @@ let sendMessageSpy: ReturnType<typeof vi.fn>;
 let workerSettings: SettingsValue;
 let workerBlocklist: string[];
 
-const ALL_OFF: SettingsValue = {
-  autoApply: { add_tags: false, set_category: false },
-};
-
 /**
  * In-memory worker double for the decisions settings protocol. The worker is
- * not running in tests; this answers GET_SETTINGS/SET_SETTINGS/SET_BLOCKLIST
- * the way `handleDecisionsMessage` would and tracks state across renders so
- * round-trips are exercised through the message boundary.
+ * not running in tests; this answers GET_SETTINGS/PATCH_SETTINGS/
+ * PATCH_BLOCKLIST the way `handleDecisionsMessage` would — the patches merge
+ * into the shared `worker*` state, so two mounted pages exercising stale
+ * snapshots both persist, matching the worker's read-modify-write.
  */
 function workerReply(message: unknown): Promise<DecisionMessageResult> {
   const msg = message as {
     type: string;
-    settings?: SettingsValue;
-    blocklist?: string[];
+    patch?: { autoApply?: Partial<SettingsValue["autoApply"]> };
+    add?: string[];
+    remove?: string[];
   };
   switch (msg.type) {
     case "GET_SETTINGS":
@@ -108,22 +109,37 @@ function workerReply(message: unknown): Promise<DecisionMessageResult> {
         settings: workerSettings,
         blocklist: [...workerBlocklist],
       });
-    case "SET_SETTINGS":
-      workerSettings = msg.settings ?? ALL_OFF;
+    case "PATCH_SETTINGS":
+      workerSettings = {
+        autoApply: { ...workerSettings.autoApply, ...(msg.patch?.autoApply ?? {}) },
+      };
       return Promise.resolve({
         ok: true,
         code: "settings_ok",
         settings: workerSettings,
         blocklist: [...workerBlocklist],
       });
-    case "SET_BLOCKLIST":
-      workerBlocklist = [...(msg.blocklist ?? [])];
+    case "PATCH_BLOCKLIST": {
+      // The double normalizes like the worker: adds/removes canonicalize
+      // through `normalizeBlocklistEntry`, deduped against the live list.
+      const removals = new Set(
+        (msg.remove ?? [])
+          .map((raw) => normalizeBlocklistEntry(raw))
+          .filter((host): host is string => host !== null),
+      );
+      const next = workerBlocklist.filter((host) => !removals.has(host));
+      for (const raw of msg.add ?? []) {
+        const host = normalizeBlocklistEntry(raw);
+        if (host !== null && !next.includes(host)) next.push(host);
+      }
+      workerBlocklist = next;
       return Promise.resolve({
         ok: true,
         code: "settings_ok",
         settings: workerSettings,
         blocklist: [...workerBlocklist],
       });
+    }
     default:
       return Promise.resolve({
         ok: false,
@@ -151,7 +167,11 @@ afterAll(() => {
   db.close();
 });
 
-const DECISION_TYPES = ["GET_SETTINGS", "SET_SETTINGS", "SET_BLOCKLIST"];
+const DECISION_TYPES = [
+  "GET_SETTINGS",
+  "PATCH_SETTINGS",
+  "PATCH_BLOCKLIST",
+];
 
 /** The `type` of every runtime.sendMessage call so far. */
 function sentTypes(): string[] {
@@ -405,25 +425,27 @@ describe("auto-apply toggles", () => {
     expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
   });
 
-  it("persists a flip via SET_SETTINGS carrying the whole DecisionSettings object", async () => {
+  it("persists a flip via a PATCH_SETTINGS field patch", async () => {
     render(<DecisionSettings />);
     const addTags = await screen.findByRole("switch", {
       name: /tag additions/i,
     });
     fireEvent.click(addTags);
     await waitFor(() => {
-      expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "SET_SETTINGS"]);
+      expect(sentDecisionTypes()).toEqual(["GET_SETTINGS", "PATCH_SETTINGS"]);
     });
     const message = sendMessageSpy.mock.calls
-      .map(([m]) => m as { type: string; settings?: SettingsValue })
-      .find((m) => m.type === "SET_SETTINGS") as {
-      type: string;
-      settings: SettingsValue;
-    };
-    expect(message.type).toBe("SET_SETTINGS");
-    expect(message.settings).toEqual({
-      autoApply: { add_tags: true, set_category: false },
-    });
+      .map(
+        ([m]) =>
+          m as {
+            type: string;
+            patch?: { autoApply?: Partial<SettingsValue["autoApply"]> };
+          },
+      )
+      .find((m) => m.type === "PATCH_SETTINGS");
+    // Only the flipped field leaves the page — a stale snapshot can't
+    // clobber another tab's concurrent write.
+    expect(message?.patch).toEqual({ autoApply: { add_tags: true } });
     // The worker's echoed snapshot flips the rendered checkbox.
     await waitFor(() =>
       expect(addTags.getAttribute("aria-checked")).toBe("true"),
@@ -441,8 +463,8 @@ describe("auto-apply toggles", () => {
     await waitFor(() =>
       expect(sendMessageSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "SET_SETTINGS",
-          settings: { autoApply: { add_tags: true, set_category: true } },
+          type: "PATCH_SETTINGS",
+          patch: { autoApply: { set_category: true } },
         }),
       ),
     );
@@ -450,7 +472,7 @@ describe("auto-apply toggles", () => {
 });
 
 describe("blocklist editor", () => {
-  it("adds a normalized entry via SET_BLOCKLIST and lists it", async () => {
+  it("adds a normalized entry via a PATCH_BLOCKLIST delta and lists it", async () => {
     render(<DecisionSettings />);
     const input = await screen.findByLabelText(/block a host/i);
     fireEvent.change(input, { target: { value: "Example.ORG" } });
@@ -458,8 +480,8 @@ describe("blocklist editor", () => {
     await waitFor(() =>
       expect(sendMessageSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "SET_BLOCKLIST",
-          blocklist: ["example.org"],
+          type: "PATCH_BLOCKLIST",
+          add: ["Example.ORG"],
         }),
       ),
     );
@@ -467,7 +489,7 @@ describe("blocklist editor", () => {
     expect(workerBlocklist).toEqual(["example.org"]);
   });
 
-  it("removes an entry via SET_BLOCKLIST", async () => {
+  it("removes an entry via a PATCH_BLOCKLIST delta", async () => {
     workerBlocklist = ["example.org", "example.net"];
     render(<DecisionSettings />);
     await screen.findByText("example.org");
@@ -477,13 +499,44 @@ describe("blocklist editor", () => {
     await waitFor(() =>
       expect(sendMessageSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "SET_BLOCKLIST",
-          blocklist: ["example.net"],
+          type: "PATCH_BLOCKLIST",
+          remove: ["example.org"],
         }),
       ),
     );
     await waitFor(() => expect(screen.queryByText("example.org")).toBeNull());
     expect(screen.getByText("example.net")).toBeTruthy();
+  });
+
+  it("persists adds from two pages holding different stale snapshots", async () => {
+    // Two mounted pages read the same snapshot, then each adds a different
+    // entry — the worker merges both deltas, so neither add is clobbered.
+    workerBlocklist = ["example.org"];
+    const first = render(<DecisionSettings />);
+    const second = render(<DecisionSettings />);
+    // Both pages render the same label + control id, so a by-label query
+    // can't disambiguate the two — the placeholder is unique to this field.
+    const firstInput = await within(first.container).findByPlaceholderText(
+      "example.com",
+    );
+    const secondInput = await within(second.container).findByPlaceholderText(
+      "example.com",
+    );
+    fireEvent.change(firstInput, { target: { value: "bank.example" } });
+    fireEvent.change(secondInput, { target: { value: "health.example" } });
+    fireEvent.click(
+      within(first.container).getByRole("button", { name: /^add$/i }),
+    );
+    fireEvent.click(
+      within(second.container).getByRole("button", { name: /^add$/i }),
+    );
+    await waitFor(() =>
+      expect(workerBlocklist).toEqual([
+        "example.org",
+        "bank.example",
+        "health.example",
+      ]),
+    );
   });
 
   it("does not send for duplicates or inputs that cannot name a host", async () => {
@@ -617,7 +670,7 @@ describe("protocol discipline", () => {
       await screen.findByRole("switch", { name: /tag additions/i }),
     );
     await waitFor(() =>
-      expect(sentDecisionTypes()).toContain("SET_SETTINGS"),
+      expect(sentDecisionTypes()).toContain("PATCH_SETTINGS"),
     );
     for (const type of sentTypes()) {
       expect([
