@@ -685,3 +685,33 @@ claim that any audit finding has been fixed or reproduced.
   re-throw propagation, and the e2e fetch-patch scope all verified.
 - Full gate green at commit: lint, typecheck, 3021 unit/171 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## Phase 3 Task 2: J03 (9a64736)
+
+- `chrome.storage.session` is the same-session discriminator: it survives
+  service-worker eviction but clears on browser restart — a marker found
+  at startup means "resume me", an empty store means "P06 pause rule".
+  Putting markers anywhere durable (Dexie, storage.local) would break
+  that distinction.
+- Keepalive drains must be fire-and-forget: `relaunch` resolves only
+  when the whole drive completes, and `resumeJobs` is behind the
+  `startupRecovery` message barrier — an awaited drain holds EVERY
+  message (Pause included) hostage for the job's remaining duration
+  and serializes marked jobs on each alarm tick. `void relaunch().catch()`
+  inside a try covers async rejections and sync throws both.
+- Mark after winning the owner claim — every same-session drive point
+  (startJob, resumeJob relaunch, watchdog re-drive) funnels through
+  `drivePersistedJob`, so one mark/unmark site covers all of them;
+  unmark on `finally` once the row leaves pending/running.
+- New permissions need four fixtures in sync: `wxt.config.ts`,
+  `store/permissions.md` (check-manifest parses the "required" table),
+  `tests/unit/{scaffold,manifest}.test.ts` lists, and the
+  `audit-release.test.ts` MANIFEST fixture — the full unit suite is the
+  only thing that catches all four.
+- `sleepCapped` preserves the full honored `retry-after` across ≤15s
+  slices — cap the single wait, not the total delay, or the server's
+  slow-down hint is silently weakened.
+- Independent review (child 7ac8d994): PASS/PASS after one fix round
+  (awaited drain → fire-and-forget launches).
+- Full gate green at commit: lint, typecheck, 3029 unit/172 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).

@@ -218,7 +218,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     `running` job is re-driven by the watchdog; 429 burst opens the breaker
     and pause is honored per item.
   - Fix: per-item outcome, resumable `failed`, wrapped run, watchdog, breaker.
-- [ ] Task 2: J03 — alarms keepalive for same-session jobs
+- [x] Task 2: J03 — alarms keepalive for same-session jobs (`9a64736`)
   <!-- files: src/entrypoints/background.ts, wxt.config.ts, store/permissions.md, src/jobs/keepalive.ts -->
   <!-- depends: task1 -->
   - Tests: job started this session survives simulated eviction (alarm
