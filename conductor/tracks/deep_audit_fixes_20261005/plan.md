@@ -268,7 +268,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 4: Duplicates, undo and data integrity
 <!-- execution: parallel -->
 
-- [ ] Task 1: D01 — safe URL normalization
+- [x] Task 1: D01 — safe URL normalization (`07bb4ee`)
   <!-- files: src/duplicates/normalize.ts, src/duplicates/group.ts, src/io/import-plan.ts -->
   - Tests: `app.com/#/inbox` vs `#/settings`, `?ref=a` vs `?ref=b` on a
     repo host, `http` vs `https` do not group for merge or import-skip;

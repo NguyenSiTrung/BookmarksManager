@@ -906,3 +906,27 @@ claim that any audit finding has been fixed or reproduced.
   3077 unit / 173 files, build, manifest, bundle, 43 e2e + 1 intentional
   screenshot skip — including the job pause/resume/cold-restart
   restructure resume specs. No manual checks (per plan).
+
+### Task 1 (D01 — safe URL normalization) `07bb4ee`
+- Scheme belongs in the dedup key: folding http→https could merge a
+  redirect hop or differently-served page into its twin. New key shape:
+  `scheme://[userinfo@]host[:port][/path][?query][#route]`.
+- Route-like fragments (`#/`, `#!`) carry page identity — keep them
+  verbatim; plain anchors still drop. Percent-encoded `#%2F` does NOT
+  match the keep rule (rare residual fold, noted by review).
+- `ref` stripping host-scoped to REF_TRACKING_HOSTS (amazon.com, dev.to,
+  imdb.com, medium.com, reddit.com, dot-bounded suffix incl. subdomains);
+  everywhere else kept — fail closed to distinctness. Repo `?ref=` now
+  keeps identity.
+- Normalized keys are ephemeral (group/import-plan/near-dup/popup all
+  compute per call) — no migration needed.
+- groupDuplicates' suppression is member-SET based, not key equality —
+  scheme-prefixed keys can't confuse it.
+- Suggestion-only merge is already structural: evaluatePolicy never
+  auto-applies merge_duplicates; DuplicatesView needs keep-pick+confirm.
+- Stale fixtures: tests that relied on http↔https folding retuned to
+  same-scheme variants (www./utm_*) — duplicates-group, search-run
+  collectDuplicateIds, decisions-candidates near-dup exclusion.
+- Independent review (child 7ac8d994): PASS/PASS first round, 8 info notes.
+- Full gate green at commit: lint, typecheck, 3084 unit, build, manifest,
+  bundle, 43 e2e + 1 intentional screenshot skip.
