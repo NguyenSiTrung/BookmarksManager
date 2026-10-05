@@ -18,6 +18,13 @@ import {
   vi,
 } from "vitest";
 import { db } from "../../src/db/database";
+import {
+  cancelJob,
+  enqueueJob,
+  pauseJob,
+  resumeJob,
+  setJobStatus,
+} from "../../src/jobs/queue";
 import { transitionStatus } from "../../src/decisions/store";
 import type { DecisionRow } from "../../src/decisions/store";
 import { App } from "../../src/entrypoints/sidepanel/App";
@@ -45,9 +52,10 @@ import { chooseMenuItem, openMenu } from "./menu-helpers";
  *                    entry with a pending-count badge; the right pane swaps
  *                    BookmarkList for ReviewView on `kind: "review"`; the
  *                    approve toast's Undo is wired to REVERT_DECISION.
- *  - Analyze         a per-row kebab/context entry and a BulkBar button,
- *                    both firing `ANALYZE_BOOKMARK` (the bulk bar loops the
- *                    single-bookmark intent — there is no bulk intent).
+ *  - Analyze         a per-row kebab/context entry (`ANALYZE_BOOKMARK`) and
+ *                    the BulkBar flow — a confirm with the estimate, then
+ *                    ONE `JOB_START` (`analyze_selection`) for the selected
+ *                    ids and a live status card (U02).
  *
  * The worker is a stub: `chrome.runtime.sendMessage` answers canned
  * `DecisionMessageResult` payloads and, for status intents, transitions the
@@ -110,6 +118,9 @@ interface Intent {
   decisionId?: string;
   decisionIds?: string[];
   bookmarkId?: string;
+  kind?: "analyze_selection" | "library_scan" | "restructure";
+  bookmarkIds?: string[];
+  jobId?: string;
 }
 
 /**
@@ -183,6 +194,35 @@ async function defaultWorker(raw: unknown): Promise<DecisionMessageResult> {
       }
       return { ok: true, code: "bulk_ok", applied, failed };
     }
+    case "JOB_START": {
+      const enqueued = await enqueueJob({
+        kind:
+          message.kind === "analyze_selection"
+            ? "analyze_selection"
+            : "library_scan",
+        bookmarkIds: message.bookmarkIds ?? [],
+      });
+      const job = await setJobStatus(enqueued.id, "running");
+      return { ok: true, code: "job_ok", job };
+    }
+    case "JOB_PAUSE":
+      return {
+        ok: true,
+        code: "job_ok",
+        job: await pauseJob(message.jobId ?? ""),
+      };
+    case "JOB_RESUME":
+      return {
+        ok: true,
+        code: "job_ok",
+        job: await resumeJob(message.jobId ?? ""),
+      };
+    case "JOB_CANCEL":
+      return {
+        ok: true,
+        code: "job_ok",
+        job: await cancelJob(message.jobId ?? ""),
+      };
     case "REVERT_BATCH": {
       const reverted: string[] = [];
       const failed: { id: string; code: string; message: string }[] = [];
@@ -233,6 +273,7 @@ beforeEach(async () => {
   await db.undo.clear();
   await db.decisions.clear();
   await db.audit.clear();
+  await db.jobs.clear();
   let tick = 0;
   fake = createFakeBookmarks({
     now: () => (tick += 100),
@@ -885,7 +926,7 @@ describe("Analyze actions", () => {
     );
   });
 
-  it("bulk-bar Analyze sends one ANALYZE_BOOKMARK per selected bookmark", async () => {
+  it("bulk-bar Analyze confirms then starts one analyze_selection job (U02)", async () => {
     await renderApp();
 
     fireEvent.click(option(/Alpha/));
@@ -893,59 +934,46 @@ describe("Analyze actions", () => {
     const bar = selectionBar();
     expect(bar.textContent).toContain("2 selected");
 
-    fireEvent.click(within(bar).getByRole("button", { name: "Analyze" }));
+    const analyze = within(bar).getByRole("button", {
+      name: "Analyze",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(analyze.disabled).toBe(false));
+    fireEvent.click(analyze);
 
-    await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: "ANALYZE_BOOKMARK",
-        bookmarkId: "b1",
-      });
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: "ANALYZE_BOOKMARK",
-        bookmarkId: "b3",
-      });
-    });
-    await waitFor(() =>
-      expect(toast().textContent).toMatch(/2 analyzed/i),
-    );
-  });
+    // Confirm shows the count and the estimate before anything is sent.
+    const dialog = (await screen.findByRole("dialog", {
+      name: "Analyze 2 bookmarks?",
+    })) as HTMLElement;
+    expect(dialog.textContent).toContain("2 AI requests");
+    expect(dialog.textContent).toContain("tokens, likely more");
+    expect(sendMessage).not.toHaveBeenCalled();
 
-  it("bulk-bar Analyze reports blocklisted and failed counts", async () => {
-    sendMessage.mockImplementation(async (raw: unknown) => {
-      const message = raw as Intent;
-      if (message.bookmarkId === "b3") {
-        return {
-          ok: true,
-          code: "analyze_ok",
-          result: { sent: false, reason: "blocklisted", decisionCount: 0 },
-        };
-      }
-      if (message.bookmarkId === "b4") {
-        return {
-          ok: false,
-          code: "no_consent",
-          message: "Consent has not been granted for decisions.",
-        };
-      }
-      return defaultWorker(raw);
-    });
-    await renderApp();
-
-    fireEvent.click(option(/Alpha/));
-    fireEvent.click(option(/Gamma/), { ctrlKey: true });
-    fireEvent.click(option(/Delta/), { ctrlKey: true });
     fireEvent.click(
-      within(selectionBar()).getByRole("button", { name: "Analyze" }),
+      within(dialog).getByRole("button", { name: "Analyze" }),
     );
 
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "JOB_START",
+        kind: "analyze_selection",
+        bookmarkIds: ["b1", "b3"],
+      }),
+    );
+
+    // The queued→running row streams into the card with Pause/Cancel.
+    const card = await screen.findByRole("status", {
+      name: "Selection analysis",
+    });
     await waitFor(() =>
-      expect(toast().textContent).toMatch(/1 analyzed/i),
+      expect(card.textContent).toContain("Analysis: Running"),
     );
-    expect(toast().textContent).toMatch(/1 blocklisted/i);
-    expect(toast().textContent).toMatch(/1 failed/i);
-    expect(toast().textContent).toContain(
-      "Consent has not been granted for decisions.",
-    );
+    expect(
+      within(card).getByRole("button", { name: "Pause" }),
+    ).toBeTruthy();
+    expect(
+      within(card).getByRole("button", { name: "Cancel" }),
+    ).toBeTruthy();
   });
 });
 

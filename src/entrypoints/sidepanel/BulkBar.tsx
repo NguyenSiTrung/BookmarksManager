@@ -1,5 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "../../db/database";
 import { deleteMetaByIds } from "../../db/meta";
+import { estimateJobCost } from "../../jobs/estimate";
+import { MAX_JOB_BOOKMARK_IDS } from "../../schemas/job";
+import type { Job as JobDocument, JobCostEstimate } from "../../schemas/job";
 import { Category } from "../../schemas/bookmark";
 import type { UndoMeta, UndoNode } from "../../schemas/undo";
 import { removeTree } from "../../sync/mutations";
@@ -27,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/components/dropdown-menu";
 import { useSelection } from "./BookmarkList";
-import { analyzeOutcome, sendDecisionMessage } from "./ReviewView";
+import { sendDecisionMessage } from "./ReviewView";
 import { DecisionMessage } from "../../messages/decisions";
 import { errorMessage, useToast } from "./UndoToast";
 
@@ -45,10 +50,21 @@ import { errorMessage, useToast } from "./UndoToast";
  *    the snapshot again — nothing to undo.
  *  - Bar actions run the corresponding mutation/tag-op over the selected
  *    ids and report the `{affected}` count in the toast: Move to… (dialog
- *    owned by the shell), Delete, Analyze (one ANALYZE_BOOKMARK intent per
- *    selected id — the decisions protocol has no bulk analyze — reporting
- *    an analyzed/blocklisted/failed tally), Add tag, Remove tag, Set
- *    category, Clear selection. Delete and Move are greyed out when NO
+ *    owned by the shell), Delete, Analyze, Add tag, Remove tag, Set
+ *    category, Clear selection. Analyze routes through the job queue: it
+ *    filters the selection down to bookmarks (folders are not analyzable),
+ *    refuses a work set over the protocol cap (`MAX_JOB_BOOKMARK_IDS`), and
+ *    opens a confirm dialog showing `estimateJobCost`'s lower bound before
+ *    anything is sent; confirm dispatches ONE `JOB_START`
+ *    (`analyze_selection`) and the bar streams the LATEST analyze_selection
+ *    job row live (ScanPanel's model — a remounted bar re-attaches to a job
+ *    still running from an earlier mount): a compact status line with
+ *    Pause/Resume/Cancel while the job is non-terminal and a dismiss on a
+ *    terminal state. A failed row read fails closed — the launcher stays
+ *    disabled and the card reports "status unavailable" rather than freeing
+ *    a second enqueue. The card follows the bar's visibility: a cleared
+ *    selection hides it, the job keeps running, and the card returns with
+ *    the next selection. Delete and Move are greyed out when NO
  *    selected row is mutable (every selected id is managed, per the
  *    optional `tree` prop) — the policy wall the mutation service would
  *    reject anyway.
@@ -182,6 +198,73 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
   const toast = useToast();
   const [tagPrompt, setTagPrompt] = useState<"add" | "remove" | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * U02: Analyze's confirm payload — the analyzable ids frozen at open plus
+   * the pre-start estimate (null when no `tree` prop, so a bare bar still
+   * confirms by count). `null` = closed.
+   */
+  const [analyzeConfirm, setAnalyzeConfirm] = useState<{
+    ids: readonly string[];
+    estimate: JobCostEstimate | null;
+  } | null>(null);
+  /**
+   * Synchronous re-entrancy guard for the analyze intent (the I02 lesson):
+   * `analyzeBusy` state lags one render behind a double-click; the ref is
+   * flipped inside the handler before the first await. Both clear in
+   * `finally` so a thrown send can never wedge the bar.
+   */
+  const analyzeBusyRef = useRef(false);
+  const [analyzeBusy, setAnalyzeBusy] = useState(false);
+  /**
+   * A terminal analyze row the user dismissed. Local by design: the bar
+   * never deletes job rows, and a NEW row (a later start, or one started
+   * elsewhere) shows regardless — the id comparison dismisses exactly one.
+   */
+  const [dismissedAnalyzeJobId, setDismissedAnalyzeJobId] = useState<
+    string | null
+  >(null);
+  /**
+   * The latest `analyze_selection` row is the card's source of truth
+   * (ScanPanel's model): a remounted bar re-attaches to a job still
+   * running from an earlier mount instead of orphaning its controls.
+   */
+  const analyzeJobRead = useLiveQuery(latestAnalyzeSelectionJob, []);
+  const analyzeReadFailed = analyzeJobRead === JOB_READ_FAILED;
+  /**
+   * The failed-read card can be dismissed; the flag resets as soon as the
+   * read recovers so a LATER failure surfaces again. Render-adjusted state
+   * (React's "you might not need an effect" pattern): the transition out
+   * of read-failed is the reset signal, applied during render rather than
+   * in an effect.
+   */
+  const [readFailureDismissed, setReadFailureDismissed] = useState(false);
+  const [prevAnalyzeReadFailed, setPrevAnalyzeReadFailed] = useState(
+    analyzeReadFailed,
+  );
+  if (prevAnalyzeReadFailed !== analyzeReadFailed) {
+    setPrevAnalyzeReadFailed(analyzeReadFailed);
+    if (!analyzeReadFailed) setReadFailureDismissed(false);
+  }
+  const analyzeJob =
+    analyzeReadFailed || analyzeJobRead === undefined
+      ? null
+      : analyzeJobRead;
+  const showAnalyzeCard =
+    analyzeJob !== null &&
+    (!isTerminalJob(analyzeJob.status) ||
+      analyzeJob.id !== dismissedAnalyzeJobId);
+  /**
+   * One live launcher at a time (ScanPanel's rule): Analyze stays disabled
+   * while the row read is pending (`undefined` — a fresh mount or the gap
+   * right after JOB_START), while the read FAILED (fail-closed: the job
+   * may still be running), or while the live row is non-terminal.
+   */
+  const analyzeDisabled =
+    busy ||
+    analyzeBusy ||
+    analyzeJobRead === undefined ||
+    analyzeReadFailed ||
+    (analyzeJob !== null && !isTerminalJob(analyzeJob.status));
 
   const count = selection.selectedIds.size;
   const ids = [...selection.selectedIds];
@@ -212,41 +295,120 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
   };
 
   /**
-   * P4.T3 analyze action: there is no bulk intent in the decisions
-   * protocol, so the bar loops one ANALYZE_BOOKMARK per selected id and
-   * reports the tally — "N analyzed, M blocklisted, K failed" — with the
-   * first redacted failure message appended verbatim. Selection is
-   * preserved (analysis changes nothing in the tree).
+   * U02 analyze action: open the confirm dialog instead of sending. Only
+   * bookmark ids are analyzable — folder ids are filtered out (the queue
+   * would fail them item-by-item); a folder-only selection is rejected up
+   * front. A selection over the protocol cap is rejected BEFORE any send —
+   * `JOB_START` refuses it anyway, and a queued 50k+ bookmark payload is
+   * never honest UI. The estimate folds the same minimized `{id,title,url}`
+   * rows the ScanPanel uses; without a `tree` prop the confirm still shows
+   * the count (no estimate).
    */
-  const handleAnalyze = async (): Promise<void> => {
-    setBusy(true);
-    let sent = 0;
-    let blocklisted = 0;
-    let failed = 0;
-    let firstError: string | undefined;
-    for (const id of ids) {
-      const outcome = analyzeOutcome(
-        await sendDecisionMessage(
-          DecisionMessage.parse({ type: "ANALYZE_BOOKMARK", bookmarkId: id }),
-        ),
-      );
-      if (outcome.kind === "sent") sent += 1;
-      else if (outcome.kind === "skipped") blocklisted += 1;
-      else {
-        failed += 1;
-        firstError ??= outcome.message;
-      }
+  const handleAnalyze = (): void => {
+    if (analyzeBusyRef.current) return;
+    const analyzableIds =
+      tree === undefined
+        ? ids
+        : ids.filter((id) => tree.bookmarks.has(id));
+    if (analyzableIds.length === 0) {
+      toast.showToast({
+        message:
+          "Nothing analyzable in the selection — folders have no page to scan.",
+        error: true,
+      });
+      return;
     }
-    setBusy(false);
-    const parts = [`${sent} analyzed`];
-    if (blocklisted > 0) parts.push(`${blocklisted} blocklisted`);
-    if (failed > 0) parts.push(`${failed} failed`);
-    toast.showToast({
-      message:
-        parts.join(", ") +
-        (firstError === undefined ? "" : ` — ${firstError}`),
-      error: failed > 0,
-    });
+    if (analyzableIds.length > MAX_JOB_BOOKMARK_IDS) {
+      toast.showToast({
+        message: `Selection too large — analyze at most ${NUMBER_FORMAT.format(
+          MAX_JOB_BOOKMARK_IDS,
+        )} bookmarks at once.`,
+        error: true,
+      });
+      return;
+    }
+    const estimate =
+      tree === undefined
+        ? null
+        : estimateJobCost({
+            bookmarks: analyzableIds.map((id) => {
+              const bookmark = tree.bookmarks.get(id);
+              return {
+                id,
+                title: bookmark?.title ?? "",
+                url: bookmark?.url ?? "",
+              };
+            }),
+            kind: "analyze_selection",
+          });
+    setAnalyzeConfirm({ ids: analyzableIds, estimate });
+  };
+
+  /**
+   * The confirm's affirmative: ONE `JOB_START` for the frozen analyzable
+   * ids (`analyze_selection` — categorize + tags, no near-duplicate phase).
+   * The dialog is closed before dispatch and the ref guards the send, so a
+   * double-click can only ever enqueue one job. Success tracks the replied
+   * job row; the row itself (not the reply) drives the status card.
+   */
+  const handleAnalyzeConfirm = async (): Promise<void> => {
+    if (analyzeConfirm === null || analyzeBusyRef.current) return;
+    const pending = analyzeConfirm;
+    setAnalyzeConfirm(null);
+    analyzeBusyRef.current = true;
+    setAnalyzeBusy(true);
+    try {
+      const result = await sendDecisionMessage(
+        DecisionMessage.parse({
+          type: "JOB_START",
+          kind: "analyze_selection",
+          bookmarkIds: [...pending.ids],
+        }),
+      );
+      if (!result.ok) {
+        toast.showToast({ message: result.message, error: true });
+        return;
+      }
+      if (result.code !== "job_ok") {
+        toast.showToast({ message: UNEXPECTED_REPLY_MESSAGE, error: true });
+        return;
+      }
+      // A fresh start supersedes any dismissed terminal row.
+      setDismissedAnalyzeJobId(null);
+      toast.showToast({
+        message: `Analysis started — ${pending.ids.length} bookmark${
+          pending.ids.length === 1 ? "" : "s"
+        } queued.`,
+      });
+    } finally {
+      analyzeBusyRef.current = false;
+      setAnalyzeBusy(false);
+    }
+  };
+
+  /** Pause/Resume/Cancel for the tracked analyze job — same reply contract as the start. */
+  const handleJobControl = async (
+    type: "JOB_PAUSE" | "JOB_RESUME" | "JOB_CANCEL",
+  ): Promise<void> => {
+    if (analyzeJob === null || analyzeBusyRef.current) return;
+    analyzeBusyRef.current = true;
+    setAnalyzeBusy(true);
+    try {
+      const result = await sendDecisionMessage(
+        DecisionMessage.parse({ type, jobId: analyzeJob.id }),
+      );
+      if (!result.ok) {
+        toast.showToast({ message: result.message, error: true });
+        return;
+      }
+      if (result.code !== "job_ok") {
+        toast.showToast({ message: UNEXPECTED_REPLY_MESSAGE, error: true });
+      }
+      // Success needs no local action — the live row is the source of truth.
+    } finally {
+      analyzeBusyRef.current = false;
+      setAnalyzeBusy(false);
+    }
   };
 
   const handleSetCategory = async (
@@ -295,8 +457,8 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
       </button>
       <button
         type="button"
-        disabled={busy}
-        onClick={() => void handleAnalyze()}
+        disabled={analyzeDisabled}
+        onClick={() => handleAnalyze()}
         className={barButtonClass}
       >
         Analyze
@@ -345,6 +507,143 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
       >
         Clear selection
       </button>
+      {analyzeReadFailed && !readFailureDismissed && (
+        <div
+          role="status"
+          aria-label="Selection analysis"
+          className="flex w-full flex-wrap items-center gap-2 pt-1"
+        >
+          <span className="text-xs font-medium">
+            Analysis: status unavailable
+          </span>
+          <span className="text-xs text-muted-foreground">
+            the job may still be running
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              // Hiding only dismisses the notice — the job itself is
+              // unaffected; the card returns if the read keeps failing.
+              setReadFailureDismissed(true);
+            }}
+            className={barButtonClass}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {showAnalyzeCard && analyzeJob !== null && (
+        <div
+          role="status"
+          aria-label="Selection analysis"
+          className="flex w-full flex-wrap items-center gap-2 pt-1"
+        >
+          <span className="text-xs font-medium">
+            Analysis: {JOB_STATUS_LABEL[analyzeJob.status]}
+          </span>
+          {analyzeJob.progress.totalBatches > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {analyzeJob.progress.processedCount} processed
+            </span>
+          )}
+          {analyzeJob.status === "failed" &&
+            analyzeJob.error !== undefined && (
+              <span role="alert" className="text-xs text-destructive">
+                {analyzeJob.error}
+              </span>
+            )}
+          {(analyzeJob.status === "pending" ||
+            analyzeJob.status === "running") && (
+            <button
+              type="button"
+              disabled={analyzeBusy}
+              onClick={() => void handleJobControl("JOB_PAUSE")}
+              className={barButtonClass}
+            >
+              Pause
+            </button>
+          )}
+          {(analyzeJob.status === "paused" ||
+            analyzeJob.status === "failed") && (
+            <button
+              type="button"
+              disabled={analyzeBusy}
+              onClick={() => void handleJobControl("JOB_RESUME")}
+              className={barButtonClass}
+            >
+              Resume
+            </button>
+          )}
+          {!isTerminalJob(analyzeJob.status) && (
+            <button
+              type="button"
+              disabled={analyzeBusy}
+              onClick={() => void handleJobControl("JOB_CANCEL")}
+              className={barButtonClass}
+            >
+              Cancel
+            </button>
+          )}
+          {isTerminalJob(analyzeJob.status) && (
+            <button
+              type="button"
+              onClick={() => setDismissedAnalyzeJobId(analyzeJob.id)}
+              className={barButtonClass}
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
+      {analyzeConfirm !== null && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setAnalyzeConfirm(null);
+          }}
+        >
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>Analyze {analyzeConfirm.ids.length} bookmark{analyzeConfirm.ids.length === 1 ? "" : "s"}?</DialogTitle>
+              <DialogDescription>
+                Categorize and tag the selected bookmarks, then list the
+                suggestions in Review.
+              </DialogDescription>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground" data-testid="analyze-estimate">
+              {analyzeConfirm.estimate === null
+                ? `${analyzeConfirm.ids.length} bookmark${
+                    analyzeConfirm.ids.length === 1 ? "" : "s"
+                  } · estimate unavailable`
+                : `${analyzeConfirm.estimate.requests} AI request${
+                    analyzeConfirm.estimate.requests === 1 ? "" : "s"
+                  } · ~${NUMBER_FORMAT.format(
+                    analyzeConfirm.estimate.inputTokens,
+                  )} tokens, likely more`}
+            </p>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => setAnalyzeConfirm(null)}
+                className="rounded-md border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={analyzeBusy}
+                onClick={() => void handleAnalyzeConfirm()}
+                className={
+                  "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
+                  "text-primary-foreground disabled:opacity-50"
+                }
+              >
+                Analyze
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {tagPrompt !== null && (
         <TagPromptDialog
           mode={tagPrompt}
@@ -353,6 +652,53 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
         />
       )}
     </div>
+  );
+}
+
+const UNEXPECTED_REPLY_MESSAGE =
+  "The extension worker returned an unexpected reply.";
+
+/**
+ * Sentinel for a FAILED job-row read — deliberately distinct from "no row"
+ * (`null`): a failed read means the row's state is unknown (fail-closed),
+ * so the launcher stays disabled and the card reports it instead of
+ * freeing a second enqueue while a job may still be running.
+ */
+const JOB_READ_FAILED = "job_read_failed" as const;
+type AnalyzeJobRead = JobDocument | null | typeof JOB_READ_FAILED;
+
+/**
+ * The latest `analyze_selection` row by `createdAt` — `null` when none
+ * exists, `JOB_READ_FAILED` when the read threw (dexie-react-hooks
+ * rethrows querier errors into the render, so a failed read must degrade
+ * to the sentinel rather than throwing).
+ */
+async function latestAnalyzeSelectionJob(): Promise<AnalyzeJobRead> {
+  const row = await db.jobs
+    .orderBy("createdAt")
+    .filter((row) => row.kind === "analyze_selection")
+    .last()
+    .catch(() => JOB_READ_FAILED);
+  return row ?? null;
+}
+
+/** Pinned locale so the cap and token figures format identically everywhere. */
+const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+
+/** Human label per `JobStatus`; the card reads "Analysis: <label>". */
+const JOB_STATUS_LABEL: Record<JobDocument["status"], string> = {
+  pending: "Queued",
+  running: "Running",
+  paused: "Paused",
+  completed: "Completed",
+  canceled: "Canceled",
+  failed: "Failed",
+};
+
+/** True for a status the job can still continue from. */
+function isTerminalJob(status: JobDocument["status"]): boolean {
+  return (
+    status === "completed" || status === "canceled" || status === "failed"
   );
 }
 
