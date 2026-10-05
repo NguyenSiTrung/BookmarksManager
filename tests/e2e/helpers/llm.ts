@@ -41,6 +41,14 @@ export interface LlmLaunchOptions extends LaunchOptions {
   profileDir?: string;
   /** Reused patched-extension root — same extension id across relaunches. */
   extensionRoot?: string;
+  /**
+   * Extra `MAP <host> 127.0.0.1` entries for `--host-resolver-rules` so a
+   * send attempted in the window before a Playwright route binds (or by a
+   * relaunched worker Playwright never rebinds) fails instantly and locally
+   * instead of reaching a real resolver — a fail-closed sink, not a
+   * replacement for the spec's own request counting.
+   */
+  hostResolverSink?: readonly string[];
 }
 
 export interface LlmExtension {
@@ -91,6 +99,14 @@ export async function launchLlmExtension(
       args: [
         `--disable-extensions-except=${root}`,
         `--load-extension=${root}`,
+        ...(options.hostResolverSink !== undefined &&
+        options.hostResolverSink.length > 0
+          ? [
+              `--host-resolver-rules=${options.hostResolverSink
+                .map((host) => `MAP ${host} 127.0.0.1`)
+                .join(", ")}`,
+            ]
+          : []),
       ],
     });
     return {
