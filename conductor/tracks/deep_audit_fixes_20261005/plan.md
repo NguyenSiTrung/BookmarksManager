@@ -283,7 +283,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     `applyMerge` records the pushed `snapshotId` even when another snapshot is
     pushed concurrently.
   - Fix: live re-read, pre-validation, ordering, return `snapshotId`.
-- [ ] Task 3: D05 + D06 + D10 + D11 — undo retention, peek, tag-delete, lock token
+- [x] Task 3: D05 + D06 + D10 + D11 — undo retention, peek, tag-delete, lock token (`f578409`)
   <!-- files: src/undo/snapshot.ts, src/undo/lock.ts, src/sync/tag-ops.ts, src/schemas/undo.ts -->
   <!-- depends: task2 -->
   - Tests: 25 decision approvals do not evict a user delete snapshot; rows

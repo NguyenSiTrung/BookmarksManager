@@ -954,3 +954,39 @@ claim that any audit finding has been fixed or reproduced.
   reasoning stress-tested and held under all retry shapes.
 - Full gate green at commit: lint, typecheck, 3089 unit, build, manifest,
   bundle, 43 e2e + 1 intentional screenshot skip.
+
+### Task 3 (D05+D06+D10+D11 — undo retention, peek, tag-delete, lock token) `f578409`
+- Per-origin retention: optional `origin` on UndoSnapshot (absent=user
+  back-compat); pushSnapshot tx now covers undo+decisions so the
+  protected-id read shares the write snapshot. Protection = undoSnapshotId
+  sidecars on decisions with status ∉ {rejected, reverted}; a protected
+  row survives INSIDE the cap, not exempt from the count.
+- Decision-origin callers: apply.ts pushMetaUndo/applyMove, applyMerge
+  (mergeGroup origin param, default user), restructure/apply. UI merge +
+  tag-ops stay user.
+- peekLatest reverse cursor: toCollection().reverse().first(), then
+  where(":id").below(id).reverse().first() on corrupt rows — same
+  invalid⇒absent rule as listSnapshots.
+- D10: single tx {tags, bookmarkMeta, undo, decisions} — nested txs join
+  when inner tables ⊆ outer (the J13 rule, again).
+- D11: UndoLockHold branded token; activeHolds membership = liveness;
+  joiners tracked in hold.pending, drained in a `while(size)` allSettled
+  loop BEFORE the platform release — a joiner's tail can never escape
+  the section. Token-less/stale calls always request the platform lock
+  (honest queue/deadlock instead of silent bypass).
+- Declare-only brands don't exist at runtime — `declare const X: unique
+  symbol` used as a computed key is a ReferenceError; real `Symbol()`
+  const infers `unique symbol` AND works at runtime.
+- TEST TRAP: gating `db.undo.toArray` now hits pushSnapshot's own tx read
+  → awaiting a foreign promise inside a Dexie tx = PrematureCommit
+  (raw DexieError escapes where tests expect typed failures). Gate
+  peekLatest's read path instead: wrap `toCollection()`'s reverse().first
+  chain on the returned collection instance.
+- Residual (review-noted): a decision's own snapshot is unprotected in
+  the push→transitionStatus record gap — needs ~20 concurrent decision
+  pushes inside a sub-ms window; accepted.
+- Residual: node bound counts nodes not meta bytes — the "byte/node"
+  bound is honored as the node half.
+- Independent review (child 7ac8d994): PASS/PASS first round, 9 info notes.
+- Full gate green at commit: lint, typecheck, 3100 unit, build, manifest,
+  bundle, 43 e2e + 1 intentional screenshot skip.
