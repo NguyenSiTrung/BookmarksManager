@@ -8,7 +8,7 @@ Reusable patterns discovered during development. Read this before starting new w
 
 - Strict TypeScript under `verbatimModuleSyntax` + `noUncheckedIndexedAccess`; ESLint flat config via `npm run lint`.
 - All Zod imports go through the jitless-configured `src/schemas/z.ts` — never import `zod` directly (MV3 CSP).
-- `fetch` is ESLint-banned outside `src/net/**`; Jev uses the `src/net/send.ts` consent gate and LLM uses `src/net/llm-send.ts`. (from: phase5_llm_layer_20260928, custom_jev_provider_20260929, 2026-09-30)
+- `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, and `importScripts` are ESLint-banned outside `src/net/**`; Jev uses the `src/net/send.ts` consent gate and LLM uses `src/net/llm-send.ts`. (from: phase5_llm_layer_20260928, custom_jev_provider_20260929, deep_audit_fixes_20261005, 2026-10-05)
 - `runtime.onMessage` handlers are total: return `{ok:true,…} | {ok:false,code,message}` Zod unions, never throw (see elevated patterns).
 
 ## Architecture

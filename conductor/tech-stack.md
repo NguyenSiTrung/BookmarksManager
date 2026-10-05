@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-04 (full refresh; no dependency drift) -->
+<!-- Last refreshed: 2026-10-05 (deep-audit fixes track; no dependency drift) -->
 
 # Technology Stack
 
@@ -18,7 +18,8 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
 - Entrypoints: `src/entrypoints/background.ts` service worker plus React/HTML
   `popup/`, `sidepanel/` (emits the `side_panel` manifest key automatically), and
   `options/` surfaces.
-- Manifest permissions as of Phase 6 (1.0.0): `activeTab`, `bookmarks`,
+- Manifest permissions as of 1.0.0: `activeTab`, `alarms` (30s job
+  keepalive while a user-started job is live), `bookmarks`,
   `contextMenus`, `favicon`, `scripting` (Readability extraction), `storage`,
   `sidePanel`; `optional_host_permissions` cover the TypeSafe/OpenRouter
   presets, the broad `https://*/*` custom Jev/LLM capability, and loopback
@@ -51,7 +52,7 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
 - **Zod 4.6.5** in jitless mode for the MV3 CSP — single configuration site
   `src/schemas/z.ts`; every schema file imports `z` from there, never from `zod`
   directly.
-- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 4**): v1 tables
+- **Dexie 4.4.6** on IndexedDB (`src/db/database.ts`, **version 9**): v1 tables
   `metadata`, `decisions`, `consents`, `sentLog`, `keyMaterials`; v2 adds
   `bookmarkMeta` (`id,*tags,category,updatedAt`), `tags` (`nameKey`), and
   `undo` (`++id,createdAt`); v3 (Phase 4) adds the decisions-UI tables `jobs`
@@ -59,8 +60,14 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   (`++id,decisionId,changedAt` — decision lifecycle history), and `usage`
   (`++id,jobId,recordedAt` — per-request cost rows); v4 (Phase 5) adds
   `llmUsage` (`++id,providerId,recordedAt`) and `llmReservations`
-  (`id,providerId,status`) for LLM budget metering. The metadata/tag
-  repository is `src/db/meta.ts`.
+  (`id,providerId,status`) for LLM budget metering; v5 (deep-audit A08) adds
+  indexed `month` fields plus `usageMonths`/`llmUsageMonths` rollups and a
+  `[providerId+month]` budget read; v6 (J13) adds `restructureAssignments`
+  (`[jobId+bookmarkId],jobId`) and the `[kind+createdAt]` jobs index; v7
+  (D12/D13) adds `metaTombstones` (`url,removedAt`, 30-day retention) and
+  `corruptMeta` (`++id,retainedAt`); v8 (I01) adds `importStates` and
+  `importQueues` for resumable imports; v9 (U06) adds `*bookmarkIds` on
+  `decisions`. The metadata/tag repository is `src/db/meta.ts`.
 - `chrome.storage.local` holds encrypted provider-credential envelopes only;
   `src/security/credentials.ts` owns envelope IO, and `src/security/keys.ts`
   wraps it for Jev while preserving storage IDs. Non-extractable AES-GCM-256
@@ -169,6 +176,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   built-in table for a preset's default model, else the user's override;
   `escalate.ts` routes unsure decisions for a second opinion without
   applying anything, and only when a ceiling is chosen and pricing is known.
+  `sanitize.ts` strips URLs/markdown from provider text before display or
+  persistence (summaries, restructure folder names); `src/net/body.ts`
+  caps success bodies (256 KiB / 64-level depth) before `JSON.parse`.
   `src/extract/` holds the click-triggered Readability page extraction;
   `src/restructure/` the bounded synopsis, proposal, Jev assignment, diff,
   and guarded apply.
@@ -201,8 +211,10 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `tests/e2e/audit-data-safety.spec.ts` (+ `helpers/audit-data.ts`) and
   `tests/e2e/audit-provider-workflows.spec.ts` (+ `helpers/audit-provider.ts`).
 - **ESLint 9 flat config** (`eslint.config.mjs`) with typescript-eslint and
-  react/react-hooks plugins; egress restriction rules ban `fetch` outside
-  `src/net/**`.
+  react/react-hooks plugins; egress restriction rules ban `fetch`,
+  `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, and
+  `importScripts` outside `src/net/**` (plus a syntax selector for
+  `window.navigator.sendBeacon`).
 - Compliance scripts: `npm run check:manifest` (generated manifest ↔
   `store/permissions.md`), `npm run check:bundle` (whole-file scan for
   `eval(`, `new Function`, remote `<script src>`), `npm run check:store`

@@ -26,8 +26,9 @@ the background. Your native Chrome bookmarks stay the source of truth.
   delete/move/merge/tag-delete.
 - **Local duplicate detection** (exact and normalized URLs) with keep-one
   merge.
-- **Import/export** as JSON, Netscape HTML, or CSV — local files only, keys
-  never exported.
+- **Import/export** as JSON, Netscape HTML, or CSV — resumable after an
+  interruption, notes optional per export; local files only, keys never
+  exported.
 - **Delete all extension data** from the options page; native bookmarks are
   untouched.
 
@@ -39,10 +40,13 @@ the background. Your native Chrome bookmarks stay the source of truth.
 - Metadata only: title, cleaned URL, domain, and candidate names are sent;
   notes never leave the device. A confidence policy decides what may
   auto-apply (off by default); everything else lands in a review queue with
-  approve/reject/undo and an audit log.
+  approve/reject/undo, a confirmed-and-undoable Approve all, and an audit
+  log. Auto-applied changes list the domains they came from and stay
+  undoable.
 - Popup suggestions run only after Tags focus or Suggest. Cold startup pauses
-  interrupted scans and restructure jobs without sending anything; click
-  Resume to continue from the last committed batch.
+  interrupted scans and restructure jobs without sending anything, and a
+  failed job is resumable too — click Resume to continue from the last
+  committed batch.
 
 **Optional LLM layer** (OpenAI-compatible preset or custom endpoint)
 
@@ -58,16 +62,24 @@ the background. Your native Chrome bookmarks stay the source of truth.
   as billed; traffic a provider cannot price is conservatively estimated.
   TypeSafe/Jev analysis sends (decisions, library scans, Ask rerank) are
   not billed paths: they are bounded by per-request token and request
-  limits, not the USD cap.
+  limits, not the USD cap. A request the provider refuses before producing
+  a response settles unbilled rather than estimated.
 
 ## Privacy and security
 
 - No AI call without explicit, versioned consent plus the browser's
   host-permission prompt; revoking removes consent, permission, and key.
-- API keys are AES-GCM encrypted at rest and reachable only from the service
-  worker.
+- API keys are stored as AES-GCM ciphertext envelopes in
+  `chrome.storage.local`; the CryptoKey is non-extractable and held in
+  IndexedDB, plaintext is never persisted, and key material is reachable
+  only from the service worker.
 - A single `fetch` wrapper in `src/net/` enforces the egress gate; a lint
-  rule bans `fetch` anywhere else, and e2e tests prove zero-egress surfaces.
+  rule bans `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`,
+  `sendBeacon`, and `importScripts` outside it, and e2e tests prove
+  zero-egress surfaces.
+- Text a provider returns is treated as untrusted: URLs and markdown are
+  stripped from persisted summaries and proposed folder names, and each
+  auto-applied change names the domain it came from.
 - Sensitive-site blocklist, metadata minimization, and a "Data sent" audit
   log you can inspect and clear.
 

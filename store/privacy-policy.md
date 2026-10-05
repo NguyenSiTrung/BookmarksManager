@@ -152,6 +152,10 @@ local summary resource matching are unchanged.
   or running an Ask search — and only when you start them — never on install,
   on a timer, or in the background; interrupted jobs pause on cold startup
   until you click Resume.
+- **What lands where:** decisions land in a review queue you approve,
+  reject, or undo; a change the confidence policy applies automatically
+  (off by default) is listed separately with the bookmarked site domains
+  it touched and its own Undo control.
 - **Links:** the provider's privacy policy above and this extension's privacy
   policy (https://nguyensitrung.github.io/BookmarksManager/privacy/).
 
@@ -163,13 +167,18 @@ service such as `http://localhost:11434`). A custom HTTPS origin is granted
 through the manifest's `https://*/*` optional host pattern: the broad
 optional host pattern is capability only — it grants the exact configured
 origin at runtime from your direct Enable click, never default access, and
-it can be revoked like any other host grant. Each feature below is a separate
-consent scope, granted per provider origin, and every request is re-checked
-against the exact configured origin, the saved consent, the host permission,
-and the closed request schema before it can leave the device. Your stored
-provider credential goes in the request's authentication header only — never
-inside the message body. Notes, the full page DOM, and credentials in the
-message body are never sent under any scope.
+it can be revoked like any other host grant. A custom endpoint whose host
+is not a public address — a private IP range, an intranet name, or a
+loopback — shows a warning in Options before you enable it; enabling it is
+still your choice. Each feature below is a separate consent scope, granted
+per provider origin, and every request is re-checked against the exact
+configured origin, the saved consent, the host permission, and the closed
+request schema before it can leave the device. Your stored provider
+credential goes in the request's authentication header only — never inside
+the message body. Notes, the full page DOM, and credentials in the message
+body are never sent under any scope. Text a provider returns is treated as
+untrusted: URLs and markdown syntax are stripped before a summary or a
+proposed folder name is displayed or saved.
 
 - **LLM test connection** (`llm_test`) — sends `model`, `messages`, and
   `response_format` as a fixed synthetic request to check that your

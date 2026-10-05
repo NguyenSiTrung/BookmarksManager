@@ -151,11 +151,15 @@ local summary resource matching are unchanged.
   its key.
 - **Optional LLM provider features, only if you configure one.** An
   OpenAI-compatible provider you choose — preset (OpenAI or OpenRouter) or a
-  custom HTTPS origin (HTTP only for a loopback service). Each feature is a
-  separate consent scope granted per exact origin; your stored provider
-  credential goes in the request's authentication header only — never inside
-  the message body. Notes, the full page DOM, and credentials in the message
-  body are never sent under any scope:
+  custom HTTPS origin (HTTP only for a loopback service). A custom endpoint
+  whose host is not a public address — a private IP range, an intranet name,
+  or a loopback — shows a warning in Options before enabling, and stays your
+  choice. Each feature is a separate consent scope granted per exact origin;
+  your stored provider credential goes in the request's authentication
+  header only — never inside the message body. Notes, the full page DOM, and
+  credentials in the message body are never sent under any scope; text the
+  provider returns is treated as untrusted — URLs and markdown are stripped
+  before a summary or proposed folder name is displayed or saved:
   - LLM test connection (`llm_test`): `model`, `messages`,
     `response_format` — a fixed synthetic request, only when you click
     "Test connection".

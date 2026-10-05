@@ -54,11 +54,14 @@ key. Suggested walkthrough:
    (The `bm` omnibox path is unit-tested: the browser's address bar cannot be
    driven by automation.)
 2. Permissions at install are the required set only — `activeTab`,
-   `bookmarks`, `contextMenus`, `favicon`, `scripting`, `storage`,
+   `alarms`, `bookmarks`, `contextMenus`, `favicon`, `scripting`, `storage`,
    `sidePanel`. There is no host access and no page-content access at
    install. (`scripting` backs the on-demand Readability extractor — injected
    only after an explicit Summarize click; there are no static content
-   scripts.)
+   scripts. `alarms` only wakes the worker on a 30s period while a
+   user-started job is live so a mid-job eviction can resume in the same
+   session — it is cleared as soon as no live job remains, and a cold start
+   still pauses jobs until Resume.)
 3. **Quick save from the popup:** click the toolbar action. The form is
    prefilled with the active tab's title and URL; add tags, a category, notes,
    and pick a folder, then Save. Re-opening the popup defaults to the folder
@@ -96,9 +99,12 @@ key. Suggested walkthrough:
    or `.csv` file from your device. A preview shows folder/bookmark/duplicate/
    invalid counts before anything is written; confirm to import into a new
    "Imported <date>" folder under Other bookmarks, then delete that folder in
-   one click if you want to undo it.
+   one click if you want to undo it. An import interrupted mid-run (extension
+   reload, crash) is resumable — reopening the dialog offers Resume and the
+   run continues from its last committed item.
 9. **Export:** side panel → "Export…" → choose a format (JSON, Netscape HTML,
-   CSV) and scope (whole library or current folder). The file downloads
+   CSV) and scope (whole library or current folder), plus an "Include notes"
+   choice (on by default for JSON, off for CSV/Netscape). The file downloads
    locally; no upload occurs, and exports contain no API keys.
 10. **Duplicates:** open the "Duplicates" view. Groups are labeled exact or
    normalized (tracking parameters and trivial URL differences are ignored).
@@ -172,7 +178,10 @@ grant, the permission, and the key.
   OpenRouter) or a custom base URL. Custom remote endpoints must be HTTPS;
   plain HTTP is accepted only for loopback (`http://localhost`,
   `http://127.0.0.1`, `http://[::1]`), and redirects, URL credentials, and
-  arbitrary headers are refused.
+  arbitrary headers are refused. A custom host that is not a public
+  address — a private IP range, an intranet name, or a loopback — shows a
+  warning under the field; the endpoint still saves (warn-but-save, so a
+  local model server stays possible).
 - Check the unchecked consent box for the feature scope and click Enable —
   Chrome's optional host-permission prompt for the exact configured origin
   appears from that click (e.g. `http://localhost:11434` for a local model,
@@ -202,8 +211,10 @@ grant, the permission, and the key.
   a provider change requires reviewing again. Unknown-cost confirmation is
   separate and resends with the same accepted binding.
 - The monthly budget caps LLM spending; when reliable pricing is configured
-  each request reserves an estimated cost, and the second-opinion flow never
-  applies a change by itself.
+  each request reserves an estimated cost bounded by the actual serialized
+  prompt, a request the provider refuses before producing a response settles
+  unbilled rather than estimated, and the second-opinion flow never applies
+  a change by itself.
 - Revoking the provider deletes every consent scope at its origin, removes
   the host permission, and deletes the stored credential — verified by
   `tests/unit/llm-settings.test.ts` and `tests/unit/consent.test.ts`.
@@ -242,6 +253,11 @@ The bookmark-data flow is shipped behind a separate, per-provider
   current consent, live host permission, and stored key) before it leaves.
 - Revoking the provider deletes every `jev_decisions` grant for its origin,
   removes its host permission, and offers to delete the stored key.
+- The review queue holds every decision for approve/reject/undo. "Approve
+  all" opens a confirmation naming the count and kinds, and its result is
+  undoable as a batch. Changes the confidence policy applied automatically
+  (off by default) appear in a separate auto-applied section naming the
+  bookmarked site domains each change touched, each with its own Undo.
 
 ## Compliance checks in this repo
 
