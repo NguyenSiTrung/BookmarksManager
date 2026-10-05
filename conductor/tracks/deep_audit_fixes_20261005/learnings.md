@@ -715,3 +715,48 @@ claim that any audit finding has been fixed or reproduced.
   (awaited drain → fire-and-forget launches).
 - Full gate green at commit: lint, typecheck, 3029 unit/172 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## Phase 3 Task 3: J04 + J05 (18fd66d)
+
+- Deterministic ids: `decisionIdFor` hashes `(jobId, sorted bookmarkIds,
+  kind)` with SHA-256 → v5-style UUID; both producers (analyze,
+  merge_duplicates) share it, so a replayed batch upserts instead of
+  duplicating. `persistDecision` runs the decided-lock + supersession
+  inside ONE Dexie rw transaction — same-id decided rows return
+  unchanged (status/undoSnapshotId are final); other undecided
+  same-slot rows are bulk-deleted only when the incoming row is itself
+  undecided (a decided document stored directly never deletes pending
+  rows — the rejected-fixture test that predated supersession caught
+  the ungated version).
+- "Undecided" = pending+unsure only. "Decided" = approved, applied,
+  auto_applied, rejected, reverted — decided rows are never superseded.
+- **Resurrection fence (reviewer-caught):** supersession deletes by
+  supersession, but a replay of the OLDER job re-derives the deleted
+  row's deterministic id and re-puts it pending — then auto-apply
+  would write the stale analysis over an already-applied row. Fence:
+  `hasDecidedSlotRow` before `approveDecision` parks the resurrected
+  proposal pending. Fence the apply, not the write — suppressing the
+  write would block legitimate re-analysis after a rejection.
+- Residual (accepted): the fence is sticky — any decided row in the
+  slot disables auto-apply for that bookmark+kind until pruned;
+  conservative and arguably desirable. Narrow TOCTOU between the
+  fence read and approveDecision's own tx is bounded.
+- **False-stale trap:** `minimizeBookmark`/`cleanUrlWithinBound` strip
+  query/hash/credentials, so `DecisionGuard.snapshots` must hold the
+  RAW send-time `{url,title}` from `options.bookmark` / the pair
+  sides — never the minimized wire form — or every query-string URL
+  trips `bookmark_edited` at apply.
+- `assertFresh` covers url/title for add_tags, set_category and
+  merge_duplicates (`staleReason: "bookmark_edited"`); `stale`
+  propagates as its own `DecisionPipelineErrorCode` so the runner
+  records a per-item skip (not in JOB_FATAL_ERROR_CODES) instead of
+  `apply_failed` — honest codes in the itemFailures ring.
+- Pipeline tests that pass `options.job` must seed a REAL job row via
+  `enqueueJob` — `assertJobAuthority` in beforeSend rejects unknown
+  job ids (pending+ownerGeneration 0 is permitted).
+- `Table<Decision, string>` rows don't expose `guard` — cast
+  `as DecisionRow[]` for guard assertions.
+- Independent review (child 7ac8d994): PASS/PASS after one fix round
+  (the resurrection fence above).
+- Full gate green at commit: lint, typecheck, 3045 unit/173 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).

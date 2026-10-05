@@ -225,7 +225,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     fires → resume); cold start does not (P06); sleeps capped; manifest check
     passes with `alarms` and `store/permissions.md` justification.
   - Fix: `chrome.storage.session` marker + periodic alarm; permission and docs.
-- [ ] Task 3: J04 + J05 — idempotent decisions and send-time staleness guard
+- [x] Task 3: J04 + J05 — idempotent decisions and send-time staleness guard (`18fd66d`)
   <!-- files: src/decisions/pipeline.ts, src/decisions/store.ts, src/decisions/duplicates.ts, src/decisions/apply.ts -->
   <!-- depends: task1 -->
   - Tests: replayed batch yields one decision per `(jobId, bookmarkId, kind)`;
