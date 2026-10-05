@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -238,6 +239,38 @@ describe("TagManager", () => {
   it("shows an empty state when no tags exist", async () => {
     render(<TagManager open />);
     await screen.findByText("No tags yet.");
+  });
+
+  it("runs no live queries while closed, then queries on open (U11)", async () => {
+    await createTag("Idle");
+    const tagsSpy = vi.spyOn(db.tags, "toArray");
+    const metaSpy = vi.spyOn(db.bookmarkMeta, "toArray");
+
+    const view = render(<TagManager open={false} />);
+    // Flush any would-be query microtasks before asserting silence.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(tagsSpy).not.toHaveBeenCalled();
+    expect(metaSpy).not.toHaveBeenCalled();
+
+    // A write while closed fires no scan either — nothing is subscribed.
+    await putMeta("bm-offscreen", { tags: ["idle"] });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(tagsSpy).not.toHaveBeenCalled();
+    expect(metaSpy).not.toHaveBeenCalled();
+
+    // Opening mounts the queries and lists the tag.
+    view.rerender(<TagManager open />);
+    await screen.findByText("Idle");
+    expect(tagsSpy).toHaveBeenCalled();
+    expect(metaSpy).toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------

@@ -293,6 +293,67 @@ describe("useBookmarkTree", () => {
     expect(barChildIds()).toHaveLength(100);
   });
 
+  it("bounds a sustained 1,000-event burst to a small refresh count", async () => {
+    fake = installBookmarksFake();
+    const getTreeSpy = vi.spyOn(fake, "getTree");
+    renders = 0;
+    await renderProbe();
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+
+    // Writes in flight: one event every ~10 ms for ten seconds. Without
+    // escalation this is ~200 full-tree reads (one per 50 ms window).
+    await act(async () => {
+      for (let index = 0; index < 1000; index += 1) {
+        void fake.create({
+          parentId: BOOKMARKS_BAR_ID,
+          title: `burst-${index}`,
+          url: `https://burst-${index}.example/`,
+        });
+        await vi.advanceTimersByTimeAsync(10);
+      }
+    });
+
+    // Let the trailing read at the burst-cap window land.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    // Escalated windows (50→100→200→400→500 cap) bound a 10 s burst to
+    // roughly 20 refreshes; the final state still lands exactly.
+    expect(getTreeSpy.mock.calls.length).toBeLessThanOrEqual(30);
+    expect(getTreeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(latest?.bookmarks.size).toBe(1000);
+    expect(barChildIds()).toHaveLength(1000);
+  });
+
+  it("keeps the short window for an isolated write after a burst ends", async () => {
+    fake = installBookmarksFake();
+    const getTreeSpy = vi.spyOn(fake, "getTree");
+    renders = 0;
+    await renderProbe();
+
+    // A burst escalates the window, then a quiet gap longer than the cap
+    // resets it: the next isolated write refreshes at the short window.
+    await act(async () => {
+      emitOneHundredBookmarkEvents();
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    const callsAfterBurst = getTreeSpy.mock.calls.length;
+
+    await act(async () => {
+      void fake.create({
+        parentId: BOOKMARKS_BAR_ID,
+        title: "after",
+        url: "https://after.example/",
+      });
+      await vi.advanceTimersByTimeAsync(COALESCE_MS);
+    });
+
+    expect(getTreeSpy.mock.calls.length).toBe(callsAfterBurst + 1);
+    expect(latest?.bookmarks.size).toBe(101);
+  });
+
   it("queues exactly one trailing read when events arrive during a held read", async () => {
     fake = installBookmarksFake();
     renders = 0;

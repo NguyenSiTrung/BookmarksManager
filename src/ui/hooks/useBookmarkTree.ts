@@ -44,8 +44,21 @@ import type { FlattenedTree } from "../../sync/tree";
  * throw inside becomes a caught rejection) and the subscriptions sit behind
  * their own try/catch — either way the hook settles on the empty model
  * instead of crashing the component.
+ *
+ * Sustained bursts (U11): an isolated change still refreshes after the
+ * short window, but while events KEEP arriving — a write burst in flight —
+ * each cycle that saw contention escalates the next window (50 → 100 →
+ * 200 → 400 → `BURST_WINDOW_CAP_MS`), and a cycle that fires with no
+ * contention decays one step. A long import/apply storm therefore
+ * produces a bounded stream of refreshes instead of one full-tree read
+ * per quiet-luck window, and the trailing read still lands the final
+ * tree once the burst ends.
  */
 const REFRESH_WINDOW_MS = 50;
+/** Largest coalescing window during a sustained write burst. */
+const BURST_WINDOW_CAP_MS = 500;
+/** Escalation ladder cap: 50 → 100 → 200 → 400 → BURST_WINDOW_CAP_MS. */
+const MAX_BURST_LEVEL = 4;
 
 export function useBookmarkTree(): FlattenedTree {
   const [model, setModel] = useState<FlattenedTree>(() => ({
@@ -60,6 +73,21 @@ export function useBookmarkTree(): FlattenedTree {
     let dirty = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribers: Array<() => void> = [];
+    // Burst throttle (U11): contention = an event arrived while a refresh
+    // cycle was already pending (armed timer or in-flight read). Each
+    // contended cycle escalates the next window; an uncontended cycle
+    // decays it. An event after a full-cap quiet gap means the burst is
+    // over — reset outright so an isolated write keeps the short window.
+    let burstLevel = 0;
+    let contended = false;
+    let lastEventAt = Number.NEGATIVE_INFINITY;
+
+    function windowMs(): number {
+      return Math.min(
+        REFRESH_WINDOW_MS << burstLevel,
+        BURST_WINDOW_CAP_MS,
+      );
+    }
 
     async function read(): Promise<void> {
       inFlight = true;
@@ -82,19 +110,31 @@ export function useBookmarkTree(): FlattenedTree {
 
     function schedule(): void {
       if (cancelled) return;
+      const now = Date.now();
+      if (now - lastEventAt > BURST_WINDOW_CAP_MS) {
+        // A quiet gap longer than the cap ended the previous burst.
+        burstLevel = 0;
+      }
+      lastEventAt = now;
       if (inFlight) {
         // One read is already running; remember a single trailing read.
         dirty = true;
+        contended = true;
         return;
       }
       if (timer !== undefined) {
-        // Already inside the coalescing window.
+        // Already inside the coalescing window: the burst continues.
+        contended = true;
         return;
       }
       timer = setTimeout(() => {
         timer = undefined;
+        burstLevel = contended
+          ? Math.min(burstLevel + 1, MAX_BURST_LEVEL)
+          : Math.max(burstLevel - 1, 0);
+        contended = false;
         void read();
-      }, REFRESH_WINDOW_MS);
+      }, windowMs());
     }
 
     // The initial read is issued immediately, outside the window.

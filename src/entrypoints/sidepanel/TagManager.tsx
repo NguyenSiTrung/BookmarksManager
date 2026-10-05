@@ -486,13 +486,26 @@ export function TagManager({
   onRequestUndo,
 }: TagManagerProps) {
   // Both live queries degrade to [] when IndexedDB is unreachable (same
-  // pattern as App), and re-emit on every write the ops make.
+  // pattern as App), and re-emit on every write the ops make. The querier
+  // only touches the tables while the dialog is OPEN — a closed manager
+  // runs no live queries and no `listMeta` scan at all, so background
+  // writes do not pay for a hidden dialog (U11).
   const tagDefs =
-    useLiveQuery(() => listTags().catch((): TagDef[] => []), []) ??
-    EMPTY_TAGS;
+    useLiveQuery(
+      () =>
+        open
+          ? listTags().catch((): TagDef[] => [])
+          : Promise.resolve(EMPTY_TAGS as TagDef[]),
+      [open],
+    ) ?? EMPTY_TAGS;
   const metas =
-    useLiveQuery(() => listMeta().catch((): BookmarkMeta[] => []), []) ??
-    EMPTY_METAS;
+    useLiveQuery(
+      () =>
+        open
+          ? listMeta().catch((): BookmarkMeta[] => [])
+          : Promise.resolve(EMPTY_METAS as BookmarkMeta[]),
+      [open],
+    ) ?? EMPTY_METAS;
 
   // nameKey → number of meta rows carrying it (the list-scan count).
   const countByKey = useMemo(() => {
