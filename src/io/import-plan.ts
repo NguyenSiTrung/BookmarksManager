@@ -48,7 +48,10 @@ import type { NetscapeNode } from "./netscape";
  *
  * ## What the planner drops
  *
- * - duplicates (into `duplicatesSkipped`), unless `importDuplicates` is set;
+ * - duplicates (into `duplicatesSkipped` and the `skipped` list — each
+ *   entry carries the url for the preview plus the library node id so the
+ *   writer can merge the file's meta into the existing bookmark, I04),
+ *   unless `importDuplicates` is set;
  * - bookmarks with a blocked URL scheme — `javascript:`/`data:`/`vbscript:`
  *   per `isBlockedScheme` in `src/io/netscape.ts`, the one shared blocklist
  *   check the Netscape parser, this planner, and the import writer all
@@ -100,6 +103,52 @@ export type ImportItem = ImportBookmark | ImportFolder;
 /** The items a plan returns for the writer — the pruned source forest. */
 export type PlannedItem = ImportItem;
 
+/**
+ * A duplicate the plan dropped. `url`/`title` feed the preview list;
+ * `existingId` — present when the twin already lives in the library — lets
+ * the writer merge the file's meta into the existing bookmark (I04).
+ * In-file repeats carry no `existingId`: their meta was already merged into
+ * the kept sibling's {@link ImportMeta} at plan time.
+ */
+export interface SkippedDuplicate {
+  url: string;
+  title: string;
+  meta?: ImportMeta;
+  existingId?: string;
+}
+
+/**
+ * Meta merge policy for a skipped duplicate (I04): tags UNION (file tags are
+ * added, existing ones kept), `category`/`notes`/`summary` fill only fields
+ * the existing row lacks — the library's own data is never overwritten.
+ * Applied to `existingId` merges in the writer and, at plan time, to in-file
+ * repeats against their kept sibling.
+ */
+export function mergeImportMeta(
+  base: ImportMeta | undefined,
+  extra: ImportMeta | undefined,
+): ImportMeta | undefined {
+  if (extra === undefined) return base;
+  const merged: ImportMeta = { ...(base ?? {}) };
+  if (extra.tags !== undefined && extra.tags.length > 0) {
+    const seen = new Set(base?.tags ?? []);
+    merged.tags = [...seen, ...extra.tags.filter((t) => !seen.has(t))];
+  }
+  if (merged.category === undefined && extra.category !== undefined) {
+    merged.category = extra.category;
+  }
+  if (
+    (merged.notes === undefined || merged.notes === "") &&
+    extra.notes !== undefined
+  ) {
+    merged.notes = extra.notes;
+  }
+  if (merged.summary === undefined && extra.summary !== undefined) {
+    merged.summary = extra.summary;
+  }
+  return Object.keys(merged).length === 0 ? undefined : merged;
+}
+
 // ---------------------------------------------------------------------------
 // planImport
 // ---------------------------------------------------------------------------
@@ -119,10 +168,12 @@ export interface PlanImportInput {
   /** The normalized source forest — output of a `from*` adapter. */
   items: readonly ImportItem[];
   /**
-   * Normalized URLs already in the library (see {@link collectNormalizedUrls}
-   * for building one from `chrome.bookmarks.getTree()`).
+   * Normalized URLs already in the library mapped to their Chrome node ids
+   * (see {@link collectNormalizedUrls} for building one from
+   * `chrome.bookmarks.getTree()`). The id lets the writer merge a skipped
+   * duplicate's meta into the existing bookmark (I04).
    */
-  existingUrls: ReadonlySet<string>;
+  existingUrls: ReadonlyMap<string, string>;
   /**
    * Rows the file parser already rejected — surfaced in the preview's invalid
    * count. Netscape: `stats.invalid + stats.skipped`; CSV: `invalid.length`;
@@ -144,6 +195,11 @@ export interface ImportPlan {
   bookmarks: number;
   duplicatesSkipped: number;
   invalid: number;
+  /**
+   * Every duplicate dropped from the plan — surfaced in the preview (I04)
+   * and consumed by the writer for meta merges.
+   */
+  skipped: SkippedDuplicate[];
   items: PlannedItem[];
 }
 
@@ -152,9 +208,19 @@ export interface ImportPlan {
  * recurse (with fresh objects — the caller's tree is never mutated);
  * bookmarks are kept unless blocked, empty, or a known duplicate.
  */
+/**
+ * The kept sibling of a normalized-url key (in-file dupes merge into it) —
+ * tracked as its position in the output array being built.
+ */
+interface KeptSlot {
+  siblings: ImportItem[];
+  index: number;
+}
+
 function planItems(
   items: readonly ImportItem[],
-  seen: Set<string>,
+  seen: ReadonlyMap<string, string>,
+  keptByKey: Map<string, KeptSlot>,
   importDuplicates: boolean,
   plan: ImportPlan,
 ): ImportItem[] {
@@ -164,7 +230,7 @@ function planItems(
       plan.folders += 1;
       out.push({
         ...item,
-        children: planItems(item.children, seen, importDuplicates, plan),
+        children: planItems(item.children, seen, keptByKey, importDuplicates, plan),
       });
       continue;
     }
@@ -174,11 +240,33 @@ function planItems(
     }
     const key = normalizeUrl(item.url);
     if (key !== null) {
-      if (!importDuplicates && seen.has(key)) {
+      const twinId = seen.get(key);
+      const inFileTwin = keptByKey.get(key);
+      if (!importDuplicates && (twinId !== undefined || inFileTwin !== undefined)) {
         plan.duplicatesSkipped += 1;
+        plan.skipped.push({
+          url: item.url,
+          title: item.title,
+          ...(item.meta === undefined ? {} : { meta: item.meta }),
+          ...(twinId === undefined ? {} : { existingId: twinId }),
+        });
+        // In-file repeat: merge its meta into the kept sibling now — the
+        // library-side merge for `existingId` dupes runs in the writer.
+        if (inFileTwin !== undefined) {
+          const kept = inFileTwin.siblings[inFileTwin.index];
+          if (kept !== undefined && kept.kind === "bookmark") {
+            const mergedMeta = mergeImportMeta(kept.meta, item.meta);
+            inFileTwin.siblings[inFileTwin.index] = {
+              ...kept,
+              ...(mergedMeta === undefined ? {} : { meta: mergedMeta }),
+            };
+          }
+        }
         continue;
       }
-      seen.add(key);
+      if (inFileTwin === undefined && twinId === undefined) {
+        keptByKey.set(key, { siblings: out, index: out.length });
+      }
     }
     plan.bookmarks += 1;
     out.push(item);
@@ -193,17 +281,18 @@ function planItems(
  */
 export function planImport(input: PlanImportInput): ImportPlan {
   const importDuplicates = input.options?.importDuplicates ?? false;
-  // A copy: the caller's set is never mutated, and kept bookmarks join it so
-  // in-file repeats count as duplicates too (see module header).
-  const seen = new Set(input.existingUrls);
+  // Read-only: the library map is never mutated; in-file kept twins are
+  // tracked separately so their ids stay unknown until write time.
+  const keptByKey = new Map<string, KeptSlot>();
   const plan: ImportPlan = {
     folders: 0,
     bookmarks: 0,
     duplicatesSkipped: 0,
     invalid: input.invalid ?? 0,
+    skipped: [],
     items: [],
   };
-  plan.items = planItems(input.items, seen, importDuplicates, plan);
+  plan.items = planItems(input.items, input.existingUrls, keptByKey, importDuplicates, plan);
   return plan;
 }
 
@@ -214,13 +303,14 @@ export function planImport(input: PlanImportInput): ImportPlan {
  */
 export function collectNormalizedUrls(
   nodes: readonly BookmarksTreeNode[],
-): Set<string> {
-  const urls = new Set<string>();
+): Map<string, string> {
+  const urls = new Map<string, string>();
   const walk = (list: readonly BookmarksTreeNode[]): void => {
     for (const node of list) {
       if (node.url !== undefined) {
         const key = normalizeUrl(node.url);
-        if (key !== null) urls.add(key);
+        // First occurrence wins as the merge target for a skipped duplicate.
+        if (key !== null && !urls.has(key)) urls.set(key, node.id);
       }
       walk(node.children ?? []);
     }

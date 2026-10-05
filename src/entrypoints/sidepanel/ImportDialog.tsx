@@ -465,6 +465,33 @@ export function ImportDialog({
               </label>
             </div>
 
+            {plan.skipped.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Skipped duplicates — their tags and notes merge into the
+                  existing bookmarks
+                </p>
+                <ul
+                  data-testid="skipped-duplicates"
+                  className="max-h-32 space-y-0.5 overflow-y-auto text-xs
+                    text-muted-foreground"
+                >
+                  {plan.skipped
+                    .slice(0, MAX_INVALID_DETAILS)
+                    .map((dup, index) => (
+                      <li key={index} className="truncate" title={dup.url}>
+                        {dup.url}
+                      </li>
+                    ))}
+                </ul>
+                {plan.skipped.length > MAX_INVALID_DETAILS && (
+                  <p className="text-xs text-muted-foreground">
+                    …and {plan.skipped.length - MAX_INVALID_DETAILS} more
+                  </p>
+                )}
+              </div>
+            )}
+
             {source.invalidDetails.length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">

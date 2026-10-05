@@ -13,7 +13,7 @@ import {
 import { db } from "../../src/db/database";
 import { createTag, getMeta, listMeta, listTags, putMeta } from "../../src/db/meta";
 import { normalizeUrl } from "../../src/duplicates/normalize";
-import { exportCsv, parseCsv } from "../../src/io/csv";
+import { exportCsv, joinFolderPath, parseCsv } from "../../src/io/csv";
 import { buildExport, parseExport, serializeExport } from "../../src/io/export-json";
 import {
   collectNormalizedUrls,
@@ -221,7 +221,7 @@ describe("planImport — preview counts", () => {
         dir("F2", []),
         bm("c", "https://c.example/"),
       ],
-      existingUrls: new Set(),
+      existingUrls: new Map(),
       invalid: 2,
     });
     expect(plan.folders).toBe(2);
@@ -232,11 +232,12 @@ describe("planImport — preview counts", () => {
   });
 
   it("returns an all-zero plan for an empty import, and is pure", async () => {
-    expect(planImport({ items: [], existingUrls: new Set() })).toEqual({
+    expect(planImport({ items: [], existingUrls: new Map() })).toEqual({
       folders: 0,
       bookmarks: 0,
       duplicatesSkipped: 0,
       invalid: 0,
+      skipped: [],
       items: [],
     });
     // Planning writes nothing to chrome or the database.
@@ -281,10 +282,10 @@ describe("planImport — duplicate skip by normalized URL", () => {
         bm("ref", "https://github.com/o/r?ref=dev"),
         bm("plain", "http://existing.example/page"),
       ],
-      existingUrls: new Set([
-        normalizeUrl("https://app.com/#/inbox") as string,
-        normalizeUrl("https://github.com/o/r?ref=main") as string,
-        normalizeUrl(EXISTING_URL) as string,
+      existingUrls: new Map([
+        [normalizeUrl("https://app.com/#/inbox") as string, "r1-id"],
+        [normalizeUrl("https://github.com/o/r?ref=main") as string, "ref-id"],
+        [normalizeUrl(EXISTING_URL) as string, "existing"],
       ]),
     });
     expect(plan.duplicatesSkipped).toBe(1); // only the exact r1 match
@@ -295,7 +296,7 @@ describe("planImport — duplicate skip by normalized URL", () => {
     const items = [bm("dup", "https://www.existing.example/page#frag")];
     const plan = planImport({
       items,
-      existingUrls: new Set([normalizeUrl(EXISTING_URL) as string]),
+      existingUrls: new Map([[normalizeUrl(EXISTING_URL) as string, "existing"]]),
       options: { importDuplicates: true },
     });
     expect(plan.duplicatesSkipped).toBe(0);
@@ -312,14 +313,14 @@ describe("planImport — duplicate skip by normalized URL", () => {
         bm("one", "https://a.example/"),
         dir("F", [bm("two", "https://a.example/#other")]),
       ],
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     expect(plan.bookmarks).toBe(1);
     expect(plan.duplicatesSkipped).toBe(1);
     expect(asFolder(plan.items[1]).children).toEqual([]);
     const empty = planImport({
       items: [dir("F", [bm("dup", EXISTING_URL)])],
-      existingUrls: new Set([normalizeUrl(EXISTING_URL) as string]),
+      existingUrls: new Map([[normalizeUrl(EXISTING_URL) as string, "existing"]]),
     });
     expect(empty.folders).toBe(1);
     expect(empty.bookmarks).toBe(0);
@@ -335,7 +336,7 @@ describe("planImport — duplicate skip by normalized URL", () => {
         bm("ftp1", "ftp://f.example/x"),
         bm("ftp2", "ftp://f.example/x"),
       ],
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     expect(ftp.bookmarks).toBe(2);
     expect(ftp.duplicatesSkipped).toBe(0);
@@ -348,7 +349,7 @@ describe("planImport — duplicate skip by normalized URL", () => {
         bm("v", "VBSCRIPT:msgbox(1)"),
         bm("e", "   "),
       ],
-      existingUrls: new Set(),
+      existingUrls: new Map(),
       invalid: 1,
     });
     expect(blocked.invalid).toBe(6);
@@ -478,10 +479,42 @@ describe("fromEnvelope", () => {
   });
 });
 
+describe("fromCsvRows — escaped path keys", () => {
+  it("a folder titled A/B does not collide with nested A → B", () => {
+    // Review fix: pathKey on decoded segments joined by `/` collided.
+    const items = fromCsvRows([
+      {
+        title: "in flat",
+        url: "https://flat.example/",
+        folderPath: joinFolderPath(["A/B"]),
+        tags: [],
+      },
+      {
+        title: "in nested",
+        url: "https://nested.example/",
+        folderPath: joinFolderPath(["A", "B"]),
+        tags: [],
+      },
+    ]);
+    expect(items).toHaveLength(2);
+    const flat = items[0];
+    const nested = items[1];
+    expect(flat?.kind === "folder" && flat.title).toBe("A/B");
+    expect(nested?.kind === "folder" && nested.title).toBe("A");
+    if (flat?.kind === "folder" && nested?.kind === "folder") {
+      expect(flat.children[0]?.title).toBe("in flat");
+      expect(nested.children[0]?.title).toBe("B");
+      if (nested.children[0]?.kind === "folder") {
+        expect(nested.children[0].children[0]?.title).toBe("in nested");
+      }
+    }
+  });
+});
+
 describe("collectNormalizedUrls", () => {
   it("collects normalized URLs from a chrome tree for planImport", async () => {
     const urls = collectNormalizedUrls(await fake.getTree());
-    expect(urls).toEqual(new Set([normalizeUrl(EXISTING_URL)]));
+    expect(urls).toEqual(new Map([[normalizeUrl(EXISTING_URL), "existing"]]));
   });
 });
 
@@ -651,7 +684,7 @@ describe("writeImport — JSON metadata restore", () => {
     if (!parsed.ok) throw new Error("backup failed to parse");
     const plan = planImport({
       items: fromEnvelope(parsed.data),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     const result = await writeImport(plan, { now: IMPORT_NOW });
     expect(result.ok).toBe(true);
@@ -713,7 +746,7 @@ describe("writeImport — JSON metadata restore", () => {
     if (!parsed.ok) return;
     const plan = planImport({
       items: fromEnvelope(parsed.data),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     const res = await writeImport(plan, {
       now: IMPORT_NOW,
@@ -766,7 +799,7 @@ describe("writeImport — JSON metadata restore", () => {
     if (!parsed.ok) throw new Error("envelope fixture must parse");
     const plan = planImport({
       items: fromEnvelope(parsed.data),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     const res = await writeImport(plan, {
       now: IMPORT_NOW,
@@ -806,7 +839,7 @@ describe("writeImport — CSV metadata restore", () => {
     if (!parsed.ok) return;
     const plan = planImport({
       items: fromCsvRows(parsed.rows),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
       invalid: parsed.invalid.length,
     });
     const res = await writeImport(plan, { now: IMPORT_NOW });
@@ -852,7 +885,7 @@ describe("writeImport — Netscape restore", () => {
     expect(parsed.stats).toMatchObject({ invalid: 1, skipped: 1 });
     const plan = planImport({
       items: fromNetscape(parsed.tree),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
       invalid: parsed.stats.invalid + parsed.stats.skipped,
     });
     expect(plan.invalid).toBe(2);
@@ -998,7 +1031,7 @@ describe("writeImport — undo", () => {
     if (!parsed.ok) throw new Error("envelope fixture must parse");
     const plan = planImport({
       items: fromEnvelope(parsed.data),
-      existingUrls: new Set(),
+      existingUrls: new Map(),
     });
     const res = await writeImport(plan, {
       now: IMPORT_NOW,
@@ -1026,5 +1059,157 @@ describe("writeImport — undo", () => {
     });
     // Tag definitions are library data — undo deliberately keeps them.
     expect(await listTags()).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I03 — tag definitions for imported tags
+// I04 — duplicate meta merge + preview list
+// ---------------------------------------------------------------------------
+
+describe("writeImport — I03 tag defs and I04 duplicate merge", () => {
+  it("creates a TagDef per distinct tag on CSV/Netscape-style imports", async () => {
+    const items = [
+      bm("A", "https://a.example/", { tags: ["Reading", "news"] }),
+      bm("B", "https://b.example/", { tags: ["reading", "other"] }),
+    ];
+    const plan = planImport({ items, existingUrls: new Map() });
+    const res = await writeImport(plan, { now: IMPORT_NOW });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Distinct keys: reading, news, other — "Reading"/"reading" share a def.
+    expect(res.summary.tagsCreated).toBe(3);
+    const defs = await listTags();
+    expect(defs.map((d) => d.nameKey).sort()).toEqual([
+      "news",
+      "other",
+      "reading",
+    ]);
+    // The first-seen display name wins the def's name.
+    expect(defs.find((d) => d.nameKey === "reading")?.name).toBe("Reading");
+  });
+
+  it("an over-long tag is truncated individually, not row-failing", async () => {
+    const longTag = "t".repeat(100);
+    const items = [
+      bm("A", "https://a.example/", { tags: [longTag, "ok", "   "] }),
+    ];
+    const res = await writeImport(items, { now: IMPORT_NOW });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const root = await subtree(res.summary.importRootId);
+    const a = findByTitle(root, "A");
+    expect(a).toBeDefined();
+    if (!a) return;
+    // Row written, long tag truncated to 64, blank one dropped, no failures.
+    expect(res.summary.failures).toEqual([]);
+    expect(await getMeta(a.id)).toMatchObject({
+      tags: [longTag.slice(0, 64), "ok"],
+    });
+    // And a def exists for the truncated key.
+    expect((await listTags()).map((d) => d.nameKey).sort()).toEqual([
+      "ok",
+      "t".repeat(64),
+    ]);
+  });
+
+  it("a library duplicate is skipped, its url listed, and its meta merged", async () => {
+    // Existing bookmark already carries curated meta.
+    await putMeta("existing", {
+      tags: ["mine"],
+      notes: "keep me",
+    });
+    const plan = planImport({
+      items: [
+        bm("dup", "https://www.existing.example/page?utm_source=x#frag", {
+          tags: ["fromFile", "Mine"],
+          category: "article",
+          notes: "file notes",
+        }),
+      ],
+      existingUrls: collectNormalizedUrls(await fake.getTree()),
+    });
+    expect(plan.duplicatesSkipped).toBe(1);
+    // I04: the skipped URL is visible for the preview.
+    expect(plan.skipped).toHaveLength(1);
+    expect(plan.skipped[0]?.url).toBe(
+      "https://www.existing.example/page?utm_source=x#frag",
+    );
+    expect(plan.skipped[0]?.existingId).toBe("existing");
+
+    const res = await writeImport(plan, { now: IMPORT_NOW });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.summary.bookmarksCreated).toBe(0);
+
+    // Tags union (case-insensitive on keys), notes kept (existing not empty),
+    // category filled (existing had none).
+    const merged = await getMeta("existing");
+    expect(merged).toMatchObject({
+      tags: ["mine", "fromfile"],
+      category: "article",
+      notes: "keep me",
+    });
+    // Defs now exist for the merged file tags.
+    expect((await listTags()).map((d) => d.nameKey).sort()).toEqual([
+      "fromfile",
+      "mine",
+    ]);
+  });
+
+  it("notes merge only into an EMPTY notes field", async () => {
+    const plan = planImport({
+      items: [
+        bm("dup", "https://existing.example/page", {
+          notes: "imported notes",
+          category: "article",
+        }),
+      ],
+      existingUrls: collectNormalizedUrls(await fake.getTree()),
+    });
+    await writeImport(plan, { now: IMPORT_NOW });
+    const merged = await getMeta("existing");
+    // No prior meta row: file's notes AND category fill in.
+    expect(merged).toMatchObject({
+      notes: "imported notes",
+      category: "article",
+    });
+  });
+
+  it("an in-file repeat merges its meta into the kept sibling", async () => {
+    const items = [
+      bm("first", "https://dup.example/", { tags: ["a"], notes: "first" }),
+      bm("second", "https://www.dup.example/?utm_source=x", {
+        tags: ["b"],
+        category: "docs",
+      }),
+    ];
+    const plan = planImport({ items, existingUrls: new Map() });
+    expect(plan.duplicatesSkipped).toBe(1);
+    expect(plan.skipped[0]?.existingId).toBeUndefined();
+    // The kept sibling absorbed the repeat's tags + category.
+    const kept = plan.items[0];
+    expect(kept?.kind).toBe("bookmark");
+    if (kept?.kind !== "bookmark") return;
+    expect(kept.meta?.tags).toEqual(["a", "b"]);
+    expect(kept.meta?.category).toBe("docs");
+    expect(kept.meta?.notes).toBe("first");
+  });
+
+  it("a duplicate deleted between plan and write records no dangling merge", async () => {
+    const plan = planImport({
+      items: [
+        bm("dup", "https://existing.example/page", { tags: ["x"] }),
+      ],
+      existingUrls: collectNormalizedUrls(await fake.getTree()),
+    });
+    // The twin vanishes after planning.
+    await fake.remove("existing");
+    const res = await writeImport(plan, { now: IMPORT_NOW });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // No meta row created for the dead id — nothing dangles.
+    expect(await getMeta("existing")).toBeUndefined();
+    expect(await db.bookmarkMeta.count()).toBe(0);
   });
 });

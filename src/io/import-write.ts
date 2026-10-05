@@ -1,7 +1,8 @@
-import { createTag, getTag, putMeta } from "../db/meta";
-import type { TagDef } from "../schemas/meta";
+import { createTag, getMeta, getTag, patchMeta, putMeta } from "../db/meta";
+import { tagNameKey, type TagDef } from "../schemas/meta";
 import {
   OTHER_BOOKMARKS_ID,
+  get as getBookmarkNodes,
   type BookmarksTreeNode,
 } from "../sync/chrome-bookmarks";
 import { createBookmark, createFolder } from "../sync/mutations";
@@ -133,6 +134,30 @@ function hasMeta(meta: ImportMeta): boolean {
 }
 
 /**
+ * Per-tag sanitation (I03): a file can carry names that violate TagNameKey
+ * — over the 64-char bound or all-whitespace. Each tag is handled
+ * INDIVIDUALLY: whitespace names drop out (key would be `""`), over-long
+ * names are truncated to 64 chars, and the surviving set is deduped. A bad
+ * tag can never fail the whole meta row this way. Returns `[name, key]`
+ * pairs — `name` feeds `createTag` for defs, `key` is what meta rows store.
+ */
+function sanitizeImportTags(
+  tags: readonly string[] | undefined,
+): { name: string; key: string }[] {
+  if (tags === undefined) return [];
+  const out: { name: string; key: string }[] = [];
+  const seenKeys = new Set<string>();
+  for (const raw of tags) {
+    const name = raw.trim().slice(0, 64);
+    const key = tagNameKey(name).slice(0, 64);
+    if (key === "" || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    out.push({ name, key });
+  }
+  return out;
+}
+
+/**
  * Meta sidecar for one created node. Errors are recorded as `meta` failures —
  * the node itself already exists and still counts as created (no rollback,
  * matching the mutations service's own sidecar policy).
@@ -144,9 +169,10 @@ async function writeMeta(
 ): Promise<void> {
   const meta = item.meta;
   if (meta === undefined || !hasMeta(meta)) return;
+  const tags = sanitizeImportTags(meta.tags).map((t) => t.key);
   try {
     await putMeta(id, {
-      ...(meta.tags === undefined ? {} : { tags: meta.tags }),
+      ...(meta.tags === undefined ? {} : { tags }),
       ...(meta.category === undefined ? {} : { category: meta.category }),
       ...(meta.notes === undefined ? {} : { notes: meta.notes }),
       ...(meta.summary === undefined ? {} : { summary: meta.summary }),
@@ -279,6 +305,97 @@ async function restoreTagDefs(
   }
 }
 
+/**
+ * I03: every tag name a CSV/Netscape plan references gets a `TagDef` —
+ * without one the imported tags sit on rows but are invisible in
+ * `listTags()` and cannot be renamed. Reuses an existing def on a nameKey
+ * collision (same policy as {@link restoreTagDefs}); JSON envelopes keep
+ * their own `tagDefs` path, this covers any tag an item or skipped
+ * duplicate mentions that no def exists for yet.
+ */
+async function ensureImportTagDefs(
+  plan: ImportPlan | undefined,
+  items: readonly ImportItem[],
+  summary: ImportSummary,
+): Promise<void> {
+  const wanted = new Map<string, string>(); // key -> display name
+  const collect = (meta: { tags?: readonly string[] } | undefined): void => {
+    for (const { name, key } of sanitizeImportTags(meta?.tags)) {
+      if (!wanted.has(key)) wanted.set(key, name);
+    }
+  };
+  const walk = (list: readonly ImportItem[]): void => {
+    for (const item of list) {
+      collect(item.meta);
+      if (item.kind === "folder") walk(item.children);
+    }
+  };
+  walk(items);
+  for (const skipped of plan?.skipped ?? []) collect(skipped.meta);
+  for (const [key, name] of wanted) {
+    try {
+      if ((await getTag(key)) !== undefined) continue;
+      await createTag(name);
+      summary.tagsCreated += 1;
+    } catch (cause) {
+      summary.failures.push({ kind: "tag", title: name, message: detail(cause) });
+    }
+  }
+}
+
+/**
+ * I04: merge a skipped duplicate's meta into the existing library bookmark.
+ * Same policy as {@link mergeImportMeta}: tags union, `category`/`notes` only
+ * fill empty fields — nothing the user already curated is overwritten.
+ * In-file repeats carry no `existingId` (already merged at plan time).
+ */
+async function mergeSkippedDuplicates(
+  plan: ImportPlan,
+  summary: ImportSummary,
+): Promise<void> {
+  for (const skipped of plan.skipped) {
+    if (skipped.existingId === undefined || skipped.meta === undefined) {
+      continue;
+    }
+    try {
+      // Liveness: a node deleted between plan and write must not gain a
+      // dangling meta row (patchMeta lazily creates rows for missing ids).
+      if ((await getBookmarkNodes(skipped.existingId)).length === 0) {
+        continue;
+      }
+      const existing = await getMeta(skipped.existingId);
+      const tags = sanitizeImportTags(skipped.meta.tags).map((t) => t.key);
+      const mergedTags = [
+        ...(existing?.tags ?? []),
+        ...tags.filter((k) => !(existing?.tags ?? []).includes(k)),
+      ];
+      await patchMeta(skipped.existingId, {
+        ...(mergedTags.length === 0 ? {} : { tags: mergedTags }),
+        ...(existing?.category === undefined &&
+        skipped.meta.category !== undefined
+          ? { category: skipped.meta.category }
+          : {}),
+        ...((existing?.notes === undefined || existing.notes === "") &&
+        skipped.meta.notes !== undefined
+          ? { notes: skipped.meta.notes }
+          : {}),
+        // `summary` deliberately does NOT merge here: the spec's merge list
+        // is tags/category/notes only, and a file's summary is often
+        // machine-generated — attaching it to an existing library bookmark
+        // would overwrite user-curated context with stale AI text. The
+        // plan-time sibling merge keeps it because both sides are the
+        // file's own data.
+      });
+    } catch (cause) {
+      summary.failures.push({
+        kind: "meta",
+        title: skipped.title,
+        message: `merge into duplicate ${JSON.stringify(skipped.url)}: ${detail(cause)}`,
+      });
+    }
+  }
+}
+
 /** Type guard: a plan carries `items`; a raw forest IS the array. */
 function isImportPlan(
   source: ImportPlan | readonly ImportItem[],
@@ -330,6 +447,10 @@ export async function writeImport(
   };
 
   await restoreTagDefs(options.tagDefs ?? [], summary);
+  await ensureImportTagDefs(plan, items, summary);
   await writeItems(items, root.id, summary);
+  if (plan !== undefined) {
+    await mergeSkippedDuplicates(plan, summary);
+  }
   return { ok: true, summary };
 }
