@@ -351,7 +351,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     finishes without duplicates; Cancel stops cleanly; progress callbacks
     fire.
   - Fix: write-ahead root id and cursor (additive table); resume/cancel API.
-- [ ] Task 4: I02 + I07 — import/export dialogs
+- [x] Task 4: I02 + I07 — import/export dialogs (0d32d0c)
   <!-- files: src/entrypoints/sidepanel/ImportDialog.tsx, src/entrypoints/sidepanel/ExportDialog.tsx -->
   <!-- depends: task3 -->
   - Tests: Esc/overlay/X are inert while importing; a reset run's late result

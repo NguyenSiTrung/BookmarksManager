@@ -1200,3 +1200,22 @@ claim that any audit finding has been fixed or reproduced.
 - **`ImportStateMeta` bounds are STORAGE bounds** (looser than
   `BookmarkMeta`) — clamping to BookmarkMeta bounds at flatten would
   launder violations `putMeta` should record as `meta` failures.
+
+## Phase 5 Task 4 — I02 + I07 dialogs (commit per git log)
+
+- **Synchronous re-entrancy guard needs try/finally**: a plain post-await
+  `importingRef = false` bricks the dialog when the awaited call throws
+  OUTSIDE its typed-result contract (Dexie put before driveImport's
+  try/catch). Refs go in `finally`; the `catch` surfaces an honest
+  `interrupted` error back on preview/resume. (reviewer Warning.)
+- **Resume-offer latch**: `setStage((c) => (c === "pick" ? "resume" : c))`
+  — a late `listInterruptedImports` resolution can only enter "resume"
+  from "pick", never hijack an in-flight or finished flow.
+- **Radix close funnel**: Esc, overlay pointer-down, and the X button all
+  reach `onOpenChange` — one `if (!next && importingRef.current) return`
+  makes every close path inert while a run is live.
+- **Reset kills stale runs**: `runRef.current += 1` in `reset()`; after
+  each await, `if (runRef.current !== run) return` before touching state.
+- **Radix test trick**: fireEvent/act flushes between synthetic events —
+  to exercise a same-tick ref guard, capture the element and fire two
+  raw `dispatchEvent(new MouseEvent("click",{bubbles:true}))`.
