@@ -319,7 +319,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     bookmark/meta events; notes not indexed there; `group.ts` scales to 5k
     groups within a bound; no `bookmarks-changed` broadcast remains.
   - Fix: lazy cached index, exact-group index, remove dead broadcast.
-- [ ] Task 8: D15 — one scheme policy
+- [x] Task 8: D15 — one scheme policy (`a02fa00`)
   <!-- files: src/search/openable.ts, src/io/netscape.ts -->
   - Tests: `\u0001javascript:`, `vbscript:`, `blob:`, `view-source:` are not
     openable; `http`, `https`, `mailto`, `ftp` are; import guard and open guard

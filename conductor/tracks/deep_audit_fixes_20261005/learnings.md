@@ -1101,3 +1101,29 @@ claim that any audit finding has been fixed or reproduced.
 - Fake reorder helper wants the FULL child-id permutation of the target
   parent; `fake.create` needs explicit `parentId: BOOKMARKS_BAR_ID` to
   land in the bar.
+
+## Task 8 — D15 (one scheme policy)
+
+- **One normalizer, two policies:** `urlScheme()` in
+  `src/search/openable.ts` is THE shared scheme read — strip
+  `\x00-\x20` (all C0 + space) → anchored `scheme:` extract →
+  lowercase. `isOpenableUrl` (allowlist http/https/mailto/ftp) and
+  netscape's `isBlockedScheme` (blocklist javascript/data/vbscript)
+  both consume it, so no obfuscated spelling can split the guards.
+- **Space-strip closed a real hole:** old openable stripped only
+  `\t\n\r`, so `java script:` was openable while browsers
+  normalize+execute it; `\x01javascript:` survived the anchored regex
+  too. Both pinned shut in the shared fixture table now.
+- **Denylist → allowlist widens the closed set:** vbscript/blob/
+  view-source/file/tel/about/chrome(-extension)/relative/unknown are
+  all not openable; e2e open-paths had used `chrome-extension://`
+  bookmarks (offline-resolving) and moved to `context.route`-faked
+  https targets.
+- **NBSP is NOT stripped** (outside \x00-\x20): `\u00a0javascript:`
+  reads as no-scheme → not openable, not import-blocked — matches
+  pre-change isBlockedScheme semantics and WHATWG trimming; harmless.
+- **netscape.ts imports from search/** — new edge in the other
+  direction (io → search leaf); openable.ts stays a pure leaf.
+- Omnibox suggestion flow filters non-openable hits entirely (existing
+  behavior, review Info) — sidepanel/palette show rows with disabled
+  opens instead.
