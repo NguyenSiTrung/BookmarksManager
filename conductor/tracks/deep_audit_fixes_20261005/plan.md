@@ -365,7 +365,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 6: UI correctness and safety
 <!-- execution: parallel -->
 
-- [ ] Task 1: U01 — confirmed, undoable Approve all
+- [x] Task 1: U01 — confirmed, undoable Approve all (SHA ff66ae1)
   <!-- files: src/entrypoints/sidepanel/ReviewView.tsx, src/entrypoints/sidepanel/App.tsx, src/messages/decisions.ts, src/decisions/apply.ts -->
   - Tests: Approve all opens a confirm showing count and kinds; confirming
     applies under one aggregate snapshot and shows an Undo toast; Undo

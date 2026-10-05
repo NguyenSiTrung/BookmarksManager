@@ -1226,3 +1226,27 @@ Lint, tsc, 3165 unit, build, manifest, bundle, 43+1 e2e all green on the
 task-4 commit (bc54631) — including the import/export e2e specs
 (core-manager JSON import round-trip, audit-data-safety export/import).
 Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
+
+## Phase 6 Task 1 — U01 confirmed, undoable Approve-all
+
+- **Batch revert beats aggregate snapshot**: every applied decision row
+  already carries its own `undoSnapshotId`, so a `REVERT_BATCH` intent that
+  replays each row's snapshot in REVERSE order gives the spec's "Undo
+  reverts the whole batch" without inventing an aggregate `UndoKind`.
+  Reverse order is REQUIRED, not cosmetic: sequential changes on one
+  bookmark (A→B then A→C) only unwind to the original newest-first.
+- **`state_unrecorded` folds into `reverted`**, never `failed` — the
+  replay already ran; counting it failed would re-arm an Undo the store
+  must refuse on a consumed snapshot. Result carries ids (`string[]`), not
+  rows — a row that vanishes mid-batch can't break the fold.
+- **Ref-vs-state busy guard**: `bulkBusyRef` (synchronous, checked in the
+  confirm handler before any await) guards double-dispatch; `bulkBusy`
+  state only drives the disabled UI. Both clear in `finally` — the I02
+  brick lesson applied to dialogs.
+- **Toast arm order**: `reportToast` disarms stale revert targets on every
+  new toast — `showToast` must run BEFORE `onApplied(ids)` at every site,
+  so the arm lands after the disarm.
+- **Single vs batch degrade**: the shell's revert target is an id list —
+  length 1 sends `REVERT_DECISION` (unchanged semantics incl. its
+  `state_unrecorded` path), >1 sends `REVERT_BATCH`. A batch undo that
+  fails down to one remaining id retries through `REVERT_DECISION`.
