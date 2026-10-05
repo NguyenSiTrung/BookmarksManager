@@ -204,7 +204,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     SentLog renders lazily.
   - Fix: additive Dexie version with `[providerId+month]` indexes and rollup
     rows; prune on write; `prunePopupDecisions` without full-table read.
-- [ ] Task: Conductor - Automated Verification 'Phase 2: Accounting and egress robustness' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 2: Accounting and egress robustness' (automated gates; no manual wait) (`cadd8a8` gate run)
   - Full local gate + e2e (provider wire specs).
 
 ## Phase 3: Jobs and decisions resilience
