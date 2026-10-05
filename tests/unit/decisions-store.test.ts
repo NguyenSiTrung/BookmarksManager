@@ -17,6 +17,7 @@ import {
   claimDecision,
   getDecision,
   isLegalTransition,
+  listAutoApplied,
   listByStatus,
   listDecisions,
   listPending,
@@ -51,6 +52,7 @@ import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
 const UUID = "9b7b5f8e-2c3a-4d1e-9f0a-1b2c3d4e5f6a";
 const UUID2 = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+const UUID3 = "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e";
 
 function decision(over: Partial<Decision> = {}): Decision {
   return Decision.parse({
@@ -175,6 +177,21 @@ describe("queries", () => {
     expect((await listByStatus("pending")).map((r) => r.id)).toEqual([UUID]);
     expect(await listByStatus("reverted")).toEqual([]);
     expect(await getDecision("00000000-0000-4000-8000-000000000000")).toBeUndefined();
+  });
+
+  it("listAutoApplied returns newest-first auto_applied rows, bounded (H05)", async () => {
+    await persistDecision(
+      decision({ id: UUID, status: "auto_applied", createdAt: "2026-09-25T10:00:00.000Z" }),
+    );
+    await persistDecision(
+      decision({ id: UUID2, status: "auto_applied", createdAt: "2026-09-25T12:00:00.000Z" }),
+    );
+    await persistDecision(
+      decision({ id: UUID3, status: "pending", createdAt: "2026-09-25T13:00:00.000Z" }),
+    );
+    const rows = await listAutoApplied();
+    expect(rows.map((r) => r.id)).toEqual([UUID2, UUID]);
+    expect((await listAutoApplied(1)).map((r) => r.id)).toEqual([UUID2]);
   });
 });
 

@@ -12,10 +12,12 @@ import {
 import { LLM_PRESETS, resolveLlmDestination } from "../../llm/providers";
 import {
   LlmAuthMode,
+  LlmBaseUrl,
   LlmProviderSettings,
   type LlmPresetId,
   type ModelPricing,
 } from "../../schemas/llm";
+import { isNonPublicUrl } from "../../decisions/minimize";
 import {
   Alert,
   Chip,
@@ -243,6 +245,13 @@ export function LlmProviderSetup() {
   }
 
   const needsKey = kind !== "custom" || auth !== "none";
+  // H04: a syntactically valid custom host that is not public warns — the
+  // endpoint still saves; the notice is the disclosure, not a gate.
+  const customBase = LlmBaseUrl.safeParse(baseUrl.trim());
+  const nonPublicHost =
+    kind === "custom" &&
+    customBase.success &&
+    isNonPublicUrl(customBase.data);
   const canEnable =
     status !== null &&
     !status.enabled &&
@@ -665,6 +674,16 @@ export function LlmProviderSetup() {
                   className={inputClass}
                 />
               </Field>
+              {nonPublicHost && (
+                <p className="-mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <WarningIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    This host is not a public address — requests go to a
+                    private or local network endpoint. You can still save it;
+                    make sure it is under your control.
+                  </span>
+                </p>
+              )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Authentication" htmlFor="llm-auth">
                   <select

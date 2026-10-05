@@ -4,6 +4,7 @@ import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
 import { LlmGateError } from "../net/llm-send";
 import { readLlmProvider } from "./settings";
+import { stripUrlsAndMarkdown } from "./sanitize";
 import { minimizeBookmark } from "../decisions/minimize";
 import { readBlocklist } from "../decisions/blocklist";
 import type { PageExtract } from "../extract/page";
@@ -101,8 +102,19 @@ export async function summarizePage(
       return client.send(request);
     },
   });
+  // H05: the provider's text is untrusted — strip URLs/markdown before the
+  // draft reaches Jev verification, the UI, or `bookmarkMeta.summary`.
+  const summary = stripUrlsAndMarkdown(run.value.summary);
+  if (summary === "") {
+    // A draft that was nothing but URLs/markdown has no usable text to
+    // verify or persist — fail the summarize stage honestly rather than
+    // let the meta schema's min(1) throw an opaque Zod error at persist.
+    const error = new Error("The provider's summary contained no usable text.");
+    Object.assign(error, { code: "empty_summary" });
+    throw error;
+  }
   return {
-    summary: run.value.summary,
+    summary,
     model: run.model,
     ...(run.usage !== undefined ? { usage: run.usage } : {}),
   };

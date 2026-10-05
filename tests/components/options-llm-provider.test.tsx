@@ -405,6 +405,31 @@ describe("enable flow", () => {
     expect(callsOfType("LLM_CONFIGURE")).toEqual([]);
   });
 
+  it("warns on a non-public custom host but still allows saving (H04)", async () => {
+    render(<LlmProviderSetup />);
+    await screen.findByRole("button", { name: /^enable/i });
+    fireEvent.click(customRadio());
+    const base = await screen.findByLabelText(/base url/i);
+
+    // RFC1918/intranet hosts warn — `isNonPublicUrl`, not a save gate.
+    fireEvent.change(base, {
+      target: { value: "https://10.0.0.9/v1" },
+    });
+    expect(
+      await screen.findByText(/not a public address/i),
+    ).toBeTruthy();
+
+    // Invalid input fails Enable instead of warning.
+    fireEvent.change(base, { target: { value: "not a url" } });
+    expect(screen.queryByText(/not a public address/i)).toBeNull();
+
+    // Public host clears it.
+    fireEvent.change(base, {
+      target: { value: "https://llm.example.com/v1" },
+    });
+    expect(screen.queryByText(/not a public address/i)).toBeNull();
+  });
+
   it("rejects negative pricing before any request", async () => {
     render(<LlmProviderSetup />);
     await screen.findByRole("button", { name: /^enable/i });

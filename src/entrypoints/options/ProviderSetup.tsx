@@ -16,6 +16,7 @@ import {
   type ProviderStatus,
 } from "../../messages/provider";
 import { PRESETS } from "../../net/presets";
+import { isNonPublicUrl } from "../../decisions/minimize";
 import {
   isMovingAlias,
   isPinnedReleaseModel,
@@ -684,6 +685,16 @@ export function ProviderSetup() {
                   className={inputClass}
                 />
               </Field>
+              {customParsed.success && isNonPublicUrl(customParsed.data) && (
+                <p className="-mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <WarningIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    This host is not a public address — requests go to a
+                    private or local network endpoint. You can still save it;
+                    make sure it is under your control.
+                  </span>
+                </p>
+              )}
               <Field
                 label="Model ID"
                 htmlFor="provider-model"

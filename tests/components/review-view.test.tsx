@@ -1232,3 +1232,80 @@ describe("Explain and second opinions", () => {
     expect(document.activeElement).toBe(explainButton);
   });
 });
+
+// ---------------------------------------------------------------------------
+// H05 — auto-applied provenance
+// ---------------------------------------------------------------------------
+
+const D_AUTO = "e5f6a7b8-c9d0-4e1f-8a2b-3c4d5e6f7a8b";
+
+function autoRow(over: Partial<DecisionDocument> = {}): DecisionDocument {
+  return decision({
+    id: D_AUTO,
+    kind: "add_tags",
+    tags: ["injected"],
+    bookmarkIds: ["b1"],
+    confidence: 0.9,
+    status: "auto_applied",
+    createdAt: "2026-09-27T10:00:00.000Z",
+    ...over,
+  });
+}
+
+describe("Auto-applied provenance (H05)", () => {
+  it("lists auto-applied rows with their source domain, outside the queue", async () => {
+    render(
+      <ReviewView
+        tree={await liveTree()}
+        decisions={[...seedRows(), autoRow()]}
+      />,
+    );
+
+    const section = screen.getByRole("region", {
+      name: "Auto-applied suggestions",
+    });
+    expect(within(section).getByText(/Source: a\.example/)).toBeTruthy();
+    expect(within(section).getByText(/\+tags injected/)).toBeTruthy();
+
+    // The queue stays actionable-only — the history row is not a pending
+    // option, not selectable, and not bulk-approvable.
+    const listbox = screen.getByRole("listbox", {
+      name: "Pending suggestions",
+    });
+    expect(within(listbox).getAllByRole("option")).toHaveLength(4);
+    expect(within(listbox).queryByText(/\+tags injected/)).toBeNull();
+  });
+
+  it("Undo on an auto-applied row sends REVERT_DECISION and reverts it", async () => {
+    await db.decisions.put(autoRow());
+    render(
+      <ReviewView tree={await liveTree()} decisions={[autoRow()]} />,
+    );
+
+    const section = screen.getByRole("region", {
+      name: "Auto-applied suggestions",
+    });
+    fireEvent.click(
+      within(section).getByRole("button", { name: /^Undo/ }),
+    );
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "REVERT_DECISION",
+        decisionId: D_AUTO,
+      });
+    });
+    expect((await db.decisions.get(D_AUTO))?.status).toBe("reverted");
+  });
+
+  it("keeps the pending badge actionable-only when history rows stream in", async () => {
+    await seedDecisions();
+    await db.decisions.put(autoRow());
+    await renderApp();
+
+    const moreButton = screen.getByRole("button", { name: /^More/ });
+    // 4 pending rows — the auto_applied row must not inflate the badge.
+    await waitFor(() => expect(moreButton.textContent).toContain("4"));
+    expect(moreButton.textContent).not.toContain("5");
+  });
+});

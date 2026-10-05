@@ -184,6 +184,85 @@ describe("proposeLayout", () => {
     ).rejects.toThrow();
   });
 
+  it("strips URLs and markdown from proposed folder names (H05)", async () => {
+    await seedProvider();
+    server = makeOpenAiServer({
+      completion: () =>
+        completion({
+          folders: [
+            {
+              // Structurally legal on the wire (no stray slashes) but dirty:
+              // markdown wrappers and a www. link get cleaned by sanitize.
+              path: "**dev**/[tools](nested)",
+              description: "See https://evil.example — `desc`.",
+            },
+            { path: "news/*flash*", description: "ok" },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    const result = await proposeLayout(PROVIDER_ID, SYNOPSIS, {
+      unknownCostConfirmed: true,
+    });
+    expect(result.proposal.folders).toEqual([
+      { path: "dev/tools", description: "See — desc." },
+      { path: "news/flash", description: "ok" },
+    ]);
+  });
+
+  it("rejects a proposal emptied entirely by sanitization", async () => {
+    await seedProvider();
+    server = makeOpenAiServer({
+      completion: () =>
+        completion({
+          // `[](x)` is a legal segment on the wire; sanitize empties the
+          // path, so the re-parse fails the same schema as raw input.
+          folders: [{ path: "[](x)", description: "" }],
+        }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    await expect(
+      proposeLayout(PROVIDER_ID, SYNOPSIS, { unknownCostConfirmed: true }),
+    ).rejects.toThrow();
+  });
+
+  it("rejects post-sanitize duplicate paths", async () => {
+    await seedProvider();
+    server = makeOpenAiServer({
+      completion: () =>
+        completion({
+          // Both sanitize to `dev/a` — the strict re-parse refuses the dup.
+          folders: [
+            { path: "dev/a", description: "" },
+            { path: "dev/[a](x)", description: "" },
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    await expect(
+      proposeLayout(PROVIDER_ID, SYNOPSIS, { unknownCostConfirmed: true }),
+    ).rejects.toThrow();
+  });
+
+  it("flattens embedded tabs/newlines inside folder-name segments", async () => {
+    await seedProvider();
+    server = makeOpenAiServer({
+      completion: () =>
+        completion({
+          // Legal on the wire; the newline must not survive into a folder
+          // name (rendering artifact, flagged in review).
+          folders: [{ path: "dev/foo\nbar", description: "ok" }],
+        }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    const result = await proposeLayout(PROVIDER_ID, SYNOPSIS, {
+      unknownCostConfirmed: true,
+    });
+    expect(result.proposal.folders).toEqual([
+      { path: "dev/foo bar", description: "ok" },
+    ]);
+  });
+
   it("rejects an unknown provider id", async () => {
     await expect(
       proposeLayout("preset:missing", SYNOPSIS),

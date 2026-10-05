@@ -708,6 +708,28 @@ describe("custom provider enable", () => {
     });
   });
 
+  it("warns on a non-public host but keeps the endpoint saveable (H04)", async () => {
+    render(<ProviderSetup />);
+    fireEvent.click(
+      await screen.findByRole("radio", { name: "Custom Jev provider" }),
+    );
+    const base = await screen.findByLabelText(/^base url$/i);
+
+    // A private/intranet host warns — reuse of `isNonPublicUrl`.
+    fireEvent.change(base, { target: { value: "https://192.168.10.5/api" } });
+    expect(
+      await screen.findByText(/not a public address/i),
+    ).toBeTruthy();
+
+    // A syntactically invalid URL does not warn — it fails Enable instead.
+    fireEvent.change(base, { target: { value: "not a url" } });
+    expect(screen.queryByText(/not a public address/i)).toBeNull();
+
+    // A public host clears the warning.
+    fireEvent.change(base, { target: { value: "https://ai.example.com/api" } });
+    expect(screen.queryByText(/not a public address/i)).toBeNull();
+  });
+
   it("keeps Enable disabled until the base URL parses and the model id is non-empty", async () => {
     render(<ProviderSetup />);
     fireEvent.click(

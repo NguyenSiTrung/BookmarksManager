@@ -4,6 +4,7 @@ import { sameSummaryResource } from "./summary-identity";
 import { readBlocklist } from "./blocklist";
 import { extractActivePage, verifyExtractedDocument, type PageExtract } from "../extract/page";
 import { summarizePage } from "../llm/summarize";
+import { stripUrlsAndMarkdown } from "../llm/sanitize";
 import { verifySummaryRun } from "../jev/tasks/verify-summary";
 import { createJevClient, type JevTransport } from "../jev/client";
 import { SummaryVerificationState } from "../schemas/summary-verification";
@@ -313,6 +314,10 @@ export async function summarizeExtracted(
     return { ok: false, stage: "summarize", code: codeOf(cause), message: messageOf(cause) };
   }
 
+  // H05: the persisted/verified text is the sanitized draft — re-apply the
+  // strip at this boundary so a future producer cannot bypass it either.
+  const summary = stripUrlsAndMarkdown(summarized.summary);
+
   // Verify — Jev under its own scope; any transport/Jev failure or a
   // non-"supported" verdict stops before persistence.
   let verdict;
@@ -331,7 +336,7 @@ export async function summarizeExtracted(
       bookmark: minimized,
       excerpt: extract.excerpt,
       headings: extract.headings,
-      summary: summarized.summary,
+      summary,
     });
     verdict = await verifySummaryRun(jevClient, state);
   } catch (cause) {
@@ -353,13 +358,13 @@ export async function summarizeExtracted(
   // `bookmarkMeta` row). The admission codes surface as the persist code.
   try {
     await admitSummary(input.bookmarkId, extract, input.tabId);
-    await setBookmarkSummary(input.bookmarkId, summarized.summary);
+    await setBookmarkSummary(input.bookmarkId, summary);
   } catch (cause) {
     return { ok: false, stage: "persist", code: codeOf(cause), message: messageOf(cause) };
   }
   return {
     ok: true,
-    summary: summarized.summary,
+    summary,
     model: summarized.model,
     verifyConfidence: verdict.confidence,
   };

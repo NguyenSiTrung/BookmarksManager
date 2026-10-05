@@ -379,6 +379,18 @@ export async function listPending(): Promise<DecisionRow[]> {
 }
 
 /**
+ * H05: the newest auto-applied decisions (bounded) — the audit surface that
+ * lets the user see what the policy applied without them, with provenance.
+ * Not part of `listReviewable`: these are history, not pending work.
+ */
+export async function listAutoApplied(limit = 50): Promise<DecisionRow[]> {
+  const rows = await listByStatus("auto_applied");
+  return rows
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+/**
  * The full review surface: `pending` rows plus `unsure` ones — unsure rows
  * carry the LLM second-opinion verdicts and remain user-reviewable (they
  * can still reach `applied`/`rejected`). Oldest-first by `createdAt`.

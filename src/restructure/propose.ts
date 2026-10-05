@@ -5,7 +5,11 @@ import { resolveLlmDestination } from "../llm/providers";
 import { LlmGateError } from "../net/llm-send";
 import { readLlmProvider } from "../llm/settings";
 import { LLM_RESTRUCTURE_SCOPE } from "../schemas/provider";
-import { LibrarySynopsis, RestructureProposal } from "../schemas/restructure";
+import {
+  LibrarySynopsis,
+  RestructureProposal,
+} from "../schemas/restructure";
+import { stripUrlsAndMarkdown } from "../llm/sanitize";
 import type { TokenUsage, ChatMessage } from "../llm/wire";
 
 /**
@@ -83,8 +87,31 @@ export async function proposeLayout(
     },
   });
   return {
-    proposal: run.value,
+    proposal: sanitizeProposal(run.value),
     model: run.model,
     ...(run.usage !== undefined ? { usage: run.usage } : {}),
   };
+}
+
+/**
+ * H05: a proposed folder name is provider text — untrusted. Strip URLs and
+ * markdown from each path and description, and drop the empty segments a
+ * stripped URL leaves behind (`dev/https://x` → `dev`). Limits stay the
+ * schema's job: the cleaned proposal is re-validated against
+ * `RestructureProposal`, so over-length, over-deep, duplicated, or fully
+ * emptied proposals still reject honestly instead of being truncated.
+ */
+function sanitizeProposal(proposal: RestructureProposal): RestructureProposal {
+  return RestructureProposal.parse({
+    folders: proposal.folders.map((folder) => ({
+      path: stripUrlsAndMarkdown(folder.path)
+        .split("/")
+        // \t/\n are meaningful in summaries but invalid in a folder name —
+        // flatten them per segment before the honest re-parse.
+        .map((segment) => segment.replace(/[\t\n]+/g, " ").trim())
+        .filter((segment) => segment.length > 0)
+        .join("/"),
+      description: stripUrlsAndMarkdown(folder.description),
+    })),
+  });
 }

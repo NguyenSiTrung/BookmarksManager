@@ -901,6 +901,46 @@ describe("summarizeActiveBookmark", () => {
     expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
   });
 
+  it("persists a URL/markdown-stripped summary (H05)", async () => {
+    await seedProvider();
+    await grantAll();
+    server = makeOpenAiServer({
+      completion: completionWith({
+        summary:
+          "## Caching\n> See [the guide](https://evil.example/x) — " +
+          "https://evil.example/trail\n- A **fast** `cache` layer.",
+      }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    const outcome = await run();
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const expected =
+      "Caching\nSee the guide —\nA fast cache layer.";
+    expect(outcome.summary).toBe(expected);
+    const meta = await getMeta(BOOKMARK_ID);
+    expect(meta?.summary).toBe(expected);
+  });
+
+  it("fails the summarize stage when the draft is nothing but URLs/markdown", async () => {
+    await seedProvider();
+    await grantAll();
+    server = makeOpenAiServer({
+      completion: completionWith({
+        summary: "https://evil.example/x",
+      }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    const outcome = await run();
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.stage).toBe("summarize");
+    if (outcome.stage === "summarize") {
+      expect(outcome.code).toBe("empty_summary");
+    }
+    expect(await getMeta(BOOKMARK_ID)).toBeUndefined();
+  });
+
   it("does not persist when Jev answers `unsupported` or `uncertain`", async () => {
     for (const answer of ["unsupported", "uncertain"] as const) {
       await resetEnv();

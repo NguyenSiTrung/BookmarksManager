@@ -279,7 +279,15 @@ export function isUnsavedDecision(row: DecisionRow): boolean {
 export function reviewQueue(
   decisions: readonly DecisionRow[],
 ): DecisionRow[] {
-  return decisions.filter((row) => !isUnsavedDecision(row));
+  // Actionable means still awaiting the user: pending or unsure. Popup
+  // placeholders and history rows (applied/auto_applied/rejected/reverted)
+  // the feed may carry are not queue work — the auto-applied ones get their
+  // own section below.
+  return decisions.filter(
+    (row) =>
+      !isUnsavedDecision(row) &&
+      (row.status === "pending" || row.status === "unsure"),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +441,26 @@ function statusAllows(row: DecisionRow, to: DecisionStatus): boolean {
   return isLegalTransition(row.status, to);
 }
 
+/**
+ * H05: the distinct hostnames a row's suggestions were derived from, shown
+ * next to an auto-applied change so the change carries its provenance. At
+ * most three, then a "+N more" suffix; unresolvable urls are skipped.
+ */
+function sourceDomains(row: DecisionRow, tree: FlattenedTree): string[] {
+  const domains = new Set<string>();
+  for (const id of row.bookmarkIds) {
+    const url = tree.bookmarks.get(id)?.url;
+    if (url === undefined) continue;
+    try {
+      const host = new URL(url).hostname;
+      if (host !== "") domains.add(host);
+    } catch {
+      // Unparseable stored url — skip rather than guess.
+    }
+  }
+  return [...domains];
+}
+
 // ---------------------------------------------------------------------------
 // ReviewView
 // ---------------------------------------------------------------------------
@@ -475,7 +503,19 @@ export function ReviewView({
   // selection, nor "approve all". `hiddenUnsaved` keeps the toolbar honest
   // about what was withheld.
   const queue = useMemo(() => reviewQueue(decisions), [decisions]);
-  const hiddenUnsaved = decisions.length - queue.length;
+  const hiddenUnsaved = useMemo(
+    () => decisions.filter(isUnsavedDecision).length,
+    [decisions],
+  );
+  // H05: the auto-applied audit surface — history rows the feed carries,
+  // newest first. Compact variant below; never selectable or bulk-approved.
+  const autoRows = useMemo(
+    () =>
+      decisions
+        .filter((row) => row.status === "auto_applied")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [decisions],
+  );
   const rows = useMemo(
     () =>
       [...queue].sort(
@@ -892,6 +932,26 @@ export function ReviewView({
           ))
         )}
       </div>
+      {autoRows.length > 0 && (
+        <section
+          aria-label="Auto-applied suggestions"
+          className="max-h-40 shrink-0 overflow-y-auto border-t border-border"
+        >
+          <h3 className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">
+            Auto-applied — review what changed and where it came from
+          </h3>
+          {autoRows.map((row) => (
+            <AutoAppliedRow
+              key={row.id}
+              row={row}
+              tree={tree}
+              busy={busyIds.has(row.id)}
+              failure={failures.get(row.id)}
+              onRevert={handleRevert}
+            />
+          ))}
+        </section>
+      )}
       <CostConfirmationDialog
         open={confirming !== null}
         featureLabel="Explain this suggestion"
@@ -1188,6 +1248,86 @@ function ReviewRow({
           )}
         </span>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// One auto-applied (history) row — H05 audit surface
+// ---------------------------------------------------------------------------
+
+interface AutoAppliedRowProps {
+  row: DecisionRow;
+  tree: FlattenedTree;
+  busy: boolean;
+  failure?: string;
+  onRevert: (row: DecisionRow) => Promise<void> | void;
+}
+
+/**
+ * A compact record of a change the policy applied without a click: what it
+ * was, what it did, and — the H05 provenance — the domain it came from. The
+ * only action is Undo (`auto_applied → reverted` is legal); it is never
+ * part of the selectable queue, so there is no checkbox or roving tab stop.
+ */
+function AutoAppliedRow({
+  row,
+  tree,
+  busy,
+  failure,
+  onRevert,
+}: AutoAppliedRowProps) {
+  const titles = titleText(row, tree);
+  const domains = sourceDomains(row, tree);
+  const primary =
+    row.bookmarkIds
+      .map((id) => tree.bookmarks.get(id))
+      .find((item) => item !== undefined) ?? null;
+  const primaryLabel =
+    primary === null ? "a missing bookmark" : displayTitle(primary.title, primary.url);
+  const canRevert = statusAllows(row, "reverted");
+  return (
+    <div
+      className="flex items-start gap-2 border-b border-border px-2 py-2 last:border-b-0"
+      data-decision-id={row.id}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="shrink-0 rounded-sm bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-secondary-foreground">
+            {KIND_LABEL[row.kind]}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-sm" title={titles}>
+            {titles}
+          </span>
+        </div>
+        <div className="truncate text-xs text-muted-foreground">
+          {payloadSummary(row, tree)}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          Source:{" "}
+          {domains.length === 0
+            ? "unknown"
+            : domains.length <= 3
+              ? domains.join(", ")
+              : `${domains.slice(0, 3).join(", ")} +${domains.length - 3} more`}
+        </div>
+        {failure !== undefined && (
+          <p role="alert" className="mt-1 text-xs text-destructive">
+            {failure}
+          </p>
+        )}
+      </div>
+      {canRevert && (
+        <button
+          type="button"
+          disabled={busy}
+          aria-label={`Undo the auto-applied suggestion for ${primaryLabel}`}
+          onClick={() => onRevert(row)}
+          className={secondaryButtonClass}
+        >
+          Undo
+        </button>
+      )}
     </div>
   );
 }
