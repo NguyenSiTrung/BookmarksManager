@@ -46,7 +46,7 @@ export type PaletteItem =
       detail: string;
       url: string;
       /**
-       * `isOpenableUrl(url)` — `false` for `javascript:`/`data:` results,
+       * `isOpenableUrl(url)` — `false` for non-allowlisted schemes,
        * which keep Reveal/Edit/Copy but no Open actions.
        */
       openable: boolean;

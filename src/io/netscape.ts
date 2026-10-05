@@ -20,6 +20,8 @@
  * pass in {@link parseNetscape}).
  */
 
+import { urlScheme } from "../search/openable";
+
 /**
  * Maximum accepted input size: 20 MiB. Bookmark files are user-picked local
  * files, and a multi-hundred-megabyte "HTML" file is either hostile or a
@@ -254,27 +256,22 @@ function parseTags(el: Element): string[] {
     .filter((tag) => tag.length > 0);
 }
 
-const SCHEME_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*):/;
-
 /**
- * Scheme check matching browser behavior: ASCII whitespace/control characters
- * are removed before reading the scheme (that's how `java\tscript:` still
- * executes in an href), so obfuscated spellings cannot slip a blocked scheme
- * through. Schemeless URLs pass — they are odd but not dangerous, and the
- * import writer decides whether to keep them.
+ * Scheme check on THE shared normalization (D15): the scheme is read via
+ * `urlScheme` — the same C0/space-strip and parse `isOpenableUrl` applies
+ * — so an obfuscated spelling (`java\tscript:`, `java script:`,
+ * `\x01javascript:`) resolves identically on both sides of the fence and
+ * can never import-block while staying openable. Schemeless URLs pass —
+ * they are odd but not dangerous, and the import writer decides whether
+ * to keep them.
  *
  * Exported as THE shared blocklist check — `src/io/import-plan.ts` applies it
  * at planning time and `src/io/import-write.ts` re-applies it at write time,
  * so a blocked URL can never be recreated no matter the input format.
  */
 export function isBlockedScheme(url: string): boolean {
-  // Browser-style scheme detection strips ASCII control chars (\x00-\x1f)
-  // and spaces too — the control-char range below is intentional.
-  // eslint-disable-next-line no-control-regex
-  const compact = url.replace(/[\x00-\x20]/g, "");
-  const match = SCHEME_PATTERN.exec(compact);
-  const scheme = match?.[1];
-  return scheme !== undefined && BLOCKED_URL_SCHEMES.has(scheme.toLowerCase());
+  const scheme = urlScheme(url);
+  return scheme !== undefined && BLOCKED_URL_SCHEMES.has(scheme);
 }
 
 /** Appends a bookmark for `a` — or bumps `skipped`/`invalid` and returns. */

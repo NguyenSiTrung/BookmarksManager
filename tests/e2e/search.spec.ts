@@ -90,10 +90,17 @@ test("command palette opens with Ctrl+K and Enter opens the hit", async () => {
     const sidepanel = await openSurface(context, id, "sidepanel");
     await waitForSidePanelReady(sidepanel);
 
-    // A chrome-extension:// URL resolves offline (fake https domains land on
-    // chrome-error://), so the opened tab's final URL is a deterministic
-    // assertion — and it stays an internal scheme for the egress watch.
-    const targetUrl = `chrome-extension://${id}/options.html`;
+    // D15 pinned the open guard to an http/https/mailto/ftp allowlist, so an
+    // extension-internal URL is no longer openable — fake an https page via
+    // context.route instead (resolves offline, deterministic final URL).
+    const targetUrl = "https://palette-target.example/options.html";
+    await context.route(`${targetUrl}**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<html><body>palette target</body></html>",
+      }),
+    );
     await createBookmark(sidepanel, {
       parentId: OTHER_BOOKMARKS_ID,
       title: "Palette target page",
@@ -114,16 +121,11 @@ test("command palette opens with Ctrl+K and Enter opens the hit", async () => {
       results.getByRole("option", { name: /Palette target page/ }),
     ).toBeVisible({ timeout: 15_000 });
 
-    // Enter opens the highlighted bookmark hit in a real new tab. The
-    // Options shell rewrites its own URL to `#connections` (its default
-    // panel) as soon as it mounts, so asserting a frozen hash-free URL is a
-    // race — assert the page, tolerating the shell's default hash.
+    // Enter opens the highlighted bookmark hit in a real new tab.
     const tabPromise = context.waitForEvent("page", { timeout: 15_000 });
     await paletteInput.press("Enter");
     const tab = await tabPromise;
-    await expect(tab).toHaveURL(
-      new RegExp(`${targetUrl.replace(/\./g, "\\.")}(#connections)?$`),
-    );
+    await expect(tab).toHaveURL(targetUrl);
     await tab.close();
   } finally {
     await context.close();
@@ -137,9 +139,16 @@ test("popup search replaces the form and Enter opens a new tab", async () => {
     const id = await extensionId(context);
     const seed = await openSurface(context, id, "sidepanel");
     await waitForSidePanelReady(seed);
-    // See the palette spec: a chrome-extension:// URL resolves offline, so
-    // the opened tab's final URL is deterministic.
-    const targetUrl = `chrome-extension://${id}/popup.html`;
+    // See the palette spec: the allowlist excludes extension-internal URLs,
+    // so a route-faked https page gives the deterministic final URL.
+    const targetUrl = "https://popup-target.example/popup.html";
+    await context.route(`${targetUrl}**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<html><body>popup target</body></html>",
+      }),
+    );
     await createBookmark(seed, {
       parentId: OTHER_BOOKMARKS_ID,
       title: "Popup find me",

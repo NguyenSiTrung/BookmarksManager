@@ -61,7 +61,7 @@ declare const chrome: { tabs?: Partial<ChromeTabsApi> | null };
 export type OpenUrlDisposition = "current" | "foreground" | "background";
 
 export type OpenUrlErrorCode =
-  /** The URL failed {@link isOpenableUrl} (`javascript:`/`data:`/blank). */
+  /** The URL failed {@link isOpenableUrl} (non-allowlisted scheme/blank). */
   | "not_openable"
   /** `chrome.tabs`, or the method the disposition needs, is unavailable. */
   | "unavailable"

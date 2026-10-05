@@ -596,8 +596,8 @@ export function App(props?: {
 
   /**
    * All opens go through the typed tabs slice (`openBookmarkUrl`) — it
-   * applies the shared `isOpenableUrl` denylist (`javascript:`/`data:`
-   * refused before reaching `chrome.tabs`) and a typed failure becomes an
+   * applies the shared `isOpenableUrl` allowlist (`http`/`https`/`mailto`/
+   * `ftp` only reach `chrome.tabs`) and a typed failure becomes an
    * error toast instead of a silent no-op. Every activation path — Enter,
    * the row "Open" action, DuplicatesView rows, and palette background
    * opens — shares this one guard.
