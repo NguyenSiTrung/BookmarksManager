@@ -510,3 +510,27 @@ claim that any audit finding has been fixed or reproduced.
   row) fixed and re-reviewed PASS.
 - Full gate green at commit: lint, typecheck, 2949 unit/168 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## 2026-10-05 — A03 completed (`c4aba4d`)
+
+- `STALE_RESERVATION_TTL_MS` (15 min) is the binding staleness bound — the
+  spec's "maximum request timeout" phrase resolves to the existing
+  conservative constant, not the 30 s per-attempt deadline. At worker start
+  ANY `active` row is definitionally orphaned (its fetch died with the old
+  worker); the TTL is belt-and-suspenders for overlap edge cases.
+- Swept rows must SETTLE under the conservative missing-usage rule
+  (`reconcileBudget` with `{}`), never RELEASE — release means "never
+  dispatched" and frees exposure, wrong direction for an orphaned sent
+  request. Fail-closed accounting beats precision for lost state.
+- `BudgetReservation.feature` (additive, non-indexed) stamps the consent
+  scope at creation so a sweep settles under the true feature; persisted
+  fields are untrusted — validate through `isRegisteredScope`, else fall
+  back to the `llm_orphan_sweep` provenance marker.
+- Guard pattern for post-dispatch bookkeeping: retry once in-process, then
+  defer to the startup sweep — bookkeeping failure must never mask the
+  transport outcome or strand the row; a dead DB can only heal at restart.
+- `settleLlmUsage` is idempotent per row inside its own transaction, so a
+  non-atomic sweep can't double-settle.
+- Independent review (child `7ac8d994`): clean PASS/PASS, zero warnings.
+- Full gate green at commit: lint, typecheck, 2957 unit/168 files, build,
+  manifest, bundle, 43 e2e (1 intentional skip).

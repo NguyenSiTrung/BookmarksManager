@@ -167,7 +167,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     transport retries back off with jitter (fake clock).
   - Fix: treat `TimeoutError`/`AbortError`; no retry on timeout; reuse
     `parseRetryAfter`/`retryDelay`.
-- [ ] Task 2: A03 — reservation orphan sweep
+- [x] Task 2: A03 — reservation orphan sweep (`c4aba4d`)
   <!-- files: src/net/llm-send.ts, src/llm/budget.ts, src/entrypoints/background.ts -->
   <!-- depends: task1 -->
   - Tests: `appendSentLog` throwing after fetch settles/releases the
