@@ -241,7 +241,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     cancelled job stops escalation; budget-skipped escalation is flagged.
   - Fix: per-decision claim in worker + store; wire/policy clamp; rethrow
     job-authority errors.
-- [ ] Task 5: J10 + J11 + J12 — restructure apply idempotency, undo target, managed rows
+- [x] Task 5: J10 + J11 + J12 — restructure apply idempotency, undo target, managed rows (`2ba816f`)
   <!-- files: src/restructure/apply.ts, src/restructure/diff.ts, src/messages/restructure.ts -->
   <!-- depends: task1 -->
   - Tests: double confirm applies once and pushes one snapshot; `moved === 0`

@@ -808,3 +808,46 @@ claim that any audit finding has been fixed or reproduced.
   ordering, and the benign-loss scoping.
 - Full gate green at commit: lint, typecheck, 3062 unit/173 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+
+## Phase 3 Task 5 — J10 + J11 + J12 (2ba816f)
+
+- **`withUndoLock` does NOT serialize same-context callers.** Its
+  nested-call contract (`holdDepth > 0` → run inline) exists so undo
+  internals never self-deadlock — but it means a second same-context
+  `withUndoLock` executes inside the first's critical section. For
+  mutual exclusion of independent same-context calls, wrap it in an
+  in-worker promise chain (`Map<key, Promise>`; same shape as
+  `serializeDecision`): chain orders same-context, Web Lock orders
+  cross-context + undo replays.
+- **Terminal-state records belong on the resource row**, written inside
+  the lock at commit time: `job.restructure.applied` (schema-optional —
+  `Job.parse` runs on every read, so the field must be in the strict
+  schema or reads break). Replay returns the record verbatim; a stale
+  record (snapshot popped by undo/discard) re-arms the real apply —
+  liveness checked via `db.undo.get(applied.snapshotId)`.
+- **`moved === 0` must be decided before `pushSnapshot`** — compute the
+  pending-move list from live `get()` reads first; only then push the
+  snapshot (capturing exactly the pending ids, not all resolved rows),
+  else the stack accrues empty-effect entries that replay pointless
+  moves. Folders created for a no-move batch are removed by the same
+  confirmed-empty cleanup as failure compensation.
+- **`undoExpected(snapshotId)` refuses BOTH empty stack and non-head id
+  as `conflict`** — the `empty` branch is unreachable through it; map
+  `conflict` → `stale` at the message layer (a stale undo handle, not a
+  diff-stale). Wire schemas must require `snapshotId` or the refusal
+  reaches `malformed_message` instead.
+- **Managed detection needs ancestor propagation** — Chrome only marks
+  the managed root; a child may carry no `unmodifiable` flag. Propagate
+  the flag while flattening (same rule as the fake's
+  `isInManagedSubtree`), and pre-filter at the DIFF so the mutation
+  layer never sees a managed row: marking it `unresolved` skips it at
+  apply instead of failing the batch mid-way.
+- **`db.jobs.update(jobId, {restructure: {...freshPlan, applied}})`**
+  replaces the nested object whole — merge from the fresh in-lock read,
+  not the pre-lock validated copy.
+- Independent review (child 7ac8d994): PASS/PASS, zero findings — verified
+  the two-layer serialization ordering, the moved===0 no-snapshot path,
+  record-write-in-try compensation invariant, and managed propagation.
+- Full gate green at commit: lint, typecheck, 3069 unit/173 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
