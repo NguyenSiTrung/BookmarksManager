@@ -371,7 +371,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     applies under one aggregate snapshot and shows an Undo toast; Undo
     reverts the whole batch; cancel applies nothing.
   - Fix: confirm dialog; aggregate snapshot or batch revert message.
-- [ ] Task 2: U02 — Analyze through the job queue
+- [x] Task 2: U02 — Analyze through the job queue (SHA 290c461)
   <!-- files: src/entrypoints/sidepanel/BulkBar.tsx, src/messages/decisions.ts -->
   <!-- depends: task1 -->
   - Tests: Analyze with N selected starts one job, shows a cost estimate,

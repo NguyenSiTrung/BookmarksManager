@@ -1250,3 +1250,27 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   length 1 sends `REVERT_DECISION` (unchanged semantics incl. its
   `state_unrecorded` path), >1 sends `REVERT_BATCH`. A batch undo that
   fails down to one remaining id retries through `REVERT_DECISION`.
+
+## Phase 6 Task 2 — U02 Analyze through the job queue
+
+- **`analyze_selection` ≠ `library_scan`**: the kind for a user selection —
+  categorize+tags only, matching the old per-id `analyzeBookmark` loop.
+  `library_scan` would plan near-duplicate pairs over a subset — a
+  different, misleading feature.
+- **Track the LATEST kind-row, not the started id** (ScanPanel's model):
+  `useLiveQuery(latestKindJob)` re-attaches controls after a remount;
+  id-keyed tracking orphans them. `dismissedJobId` hides exactly one
+  terminal row — a newer job resurfaces regardless.
+- **Fail-closed on read failure**: `null` = "no row" (launcher free),
+  a sentinel = "read failed" (launcher disabled, 'status unavailable'
+  card) — folding a Dexie read error into `null` re-opens the double-
+  enqueue window. `.catch` must return the sentinel, not `undefined`.
+- **Pending-read gate**: `analyzeJobRead === undefined` (first read, and
+  the gap right after JOB_START) disables the launcher — without it a
+  fast second confirm enqueues a second job.
+- **eslint `react-hooks/set-state-in-effect`**: derive resets during
+  render instead — keep `prev` state, compare, adjust. The effect form of
+  "reset flag when X recovers" is banned by the lint config.
+- **Test flake pattern**: a live-query card's FIRST emission can be an
+  intermediate state (`pending` before the worker flips `running`) —
+  assert terminal/expected text with `waitFor`, never on first render.
