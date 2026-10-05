@@ -256,7 +256,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     legacy jobs with inline assignments still apply; `latestRestructureJob`
     is indexed.
   - Fix: per-batch merge or `(jobId, bookmarkId)` table (additive).
-- [ ] Task 7: J14 — summary re-admission and decision cascade
+- [x] Task 7: J14 — summary re-admission and decision cascade (`406de89`)
   <!-- files: src/decisions/summaries.ts, src/decisions/store.ts, src/sync/listeners.ts -->
   <!-- depends: task4 -->
   - Tests: deleted/retargeted bookmark cannot receive a summary or orphan

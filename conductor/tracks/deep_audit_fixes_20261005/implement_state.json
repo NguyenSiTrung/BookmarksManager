@@ -6,12 +6,12 @@
     "Phase 1: Privacy and consent enforcement",
     "Phase 2: Accounting and egress robustness"
   ],
-  "last_updated": "2026-10-05T08:25:00Z",
+  "last_updated": "2026-10-05T08:48:44Z",
   "status": "in_progress",
   "checkpoint_blockers": [],
   "task_review": {
-    "task": "BookmarksManager-3op.3.5",
-    "fix_round": 0,
+    "task": "BookmarksManager-3op.3.6",
+    "fix_round": 1,
     "status": "closed"
   },
   "section_count": 1,

@@ -875,3 +875,27 @@ claim that any audit finding has been fixed or reproduced.
   table rows skip `Job.parse` (producer-validated upstream).
 - Full gate green at commit: lint, typecheck, 3073 unit, build, manifest,
   bundle, 43 e2e (1 intentional screenshot skip).
+
+### Phase 3 Task 7 (J14 — `406de89`)
+- **Re-admit at the persist call site, not inside `setBookmarkSummary`** —
+  the db/meta layer stays free of Chrome-liveness checks; the admission
+  codes surface verbatim as the `persist` stage code.
+- **Bookmark-death sweeps must live behind a shared predicate**: the
+  `onRemoved` cascade (removed-subtree ids) and the startup reconcile
+  (ids absent from the live tree) are the same reviewable-row sweep —
+  `pending`/`unsure`/`approved` die on ANY dead member; decided rows are
+  history.
+- **A decision sweep must skip rows under a live J06 claim** — a merge
+  apply removes loser ids as its own action; deleting the row mid-apply
+  races `transitionStatus` into `not_found` and compensates a completed
+  merge (caught by independent review).
+- **Reconcile's early-return can't gate on meta orphans alone** — a
+  deleted bookmark may have NO meta row yet still leave decisions.
+- **`popup:` synthetic ids are never tree ids** — exempt them from
+  liveness tests in both paths.
+- `.example` is an INTRANET_SUFFIXES host — admission returns
+  `unsendable`, not `mismatch`; retarget tests need a normal public host.
+- Independent review (child 7ac8d994): r1 caught the merge-apply race
+  (Critical) + reconcile gap (Warning); r2 PASS/PASS.
+- Full gate green at commit: lint, typecheck, 3077 unit, build, manifest,
+  bundle, 43 e2e (1 intentional screenshot skip).
