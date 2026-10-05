@@ -291,7 +291,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     tag-delete is atomic and discards its snapshot on failure; unrelated
     same-context `withUndoLock` call cannot bypass the lock.
   - Fix: per-origin caps, node/byte bound, reverse cursor, held token.
-- [ ] Task 4: D07 + D09 — targeted undo and non-clobbering restore
+- [x] Task 4: D07 + D09 — targeted undo and non-clobbering restore (`a7c3f85`)
   <!-- files: src/entrypoints/sidepanel/UndoToast.tsx, src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/CommandPalette.tsx, src/undo/restore.ts -->
   <!-- depends: task3 -->
   - Tests: delete in panel A, move in B, Undo in A reverts the delete only;

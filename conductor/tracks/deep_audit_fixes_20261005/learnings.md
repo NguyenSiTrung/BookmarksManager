@@ -990,3 +990,31 @@ claim that any audit finding has been fixed or reproduced.
 - Independent review (child 7ac8d994): PASS/PASS first round, 9 info notes.
 - Full gate green at commit: lint, typecheck, 3100 unit, build, manifest,
   bundle, 43 e2e + 1 intentional screenshot skip.
+
+## Phase 4 Task 4 — D07+D09 (a7c3f85)
+
+- **Targeted undo (`restoreById`)** replaces head-check (`undoExpected`) for
+  toast, palette, and decision revert/compensate paths. `db.undo.get(id)` +
+  `safeParse` inside `withUndoLock`; missing/corrupt → `{ok:false,code:"empty"}`.
+  `empty`/`conflict` map onto `undo_conflict` in decisions.
+- **False-negative shared everywhere it lived:** a decision toast's Undo via
+  REVERT_DECISION `undo_conflict`ed on non-head exactly like the panel toast —
+  reviewer flagged; switched compensate+revert too.
+- **No-op-merge hazard found via review:** `snapshotId: undefined` + `undoable`
+  fell back to `undoLatest` → pops an UNRELATED head. Now `undoable` requires a
+  real id and the in-view fallback reports "Nothing to undo".
+- **Merge undo (D09a):** union can't express "user deleted a merged field" —
+  `recorded ∪ (current − merged)` where `merged` is recomputed from recorded
+  member rows exactly as `mergeMemberMeta` builds it. A field the merge wrote
+  that matches `merged` reverts; anything else is a post-merge edit and survives.
+  `MERGE_NOTES_SEPARATOR` moved to `schemas/meta.ts` — importing from merge.ts
+  in restore.ts creates a `restore→merge→restore` cycle.
+- **Move undo (D09b):** `movedToParentId` (destination at capture) vs `parentId`
+  (original). Absent = pre-D09 unconditional restore.
+- **Test gates:** `db.undo.get` is `restoreById`'s read — gate it via
+  `spyOn(db.undo,"get")` chaining `PromiseExtended`, NOT `toCollection`
+  (that's peekLatest's path).
+- **Fixture trap:** the fake's `get(id)` returns `Promise<FakeNode[]>` (array) —
+  assert `[0]`/`toMatchObject([...])`. Merge fixtures must model the REAL
+  `mergeMemberMeta` output (verbatim kept-first tag union, `\n\n---\n\n` notes
+  join) or the union semantics legitimately read them as post-merge edits.

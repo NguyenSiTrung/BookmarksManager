@@ -1,17 +1,17 @@
 {
   "current_phase": "Phase 4: Duplicates, undo, import/export safety",
   "current_phase_index": 3,
-  "current_task_index": 3,
+  "current_task_index": 4,
   "completed_phases": [
     "Phase 1: Privacy and consent enforcement",
     "Phase 2: Accounting and egress robustness",
     "Phase 3: Jobs and decisions resilience"
   ],
-  "last_updated": "2026-10-05T09:55:00Z",
+  "last_updated": "2026-10-05T10:30:00Z",
   "status": "in_progress",
   "checkpoint_blockers": [],
   "task_review": {
-    "task": "task3",
+    "task": "task4",
     "fix_round": 0,
     "status": "closed"
   },
