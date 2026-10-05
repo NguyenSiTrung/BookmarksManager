@@ -419,7 +419,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
   - Tests: a throwing child renders the fallback with Reload; an
     `unhandledrejection` is reported, not silent.
   - Fix: one boundary component mounted per entrypoint.
-- [ ] Task 10: U11 — sidepanel render cost
+- [x] Task 10: U11 — sidepanel render cost (617404f)
   <!-- files: src/entrypoints/sidepanel/TagManager.tsx, src/ui/hooks/useBookmarkTree.ts, src/entrypoints/sidepanel/App.tsx -->
   <!-- depends: task6 -->
   - Tests: closed `TagManager` runs no live queries; a 1,000-event burst

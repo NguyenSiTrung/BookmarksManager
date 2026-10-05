@@ -1449,3 +1449,25 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   declared on the base class).
 - **Fail-soft reporting**: a diagnostics-ring write failure must be
   swallowed — reporting a failure must never throw into a degraded page.
+
+### U11 — sidepanel render cost
+- **`useLiveQuery` queriers can gate on render state**: putting `open` in
+  the deps and making the querier return a resolved `[]` without touching
+  any table means a closed dialog installs zero Dexie observation ranges
+  — writes cannot re-fire it. You do not need conditional component
+  mounts (which would kill the close animation) to stop hidden queries.
+- **Escalate the coalescing window on contention, not on event count**:
+  `contended` = an event arrived while a refresh was already pending
+  (armed timer OR in-flight read). Each contended cycle bumps the wait
+  (50→100→200→400→500ms), an uncontended one decays, and a quiet gap
+  longer than the cap resets outright — synchronous bursts still collapse
+  to one read (escalation only affects the NEXT arming), and isolated
+  writes keep short latency.
+- **Read the burst level at fire, apply it at next arm**: an armed
+  setTimeout delay cannot be retargeted — update the level in the fire
+  callback and let the next `schedule()` pick it up. No extra state.
+- **`Date.now()` under `vi.useFakeTimers` is mocked consistently** — a
+  quiet-gap check works identically in tests and production.
+- **Spy on `db.<table>.toArray` to prove "no live queries"** — module
+  spies cannot intercept direct ESM bindings, but the Dexie table method
+  is the observable sink every repo list goes through.
