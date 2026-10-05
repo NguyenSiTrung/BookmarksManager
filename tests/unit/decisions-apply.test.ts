@@ -110,10 +110,12 @@ async function expectApplyError(
 }
 
 /**
- * Pause the FIRST stack read (`peekLatest`'s Dexie
- * `toCollection().reverse().first()`, D06) so a test can push an unrelated
- * snapshot into the window between a caller's head check and its replay —
- * the B13 interleave. Returns a handle to observe the pause and release it.
+ * Pause `db.undo.get` — the read `restoreById` performs (D07) — so a test
+ * can push an unrelated snapshot into the window between a caller's read
+ * and its replay. A by-id fetch can't be fooled by an intervening PUSH the
+ * way a head check can, but pausing it still proves the "decoy lands
+ * mid-flight" case: the replay pops only the row it read, never the
+ * injected one. Returns a handle to observe the pause and release it.
  *
  * Dexie resolves a `PromiseExtended`, so the gate chains on the real
  * promise; an `async` wrapper would return a plain promise and fail the
@@ -121,27 +123,18 @@ async function expectApplyError(
  * calls it inside its own transaction, and awaiting a foreign promise in
  * there would trip a PrematureCommit abort.)
  */
-function gateFirstStackRead(): { delayed: () => boolean; release: () => void } {
-  const realToCollection = db.undo.toCollection.bind(db.undo);
+function gateFirstUndoGet(): { delayed: () => boolean; release: () => void } {
+  const realGet = db.undo.get.bind(db.undo);
   let delayed = false;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
-  vi.spyOn(db.undo, "toCollection").mockImplementation(() => {
-    const collection = realToCollection();
-    const realReverse = collection.reverse.bind(collection);
-    collection.reverse = () => {
-      const reversed = realReverse();
-      const realFirst = reversed.first.bind(reversed);
-      reversed.first = () =>
-        realFirst().then((row) => {
-          if (delayed) return row;
-          delayed = true;
-          return gate.then(() => row);
-        });
-      return reversed;
-    };
-    return collection;
-  });
+  vi.spyOn(db.undo, "get").mockImplementation((key: Parameters<typeof db.undo.get>[0]) =>
+    realGet(key).then((row) => {
+      if (delayed) return row;
+      delayed = true;
+      return gate.then(() => row);
+    }),
+  );
   return { delayed: () => delayed, release };
 }
 
@@ -389,17 +382,20 @@ describe("revertDecision", () => {
     await expectApplyError(() => revertDecision(noSnap.id), "invalid");
   });
 
-  it("refuses with undo_conflict when its snapshot is not the stack head", async () => {
+  it("reverts mid-stack — an unrelated snapshot on top is left in place (D07)", async () => {
     const d = await persistDecision(
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
     );
     await approveDecision(d.id);
-    // An unrelated snapshot pushed on top of the decision's own snapshot.
-    await pushSnapshot({ kind: "delete", nodes: [], meta: [] });
-    await expectApplyError(() => revertDecision(d.id), "undo_conflict");
-    // The unrelated snapshot is untouched and the change is still applied.
-    expect((await peekLatest())?.meta).toEqual([]);
-    expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
+    // An unrelated snapshot pushed on top of the decision's own snapshot:
+    // `restoreById` still replays exactly the recorded row (D07) — the
+    // head-ness refusal was the same false-negative the toast had.
+    const interloper = await pushSnapshot({ kind: "delete", nodes: [], meta: [] });
+    await revertDecision(d.id);
+    // The decision's tags came off; the unrelated snapshot is untouched.
+    // (Empty row → lazy-row rule may delete the row entirely.)
+    expect((await getMeta("bm-a"))?.tags ?? []).toEqual([]);
+    expect((await peekLatest())?.id).toBe(interloper);
   });
 
 });
@@ -517,9 +513,10 @@ describe("apply rollback and compensation", () => {
     const decoy = await captureSubtree("bm-c");
     if (decoy === undefined) throw new Error("missing fixture node bm-c");
 
-    // Pause the FIRST stack read of the revert; an unrelated snapshot lands
-    // while the revert is between its head check and its replay.
-    const read = gateFirstStackRead();
+    // Pause the revert's by-id read (`restoreById`'s `db.undo.get`); an
+    // unrelated snapshot lands mid-flight — the replay must still target
+    // only the row it read.
+    const read = gateFirstUndoGet();
 
     const reverting = revertDecision(d.id);
     await vi.waitFor(() => expect(read.delayed()).toBe(true));
@@ -550,7 +547,8 @@ describe("apply rollback and compensation", () => {
     // The status/audit write fails, so the apply must compensate its change.
     vi.spyOn(db.audit, "add").mockRejectedValue(new Error("audit write failed"));
 
-    const read = gateFirstStackRead();
+    // Same mid-flight gate on the compensate path's `restoreById` read.
+    const read = gateFirstUndoGet();
 
     const approving = approveDecision(d.id);
     await vi.waitFor(() => expect(read.delayed()).toBe(true));
@@ -583,7 +581,7 @@ describe("apply rollback and compensation", () => {
       "undo_conflict",
     );
 
-    expect(error.message).toMatch(/top of the stack/);
+    expect(error.message).toMatch(/no longer available/);
     // Zero mutations: the change is still applied and the row still says so.
     expect((await getMeta("bm-a"))?.category).toBe("docs");
     expect((await db.decisions.get(d.id))?.status).toBe("applied");

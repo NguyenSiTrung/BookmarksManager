@@ -329,6 +329,44 @@ describe("mergeGroup — undo", () => {
     // Pre-merge state had no row for bm-k — undo removes the merged row.
     expect(await getMeta("bm-k")).toBeUndefined();
   });
+
+  it("keeps notes/tags edited after the merge instead of clobbering them (D09)", async () => {
+    await putMeta("bm-k", { tags: ["keep"], notes: "kept note" });
+    await putMeta("bm-l1", { tags: ["l1"], notes: "l1 note" });
+    expectMergeOk(await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k"));
+    // The merge's own survivor write: unioned tags + joined notes.
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep", "l1"],
+      notes: ["kept note", "l1 note"].join(MERGE_NOTES_SEPARATOR),
+    });
+
+    // User edits ON TOP of the merged row — a new tag and a new segment.
+    const merged = (await getMeta("bm-k"))!;
+    await putMeta("bm-k", {
+      tags: [...merged.tags, "afterward"],
+      notes: `${merged.notes}${MERGE_NOTES_SEPARATOR}edited after`,
+    });
+
+    expectUndoOk(await undoLatest());
+    // Survivor = recorded pre-merge row ∪ post-merge edits: the merge's own
+    // write reverts (no "l1"), the user's additions survive.
+    const kept = await getMeta("bm-k");
+    expect(kept?.tags).toEqual(["keep", "afterward"]);
+    expect(kept?.notes).toBe(
+      ["kept note", "edited after"].join(MERGE_NOTES_SEPARATOR),
+    );
+  });
+
+  it("still fully reverts survivor meta when nothing was edited after", async () => {
+    await putMeta("bm-k", { tags: ["keep"] });
+    await putMeta("bm-l1", { tags: ["l1"] });
+    expectMergeOk(await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k"));
+    expect(await getMeta("bm-k")).toMatchObject({ tags: ["keep", "l1"] });
+
+    expectUndoOk(await undoLatest());
+    // current == merged → edits set is empty → exactly the recorded row.
+    expect((await getMeta("bm-k"))?.tags).toEqual(["keep"]);
+  });
 });
 
 // ---------------------------------------------------------------------------

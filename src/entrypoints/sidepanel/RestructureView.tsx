@@ -407,12 +407,14 @@ export function RestructureView(props: { className?: string }) {
     }
     if (reply.code === "applied") {
       setPhase({ kind: "applied", moved: reply.moved });
-      // `undoable` arms the shell toast's Undo — it calls `undoLatest`,
-      // which dispatches to the restructure restore (moves back + created
-      // empty folders removed). No custom callback needed.
+      // `undoable` arms the shell toast's Undo — with `reply.snapshotId`
+      // the toast replays exactly this apply's row (D07: moves back +
+      // created empty folders removed) even if something else pushed on
+      // top. No custom callback needed.
       showToast({
         message: `Restructure applied — ${reply.moved} bookmark${reply.moved === 1 ? "" : "s"} moved.`,
         undoable: true,
+        snapshotId: reply.snapshotId,
       });
       return;
     }

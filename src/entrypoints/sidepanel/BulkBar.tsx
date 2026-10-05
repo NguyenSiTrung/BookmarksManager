@@ -66,6 +66,11 @@ export interface DeleteNodesResult {
   failed: number;
   /** First typed failure message, when any. */
   error?: string;
+  /**
+   * The undo row this delete pushed, when `deleted > 0` (D07): callers put
+   * it on the toast so Undo replays THIS snapshot regardless of stack head.
+   */
+  snapshotId?: number;
 }
 
 /** Every id inside a captured undo node, depth-first. */
@@ -131,7 +136,12 @@ export async function deleteNodesWithUndo(
         error: firstError ?? "Delete failed.",
       };
     }
-    return { deleted, failed: ids.length - deleted, error: firstError };
+    return {
+      deleted,
+      failed: ids.length - deleted,
+      error: firstError,
+      snapshotId,
+    };
   } catch (cause) {
     return { deleted: 0, failed: ids.length, error: errorMessage(cause) };
   }

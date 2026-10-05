@@ -10,7 +10,7 @@ import type { BookmarkItem } from "../../sync/tree";
 import { ExternalLinkIcon } from "../../ui/components/icons";
 import { Favicon } from "../../ui/components/favicon";
 import { cn } from "../../ui/lib/cn";
-import { undoLatest } from "../../undo/restore";
+import { restoreById } from "../../undo/restore";
 import { displayDomain, folderLabel, formatAdded } from "./row-text";
 
 /**
@@ -49,10 +49,12 @@ export interface DuplicatesViewProps {
   /** True while the bookmark tree is still loading. */
   loading?: boolean;
   /**
-   * Undo seam — the coordinator wires this to App's toast + `undoLatest`.
-   * When absent the banner calls `undoLatest` itself and reports inline.
+   * Undo seam — the coordinator wires this to App's toast + undo restore.
+   * Called with the merged result's snapshot id so the replay targets THIS
+   * merge wherever it sits on the stack (D07). When absent the banner
+   * replays the recorded snapshot itself and reports inline.
    */
-  onRequestUndo?: () => void;
+  onRequestUndo?: (snapshotId?: number) => void;
   /** Fired once per successful merge (refresh counts, extra toasts). */
   onMerged?: (
     result: MergeSuccess,
@@ -551,7 +553,7 @@ export function DuplicatesView({
   const requestUndo = async (): Promise<void> => {
     if (undoingRef.current) return;
     if (onRequestUndo !== undefined) {
-      onRequestUndo();
+      onRequestUndo(outcome?.result.snapshotId);
       setOutcome((prev) =>
         prev === null ? prev : { ...prev, undo: { status: "requested" } },
       );
@@ -562,7 +564,17 @@ export function DuplicatesView({
       prev === null ? prev : { ...prev, undo: { status: "applying" } },
     );
     try {
-      const result = await undoLatest();
+      const snapshotId = outcome?.result.snapshotId;
+      // A no-op merge pushed no snapshot — refuse locally instead of
+      // falling back to `undoLatest`, which would pop an UNRELATED head.
+      const result =
+        snapshotId === undefined
+          ? {
+              ok: false as const,
+              code: "empty" as const,
+              message: "Nothing to undo.",
+            }
+          : await restoreById(snapshotId);
       setOutcome((prev) =>
         prev === null
           ? prev

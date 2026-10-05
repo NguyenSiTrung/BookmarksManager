@@ -627,6 +627,7 @@ export function App(props?: {
     reportToast({
       message: deleteResultMessage(result),
       undoable: result.deleted > 0,
+      snapshotId: result.snapshotId,
       error: result.deleted === 0,
     });
   };
@@ -934,10 +935,15 @@ export function App(props?: {
                       tagNameByKey={tagNameByKey}
                       loading={tree.folders.size === 0}
                       onActivateItem={openItem}
-                      onRequestUndo={() =>
+                      onRequestUndo={(snapshotId) =>
                         reportToast({
                           message: "Duplicates merged.",
-                          undoable: true,
+                          // A no-op merge (every member drifted) pushed no
+                          // snapshot — arming undoable then would let Undo
+                          // fall back to undoLatest and pop an UNRELATED
+                          // head row.
+                          undoable: snapshotId !== undefined,
+                          snapshotId,
                         })
                       }
                       empty={emptyNode}
@@ -1036,6 +1042,7 @@ export function App(props?: {
             reportToast({
               message: `Deleted tag "${info.tag.name}" from ${info.affected} bookmark(s).`,
               undoable: true,
+              snapshotId: info.snapshotId,
             })
           }
         />

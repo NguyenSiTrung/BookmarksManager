@@ -316,9 +316,16 @@ export async function applyRestructurePlan(
         // Pre-move capture of exactly the bookmarks about to move — the undo
         // snapshot's `nodes`, pushed before any mutation.
         const capture = await captureNodes(pending.map((p) => p.id));
+        // Per-node targets (D09): undo skips a node moved again afterwards.
+        const targetById = new Map(
+          pending.map((p) => [p.id, p.targetParentId] as const),
+        );
         snapshotId = await pushSnapshot({
           kind: "restructure",
-          nodes: capture.nodes,
+          nodes: capture.nodes.map((node) => ({
+            ...node,
+            movedToParentId: targetById.get(node.id),
+          })),
           meta: capture.meta,
           createdFolderIds,
           origin: "decision",

@@ -419,6 +419,18 @@ function Harness() {
       </button>
       <button
         type="button"
+        onClick={() =>
+          controller.showToast({
+            message: "Did a specific thing",
+            undoable: true,
+            snapshotId: 42,
+          })
+        }
+      >
+        show-id
+      </button>
+      <button
+        type="button"
         onClick={() => {
           // Two rapid clicks with no await between them — the second must be
           // ignored while the first is outstanding.
@@ -488,6 +500,53 @@ describe("Undo re-entry guard", () => {
     // clicks runs undoLatest exactly once more.
     fireEvent.click(screen.getByRole("button", { name: "undo-twice" }));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("Undo toast snapshotId routing (D07)", () => {
+  it("targets the toast's snapshotId via restoreById, never undoLatest", async () => {
+    const byId = vi.spyOn(restore, "restoreById").mockResolvedValue({
+      ok: true,
+      restoredIds: [],
+      idMap: {},
+      fellBackToOther: false,
+    });
+    const latest = vi.spyOn(restore, "undoLatest");
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "show-id" }));
+    fireEvent.click(screen.getByRole("button", { name: "undo-twice" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("undo-toast").textContent).toContain("Undone"),
+    );
+    expect(byId).toHaveBeenCalledTimes(1);
+    expect(byId).toHaveBeenCalledWith(42);
+    expect(latest).not.toHaveBeenCalled();
+  });
+
+  it("keeps the snapshotId on a failure toast so the retry targets the same row", async () => {
+    const byId = vi
+      .spyOn(restore, "restoreById")
+      .mockResolvedValue({
+        ok: false,
+        code: "empty",
+        message: "gone",
+      });
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "show-id" }));
+    fireEvent.click(screen.getByRole("button", { name: "undo-twice" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("undo-toast").textContent).toContain(
+        "Undo failed",
+      ),
+    );
+    expect(byId).toHaveBeenCalledWith(42);
+
+    // Retry: the failure toast still carries the advertised id.
+    fireEvent.click(screen.getByRole("button", { name: "undo-twice" }));
+    await waitFor(() => expect(byId).toHaveBeenCalledTimes(2));
+    expect(byId).toHaveBeenLastCalledWith(42);
   });
 });
 

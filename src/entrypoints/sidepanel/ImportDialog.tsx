@@ -367,7 +367,11 @@ export function ImportDialog({
       return;
     }
     setDeleted(true);
-    toast.showToast({ message: "Import folder deleted.", undoable: true });
+    toast.showToast({
+      message: "Import folder deleted.",
+      undoable: true,
+      snapshotId: result.snapshotId,
+    });
   };
 
   const busy = stage === "importing";

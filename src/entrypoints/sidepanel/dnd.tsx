@@ -223,7 +223,11 @@ export async function moveNodesToIndexWithUndo(
     }
     const snapshotId = await pushSnapshot({
       kind: "bulk_move",
-      nodes: capture.nodes,
+      // movedToParentId (D09): undo skips a node moved again afterwards.
+      nodes: capture.nodes.map((node) => ({
+        ...node,
+        movedToParentId: parentId,
+      })),
       meta: capture.meta,
     });
     let moved = 0;
@@ -246,7 +250,12 @@ export async function moveNodesToIndexWithUndo(
         error: firstError ?? "Move failed.",
       };
     }
-    return { moved, failed: ids.length - moved, error: firstError };
+    return {
+      moved,
+      failed: ids.length - moved,
+      error: firstError,
+      snapshotId,
+    };
   } catch (cause) {
     return { moved: 0, failed: ids.length, error: errorMessage(cause) };
   }
@@ -439,7 +448,12 @@ async function performDrop(
   payload: DragPayload,
   resolution: Extract<DropResolution, { ok: true }>,
   tree: FlattenedTree,
-  showToast: (toast: { message: string; undoable?: boolean; error?: boolean }) => void,
+  showToast: (toast: {
+    message: string;
+    undoable?: boolean;
+    snapshotId?: number;
+    error?: boolean;
+  }) => void,
   clearSelection: () => void,
 ): Promise<void> {
   const result =
@@ -471,6 +485,7 @@ async function performDrop(
   showToast({
     message: `${verb} ${result.moved} ${noun} in ${destLabel}${partial}`,
     undoable: true,
+    snapshotId: result.snapshotId,
   });
 }
 

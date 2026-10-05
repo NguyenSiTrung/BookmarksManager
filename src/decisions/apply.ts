@@ -10,7 +10,7 @@ import { MutationError, moveNode } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
 import { bulkAddTag, bulkSetCategory } from "../sync/tag-ops";
 import type { TagOpsErrorCode } from "../sync/tag-ops";
-import { discardById, undoExpected } from "../undo/restore";
+import { discardById, restoreById } from "../undo/restore";
 import type { UndoFailureCode } from "../undo/restore";
 import { captureNodes, pushSnapshot } from "../undo/snapshot";
 import type { UndoMeta } from "../schemas/undo";
@@ -63,10 +63,9 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  * - **Compensation is targeted by id, never "latest".** Both the
  *   mutation-failure rollback and the transition-failure compensation name the
  *   exact snapshot id they pushed: `discardById` drops it when there is
- *   nothing to restore, and `undoExpected` replays it ONLY while it is
- *   verifiably the stack head — checking the head and replaying the checked
- *   row inside one hold of the extension-wide undo lock, so a snapshot another
- *   context pushed in between can never be popped in its place.
+ *   nothing to restore, and `restoreById` replays it inside one hold of the
+ *   extension-wide undo lock wherever it sits on the stack — a snapshot
+ *   another context pushed in between is never popped in its place.
  * - **Meta undo via the `delete` kind.** The undo system has no dedicated
  *   "metadata changed" snapshot; the `delete`/`merge` replay writes every
  *   `meta` row whose id is NOT in `nodes` back onto its surviving bookmark
@@ -83,10 +82,12 @@ import type { DecisionRow, DecisionStoreErrorCode } from "./store";
  *   `add_tags`/`set_category`/`merge_duplicates`, one whose url or title
  *   changed is `stale`/`bookmark_edited`. Nothing is written and no audit
  *   row is added.
- * - **Revert targets its own snapshot.** A revert only runs through
- *   `undoExpected`, which replays the row's recorded `undoSnapshotId` and
- *   reports `conflict` (mapped to `undo_conflict`) when that row is no longer
- *   the stack head — rather than blindly popping an unrelated snapshot.
+ * - **Revert targets its own snapshot.** A revert runs through
+ *   `restoreById`, which replays the row's recorded `undoSnapshotId`
+ *   wherever it sits on the stack — the same targeted-undo contract D07
+ *   gives the toast: a revert refuses only when the row is gone (`empty`),
+ *   never because something unrelated pushed on top (D05 keeps the row).
+ *   rather than blindly popping an unrelated snapshot.
  * - **Per-decision mutual exclusion (J06).** Approve and reject serialize on
  *   the decision id: an in-worker promise chain makes same-context calls run
  *   one-at-a-time, and a conditional `claim` sidecar in the store makes
@@ -285,16 +286,15 @@ async function rollback(snapshotId: number): Promise<void> {
 /**
  * Replay snapshot `snapshotId` to compensate a change that must be undone
  * (a partially-applied multi-op, or a mutation whose status write failed).
- * {@link undoExpected} checks that the row is still the stack head AND replays
- * that exact row inside one hold of the extension-wide undo lock, so a
- * snapshot another context pushed in the meantime can never be popped in its
- * place — the peek and the replay are one atomic step, not two. A head that
- * moved reports `conflict` (and nothing is replayed). Returns whether the
- * replay ran and succeeded; best-effort, never throws.
+ * {@link restoreById} replays that exact row inside one hold of the
+ * extension-wide undo lock wherever it sits on the stack — a snapshot
+ * another context pushed in the meantime is left in place, not popped in
+ * this row's place, and the compensate still targets the right one.
+ * Returns whether the replay ran and succeeded; best-effort, never throws.
  */
 async function compensate(snapshotId: number): Promise<boolean> {
   try {
-    const result = await undoExpected(snapshotId);
+    const result = await restoreById(snapshotId);
     return result.ok;
   } catch {
     return false;
@@ -339,7 +339,12 @@ async function applyMove(
   const { nodes, meta } = await captureNodes(row.bookmarkIds);
   const snapshotId = await pushSnapshot({
     kind: "bulk_move",
-    nodes,
+    // movedToParentId (D09): undo must skip a node the user moved again
+    // after this apply instead of yanking it back.
+    nodes: nodes.map((node) => ({
+      ...node,
+      movedToParentId: row.targetFolderId,
+    })),
     meta,
     origin: "decision",
   });
@@ -581,15 +586,18 @@ export async function revertDecision(
       `Decision "${id}" has no recorded undo snapshot to revert.`,
     );
   }
-  // Atomic targeted replay: the head check and the replay happen inside one
-  // hold of the extension-wide undo lock, so a snapshot another context pushes
-  // in the meantime is never popped in this decision's place.
-  const undone = await undoExpected(snapshotId);
+  // Targeted replay: `restoreById` replays exactly the row this decision
+  // recorded, wherever it sits on the stack (D07/D05) — a snapshot another
+  // context pushed in the meantime is never popped in this decision's
+  // place, and a non-head row is no longer a false refusal. `empty` (the
+  // row was consumed) maps onto the same `undo_conflict` the head-moved
+  // refusal reported before.
+  const undone = await restoreById(snapshotId);
   if (!undone.ok) {
-    if (undone.code === "conflict") {
+    if (undone.code === "empty" || undone.code === "conflict") {
       throw new DecisionApplyError(
         "undo_conflict",
-        `The undo snapshot for decision "${id}" is not the top of the stack.`,
+        `The undo snapshot for decision "${id}" is no longer available.`,
       );
     }
     throw new DecisionApplyError(undone.code, undone.message);

@@ -98,6 +98,11 @@ export interface MoveNodesResult {
   failed: number;
   /** First typed failure message, when any. */
   error?: string;
+  /**
+   * The undo row this move pushed, when `moved > 0` (D07): callers put it
+   * on the toast so Undo replays THIS snapshot regardless of stack head.
+   */
+  snapshotId?: number;
 }
 
 /**
@@ -122,7 +127,11 @@ export async function moveNodesWithUndo(
     }
     const snapshotId = await pushSnapshot({
       kind: "bulk_move",
-      nodes: capture.nodes,
+      // movedToParentId (D09): undo skips a node moved again afterwards.
+      nodes: capture.nodes.map((node) => ({
+        ...node,
+        movedToParentId: parentId,
+      })),
       meta: capture.meta,
     });
     let moved = 0;
@@ -146,7 +155,12 @@ export async function moveNodesWithUndo(
         error: firstError ?? "Move failed.",
       };
     }
-    return { moved, failed: ids.length - moved, error: firstError };
+    return {
+      moved,
+      failed: ids.length - moved,
+      error: firstError,
+      snapshotId,
+    };
   } catch (cause) {
     return { moved: 0, failed: ids.length, error: errorMessage(cause) };
   }
@@ -224,6 +238,7 @@ function MoveToForm({
     toast.showToast({
       message: `Moved ${result.moved} ${noun} to “${destTitle}”${partial}`,
       undoable: true,
+      snapshotId: result.snapshotId,
     });
     onMoved?.();
     onClose();

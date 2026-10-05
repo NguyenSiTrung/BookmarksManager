@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { undoLatest } from "../../undo/restore";
+import { restoreById, undoLatest } from "../../undo/restore";
 
 /**
  * Bottom "Undo" toast for the side panel — the user-visible half of the undo
@@ -43,6 +43,13 @@ export interface ToastState {
   message: string;
   /** Offer the Undo button (the action pushed a snapshot). */
   undoable?: boolean;
+  /**
+   * The undo-stack row this toast advertised (D07): Undo replays THIS
+   * snapshot — not whatever the stack head is — so a delete in panel A is
+   * still reverted after a move in panel B pushed on top. `undefined`
+   * keeps `undoLatest` head semantics.
+   */
+  snapshotId?: number;
   /** Failure styling/semantics (`role="alert"`). */
   error?: boolean;
 }
@@ -132,8 +139,16 @@ export function useUndoToastController(
   const undo = useCallback(async () => {
     if (pendingRef.current) return; // a call is already outstanding
     pendingRef.current = true;
+    // Id captured at call time from the live toast (D07): a toast that
+    // announced a specific action keeps that id, and `restoreById` replays
+    // exactly that row wherever it sits on the stack. Id-less toasts keep
+    // `undoLatest` head semantics.
+    const snapshotId = toast?.undoable === true ? toast.snapshotId : undefined;
     try {
-      const result = await undoLatest();
+      const result =
+        snapshotId === undefined
+          ? await undoLatest()
+          : await restoreById(snapshotId);
       if (result.ok) {
         showToast({
           message: result.fellBackToOther
@@ -144,15 +159,18 @@ export function useUndoToastController(
       }
       // Typed failure; Undo stays on the toast because the failed snapshot is
       // still on the stack (restore pops on success only) and is retryable.
+      // The ORIGINAL snapshotId is carried over so a retry targets the same
+      // advertised action again.
       showToast({
         message: `Undo failed: ${result.message}`,
         error: true,
         undoable: true,
+        snapshotId,
       });
     } finally {
       pendingRef.current = false;
     }
-  }, [showToast]);
+  }, [showToast, toast]);
 
   useEffect(
     () => () => {

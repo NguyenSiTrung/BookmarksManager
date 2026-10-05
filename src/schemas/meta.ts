@@ -63,6 +63,17 @@ export type TagDef = z.infer<typeof TagDef>;
  * (e.g. merge joins) must pre-validate against this before writing. */
 export const NOTES_MAX_LENGTH = 10_000;
 
+/**
+ * Segment placed between the non-empty notes of merged members —
+ * `"\n\n---\n\n"`, a blank-line-flanked Markdown horizontal rule. Readable
+ * as a divider in plain text and renders as one wherever notes are shown
+ * as Markdown. Lives here (not in `duplicates/merge.ts`) so the undo
+ * restore's survivor-merge can split joined notes without importing the
+ * merge module — `merge.ts` already imports `restore.ts`, which would make
+ * a `restore → merge` import a runtime cycle.
+ */
+export const MERGE_NOTES_SEPARATOR = "\n\n---\n\n";
+
 export const BookmarkMeta = z.strictObject({
   id: z.string(), // Chrome bookmark node id — the Dexie `bookmarkMeta` primary key
   tags: z.array(TagNameKey).default([]),

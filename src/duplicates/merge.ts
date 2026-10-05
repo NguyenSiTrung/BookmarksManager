@@ -7,7 +7,7 @@ import {
 import type { MetaRepoErrorCode } from "../db/meta";
 import type { Category } from "../schemas/bookmark";
 import type { BookmarkMeta } from "../schemas/meta";
-import { NOTES_MAX_LENGTH } from "../schemas/meta";
+import { MERGE_NOTES_SEPARATOR, NOTES_MAX_LENGTH } from "../schemas/meta";
 import type { UndoMeta, UndoNode, UndoOrigin } from "../schemas/undo";
 import { get } from "../sync/chrome-bookmarks";
 import { MutationError, removeTree } from "../sync/mutations";
@@ -97,11 +97,12 @@ import { normalizeUrl } from "./normalize";
 
 /**
  * Segment placed between the non-empty notes of merged members —
- * `"\n\n---\n\n"`, a blank-line-flanked Markdown horizontal rule. Readable
- * as a divider in plain text and renders as one wherever notes are shown
- * as Markdown.
+ * `"\n\n---\n\n"`, a blank-line-flanked Markdown horizontal rule — the
+ * constant itself lives in `src/schemas/meta.ts` (the undo restore's
+ * survivor-merge needs it too, and importing it from here would create a
+ * `restore → merge → restore` cycle). Re-exported for existing importers.
  */
-export const MERGE_NOTES_SEPARATOR = "\n\n---\n\n";
+export { MERGE_NOTES_SEPARATOR } from "../schemas/meta";
 
 /** `code` values on a failed merge: the guards plus every typed write error. */
 export type MergeFailureCode =

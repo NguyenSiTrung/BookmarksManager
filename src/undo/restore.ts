@@ -7,7 +7,11 @@ import {
   putMeta,
 } from "../db/meta";
 import type { MetaRepoErrorCode } from "../db/meta";
-import type { UndoNode, UndoSnapshot } from "../schemas/undo";
+import { UndoSnapshot } from "../schemas/undo";
+import type { UndoMeta, UndoNode } from "../schemas/undo";
+import type { BookmarkMeta } from "../schemas/meta";
+import type { Category } from "../schemas/bookmark";
+import { MERGE_NOTES_SEPARATOR } from "../schemas/meta";
 import {
   get,
   getChildren,
@@ -340,10 +344,86 @@ async function recreateNodes(
 }
 
 /**
+ * A merge survivor's undo row (D09): `recorded` is the kept bookmark's
+ * PRE-merge row; the live row holds the merge's own writes PLUS whatever
+ * the user edited afterwards. Writing the recorded row back wholesale
+ * would silently clobber those edits — so the result is
+ * `recorded ∪ (current − merged)`, where `merged` is the merge's own
+ * survivor write recomputed from the recorded member rows exactly as
+ * `mergeMemberMeta` built it (kept-first tag union, verbatim note join,
+ * first-found category). A current tag/segment the merge did not write is
+ * a post-merge edit and survives; one the merge wrote reverts with it.
+ * Category follows the same rule: the recorded value when set, else the
+ * current one only if it differs from the borrowed `merged` value (a user
+ * change, not the merge's). Summary is never written by the merge, so the
+ * recorded value wins when present and the current survives otherwise.
+ * Known limit: a union cannot express "user deleted one of the merged
+ * fields" — a field absent from `current` simply reverts with the merge.
+ */
+function mergeSurvivorMeta(
+  recorded: UndoMeta,
+  members: readonly UndoMeta[],
+  current: BookmarkMeta | undefined,
+): {
+  tags: string[];
+  category: Category | null;
+  notes: string | null;
+  summary: string | null;
+} {
+  // The merge's own survivor write — kept row first, then the rest in
+  // recorded order (capture order == the group order mergeMemberMeta saw).
+  const mergedTags = new Set<string>();
+  const mergedSegments = new Set<string>();
+  let mergedCategory: Category | undefined;
+  const rows = [
+    recorded,
+    ...members.filter((member) => member.id !== recorded.id),
+  ];
+  for (const row of rows) {
+    for (const tag of row.tags) mergedTags.add(tag);
+    for (const segment of (row.notes ?? "")
+      .split(MERGE_NOTES_SEPARATOR)
+      .filter((segment) => segment.length > 0)) {
+      mergedSegments.add(segment);
+    }
+    if (mergedCategory === undefined && row.category !== undefined) {
+      mergedCategory = row.category;
+    }
+  }
+
+  const recordedSegments = (recorded.notes ?? "")
+    .split(MERGE_NOTES_SEPARATOR)
+    .filter((segment) => segment.length > 0);
+  const tagEdits = (current?.tags ?? []).filter(
+    (tag) => !mergedTags.has(tag),
+  );
+  const noteEdits = (current?.notes ?? "")
+    .split(MERGE_NOTES_SEPARATOR)
+    .filter((segment) => segment.length > 0)
+    .filter(
+      (segment) =>
+        !mergedSegments.has(segment) && !recordedSegments.includes(segment),
+    );
+
+  const segments = [...recordedSegments, ...noteEdits];
+  return {
+    tags: [...new Set([...recorded.tags, ...tagEdits])],
+    category:
+      recorded.category ??
+      (current?.category !== undefined && current.category !== mergedCategory
+        ? current.category
+        : null),
+    notes: segments.length > 0 ? segments.join(MERGE_NOTES_SEPARATOR) : null,
+    summary: recorded.summary ?? current?.summary ?? null,
+  };
+}
+
+/**
  * `delete`/`merge` metadata pass. `idMap` covers snapshotted (recreated)
  * ids; any other meta row belongs to a surviving node — for a merge that is
- * exactly the kept bookmark's pre-merge row — and is written back under
- * its own id when that node still exists.
+ * exactly the kept bookmark's pre-merge row. A surviving row of a `merge`
+ * snapshot is MERGED with the live row (D09 — post-merge edits survive);
+ * every other survivor row is written back wholesale.
  */
 async function restoreMetaRows(
   snapshot: UndoSnapshot,
@@ -361,12 +441,17 @@ async function restoreMetaRows(
       continue;
     }
     if (!(await nodeExists(meta.id))) continue; // never manufacture orphans
-    await putMeta(meta.id, {
-      tags: meta.tags,
-      category: meta.category ?? null,
-      notes: meta.notes ?? null,
-      summary: meta.summary ?? null,
-    });
+    if (snapshot.kind === "merge") {
+      const current = await getMeta(meta.id);
+      await putMeta(meta.id, mergeSurvivorMeta(meta, snapshot.meta, current));
+    } else {
+      await putMeta(meta.id, {
+        tags: meta.tags,
+        category: meta.category ?? null,
+        notes: meta.notes ?? null,
+        summary: meta.summary ?? null,
+      });
+    }
     ctx.restoredIds.push(meta.id);
   }
 }
@@ -395,6 +480,15 @@ async function restoreMoves(
       const parentId = await resolveParent(node.parentId, ctx);
       const siblings = await getChildren(parentId);
       await recreateSubtree(node, parentId, Math.min(node.index, siblings.length), ctx);
+      continue;
+    }
+    if (
+      node.movedToParentId !== undefined &&
+      current.parentId !== node.movedToParentId
+    ) {
+      // The node no longer sits where this move left it — the user (or
+      // another flow) moved it AGAIN since. Undoing the recorded move would
+      // clobber that newer placement; skip it (D09).
       continue;
     }
     const parentId = await resolveParent(node.parentId, ctx);
@@ -608,6 +702,43 @@ export function undoExpected(
   return serialize(() =>
     withUndoLock(() => runUndoExpected(snapshotId), hold).catch(toFailure),
   );
+}
+
+/**
+ * Replay the SPECIFIC snapshot row `snapshotId` wherever it sits on the
+ * stack (D07) — the toast/palette counterpart of {@link undoExpected} for
+ * flows that recorded WHICH action they announced: deleting in panel A
+ * then moving in panel B leaves A's delete below B's move, and A's Undo
+ * must still revert exactly the delete it advertised, not whatever the
+ * head happens to be. Same serialization + lock + pop-on-success as every
+ * other replay; a missing/corrupt row reports `empty`. Never throws.
+ */
+export function restoreById(
+  snapshotId: number,
+  hold?: UndoLockHold,
+): Promise<UndoResult> {
+  return serialize(() =>
+    withUndoLock(() => runRestoreById(snapshotId), hold).catch(toFailure),
+  );
+}
+
+async function runRestoreById(snapshotId: number): Promise<UndoResult> {
+  try {
+    const row = await db.undo.get(snapshotId);
+    const parsed = row === undefined ? undefined : UndoSnapshot.safeParse(row);
+    if (row === undefined || parsed === undefined || !parsed.success) {
+      // Already consumed/popped — or corrupt, which the repository's
+      // invalid⇒absent rule reads the same way.
+      return {
+        ok: false,
+        code: "empty",
+        message: "That change was already undone.",
+      };
+    }
+    return await replaySnapshot(parsed.data);
+  } catch (cause) {
+    return toFailure(cause);
+  }
 }
 
 async function runUndoExpected(snapshotId: number): Promise<UndoResult> {

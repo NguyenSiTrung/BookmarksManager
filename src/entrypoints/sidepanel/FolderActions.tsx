@@ -224,6 +224,7 @@ function FolderActionForm({
       toast.showToast({
         message: `Deleted folder “${label}”`,
         undoable: true,
+        snapshotId: result.snapshotId,
       });
       onClose();
     };

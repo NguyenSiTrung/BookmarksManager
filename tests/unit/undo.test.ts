@@ -20,6 +20,7 @@ import {
   putMeta,
 } from "../../src/db/meta";
 import type { UndoSnapshot } from "../../src/schemas/undo";
+import { MERGE_NOTES_SEPARATOR } from "../../src/schemas/meta";
 import {
   BOOKMARKS_BAR_ID,
   OTHER_BOOKMARKS_ID,
@@ -1081,7 +1082,17 @@ describe("undoLatest — merge", () => {
     const kept = await getMeta("bm-k");
     if (kept === undefined) throw new Error("missing fixture metadata");
     await pushSnapshot({ kind: "merge", ...captured, meta: [...captured.meta, kept] });
-    await putMeta("bm-k", { tags: ["merged"], notes: "Merged notes.", summary: "Merged summary." });
+    // The merge's own survivor write (as mergeGroup computes it: kept-first
+    // union of the recorded rows) — the loser here contributes nothing, so
+    // the write equals the kept row's fields; the summary is a post-merge
+    // user write mergeMemberMeta never produces. D09: current == merged +
+    // edits → survivor = recorded ∪ edits = the recorded row verbatim.
+    await putMeta("bm-k", {
+      tags: kept.tags,
+      category: kept.category ?? null,
+      notes: kept.notes ?? null,
+      summary: "Merged summary.",
+    });
     await removeWithCascade("bm-l1");
 
     const result = expectOk(await undoLatest());
@@ -1092,22 +1103,38 @@ describe("undoLatest — merge", () => {
     }
   });
 
-  it("clears a merge-created summary when the captured target had none", async () => {
+  it("keeps a summary written after the merge on the surviving target", async () => {
     await putMeta("bm-k", { tags: ["original"], notes: "Original notes." });
     const kept = await getMeta("bm-k");
     if (kept === undefined) throw new Error("missing fixture metadata");
     await pushSnapshot({ kind: "merge", nodes: [], meta: [kept] });
-    await putMeta("bm-k", { tags: ["merged"], summary: "Later summary." });
+    // Merge's own write reuses the recorded fields (it is the only member's
+    // union); the summary is a post-merge edit — mergeMemberMeta never
+    // writes summary — so D09 keeps it while reverting tags/notes.
+    await putMeta("bm-k", {
+      tags: kept.tags,
+      notes: kept.notes ?? null,
+      summary: "Later summary.",
+    });
 
     expectOk(await undoLatest());
-    expect(await getMeta("bm-k")).toMatchObject({ tags: ["original"], notes: "Original notes." });
-    expect((await getMeta("bm-k"))?.summary).toBeUndefined();
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["original"],
+      notes: "Original notes.",
+      summary: "Later summary.",
+    });
   });
 
   it("re-creates the merged-away bookmarks and restores the kept node's pre-merge meta", async () => {
     await putMeta("bm-k", { tags: ["keep"], notes: "kept notes" });
     await putMeta("bm-l1", { tags: ["l1"] });
-    await putMeta("bm-l2", { tags: ["l2"], category: "docs" });
+    await putMeta("bm-l2", {
+      tags: ["l2"],
+      category: "docs",
+      // l2's own notes: the synthesized merge write below joins them, and
+      // the recorded row is what lets the union restore revert them.
+      notes: "l2 notes",
+    });
     const l1 = await captureSubtree("bm-l1");
     const l2 = await captureSubtree("bm-l2");
     const keptMeta = await getMeta("bm-k");
@@ -1119,9 +1146,10 @@ describe("undoLatest — merge", () => {
       meta: [...l1!.meta, ...l2!.meta, keptMeta!],
     });
     // The merge itself: unioned fields onto the kept node, losers removed.
+    // (Real MERGE_NOTES_SEPARATOR — the union restore splits on it.)
     await putMeta("bm-k", {
       tags: ["keep", "l1", "l2"],
-      notes: "kept notes\n---\nl2 notes",
+      notes: ["kept notes", "l2 notes"].join(MERGE_NOTES_SEPARATOR),
       category: "docs",
     });
     await removeTree("bm-l1");
@@ -1428,7 +1456,8 @@ describe("undoExpected", () => {
       ...captured,
       meta: [...captured.meta, kept],
     });
-    await putMeta("bm-k", { tags: ["merged"], summary: "Merged summary." });
+    // Merge's own write (recorded-union) plus a post-merge summary edit.
+    await putMeta("bm-k", { tags: ["keep"], summary: "Merged summary." });
     await removeWithCascade("bm-l1");
 
     const result = expectOk(await undoExpected(rowId));

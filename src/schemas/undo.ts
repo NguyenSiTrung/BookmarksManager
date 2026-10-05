@@ -36,6 +36,16 @@ export const UndoNode = z.strictObject({
   get children() {
     return z.array(UndoNode).optional();
   },
+  /**
+   * `bulk_move`/`restructure` only: the parent the move sent this node to
+   * (recorded at capture time by the pusher — {@link parentId} is the
+   * ORIGINAL, pre-move parent). On undo a node whose current parent is
+   * not this target was moved AGAIN since the snapshot and is skipped
+   * rather than yanked back (D09). Absent on older rows and on
+   * delete/merge/tag_delete nodes — those restores keep their existing
+   * semantics.
+   */
+  movedToParentId: z.string().optional(),
 });
 export type UndoNode = z.infer<typeof UndoNode>;
 
