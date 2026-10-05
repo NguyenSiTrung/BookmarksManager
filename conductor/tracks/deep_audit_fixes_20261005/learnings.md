@@ -1172,3 +1172,31 @@ claim that any audit finding has been fixed or reproduced.
   `git apply --cached` of a hunk-subset patch stages part of one file;
   when a LATER task already rewrote the file, restore the earlier content
   verbatim from context, verify tests, commit, then reapply the new work.
+
+## Phase 5 Task 3 — I01 resumable import (7e77e1e)
+
+- **Two-table persistence**: the flattened queue row is written ONCE; the
+  cursor/counters row is rewritten per item — keeps per-item persistence
+  at O(1) instead of O(N) (the J13 lesson applied to imports).
+- **Rows-deleted-on-exit = resumable-by-existence**: completion AND clean
+  cancel both delete both rows, so `listInterruptedImports` is a bare
+  table read — no "resumable" flag to keep honest.
+- **Cancel needs two channels**: in-page `AbortSignal` + persisted
+  `cancelled` status read per item (cross-context Cancel button flips
+  the row; the driver polls it at item boundaries).
+- **Single-flight on resume**: `claimedBy` + 60s TTL on `updatedAt`
+  claimed inside ONE Dexie transaction; the driver re-checks the token
+  per boundary read and stands down WITHOUT deleting on takeover — the
+  new owner finishes the rows. (J06 claim pattern, reviewer-suggested.)
+- **One failure writer**: helpers (`writeMeta`, `restoreTagDefs`,
+  `ensureImportTagDefs`, `mergeSkippedDuplicates`) take `state`/a
+  `record` callback into `recordFailure` (capped 200; `failureCount`
+  keeps the true total). An uncapped `summary.failures` alias would make
+  `ImportState.parse` reject past 200 → persist throws → import can
+  never finish while perpetually offering Resume (reviewer Warning 2).
+- **Resume failure reconstruction**: folders left of cursor absent from
+  `folderIds` ⇒ their subtree fails with the same cascade; a missing
+  parentId ⇒ subtree failure, never a guessed parent.
+- **`ImportStateMeta` bounds are STORAGE bounds** (looser than
+  `BookmarkMeta`) — clamping to BookmarkMeta bounds at flatten would
+  launder violations `putMeta` should record as `meta` failures.

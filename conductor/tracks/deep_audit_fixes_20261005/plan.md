@@ -344,7 +344,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     65-char tag is truncated/skipped without losing the row; duplicate skip
     merges tags/category and lists skipped URLs.
   - Fix: `TagDef` creation per key; per-tag validation; merge-on-duplicate.
-- [ ] Task 3: I01 — resumable import
+- [x] Task 3: I01 — resumable import (7e77e1e)
   <!-- files: src/io/import-write.ts, src/db/database.ts, src/schemas/import-state.ts -->
   <!-- depends: task2 -->
   - Tests: interrupting after N items persists root id + cursor; resume
