@@ -175,8 +175,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     next start settles as unknown-cost under the conservative rule.
   - Fix: guard post-fetch bookkeeping; stale-reservation sweep at worker start
     using request-start time.
-- [ ] Task 3: A04 + A05 — input-token estimate and billing provenance
-  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/budget.ts, src/jev/client.ts, src/decisions/pipeline.ts -->
+- [x] Task 3: A04 + A05 — input-token estimate and billing provenance (`acaa911`)
+  <!-- files: src/net/llm-send.ts, src/llm/client.ts, src/llm/budget.ts, src/jev/client.ts, src/decisions/pipeline.ts, src/decisions/rerank.ts, src/decisions/duplicates.ts -->
   <!-- depends: task2 -->
   - Tests: oversize prompt reserves `max(declared, estimate)` or is refused;
     4xx capability-probe rejection is not counted toward the cap while

@@ -534,3 +534,33 @@ claim that any audit finding has been fixed or reproduced.
 - Independent review (child `7ac8d994`): clean PASS/PASS, zero warnings.
 - Full gate green at commit: lint, typecheck, 2957 unit/168 files, build,
   manifest, bundle, 43 e2e (1 intentional skip).
+
+## 2026-10-05 — A04/A05 + eov completed (`acaa911`)
+
+- The reservation bound must cover the REAL serialized prompt, not the
+  caller's declared bound: `max(declared, ceil(body.length/4 * 1.25))`
+  computed AFTER `admitPayload` (a stringify before admission turns the
+  gate's typed `request_not_allowed` into a native TypeError — admission
+  ordering is load-bearing for the failure taxonomy).
+- Retry passes `input.maxInputTokens` through unchanged: the session
+  binding canonicalized the caller's declared bound at first admit, so
+  forwarding the inflated reservation bound would trip `rejectPayload`.
+- "Not billed" is a fourth cost provenance, not the absence of one: the
+  row records egressed traffic (tokens reported-or-0, requestCount) but
+  carries NO cost fields — substituting the bound would fabricate spend
+  for a request the provider rejected pre-response. The snapshot skip
+  must cover BOTH committedUsd and unknownCostRequests.
+- `capabilityRejected` stays the only not-billed settle path — 5xx,
+  timeout, transport and non-JSON-200 keep conservative billing. The
+  classification lives in `errorDetails`; the settle flag is the only
+  thing the client adds.
+- eov: `recordUsage` must run BEFORE the answer/level cross-check —
+  a mismatched response still egressed, so its cost must be committed
+  before the throw. All three cross-check sites had the identical defect.
+- Declared test bounds below real bodies silently encode wrong
+  accounting: ~30 stale `inputTokens: 100`/`0.000045` sites across 6
+  unit files + 2 e2e specs retuned to computed per-request bounds via
+  the `reservedInputBound` test helper (and wire `postData` length e2e).
+- Independent review (child `7ac8d994`): PASS/PASS clean, zero warnings.
+- Full gate green at commit: lint, typecheck, 2962 unit/168 files, build,
+  manifest, bundle, 44 e2e (1 intentional screenshot skip).
