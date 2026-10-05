@@ -6,7 +6,7 @@ import {
 import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
 import { db } from "../db/database";
 import { pruneTerminalJobsLocked } from "../db/retention";
-import { Job, JobUsage, MAX_JOB_BOOKMARK_IDS, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
+import { Job, JobUsage, MAX_JOB_BOOKMARK_IDS, MAX_JOB_ITEM_FAILURES, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
 import type {
   JobKind,
   JobProgress,
@@ -19,7 +19,7 @@ import { DEFAULT_BATCH_SIZE } from "./estimate";
 import { waitForJob } from "./coordinator";
 
 /** Validated queue reads/writes always materialize legacy fence defaults. */
-type PersistedJob = Job & { ownerGeneration: number; controlRevision: number };
+export type PersistedJob = Job & { ownerGeneration: number; controlRevision: number };
 
 function parseJob(value: unknown): PersistedJob {
   const job = Job.parse(value);
@@ -66,8 +66,11 @@ export class JobQueueError extends Error {
 
 /**
  * Legal status transitions. `running` includes itself so a runner can
- * re-enter an already-running job idempotently; terminal states have no
- * outgoing edges.
+ * re-enter an already-running job idempotently; `completed`/`canceled`
+ * have no outgoing edges. `failed` is resumable (J01): it may only move
+ * back to `running` — through `resumeJob` or an owner claim — never to
+ * any other status, so a failed row stays distinguishable from one that
+ * never ran.
  */
 const LEGAL_TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   pending: ["running", "paused", "canceled"],
@@ -75,7 +78,7 @@ const LEGAL_TRANSITIONS: Readonly<Record<JobStatus, readonly JobStatus[]>> = {
   paused: ["paused", "running", "canceled"],
   completed: [],
   canceled: [],
-  failed: [],
+  failed: ["running"],
 };
 
 /** Whether `to` is a legal next status from `from`. */
@@ -385,7 +388,9 @@ export async function attachNearDuplicatePlan(
 /**
  * Claim the next durable runner generation atomically. A fresh worker may
  * replace an interrupted `running` owner, but never resume user-paused or
- * terminal work merely because an old launch was queued.
+ * `completed`/`canceled` work merely because an old launch was queued. A
+ * `failed` row is resumable (J01): an explicit run may claim it back to
+ * `running`, resuming from `committedBatches`.
  */
 export async function claimJobOwner(
   id: string,
@@ -393,13 +398,22 @@ export async function claimJobOwner(
 ): Promise<PersistedJob | undefined> {
   return db.transaction("rw", db.jobs, async () => {
     const job = await requireJob(id);
-    if (job.status !== "pending" && job.status !== "running") return undefined;
-    const updated = parseJob({
+    if (job.status !== "pending" && job.status !== "running" && job.status !== "failed") return undefined;
+    // A `failed` row isn't "live" for A07's enqueue guard, so a replacement
+    // same-kind job may already be driving. Resuming into that lane would
+    // run two same-kind jobs concurrently (duplicate sends on overlapping
+    // work sets) — refuse the claim instead.
+    if (job.status === "failed" && (await findLiveJobByKind(job.kind)) !== undefined) {
+      return undefined;
+    }
+    const base: Record<string, unknown> = {
       ...job,
       status: "running",
       ownerGeneration: job.ownerGeneration + 1,
       updatedAt: nowIso(now),
-    });
+    };
+    delete base.error; // a resumed row drops its stale failure message
+    const updated = parseJob(base);
     await db.jobs.put(updated);
     return updated;
   });
@@ -458,7 +472,7 @@ export async function setJobStatus(
         `Cannot move a ${job.status} job to ${to}.`,
       );
     }
-    const base = {
+    const base: Record<string, unknown> = {
       ...job,
       status: to,
       controlRevision: ownerGeneration === undefined &&
@@ -468,6 +482,9 @@ export async function setJobStatus(
       usage: patch.usage ?? job.usage,
       updatedAt: nowIso(now),
     };
+    // A stale failure message must not survive a healthy transition: a
+    // resumed-then-completed job would otherwise read "completed (boom)".
+    if (to !== "failed") delete base.error;
     const updated = parseJob(
       patch.error === undefined ? base : { ...base, error: patch.error },
     );
@@ -531,7 +548,20 @@ export async function resumeJob(
   return db.transaction("rw", db.jobs, async () => {
     const job = await requireJob(id);
     if (job.controlRevision !== revision ||
-      (job.status !== "paused" && job.status !== "pending" && job.status !== "running")) return job;
+      (job.status !== "paused" && job.status !== "pending" &&
+        job.status !== "running" && job.status !== "failed")) return job;
+    // Same A07 lane guard as `claimJobOwner`: a `failed` row may not resume
+    // while another live same-kind job exists — the refusal is typed so
+    // the surface can explain it.
+    if (job.status === "failed") {
+      const live = await findLiveJobByKind(job.kind);
+      if (live !== undefined) {
+        throw new JobQueueError(
+          "job_in_progress",
+          `Another ${job.kind} job is ${live.status} — resume it or cancel this failed row first.`,
+        );
+      }
+    }
     return setJobStatus(id, "running", {}, now);
   });
 }
@@ -564,6 +594,15 @@ export async function commitJobProgress(
       usage,
       updatedAt: nowIso(now),
     });
+    // An open breaker that already lapsed is closed on the next commit —
+    // the persisted `openUntil` is a delay, not a latch (J09). `delete` is
+    // required: Dexie rejects rows carrying explicit `undefined` values.
+    if (
+      updated.breaker !== undefined &&
+      Date.parse(updated.breaker.openUntil) <= Date.parse(nowIso(now))
+    ) {
+      delete updated.breaker;
+    }
     await db.jobs.put(updated);
     return updated;
   });
@@ -651,4 +690,97 @@ export async function jobUsageRollup(id: string): Promise<JobUsage> {
     requests,
     ...(sawCost ? { costUsd } : {}),
   });
+}
+
+/** Consecutive `retry_later` item failures before the breaker opens (J09). */
+export const JOB_BREAKER_THRESHOLD = 3;
+
+/** The job-level circuit breaker's cooldown once it opens (J09). */
+export const JOB_BREAKER_DELAY_MS = 30_000;
+
+/** `running` rows silent for this long are presumed ownerless (J02). */
+export const STALE_RUNNING_JOB_MS = 5 * 60_000;
+
+/**
+ * Record one skipped work item durably (J01): the bookmark id (or
+ * `pair-batch:<n>` label) and its content-free failure `code`, appended to
+ * the `itemFailures` ring (oldest drop past {@link MAX_JOB_ITEM_FAILURES} —
+ * the entry count stays honest; the row keeps the recent slice). When
+ * `openBreakerUntil` is supplied the persisted breaker is set in the same
+ * transaction, so a throttle burst and its circuit state can never diverge.
+ * Owner-fenced like {@link commitJobProgress}: a settled paused batch may
+ * still record, but a stale owner cannot.
+ */
+export async function recordJobItemFailure(
+  id: string,
+  failure: { item: string; code: string; openBreakerUntil?: string },
+  now?: () => string,
+  ownerGeneration?: number,
+): Promise<PersistedJob> {
+  return db.transaction("rw", db.jobs, async () => {
+    const job = await requireJob(id);
+    if (ownerGeneration !== undefined && !ownedWritable(job, ownerGeneration, true)) return job;
+    if (job.status !== "running" && job.status !== "paused" && job.status !== "pending") return job;
+    const stamp = nowIso(now);
+    const itemFailures = [
+      ...(job.itemFailures ?? []),
+      { item: failure.item, code: failure.code, at: stamp },
+    ].slice(-MAX_JOB_ITEM_FAILURES);
+    const updated = parseJob({
+      ...job,
+      itemFailures,
+      ...(failure.openBreakerUntil === undefined
+        ? {}
+        : { breaker: { openUntil: failure.openBreakerUntil } }),
+      updatedAt: stamp,
+    });
+    await db.jobs.put(updated);
+    return updated;
+  });
+}
+
+/**
+ * The J02 watchdog sweep: every `running` row whose `updatedAt` is older
+ * than the stale window has a dead or wedged owner — a live runner commits
+ * (and stamps `updatedAt`) on every batch. Each stale row is handed to
+ * `relaunch` (the production `runPersistedJob`, which claims a fresh owner
+ * generation); a false positive costs the live owner at most its current
+ * item, since it exits at the next durable fence. Returns the re-driven ids.
+ */
+export async function reDriveStaleJobs(
+  relaunch: (jobId: string) => Promise<void>,
+  now?: () => string,
+): Promise<string[]> {
+  const cutoff = new Date(
+    Date.parse(nowIso(now)) - STALE_RUNNING_JOB_MS,
+  ).toISOString();
+  const rows = await db.jobs
+    .where("status")
+    .equals("running")
+    .filter((row) => row.updatedAt < cutoff)
+    .toArray();
+  const driven: string[] = [];
+  for (const row of rows) {
+    try {
+      parseJob(row);
+    } catch {
+      // A schema-poisoned row can never run — mark it `failed` so it
+      // doesn't pin `running` in the UI forever (the sweep can't parse it
+      // to re-drive, and leaving it is the immortal row J02 forbids).
+      await db.jobs.update(row.id, {
+        status: "failed",
+        error: "The job failed while analyzing a bookmark (invalid_state).",
+        updatedAt: nowIso(now),
+      });
+      continue;
+    }
+    try {
+      await relaunch(row.id);
+    } catch {
+      // The drive already marked this row `failed` before re-throwing —
+      // keep sweeping the rest; one bad row never stalls the watchdog.
+    }
+    driven.push(row.id);
+  }
+  return driven;
 }

@@ -476,11 +476,15 @@ describe("runPersistedJob guards", () => {
       await runPersistedJob(job.id);
       const finished = (await getJob(job.id))!;
       expect(maxActive).toBe(1);
-      expect(requests).toEqual(["B1", "B3", "B4"]);
-      expect(committedAtSend).toEqual([0, 0, 1]);
+      // J02: pause is honored per item — B1 completes and the runner exits
+      // before B3, leaving batch 1 UNCOMMITTED. The waiting resumes relaunch
+      // from `committedBatches` and replay the batch at least once (B1 is
+      // sent twice; durable per-item rows merge idempotently by bookmarkId).
+      expect(requests).toEqual(["B1", "B1", "B3", "B4"]);
+      expect(committedAtSend).toEqual([0, 0, 0, 1]);
       expect(finished.status).toBe("completed");
       expect(finished.progress).toEqual({ totalBatches: 2, committedBatches: 2, processedCount: 3 });
-      expect(finished.usage.requests).toBe(3);
+      expect(finished.usage.requests).toBe(4);
       if (kind === "restructure") {
         expect(finished.restructure?.proposal).toEqual(job.restructure?.proposal);
         expect(finished.restructure?.assignments.map((row) => row.bookmarkId)).toEqual(["b1", "b3", "b4"]);
@@ -489,7 +493,7 @@ describe("runPersistedJob guards", () => {
       // A later startup/manual drive and terminal resume may not restart completed work.
       await runPersistedJob(job.id);
       expect((await handlers.resumeJob(job.id)).status).toBe("completed");
-      expect(requests).toHaveLength(3);
+      expect(requests).toHaveLength(4);
     }
   });
 
@@ -682,7 +686,7 @@ describe("runPersistedJob guards", () => {
     expect((await getJob(enqueued.id))?.status).toBe("paused");
   });
 
-  it("marks a stranded running row failed on a work-set mismatch", async () => {
+  it("completes a stranded running row whose whole work set was deleted (J02)", async () => {
     await seedProvider();
     const enqueued = await enqueueJob({
       kind: "library_scan",
@@ -690,16 +694,15 @@ describe("runPersistedJob guards", () => {
     });
     await setJobStatus(enqueued.id, "running");
 
+    // b1/b2 resolve to nothing — every remaining id is gone, so the job
+    // ends terminal, never an immortal `running`.
     await runPersistedJob(enqueued.id);
 
     const row = await getJob(enqueued.id);
-    expect(row?.status).toBe("failed");
-    expect(row?.error).toBe(
-      "The supplied bookmarks do not match the job's persisted bookmarkIds.",
-    );
+    expect(row?.status).toBe("completed");
   });
 
-  it("fails a mismatched pending row visibly too (the startJob race window)", async () => {
+  it("completes a deleted pending work set too (the startJob race window)", async () => {
     await seedProvider();
     const enqueued = await enqueueJob({
       kind: "library_scan",
@@ -709,9 +712,27 @@ describe("runPersistedJob guards", () => {
     await runPersistedJob(enqueued.id);
 
     const row = await getJob(enqueued.id);
-    expect(row?.status).toBe("failed");
-    expect(row?.error).toBe(
-      "The supplied bookmarks do not match the job's persisted bookmarkIds.",
+    expect(row?.status).toBe("completed");
+  });
+
+  it("an unexpected drive error marks the job failed with a redacted code (J02)", async () => {
+    const job = await seedWork("analyze_selection");
+    // Work-set resolution blows up — an untyped infrastructure error that
+    // must never leave an immortal `running` row or leak its message.
+    vi.spyOn(
+      chrome.bookmarks as { getTree: () => Promise<unknown> },
+      "getTree",
+    ).mockRejectedValue(
+      new TypeError("bookmarks backend gone: /home/secret/path"),
     );
+
+    // The caller's typed error still propagates (the egress surface needs
+    // it for its refusal) — but the ROW stores only the redacted code.
+    await expect(runPersistedJob(job.id)).rejects.toThrow(TypeError);
+
+    const row = await getJob(job.id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toBe("The job failed while analyzing a bookmark.");
+    expect(row?.error).not.toContain("bookmarks backend gone");
   });
 });

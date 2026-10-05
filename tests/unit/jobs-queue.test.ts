@@ -19,9 +19,11 @@ import {
   jobRunsNearDuplicate,
   jobUsageRollup,
   pauseJob,
+  reDriveStaleJobs,
   resumeJob,
   setJobStatus,
   mergeRestructureAssignments,
+  STALE_RUNNING_JOB_MS,
 } from "../../src/jobs/queue";
 
 /**
@@ -337,8 +339,8 @@ describe("lifecycle transitions", () => {
     expect((await getJob(job.id))?.progress).toEqual(progress);
   });
 
-  it("keeps terminal statuses immutable against late owner writes", async () => {
-    for (const status of ["completed", "canceled", "failed"] as const) {
+  it("keeps completed/canceled immutable but lets a fresh owner claim failed work (J01)", async () => {
+    for (const status of ["completed", "canceled"] as const) {
       const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
       const owner = (await claimJobOwner(job.id, now))!;
       const terminal = await setJobStatus(job.id, status, {}, now);
@@ -348,6 +350,36 @@ describe("lifecycle transitions", () => {
       expect(await getJob(job.id), status).toEqual(terminal);
       expect(await claimJobOwner(job.id, now), status).toBeUndefined();
     }
+
+    // `failed` is resumable (J01): a late owner's writes are still fenced
+    // out, but a FRESH claim revives the row to `running` so the runner can
+    // resume from its committed batches.
+    const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const owner = (await claimJobOwner(job.id, now))!;
+    const failed = await setJobStatus(job.id, "failed", { error: "boom" }, now);
+    await commitJobProgress(job.id, { totalBatches: 1, committedBatches: 1, processedCount: 1 },
+      { inputTokens: 10, outputTokens: 2, requests: 1 }, now, owner.ownerGeneration);
+    expect(await getJob(job.id)).toEqual(failed);
+    const revived = await claimJobOwner(job.id, now);
+    expect(revived?.status).toBe("running");
+    expect(revived?.ownerGeneration).toBe(failed.ownerGeneration + 1);
+  });
+
+  it("refuses a failed resume while another live same-kind job owns the lane (A07)", async () => {
+    const failed = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    await claimJobOwner(failed.id, now);
+    await setJobStatus(failed.id, "failed", { error: "boom" }, now);
+    // `failed` isn't live, so a replacement same-kind job can coexist —
+    // resuming the failed row into that lane must refuse typed.
+    const replacement = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-2"], now });
+
+    await expect(resumeJob(failed.id, now)).rejects.toMatchObject({ code: "job_in_progress" });
+    expect(await claimJobOwner(failed.id, now)).toBeUndefined();
+    expect((await getJob(failed.id))?.status).toBe("failed");
+
+    // Once the lane clears, the failed row resumes normally.
+    await cancelJob(replacement.id, now);
+    expect((await resumeJob(failed.id, now)).status).toBe("running");
   });
 
   it("commits a settled paused batch but never changes its pause intent to completion or failure", async () => {
@@ -535,5 +567,34 @@ describe("jobUsageRollup", () => {
       outputTokens: 0,
       requests: 0,
     });
+  });
+});
+
+describe("J02 stale-running watchdog", () => {
+  it("re-drives running rows silent past the stale window and ignores fresh or non-running rows", async () => {
+    const stale = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const fresh = await enqueueJob({ kind: "library_scan", bookmarkIds: ["bm-2"], now });
+    const paused = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: ["bm-3"],
+      restructureProposal: { folders: [{ path: "news", description: "News." }] },
+      now,
+    });
+    // Stale: a `running` row whose updatedAt is older than the window.
+    await db.jobs.put({
+      ...stale,
+      status: "running",
+      ownerGeneration: 1,
+      updatedAt: new Date(Date.parse(NOW) - STALE_RUNNING_JOB_MS - 1).toISOString(),
+    });
+    // Fresh: running but stamped now.
+    await db.jobs.put({ ...fresh, status: "running", ownerGeneration: 1, updatedAt: NOW });
+    await pauseJob(paused.id, now);
+
+    const driven: string[] = [];
+    const reDriven = await reDriveStaleJobs(async (id) => { driven.push(id); }, now);
+
+    expect(reDriven).toEqual([stale.id]);
+    expect(driven).toEqual([stale.id]);
   });
 });

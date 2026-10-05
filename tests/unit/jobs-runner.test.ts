@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../src/db/database";
 import { DecisionPipelineError } from "../../src/decisions/pipeline";
+import { LlmGateError } from "../../src/net/llm-send";
 import type { AnalysisBookmark } from "../../src/decisions/pipeline";
 import { UsageRecord } from "../../src/schemas/usage";
 import type { AnalyzeBookmarkResult } from "../../src/decisions/pipeline";
@@ -14,7 +15,8 @@ import {
   type JobScanDuplicatesFn,
 } from "../../src/jobs/runner";
 import { cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, resumeJob, setJobStatus } from "../../src/jobs/queue";
-import type { NearDuplicatePair } from "../../src/decisions/candidates";
+import type { NearDuplicatePair, NearDuplicateSide } from "../../src/decisions/candidates";
+import type { NearDuplicatePlan } from "../../src/decisions/near-duplicate-plan";
 import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
 import { flattenTree } from "../../src/sync/tree";
 
@@ -535,6 +537,10 @@ function makeScanner(options: ScannerOptions = {}): {
   return { scanDuplicates, calls };
 }
 
+function pairSide(id: string): NearDuplicateSide {
+  return { id, title: `t-${id}`, url: `https://ex.com/${id}`, domain: "ex.com" };
+}
+
 describe("JobRunner library_scan pair phase", () => {
   it("runs the per-bookmark phase and then the near-duplicate pair phase", async () => {
     const bms = pairBookmarks();
@@ -652,6 +658,50 @@ describe("JobRunner library_scan pair phase", () => {
       committedBatches: 6,
       processedCount: 4,
     });
+  });
+
+  it("a deletion never shifts a live pair into a committed pair window", async () => {
+    // bs1 → 4 bookmark batches + 3 one-pair batches = 7. The first pair
+    // batch (bm-0|bm-1) is committed; bm-0 is then deleted, killing pair 1
+    // (bm-0|bm-2) as well — but bm-1|bm-3 is still live work. Re-slicing a
+    // filtered pair list would drop it into the committed window and skip
+    // it; positional slicing scans it instead (J02).
+    const bms = pairBookmarks();
+    const plan: NearDuplicatePlan = {
+      pairs: [
+        { a: pairSide("bm-0"), b: pairSide("bm-1"), titleSimilarity: 0.9 },
+        { a: pairSide("bm-0"), b: pairSide("bm-2"), titleSimilarity: 0.9 },
+        { a: pairSide("bm-1"), b: pairSide("bm-3"), titleSimilarity: 0.9 },
+      ],
+      comparisons: 3,
+      truncated: false,
+    };
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((bookmark) => bookmark.id),
+      batchSize: 1,
+      nearDuplicatePlan: plan,
+      now,
+    });
+    await db.jobs.put({
+      ...job,
+      status: "running",
+      ownerGeneration: 1,
+      progress: { totalBatches: 7, committedBatches: 5, processedCount: 4 },
+    });
+
+    const { analyze, calls } = makeAnalyzer();
+    const { scanDuplicates, calls: pairCalls } = makeScanner();
+    const live = bms.filter((bookmark) => bookmark.id !== "bm-0");
+    const finished = await new JobRunner({ analyze, scanDuplicates, now }).run(
+      job.id,
+      { bookmarks: live, batchSize: 1 },
+    );
+
+    expect(pairCalls).toEqual([["bm-1|bm-3"]]); // the only live pair, covered
+    expect(calls).toEqual([]); // bookmark phase fully committed
+    expect(finished.status).toBe("completed");
+    expect(finished.progress.committedBatches).toBe(7);
   });
 
   it("fails closed when a library_scan has no scanner dependency", async () => {
@@ -1138,5 +1188,184 @@ describe("restructure jobs", () => {
         now,
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
+  });
+});
+
+describe("J01/J02/J09 job resilience", () => {
+  it("records a throwing item and skips it, completing the rest", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    const analyzer = makeAnalyzer({
+      onCall: (bookmark) => {
+        if (bookmark.id === "bm-2") {
+          throw new DecisionPipelineError("http_error", "upstream said 500");
+        }
+      },
+    });
+
+    const result = await new JobRunner({ analyze: analyzer.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(4) });
+
+    expect(result.status).toBe("completed");
+    expect(analyzer.calls).toEqual(ids);
+    const row = (await getJob(job.id))!;
+    expect(row.itemFailures).toEqual([
+      { item: "bm-2", code: "http_error", at: NOW },
+    ]);
+    // Skipped items still count as processed work — the batch committed.
+    expect(row.progress).toEqual({
+      totalBatches: 2,
+      committedBatches: 2,
+      processedCount: 4,
+    });
+  });
+
+  it("a budget_exceeded refusal fails the job instead of item-skipping everything", async () => {
+    const job = await runningJob(["bm-0", "bm-1"], 2);
+    const analyzer = makeAnalyzer({
+      onCall: () => {
+        throw new LlmGateError("budget_exceeded", "monthly cap reached");
+      },
+    });
+
+    const result = await new JobRunner({ analyze: analyzer.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(2) });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("budget_exceeded");
+    expect(result.itemFailures ?? []).toEqual([]);
+  });
+
+  it("a job-fatal code fails the job, and `failed` resumes from committedBatches", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    let healthy = false;
+    const first = makeAnalyzer({
+      onCall: () => {
+        // `provider` is job-fatal: throw it at batch 2's first item so
+        // batch 1 stays committed — the resume then covers only bm-2/bm-3.
+        if (!healthy && first.calls.length === 3) {
+          throw new DecisionPipelineError("provider", "no provider configured");
+        }
+      },
+    });
+
+    const crashed = await new JobRunner({ analyze: first.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(4) });
+    expect(crashed.status).toBe("failed");
+    expect(crashed.progress.committedBatches).toBe(1); // batch 1 committed
+    expect(first.calls).toEqual(["bm-0", "bm-1", "bm-2"]);
+
+    // Explicit resume: `failed` claims a fresh owner and continues from
+    // `committedBatches` — committed items are never re-sent (J01).
+    healthy = true;
+    const second = makeAnalyzer();
+    const resumed = await resumeJob(job.id, now);
+    expect(resumed.status).toBe("running");
+    const done = await new JobRunner({ analyze: second.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(4) });
+
+    expect(done.status).toBe("completed");
+    expect(done.error).toBeUndefined(); // stale failure message is stripped
+    expect(second.calls).toEqual(["bm-2", "bm-3"]);
+  });
+
+  it("filters deleted ids on resume and still completes", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    // Simulate the mid-run state: batch 1 committed, then bm-2 was deleted.
+    await db.jobs.put({
+      ...job,
+      status: "running",
+      ownerGeneration: 1,
+      progress: { totalBatches: 2, committedBatches: 1, processedCount: 2 },
+    });
+    const second = makeAnalyzer();
+    const live = bookmarks(4).filter((b) => b.id !== "bm-2");
+    const result = await new JobRunner({ analyze: second.analyze, now })
+      .run(job.id, { bookmarks: live });
+
+    expect(result.status).toBe("completed");
+    expect(second.calls).toEqual(["bm-3"]); // bm-2 filtered, never analyzed
+  });
+
+  it("a deletion inside the committed window never skips a live bookmark", async () => {
+    // committed batch 0 covered the ORIGINAL positions [bm-0, bm-1]; bm-0
+    // was deleted since. Re-slicing the whole filtered list would shift
+    // bm-2 into a committed position and skip it — the committed window
+    // stays positional in the original ids instead (J02).
+    const job = await runningJob(["bm-0", "bm-1", "bm-2", "bm-3"], 2);
+    await db.jobs.put({
+      ...job,
+      status: "running",
+      ownerGeneration: 1,
+      progress: { totalBatches: 2, committedBatches: 1, processedCount: 2 },
+    });
+    const analyzer = makeAnalyzer();
+    const live = bookmarks(4).filter((b) => b.id !== "bm-0");
+    const result = await new JobRunner({ analyze: analyzer.analyze, now })
+      .run(job.id, { bookmarks: live });
+
+    expect(result.status).toBe("completed");
+    expect(analyzer.calls).toEqual(["bm-2", "bm-3"]); // bm-2 covered, never skipped
+  });
+
+  it("an empty filtered work set ends terminal, never an immortal running", async () => {
+    const job = await runningJob(["bm-0", "bm-1"], 2);
+    const analyzer = makeAnalyzer();
+    const result = await new JobRunner({ analyze: analyzer.analyze, now })
+      .run(job.id, { bookmarks: [] }); // every persisted id was deleted
+
+    expect(result.status).toBe("completed");
+    expect(analyzer.calls).toEqual([]);
+  });
+
+  it("pause is honored at the next ITEM boundary, not the batch boundary", async () => {
+    const job = await runningJob(["bm-0", "bm-1"], 2);
+    const analyzer = makeAnalyzer({
+      onCall: async (bookmark) => {
+        if (bookmark.id === "bm-0") await pauseJob(job.id, now);
+      },
+    });
+
+    const result = await new JobRunner({ analyze: analyzer.analyze, now })
+      .run(job.id, { bookmarks: bookmarks(2) });
+
+    expect(result.status).toBe("paused");
+    expect(analyzer.calls).toEqual(["bm-0"]); // bm-1 never sent
+    expect((await getJob(job.id))?.progress.committedBatches).toBe(0);
+  });
+
+  it("a retry_later burst opens the breaker, delays the next item, and resumes", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    let nowMs = Date.parse(NOW);
+    const tick = () => new Date(nowMs).toISOString();
+    const waits: number[] = [];
+    const sleep = async (ms: number) => { waits.push(ms); nowMs += ms; };
+    const analyzer = makeAnalyzer({
+      onCall: (bookmark) => {
+        if (bookmark.id !== "bm-3") {
+          throw new DecisionPipelineError("retry_later", "429");
+        }
+      },
+    });
+
+    const result = await new JobRunner({ analyze: analyzer.analyze, now: tick, sleep })
+      .run(job.id, { bookmarks: bookmarks(4) });
+
+    expect(result.status).toBe("completed");
+    // Three consecutive throttles opened the breaker: the persisted row
+    // gained `breaker.openUntil` and the runner slept before the next item.
+    const row = (await getJob(job.id))!;
+    expect(row.itemFailures?.map((f) => [f.item, f.code])).toEqual([
+      ["bm-0", "retry_later"],
+      ["bm-1", "retry_later"],
+      ["bm-2", "retry_later"],
+    ]);
+    expect(waits.length).toBeGreaterThanOrEqual(1);
+    expect(Math.max(...waits)).toBeLessThanOrEqual(15_000); // MV3-safe chunks
+    expect(row.breaker).toBeUndefined(); // lapsed breaker is cleared on commit
+    expect(analyzer.calls).toEqual(ids); // items after the burst still ran
   });
 });

@@ -69,7 +69,7 @@ export interface FakeDecisionsRoute {
   release(): void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
@@ -79,7 +79,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * choice probabilities confined to the asked criteria options (the unit
  * suite's two-option `{pick: conf, other: 1-conf}` shape).
  */
-function buildFakeResponse(
+export function buildFakeResponse(
   postData: unknown,
   script: FakeDecisionsScript,
 ): SystemOneResponse {

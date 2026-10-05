@@ -12,7 +12,7 @@ import type {
 import { extractDomain } from "../search/index";
 import { db } from "../db/database";
 import { appendUsage } from "../db/retention";
-import type { Job, NearDuplicateJobPlan } from "../schemas/job";
+import type { Job, NearDuplicatePlanPair } from "../schemas/job";
 import type { UsageRecord } from "../schemas/usage";
 import {
   attachNearDuplicatePlan,
@@ -21,11 +21,15 @@ import {
   commitJobProgress,
   computeTotalBatches,
   getJob,
+  JOB_BREAKER_DELAY_MS,
+  JOB_BREAKER_THRESHOLD,
   jobChecks,
   jobRunsNearDuplicate,
   jobUsageRollup,
+  recordJobItemFailure,
   setJobStatus,
 } from "./queue";
+import type { PersistedJob } from "./queue";
 
 /**
  * Job runner (spec FR7): the batch loop that drives a persisted `Job` to
@@ -36,16 +40,22 @@ import {
  * the same Dexie state therefore resumes from the last committed batch and
  * never re-sends an already-committed batch.
  *
- * Pause drains the already-started batch, then stops before the next batch.
- * Cancel and owner replacement also stop before the next bookmark request;
- * their late batch progress cannot change terminal or newer-owner state.
- * Paid work that survived a crash in an uncommitted batch may still replay:
- * this is at-least-once resumption, not exactly-once external billing.
- * A batch that throws is not committed; the job is marked `failed` with a
- * redacted, content-free error (only the failure's `code`, never its message
- * or any bookmark content) — but only when the job is still `running`, so a
- * pause/cancel that landed during the same batch wins and no illegal
- * transition is attempted.
+ * Pause, cancel, and owner replacement are honored at every ITEM boundary
+ * (J02/J09): the next bookmark request never fires while any of them is
+ * live — pause does not drain the rest of the batch. The interrupted
+ * batch's durable per-item writes stand but it is not committed, so a
+ * resume replays it (at-least-once resumption, not exactly-once external
+ * billing — J04's deterministic decision ids make the replay idempotent).
+ * A batch-level infrastructure throw (durability, work-set resolution) is
+ * not committed; the job is marked `failed` with a redacted, content-free
+ * error (only the failure's `code`, never its message or any bookmark
+ * content) — but only when the job is still `running`, so a pause/cancel
+ * that landed during the same batch wins and no illegal transition is
+ * attempted. A `failed` row is resumable: `run` claims a fresh owner and
+ * continues from `committedBatches` (J01). Per-bookmark item failures are
+ * instead recorded on the row's `itemFailures` ring and skipped (J01);
+ * a burst of `retry_later` throttles opens the persisted `breaker`, which
+ * delays the next item until `openUntil` (J09).
  *
  * A `library_scan` runs a SECOND phase after its per-bookmark batches: the
  * library-wide near-duplicate pair scan (FR7). The runner drives the DURABLE
@@ -122,12 +132,50 @@ export interface RunJobOptions {
   readonly ownerGeneration?: number;
 }
 
-/** Statuses from which a job can no longer be run. */
+/** Statuses from which a job can never be run again. `failed` is
+ * resumable (J01) — it re-enters through the owner claim below. */
 const TERMINAL: ReadonlySet<Job["status"]> = new Set([
   "completed",
-  "failed",
   "canceled",
 ]);
+
+/**
+ * Failure codes that end the JOB rather than the item (J01): egress-gate
+ * refusals that revoke every future send (consent/key/permission revoked
+ * mid-scan), permanently broken provider configuration, and the
+ * pipeline's own contract failures. Every other analyzer error —
+ * `retry_later`, `timeout`, `transport`, `http_error`, `invalid_response`,
+ * `answer_mismatch`, `apply_failed`, `stale`, `bookmark_gone`, unknowns —
+ * is a per-ITEM outcome: recorded on the row and skipped.
+ */
+const JOB_FATAL_ERROR_CODES: ReadonlySet<string> = new Set([
+  "unregistered_scope",
+  "request_not_allowed",
+  "unlisted_model",
+  "https_only",
+  "unlisted_origin",
+  "no_consent",
+  "no_permission",
+  "no_key",
+  "auth",
+  "incompatible",
+  "model_mismatch",
+  "invalid_request",
+  "invalid_input",
+  "persist_failed",
+  "provider",
+  "budget_exceeded",
+  "illegal_transition",
+]);
+
+/** Longest single in-worker wait while the breaker is open (J09). MV3
+ * kills an idle worker around 30s — each chunk re-checks the row, so a
+ * pause/cancel is still honored at the next item boundary. */
+const BREAKER_WAIT_CHUNK_MS = 15_000;
+
+function isoNow(now?: () => string): string {
+  return (now ?? (() => new Date().toISOString()))();
+}
 
 /**
  * Attach a job's `jobId` to the `usage` row an analysis persisted, so the
@@ -165,7 +213,7 @@ async function attachScanUsageToJob(
 }
 
 /** Extract a content-free failure code from a thrown cause, if any. */
-function failureCode(cause: unknown): string | undefined {
+export function failureCode(cause: unknown): string | undefined {
   if (typeof cause === "object" && cause !== null && "code" in cause) {
     const code = (cause as { readonly code?: unknown }).code;
     if (typeof code === "string" && /^[a-z][a-z0-9_]*$/.test(code)) {
@@ -176,7 +224,7 @@ function failureCode(cause: unknown): string | undefined {
 }
 
 /** A redacted, content-free failure message for the `failed` job row. */
-function redactFailure(cause: unknown): string {
+export function redactFailure(cause: unknown): string {
   const code = failureCode(cause);
   return code === undefined
     ? "The job failed while analyzing a bookmark."
@@ -202,11 +250,11 @@ function toPairSide(bookmark: AnalysisBookmark): NearDuplicateSide {
  * silently dropped (which would shift every later batch offset).
  */
 function hydrateNearDuplicatePairs(
-  plan: NearDuplicateJobPlan,
+  pairs: readonly NearDuplicatePlanPair[],
   bookmarks: readonly AnalysisBookmark[],
 ): NearDuplicatePair[] {
   const byId = new Map(bookmarks.map((bookmark) => [bookmark.id, bookmark]));
-  return plan.pairs.map((pair) => {
+  return pairs.map((pair) => {
     const first = byId.get(pair.a);
     const second = byId.get(pair.b);
     if (first === undefined || second === undefined) {
@@ -231,16 +279,90 @@ export class JobRunner {
   readonly #analyze: JobAnalyzeFn;
   readonly #scanDuplicates: JobScanDuplicatesFn | undefined;
   readonly #now: (() => string) | undefined;
+  readonly #sleep: (ms: number) => Promise<void>;
 
   constructor(deps: {
     readonly analyze: JobAnalyzeFn;
     /** The near-duplicate pair-phase dependency; a library_scan needs it. */
     readonly scanDuplicates?: JobScanDuplicatesFn;
     readonly now?: () => string;
+    /** Injectable wait for the breaker's delayed resume (tests fake it). */
+    readonly sleep?: (ms: number) => Promise<void>;
   }) {
     this.#analyze = deps.analyze;
     this.#scanDuplicates = deps.scanDuplicates;
     this.#now = deps.now;
+    this.#sleep =
+      deps.sleep ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /**
+   * Read the live row for the next item boundary (J09): waits out the
+   * persisted breaker (`openUntil`), in chunks capped under the MV3 idle
+   * limit, re-reading the row after every wait so a pause/cancel/owner
+   * replacement is honored per item. Returns `undefined` when this owner
+   * may no longer send (paused, canceled, terminal, or superseded).
+   */
+  async #nextItem(
+    jobId: string,
+    ownerGeneration: number,
+  ): Promise<PersistedJob | undefined> {
+    for (;;) {
+      const live = await getJob(jobId);
+      if (
+        live === undefined ||
+        live.ownerGeneration !== ownerGeneration ||
+        live.status !== "running"
+      ) {
+        return undefined;
+      }
+      const openUntil = live.breaker?.openUntil;
+      const nowMs = Date.parse(isoNow(this.#now));
+      if (openUntil === undefined || Date.parse(openUntil) <= nowMs) {
+        return live;
+      }
+      await this.#sleep(
+        Math.min(Date.parse(openUntil) - nowMs, BREAKER_WAIT_CHUNK_MS),
+      );
+    }
+  }
+
+  /**
+   * Record one analyzer failure as a per-item outcome (J01/J09): a
+   * job-fatal code rethrows (the outer catch marks the job `failed`);
+   * anything else is appended to `itemFailures` and skipped. A
+   * `retry_later` burst past {@link JOB_BREAKER_THRESHOLD} opens the
+   * persisted breaker in the same write. Returns the updated consecutive
+   * throttle count (session-local; a restart needs a fresh burst).
+   */
+  async #recordItemOutcome(
+    jobId: string,
+    item: string,
+    cause: unknown,
+    consecutiveThrottles: number,
+    ownerGeneration: number,
+  ): Promise<number> {
+    const code = failureCode(cause) ?? "internal_error";
+    if (JOB_FATAL_ERROR_CODES.has(code)) throw cause;
+    const throttles = code === "retry_later" ? consecutiveThrottles + 1 : 0;
+    const openBreakerUntil =
+      throttles >= JOB_BREAKER_THRESHOLD
+        ? new Date(
+            Date.parse(isoNow(this.#now)) + JOB_BREAKER_DELAY_MS,
+          ).toISOString()
+        : undefined;
+    await recordJobItemFailure(
+      jobId,
+      {
+        item,
+        code,
+        ...(openBreakerUntil === undefined ? {} : { openBreakerUntil }),
+      },
+      this.#now,
+      ownerGeneration,
+    );
+    return throttles;
   }
 
   /**
@@ -263,26 +385,6 @@ export class JobRunner {
     if (job.status === "paused") return job;
     if (options.ownerGeneration !== undefined && job.ownerGeneration !== options.ownerGeneration) return job;
 
-    const bookmarks = options.bookmarks;
-    if (bookmarks.length === 0) {
-      throw new JobRunnerError(
-        "no_work_set",
-        "The job has no bookmarks to process.",
-      );
-    }
-    if (job.bookmarkIds !== undefined) {
-      const expected = job.bookmarkIds;
-      const matches =
-        expected.length === bookmarks.length &&
-        expected.every((id, index) => id === bookmarks[index]?.id);
-      if (!matches) {
-        throw new JobRunnerError(
-          "invalid_input",
-          "The supplied bookmarks do not match the job's persisted bookmarkIds.",
-        );
-      }
-    }
-
     // The persisted `batchSize` is authoritative: a resume must slice the work
     // set exactly as the original run did, so it can never skip or re-send a
     // committed batch. A differing override is rejected rather than honoured.
@@ -292,6 +394,50 @@ export class JobRunner {
         "invalid_input",
         "The supplied batchSize does not match the job's persisted batchSize.",
       );
+    }
+
+    // J02: resume tolerates deleted ids. Committed batches stay positional
+    // in the ORIGINAL persisted id list — those items were already
+    // processed whether or not they still exist. Only the UNCOMMITTED
+    // window (`bookmarkIds` past the committed boundary) is re-sliced,
+    // filtered to the live supplied set: a mid-window deletion can never
+    // silently skip a live bookmark (re-slicing the WHOLE filtered list
+    // would shift later live ids into committed positions). An id OUTSIDE
+    // the persisted set still fails typed.
+    const supplied = options.bookmarks;
+    const liveById = new Map(supplied.map((bookmark) => [bookmark.id, bookmark]));
+    let committedBookmarkBatches = 0;
+    let bookmarks: readonly AnalysisBookmark[];
+    if (job.bookmarkIds !== undefined) {
+      const allowed = new Set(job.bookmarkIds);
+      if (supplied.some((bookmark) => !allowed.has(bookmark.id))) {
+        throw new JobRunnerError(
+          "invalid_input",
+          "The supplied bookmarks do not match the job's persisted bookmarkIds.",
+        );
+      }
+      const persistedBookmarkBatches = computeTotalBatches(
+        job.bookmarkIds.length,
+        batchSize,
+      );
+      committedBookmarkBatches = Math.min(
+        job.progress.committedBatches,
+        persistedBookmarkBatches,
+      );
+      bookmarks = job.bookmarkIds
+        .slice(committedBookmarkBatches * batchSize)
+        .flatMap((id) => {
+          const bookmark = liveById.get(id);
+          return bookmark === undefined ? [] : [bookmark];
+        });
+    } else {
+      if (supplied.length === 0) {
+        throw new JobRunnerError(
+          "no_work_set",
+          "The job has no bookmarks to process.",
+        );
+      }
+      bookmarks = supplied;
     }
     // A `library_scan` runs the near-duplicate pair phase (FR7); with no
     // injected scanner it could only compute zero pair batches and complete as
@@ -312,13 +458,41 @@ export class JobRunner {
     // pairs come from the DURABLE plan persisted on the row (Task 5): a resume
     // slices exactly the planned work set, so editing titles between runs can
     // neither skip nor re-send a committed pair batch.
+    const liveIds = new Set(supplied.map((bookmark) => bookmark.id));
+
     const runsPairs = jobRunsNearDuplicate(job.kind);
+    // `bookmarkBatchCount` is the number of REMAINING bookmark batches
+    // (over the filtered uncommitted window); pair batches follow it.
     const bookmarkBatchCount = computeTotalBatches(bookmarks.length, batchSize);
+    const bookmarkPhaseEnd = committedBookmarkBatches + bookmarkBatchCount;
     const storedPlan = job.nearDuplicatePlan;
-    let pairs: readonly NearDuplicatePair[] = [];
+    // The pair plan stays positional in the ORIGINAL persisted list (J02):
+    // a committed pair window covers fixed plan positions, and deletions
+    // are filtered WITHIN an uncommitted batch — never by re-slicing the
+    // plan, which would let a live pair slide into a committed position
+    // and be silently skipped.
+    let planPairs: readonly NearDuplicatePlanPair[] = [];
     if (runsPairs) {
       if (storedPlan !== undefined) {
-        pairs = hydrateNearDuplicatePairs(storedPlan, bookmarks);
+        // An endpoint that was never in the persisted work set is a
+        // corrupt plan, not a deletion — a typed failure. (Deleted
+        // endpoints ARE in the set: a deleted bookmark keeps its id in
+        // `bookmarkIds`; a cursor job references the live supplied set.)
+        const reference =
+          job.bookmarkIds !== undefined
+            ? new Set(job.bookmarkIds)
+            : liveIds;
+        if (
+          storedPlan.pairs.some(
+            (pair) => !reference.has(pair.a) || !reference.has(pair.b),
+          )
+        ) {
+          throw new JobRunnerError(
+            "invalid_input",
+            "The stored near-duplicate plan references bookmarks outside the persisted work set.",
+          );
+        }
+        planPairs = storedPlan.pairs;
       } else if (job.progress.committedBatches > 0) {
         // A pre-Task-5 row already committed a batch without a stored plan:
         // its committed offsets may be bookmark OR pair batches, so the pair
@@ -331,17 +505,9 @@ export class JobRunner {
       }
     }
     let pairBatchCount = runsPairs
-      ? computeTotalBatches(pairs.length, batchSize)
+      ? computeTotalBatches(planPairs.length, batchSize)
       : 0;
-    let totalBatches = bookmarkBatchCount + pairBatchCount;
-
-    let startBatch = job.progress.committedBatches;
-    if (startBatch > totalBatches) {
-      throw new JobRunnerError(
-        "invalid_input",
-        "The committed-batch count exceeds the batch count for this work set.",
-      );
-    }
+    let totalBatches = bookmarkPhaseEnd + pairBatchCount;
 
     const claimed = options.ownerGeneration === undefined
       ? await claimJobOwner(jobId, this.#now) : await getJob(jobId);
@@ -361,21 +527,59 @@ export class JobRunner {
       );
       const persisted = acquired.nearDuplicatePlan;
       if (persisted === undefined) return acquired;
-      pairs = hydrateNearDuplicatePairs(persisted, bookmarks);
-      pairBatchCount = computeTotalBatches(pairs.length, batchSize);
-      totalBatches = bookmarkBatchCount + pairBatchCount;
+      planPairs = persisted.pairs;
+      pairBatchCount = computeTotalBatches(planPairs.length, batchSize);
+      totalBatches = bookmarkPhaseEnd + pairBatchCount;
     }
 
     job = await setJobStatus(
       jobId,
       "running",
-      { progress: { ...claimed.progress, totalBatches } },
+      {
+        progress: {
+          ...claimed.progress,
+          // A resume after deletions may recompute fewer batches than are
+          // already committed — the stored committed count must stay <= the
+          // written total or the row fails its own schema refinement.
+          totalBatches: Math.max(totalBatches, claimed.progress.committedBatches),
+        },
+      },
       this.#now,
       ownerGeneration,
     );
-    startBatch = job.progress.committedBatches;
+    const startBatch = job.progress.committedBatches;
     const checks = bookmarkChecks(jobChecks(job.kind));
+    // Items the committed positional windows covered in the ORIGINAL id
+    // list — all real ids, so exact unless the last window was partial.
+    const committedBookmarkCount = Math.min(
+      committedBookmarkBatches * batchSize,
+      job.bookmarkIds?.length ?? 0,
+    );
 
+    if (startBatch >= totalBatches) {
+      // J02: everything left was deleted (or already committed) — the work
+      // set is empty, so end terminal here rather than leave an immortal
+      // `running` row.
+      return await setJobStatus(
+        jobId,
+        "completed",
+        {
+          progress: {
+            totalBatches: Math.max(totalBatches, job.progress.committedBatches),
+            committedBatches: Math.max(totalBatches, job.progress.committedBatches),
+            processedCount: Math.max(
+              committedBookmarkCount + bookmarks.length,
+              job.progress.processedCount,
+            ),
+          },
+          usage: await jobUsageRollup(jobId),
+        },
+        this.#now,
+        ownerGeneration,
+      );
+    }
+
+    let consecutiveThrottles = 0;
     for (let index = startBatch; index < totalBatches; index += 1) {
       // Batch boundary: a pause/cancel that landed during the previous batch
       // is observed here, before any further work is sent.
@@ -385,32 +589,70 @@ export class JobRunner {
       }
 
       try {
-        if (index < bookmarkBatchCount) {
+        if (index < bookmarkPhaseEnd) {
           const batch = bookmarks.slice(
-            index * batchSize,
-            (index + 1) * batchSize,
+            (index - committedBookmarkBatches) * batchSize,
+            (index - committedBookmarkBatches + 1) * batchSize,
           );
           for (const bookmark of batch) {
-            // Do not let a superseded owner send another request, even inside
-            // its batch. A same-owner pause still drains the current batch.
-            const live = await getJob(jobId);
-            if (live === undefined || live.ownerGeneration !== ownerGeneration ||
-              (live.status !== "running" && live.status !== "paused")) return live ?? job;
-            const result = await this.#analyze({
-              bookmark,
-              job: live,
-              checks,
-            });
+            // The control fence AND the circuit breaker are observed before
+            // EVERY paid request (J02/J09): pause, cancel, and owner
+            // replacement stop the next item — never deferred to a batch
+            // boundary — and an open breaker delays the next item.
+            const live = await this.#nextItem(jobId, ownerGeneration);
+            if (live === undefined) return (await getJob(jobId)) ?? job;
+            let result: AnalyzeBookmarkResult;
+            try {
+              result = await this.#analyze({
+                bookmark,
+                job: live,
+                checks,
+              });
+            } catch (cause) {
+              consecutiveThrottles = await this.#recordItemOutcome(
+                jobId,
+                bookmark.id,
+                cause,
+                consecutiveThrottles,
+                ownerGeneration,
+              );
+              continue;
+            }
             await attachUsageToJob(result.sent ? result.usage : null, jobId);
+            consecutiveThrottles = 0;
           }
         } else if (scanDuplicates !== undefined) {
-          const pairIndex = index - bookmarkBatchCount;
-          const batch = pairs.slice(
-            pairIndex * batchSize,
-            (pairIndex + 1) * batchSize,
-          );
-          const result = await scanDuplicates({ pairs: batch, job: current });
-          await attachScanUsageToJob(result, jobId);
+          const pairIndex = index - bookmarkPhaseEnd;
+          // Deleted-endpoint pairs are filtered WITHIN this positional
+          // window — the slicing over the original plan never shifts, so
+          // a committed pair window cannot swallow a live pair (J02).
+          const liveBatch = planPairs
+            .slice(pairIndex * batchSize, (pairIndex + 1) * batchSize)
+            .filter((pair) => liveIds.has(pair.a) && liveIds.has(pair.b));
+          if (liveBatch.length > 0) {
+            const live = await this.#nextItem(jobId, ownerGeneration);
+            if (live === undefined) return (await getJob(jobId)) ?? job;
+            let result: DuplicateScanResult | undefined;
+            try {
+              result = await scanDuplicates({
+                pairs: hydrateNearDuplicatePairs(liveBatch, supplied),
+                job: live,
+              });
+            } catch (cause) {
+              consecutiveThrottles = await this.#recordItemOutcome(
+                jobId,
+                `pair-batch:${pairIndex}`,
+                cause,
+                consecutiveThrottles,
+                ownerGeneration,
+              );
+              result = undefined;
+            }
+            if (result !== undefined) {
+              await attachScanUsageToJob(result, jobId);
+              consecutiveThrottles = 0;
+            }
+          }
         }
       } catch (cause) {
         // A pause/cancel may have landed during this batch. Only a job that is
@@ -431,20 +673,21 @@ export class JobRunner {
 
       // Every result in the batch is durable now — commit the progress. The
       // processed count tracks the bookmarks the committed per-bookmark
-      // batches covered, so it saturates at the work-set size once the pair
-      // phase begins.
+      // batches covered: the positional committed window in the ORIGINAL
+      // id list plus the remaining items covered so far — so it saturates
+      // at the count of items actually processed once the pair phase
+      // begins.
       const committedBatches = index + 1;
-      const committedBookmarkBatches = Math.min(
-        committedBatches,
+      const coveredBookmarkBatches = Math.min(
+        Math.max(committedBatches - committedBookmarkBatches, 0),
         bookmarkBatchCount,
       );
       const progress = {
         totalBatches,
         committedBatches,
-        processedCount: Math.min(
-          committedBookmarkBatches * batchSize,
-          bookmarks.length,
-        ),
+        processedCount:
+          committedBookmarkCount +
+          Math.min(coveredBookmarkBatches * batchSize, bookmarks.length),
       };
       const usage = await jobUsageRollup(jobId);
       job = await commitJobProgress(jobId, progress, usage, this.#now, ownerGeneration);
@@ -461,7 +704,7 @@ export class JobRunner {
         progress: {
           totalBatches,
           committedBatches: totalBatches,
-          processedCount: bookmarks.length,
+          processedCount: committedBookmarkCount + bookmarks.length,
         },
         usage: await jobUsageRollup(jobId),
       },

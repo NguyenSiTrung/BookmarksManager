@@ -19,7 +19,9 @@ import {
 import type { FakeOpenAiReply } from "./helpers/llm";
 import type { BudgetReservation, LlmUsageRow } from "../../src/llm/budget";
 import {
+  buildFakeResponse,
   grantDecisionsConsent,
+  isRecord,
   routeFakeDecisions,
 } from "./helpers/decisions";
 import { enableTypesafe, readStoreRows } from "./helpers/provider";
@@ -952,6 +954,42 @@ test("worker restart resumes a restructure job from committed progress", async (
       relaunch.context,
       { choices: { folder: "p0" }, noul: {} },
     );
+    // The persisted profile's service worker is already running before any
+    // `context.route` call lands, and Playwright's interception does not bind
+    // to it reliably (host-resolver rules don't reach it either) — a resumed
+    // provider send can escape to real egress and 401 the job. Patch the
+    // worker's own `fetch` instead: deterministic, in-realm, and scoped to
+    // the provider origin while every consent/permission gate still runs.
+    const resumeWorker =
+      relaunch.context.serviceWorkers()[0] ??
+      (await relaunch.context.waitForEvent("serviceworker"));
+    await resumeWorker.evaluate(
+        ([isRecordSrc, buildSrc, scriptJson]: string[]) => {
+          const isRecord = new Function(`return ${isRecordSrc}`)() as (v: unknown) => v is Record<string, unknown>;
+          const build = new Function("isRecord", `return (${buildSrc})`)(isRecord) as (postData: unknown, script: unknown) => unknown;
+          const script = JSON.parse(scriptJson as string) as unknown;
+          const real = self.fetch.bind(self);
+          self.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+            if (!url.includes("api.typesafe.ai")) return real(input, init);
+            let postData: unknown = {};
+            try {
+              postData = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : {};
+            } catch {
+              postData = {};
+            }
+            (self as unknown as { __fakeFetchCount?: number }).__fakeFetchCount =
+              ((self as unknown as { __fakeFetchCount?: number }).__fakeFetchCount ?? 0) + 1;
+            return Promise.resolve(
+              new Response(JSON.stringify(build(postData, script)), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }) as typeof fetch;
+        },
+        [isRecord.toString(), buildFakeResponse.toString(), JSON.stringify({ choices: { folder: "p0" }, noul: {} })],
+    );
     const panel2 = await openSurface(relaunch.context, relaunch.id, "sidepanel");
     // The persisted row carried proposal + committed batch across the
     // restart; RESUME re-drives only the uncommitted tail.
@@ -970,10 +1008,16 @@ test("worker restart resumes a restructure job from committed progress", async (
       if (status === "completed" || status === "failed") break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
+    const fakeFetchCount = await resumeWorker.evaluate(
+      () => (self as unknown as { __fakeFetchCount?: number }).__fakeFetchCount ?? 0,
+    );
     expect(
       status,
       `row=${JSON.stringify(row)} openai=${openai2.requests.length} jev=${jev2.requests.length}`,
     ).toBe("completed");
+    // The resume must have re-sent at least one provider request through the
+    // patched fetch — otherwise the uncommitted tail never actually ran.
+    expect(fakeFetchCount).toBeGreaterThan(0);
     // The proposal persisted on the row — the relaunch never re-egresses
     // the LLM call.
     expect(openai2.requests).toHaveLength(0);

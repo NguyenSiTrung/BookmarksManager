@@ -80,6 +80,39 @@ export const JobProgress = z.strictObject({
 export type JobProgress = z.infer<typeof JobProgress>;
 
 /**
+ * Hard cap on the per-item failure ring a job row persists (J01). One entry
+ * is written per skipped bookmark or pair batch; when the cap is reached
+ * the oldest records drop first — the count is honest (it never hides a
+ * failure), the row just keeps the most recent slice.
+ */
+export const MAX_JOB_ITEM_FAILURES = 200;
+
+/**
+ * One skipped work item's durable record (J01): WHAT was skipped (`item` —
+ * a bookmark id, or `pair-batch:<n>` for a pair-phase batch), the
+ * content-free failure `code`, and when it was recorded. Messages and
+ * payloads are never persisted.
+ */
+export const JobItemFailure = z.strictObject({
+  item: z.string().min(1).max(200),
+  code: z.string().min(1).max(100),
+  at: z.iso.datetime(),
+});
+export type JobItemFailure = z.infer<typeof JobItemFailure>;
+
+/**
+ * The persisted circuit-breaker state (J09): while `openUntil` is in the
+ * future, the runner delays before the next item. The consecutive-failure
+ * count that opened it is deliberately session-local — after a restart the
+ * breaker needs a fresh burst to reopen, but an outstanding delay is still
+ * honored.
+ */
+export const JobBreaker = z.strictObject({
+  openUntil: z.iso.datetime(),
+});
+export type JobBreaker = z.infer<typeof JobBreaker>;
+
+/**
  * Per-job usage roll-up (FR8). Mirrors the `UsageMeter` totals: summed input
  * and output tokens, the summed USD cost when the provider reported one
  * (`costUsd` stays absent when no response did), and the number of requests
@@ -178,6 +211,13 @@ export const Job = z
      * rows stay valid; the runner acquires one for an uncommitted legacy scan.
      */
     nearDuplicatePlan: NearDuplicateJobPlan.optional(),
+    /**
+     * J01: the ring of skipped work items (bookmark ids / pair batches)
+     * capped at {@link MAX_JOB_ITEM_FAILURES}. Absent = nothing skipped.
+     */
+    itemFailures: z.array(JobItemFailure).max(MAX_JOB_ITEM_FAILURES).optional(),
+    /** J09: persisted breaker — the runner delays until `openUntil` passes. */
+    breaker: JobBreaker.optional(),
     createdAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     error: z.string().max(1_000).optional(),

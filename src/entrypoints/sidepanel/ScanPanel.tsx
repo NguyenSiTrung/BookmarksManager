@@ -279,7 +279,7 @@ export function ScanPanel({
                 Pause
               </button>
             )}
-            {job.status === "paused" && (
+            {(job.status === "paused" || job.status === "failed") && (
               <button
                 type="button"
                 disabled={busy}

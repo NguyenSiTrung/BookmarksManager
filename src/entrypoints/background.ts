@@ -33,6 +33,7 @@ import {
   getJob,
   pauseInterruptedJobs,
   pauseJob,
+  reDriveStaleJobs,
   resumeJob,
   setJobStatus,
 } from "../jobs/queue";
@@ -40,9 +41,9 @@ import { coordinateJob } from "../jobs/coordinator";
 import { estimateJobCost } from "../jobs/estimate";
 import {
   JobRunner,
-  JobRunnerError,
   createDuplicateScanner,
   createPipelineAnalyzer,
+  redactFailure,
 } from "../jobs/runner";
 import {
   handleDecisionsMessage,
@@ -292,12 +293,14 @@ async function buildRunner(
  * Only a LIVE row (`running`/`pending`) is ever driven: a pause/cancel that
  * landed between the caller's flip and this read wins — re-entering the
  * runner would otherwise flip the row back to `running` and drive egress
- * the user explicitly halted. A caller-side `JobRunnerError` (work-set
- * mismatch, …) strands a row that claims a live status nothing will drive,
- * so it is surfaced as a `failed` row (the runner's own failure
- * discipline) instead of being swallowed silently; anything else
- * (transport/context) is left for the next worker start to retry.
+ * the user explicitly halted. ANY failure while driving — a caller-side
+ * `JobRunnerError`, a work-set resolution blow-up, a runner construction
+ * fault — degrades the row to `failed` with a redacted code (J02), never
+ * an untyped rejection that leaves an immortal `running` row behind.
  */
+
+/** How often the J02 watchdog sweeps for ownerless `running` rows. */
+const JOB_WATCHDOG_INTERVAL_MS = 60_000;
 export function runPersistedJob(jobId: string): Promise<void> {
   return coordinateJob(jobId, () => drivePersistedJob(jobId));
 }
@@ -310,18 +313,32 @@ async function drivePersistedJob(jobId: string): Promise<void> {
   if (provider === null) return; // no consented provider — leave the job be
   const owner = await claimJobOwner(jobId);
   if (owner === undefined) return; // pause/cancel during provider setup wins
-  const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
-  if (bookmarks.length === 0) return;
   try {
+    // Work-set resolution and runner construction are INSIDE the try: any
+    // unexpected failure must degrade this job to `failed` with a redacted
+    // code (J02) rather than leak an untyped rejection that leaves an
+    // immortal `running` row. An empty resolved set is NOT an early exit —
+    // the runner decides the terminal state (deleted work set → completed).
+    const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
     const runner = await buildRunner(provider, job.kind);
     await runner.run(jobId, { bookmarks, ownerGeneration: owner.ownerGeneration });
   } catch (error) {
-    if (!(error instanceof JobRunnerError)) throw error;
     try {
-      await setJobStatus(jobId, "failed", { error: error.message }, undefined, owner.ownerGeneration);
+      await setJobStatus(
+        jobId,
+        "failed",
+        { error: redactFailure(error) },
+        undefined,
+        owner.ownerGeneration,
+      );
     } catch {
       // Raced a concurrent transition — the row keeps whatever won.
     }
+    // Marking `failed` must not swallow the caller's typed refusal: the ROW
+    // keeps only the redacted code while the surface still receives the
+    // original error it needs to answer `request_not_allowed` (or any other
+    // typed outcome) — a failed row AND a propagated refusal, not either/or.
+    throw error;
   }
 }
 
@@ -576,6 +593,16 @@ export default defineBackground(() => {
   void sweepStaleLlmReservations().catch(() => {
     // Best-effort; the next worker start retries.
   });
+  // J02 watchdog: a `running` row silent past the stale window lost its
+  // owner — the interval re-drives it through the normal claim+run path
+  // (the owner-generation fence makes a false positive cheap: a live owner
+  // exits at its next durable boundary). Local only, fire-and-forget like
+  // the sweeps above.
+  setInterval(() => {
+    void reDriveStaleJobs(runPersistedJob).catch(() => {
+      // Best-effort; the next interval retries.
+    });
+  }, JOB_WATCHDOG_INTERVAL_MS);
 
   const decisionsHandlers = productionHandlers();
 

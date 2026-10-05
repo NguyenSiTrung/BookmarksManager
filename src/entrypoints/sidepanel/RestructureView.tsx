@@ -563,7 +563,7 @@ export function RestructureView(props: { className?: string }) {
               </button>
             </div>
           )}
-          {job.status === "paused" && (
+          {(job.status === "paused" || job.status === "failed") && (
             <div className="flex gap-2">
               <button
                 type="button"
