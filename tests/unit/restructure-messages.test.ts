@@ -7,6 +7,7 @@ import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { handleRestructureMessage } from "../../src/messages/restructure";
 import type { RestructureDeps } from "../../src/messages/restructure";
 import { proposeLayout } from "../../src/restructure/propose";
+import { LlmGateError } from "../../src/net/llm-send";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { enqueueJob } from "../../src/jobs/queue";
 import type { RestructureProposal } from "../../src/schemas/restructure";
@@ -170,6 +171,25 @@ describe("RESTRUCTURE_START", () => {
     );
     expect(reply).toMatchObject({ ok: false, code: "no_provider" });
     expect(proposeLayout).not.toHaveBeenCalled();
+  });
+
+  it("relays an aborted provider send verbatim", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockRejectedValue(
+      new LlmGateError("aborted", "Outbound LLM request was aborted."),
+    );
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "aborted" });
   });
 });
 

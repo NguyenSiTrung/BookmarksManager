@@ -831,7 +831,7 @@ describe("LLM_REVOKE", () => {
       { label: "HTTP error with reported usage", response: () => Response.json({ usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.02 } }, { status: 400 }), error: { status: 400 }, tokens: [3, 2], cost: { costUsd: 0.02 } },
       { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
       { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-      { label: "aborted transport", response: () => null, error: { code: "timeout" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+      { label: "aborted transport", response: () => null, error: { code: "aborted" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
     ] as const) {
     await resetEnv();
     await seedExplainProvider();

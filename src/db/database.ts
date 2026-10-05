@@ -27,6 +27,7 @@ export type SentLogOutcome =
   | "ok"
   | "retried"
   | "timeout"
+  | "aborted"
   | "redirect"
   | "transport"
   | `http_${number}`;

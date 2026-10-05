@@ -39,4 +39,14 @@ describe("content-free outbound abort classification", () => {
     expect(classifyAbort(controller.signal, reason)).toBe("timeout");
     expect(classifyAbort(undefined, reason)).toBe("timeout");
   });
+
+  it("survives a reason whose name getter throws", () => {
+    const reason = {
+      get name(): never { throw new Error("Do not read private content"); },
+    };
+    const controller = new AbortController();
+    controller.abort(reason);
+    expect(classifyAbort(controller.signal, reason)).toBe("aborted");
+    expect(classifyAbort(undefined, reason)).toBeUndefined();
+  });
 });

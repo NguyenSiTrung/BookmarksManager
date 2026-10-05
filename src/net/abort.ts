@@ -8,9 +8,14 @@ export function classifyAbort(
   cause?: unknown,
 ): "timeout" | "aborted" | undefined {
   const reason = signal?.aborted ? signal.reason : cause;
-  const name = typeof reason === "object" && reason !== null
-    ? (reason as { name?: unknown }).name
-    : undefined;
+  let name: unknown;
+  try {
+    name = typeof reason === "object" && reason !== null
+      ? (reason as { name?: unknown }).name
+      : undefined;
+  } catch {
+    name = undefined;
+  }
   if (name === "TimeoutError") return "timeout";
   if (signal?.aborted || name === "AbortError") return "aborted";
   return undefined;

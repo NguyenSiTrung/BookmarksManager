@@ -41,7 +41,7 @@ export const SENT_LOG_RETENTION_CAP = 500;
 /** Reject arbitrary runtime strings: outcomes must never carry error text. */
 function isSentLogOutcome(value: unknown): value is SentLogOutcome {
   return value === "ok" || value === "retried" || value === "timeout" ||
-    value === "redirect" || value === "transport" ||
+    value === "aborted" || value === "redirect" || value === "transport" ||
     (typeof value === "string" && /^http_[1-5]\d{2}$/.test(value));
 }
 

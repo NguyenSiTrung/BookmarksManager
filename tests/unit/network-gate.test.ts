@@ -576,7 +576,7 @@ describe("scoped sendConsented gate", () => {
     const error = await pending.catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(NetworkGateError);
     expect((error as NetworkGateError).code).toBe("aborted");
-    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "aborted" }]);
   });
 
   it("maps an abort raised during the gate's async checks to aborted", async () => {

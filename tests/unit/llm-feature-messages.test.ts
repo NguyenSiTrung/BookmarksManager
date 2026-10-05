@@ -355,6 +355,19 @@ describe("handleLlmFeatureMessage", () => {
       expect(server.requests).toHaveLength(1);
     });
 
+    it("relays a transport abort as aborted, not timeout or internal_error", async () => {
+      await seedProvider();
+      await persistDecision(pendingDecision());
+      vi.stubGlobal("fetch", async () => {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
+      const reply = await handleLlmFeatureMessage(
+        { type: "LLM_EXPLAIN", decisionId: UUID },
+        TRUSTED,
+      );
+      expect(reply).toMatchObject({ ok: false, code: "aborted" });
+    });
+
     it("leaks no title, url, or key material in any reply", async () => {
       await seedProvider();
       await persistDecision(pendingDecision());

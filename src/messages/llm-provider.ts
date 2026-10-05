@@ -130,7 +130,8 @@ const LLM_MESSAGE_TYPES = new Set([
  * `LlmGateError` codes (`unregistered_scope`, `no_provider`,
  * `invalid_provider`, `request_not_allowed`, `unlisted_model`,
  * `no_consent`, `no_permission`, `no_key`, `pricing_required`,
- * `confirmation_required`, `budget_exceeded`, `timeout`, `transport`),
+ * `confirmation_required`, `budget_exceeded`, `timeout`, `aborted`,
+ * `transport`),
  * `http_error`, the credential store's `reconnect`, and
  * `capability_unsupported` (every structured-output tier rejected) reach
  * the page verbatim.
@@ -156,6 +157,7 @@ export const LlmProviderErrorCode = z.enum([
   "confirmation_required",
   "budget_exceeded",
   "timeout",
+  "aborted",
   "transport",
   "http_error",
   "reconnect",

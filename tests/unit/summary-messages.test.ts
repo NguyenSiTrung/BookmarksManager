@@ -473,6 +473,21 @@ describe("handleSummarizeMessage", () => {
     expect(wireRequests).toHaveLength(2);
   });
 
+  it("relays a summarize transport abort as aborted, not internal_error", async () => {
+    await seedProvider();
+    const consentApproval = await preflightApproval();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("api.openai.com")) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      return server.fetch(input as never, init as never) as Promise<Response>;
+    });
+    expect(await handleSummarizeMessage({
+      type: "LLM_SUMMARIZE", tabId: 42, bookmarkId: BOOKMARK_ID, consentApproval,
+    }, TRUSTED)).toMatchObject({ ok: false, code: "aborted" });
+  });
+
   it("LLM_SUMMARY_READ returns the persisted summary only", async () => {
     await setBookmarkSummary(BOOKMARK_ID, "Stored summary.");
     const reply = await handleSummarizeMessage(

@@ -104,6 +104,7 @@ export const LlmFeatureErrorCode = z.enum([
   "confirmation_required",
   "budget_exceeded",
   "timeout",
+  "aborted",
   "transport",
   "http_error",
   "internal_error",

@@ -602,7 +602,7 @@ async function sendLlmRequest(
       throw cause;
     }
     if (abortCode !== undefined) {
-      await finishLog("timeout");
+      await finishLog(abortCode);
       throw new LlmGateError(abortCode, abortCode === "timeout"
         ? "Outbound LLM request timed out." : "Outbound LLM request was aborted.");
     }

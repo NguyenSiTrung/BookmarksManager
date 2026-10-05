@@ -55,13 +55,13 @@ async function appendMany(count: number): Promise<void> {
 
 describe("appendSentLog", () => {
   it("keeps safe outcomes but drops arbitrary runtime outcome text", async () => {
-    for (const outcome of ["ok", "retried", "timeout", "redirect", "transport", "http_503"]) {
+    for (const outcome of ["ok", "retried", "timeout", "aborted", "redirect", "transport", "http_503"]) {
       await appendSentLog({ ...entry(), outcome } as Omit<SentLogEntry, "id">);
     }
     await appendSentLog({ ...entry(), outcome: "Bearer secret / private error" } as unknown as Omit<SentLogEntry, "id">);
     const rows = await db.sentLog.orderBy(":id").toArray();
     expect(rows.map((row) => row.outcome))
-      .toEqual(["ok", "retried", "timeout", "redirect", "transport", "http_503", undefined]);
+      .toEqual(["ok", "retried", "timeout", "aborted", "redirect", "transport", "http_503", undefined]);
     expect(JSON.stringify(rows)).not.toContain("secret");
   });
   it("writes exactly one metadata-only row per append", async () => {

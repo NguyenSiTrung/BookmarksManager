@@ -80,6 +80,7 @@ export const SummarizeErrorCode = z.enum([
   "request_not_allowed",
   "unlisted_model",
   "timeout",
+  "aborted",
   "transport",
   "http_error",
   "unavailable",

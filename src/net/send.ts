@@ -432,7 +432,7 @@ export async function sendConsented(
   } catch (cause) {
     const abortCode = classifyAbort(signal, cause);
     if (abortCode !== undefined) {
-      await finishLog("timeout");
+      await finishLog(abortCode);
       throw new NetworkGateError(
         abortCode,
         `Outbound ${scopeEntry.scope} request for provider "${providerId}" was aborted.`,

@@ -86,7 +86,8 @@ export type ProviderMessage = z.infer<typeof ProviderMessage>;
  * `auth`/`incompatible`/`retry_later`/`timeout`/`invalid_response`/
  * `answer_mismatch`/`model_mismatch`/`too_large`/`invalid_request`/
  * `http_error` plus the `NetworkGateError` codes it relays (`https_only`,
- * `unlisted_origin`, `no_consent`, `no_permission`, `no_key`, `transport`,
+ * `unlisted_origin`, `no_consent`, `no_permission`, `no_key`, `aborted`,
+ * `transport`,
  * `unlisted_model`, `unregistered_scope`, `request_not_allowed`) — and
  * `ProviderKeyError`'s `reconnect` reach the page verbatim. */
 export const ProviderErrorCode = z.enum([
@@ -101,6 +102,7 @@ export const ProviderErrorCode = z.enum([
   "incompatible",
   "retry_later",
   "timeout",
+  "aborted",
   "invalid_response",
   "answer_mismatch",
   "model_mismatch",

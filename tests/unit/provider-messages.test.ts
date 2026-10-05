@@ -625,4 +625,16 @@ describe("custom provider", () => {
     expect(url).toBe(`${BASE_URL}/systemone`);
     expect(readKey).toHaveBeenCalledWith("custom");
   });
+
+  it("relays a transport abort from the connection test as aborted", async () => {
+    await handleProviderMessage(customEnable(), optionsSender);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new DOMException("The operation was aborted.", "AbortError");
+    }));
+    const result = await handleProviderMessage(
+      { type: "TEST_PROVIDER", preset: "custom" },
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: false, code: "aborted" });
+  });
 });

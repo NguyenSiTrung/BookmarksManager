@@ -397,7 +397,7 @@ describe("sendLlmConsented happy path", () => {
     expect(requests).toBe(1);
     expect(await db.llmUsage.count()).toBe(1);
     expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
-    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: code }]);
   });
 
   it.each(["transport", "http"] as const)("waits with exponential jitter and bounds %s retries", async (failure) => {
@@ -1111,7 +1111,7 @@ describe("sendLlmConsented happy path", () => {
       inputTokens: 100, outputTokens: 50,
       estimatedCostUsd: expect.closeTo(0.000045, 12),
     }]);
-    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "timeout" }]);
+    expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "aborted" }]);
   });
 
   it("accounts missing usage for every exhausted transport attempt", async () => {

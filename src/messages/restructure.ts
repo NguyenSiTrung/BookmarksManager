@@ -137,6 +137,7 @@ export const RestructureErrorCode = z.enum([
   "confirmation_required",
   "budget_exceeded",
   "timeout",
+  "aborted",
   "transport",
   "http_error",
   "capability_unsupported",
