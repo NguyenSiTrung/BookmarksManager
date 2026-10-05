@@ -1611,3 +1611,13 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - Reviewer grading: seven Infos are notes, not gates — act on
   Important/Critical only; a bounded blind spot (pre-attach worker send)
   is still covered by the sink + paused-state assertion.
+
+## Phase 7 checkpoint (b4043fc)
+
+- Record checkpoints at the tracking-commit SHA, not the task SHA — the
+  tree is identical but the recorded state is what future readers check
+  out. All eight gate commands + e2e ran on this tree: 3256 unit,
+  48 e2e + 1 intentional visual-capture skip.
+- Native-permission-prompt exclusion is vacuous here: every e2e grants
+  host_permissions programmatically through the manifest-patched launch
+  helper, so state that instead of listing phantom exclusions.

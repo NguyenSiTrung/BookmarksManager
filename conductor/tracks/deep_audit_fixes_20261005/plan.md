@@ -467,9 +467,21 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     (zero-egress on open/cold start, per-attempt log, timeout, double approve,
     undo targeting); record counts.
   - Fix: none expected; any failure re-opens the owning task.
-- [ ] Task: Conductor - Automated Verification 'Phase 7: Provider hardening and documentation' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 7: Provider hardening and documentation' — full gate green at `b4043fc` (lint, tsc, 3256 unit/180 files, build, manifest, bundle, store, site, 48 e2e +1 store-assets skip)
   - Final gate: `npm run lint`, `typecheck`, `test -- --run`, `build`,
     `check:manifest`, `check:bundle`, `check:store`, `check:site`,
     `xvfb-run -a npm run test:e2e` (macOS `E2E_HEADLESS=1`). Record exact
     commands and pass/fail/skip counts. State key-gated and native-prompt
     exclusions.
+    Recorded 2026-10-05 at `b4043fc`: lint PASS, `taskset -c 2 npx tsc
+    --noEmit` PASS, `taskset -c 2 npx vitest run --maxWorkers=1` PASS
+    (3256 tests / 180 files), build PASS, check:manifest PASS,
+    check:bundle PASS, check:store PASS, check:site PASS,
+    `xvfb-run -a npm run test:e2e` 48 PASS + 1 SKIP
+    (store-assets.spec capture-the-manager-screenshot — intentional
+    visual-capture spec, skipped by design).
+    Exclusions: `test:live` and `test:eval` stay key-gated and were not
+    run (no real provider keys; synthetic fixtures only). No e2e relies
+    on native permission prompts — host permissions are granted
+    programmatically via the patched-manifest launch helper, so nothing
+    is excluded on that ground.
