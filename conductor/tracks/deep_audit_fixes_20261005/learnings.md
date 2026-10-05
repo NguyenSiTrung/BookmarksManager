@@ -483,3 +483,30 @@ claim that any audit finding has been fixed or reproduced.
   `handoff_20261004_230731.md`. No live workers remain. User requested
   handoff after interruption; no further behavior edits or implementation
   commits were made. Preserve the unfinished source/test files.
+
+## 2026-10-04 — A01/A02 completed (`72ff895`)
+
+- Caller aborts are now honest end-to-end: `classifyAbort` reads only
+  `.name` (under try/catch so a hostile `signal.reason` getter cannot
+  skip settlement/logging), signal.reason stays the sole
+  TimeoutError-vs-abort discriminator, and `finishLog(abortCode)` writes
+  `outcome: "aborted"` — the closed `SentLogOutcome` vocabulary gained the
+  one content-free member additively (Revision 13).
+- `"aborted"` had to be added to ALL five message-layer error unions
+  (llm-features, llm-provider, provider, restructure, summaries). A missing
+  member silently flattens the relay (`isSummarizeErrorCode` safeParse would
+  have mapped aborted→internal_error). Relay-site check for future code
+  additions: `toConnectionCode`, `RerankErrorCode`,
+  `DecisionPipelineErrorCode`, `DuplicateScanErrorCode` all union
+  `JevClientError["code"]` and flow verbatim already.
+- Jev keeps its intended retryable-timeout policy (Revision 12): the
+  internal deadline aborts with a TimeoutError DOMException reason, so
+  shared classification doesn't change Jev retry. LLM gate composes
+  `AbortSignal.any` so caller abort wins over deadline.
+- `src/jev/retry.ts` was already adequate (HTTP-date + jittered exp) —
+  A02's contribution was the LLM gate reusing it, not editing it.
+- Independent review (child session `7ac8d994`): PASS/PASS, one warning
+  (throwing `.name` getter could skip reservation settlement + sent-log
+  row) fixed and re-reviewed PASS.
+- Full gate green at commit: lint, typecheck, 2949 unit/168 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).

@@ -160,7 +160,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 2: Accounting and egress robustness
 <!-- execution: parallel -->
 
-- [~] Task 1: A01 + A02 — timeout classification and retry policy
+- [x] Task 1: A01 + A02 — timeout classification and retry policy (`72ff895`)
   <!-- files: src/net/llm-send.ts, src/net/send.ts, src/net/abort.ts, src/net/sent-log.ts, src/jev/retry.ts, src/jev/client.ts, src/db/database.ts, src/messages/llm-features.ts, src/messages/llm-provider.ts, src/messages/provider.ts, src/messages/restructure.ts, src/messages/summaries.ts -->
   - Tests: `AbortSignal.timeout` rejection → `timeout`, one request, one
     reservation; user abort distinguished; HTTP-date `Retry-After` honored;
