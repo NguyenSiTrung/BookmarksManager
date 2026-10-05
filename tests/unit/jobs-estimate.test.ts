@@ -98,8 +98,35 @@ describe("estimateJobCost", () => {
     expect(estimate.comparisons).toBe(plan.comparisons);
     expect(estimate.truncated).toBe(plan.truncated);
     expect(estimate.truncated).toBe(false);
-    // The token fold still only covers the bookmark payloads.
-    expect(estimate.totalBatches).toBe(1);
+    // A07/FR7: totalBatches mirrors `progress.totalBatches` on the persisted
+    // row — 1 bookmark batch + 1 pair batch (2 pairs at the default batch
+    // size of 5) — while the token fold still covers bookmark payloads only.
+    expect(estimate.totalBatches).toBe(2);
+    expect(estimate.batches).toHaveLength(1);
+  });
+
+  it("counts a passed plan instead of re-planning the pairs", async () => {
+    const plan = planNearDuplicates(PAIR_BOOKMARKS);
+    const truncatedPlan = { ...plan, truncated: true };
+    const estimate = estimateJobCost({
+      kind: "library_scan",
+      bookmarks: PAIR_BOOKMARKS,
+      plan: truncatedPlan,
+    });
+    // The supplied plan's own counts flow straight through — the pair
+    // batches derive from its length, not a second planning pass.
+    expect(estimate.pairs).toBe(plan.pairs.length);
+    expect(estimate.truncated).toBe(true);
+    expect(estimate.requests).toBe(PAIR_BOOKMARKS.length + plan.pairs.length);
+    // An ignored plan on a non-scan kind folds bookmark batches alone.
+    const selection = estimateJobCost({
+      kind: "analyze_selection",
+      bookmarks: PAIR_BOOKMARKS,
+      plan: truncatedPlan,
+    });
+    expect(selection.pairs).toBe(0);
+    expect(selection.requests).toBe(PAIR_BOOKMARKS.length);
+    expect(selection.totalBatches).toBe(1);
   });
 
   it("counts only the bookmark requests for an analyze_selection", () => {

@@ -129,11 +129,17 @@ describe("production job handlers", () => {
     // The fire-and-forget runner must not reach the network here.
     vi.spyOn(network, "sendConsented").mockRejectedValue(new Error("no network"));
 
-    const job = await productionHandlers().startJob("library_scan", ["a", "b"]);
+    const { job, estimate } = await productionHandlers().startJob("library_scan", ["a", "b"]);
 
     // 1 bookmark batch + 1 pair batch at the default batch size of 5.
     expect(job.progress.totalBatches).toBe(2);
     expect(job.nearDuplicatePlan?.pairs).toEqual([{ a: "a", b: "b" }]);
+    // A07: the start reply carries the same pre-run estimate the panel
+    // shows, with totalBatches mirroring the persisted progress counter
+    // (bookmark batches + pair batches).
+    expect(estimate?.requests).toBe(3); // 2 bookmarks + 1 pair
+    expect(estimate?.totalBatches).toBe(2);
+    expect(estimate?.inputTokens).toBeGreaterThan(0);
     const stored = await getJob(job.id);
     expect(stored?.nearDuplicatePlan?.truncated).toBe(false);
     // Pair IDs only — no raw titles or URLs in the persisted plan.
@@ -159,7 +165,10 @@ describe("production job handlers", () => {
     // The fire-and-forget runner must not reach the network here.
     vi.spyOn(network, "sendConsented").mockRejectedValue(new Error("no network"));
 
-    const job = await productionHandlers().startJob("library_scan", ["a", "b"]);
+    const { job, estimate } = await productionHandlers().startJob("library_scan", ["a", "b"]);
+    // The work-set read failed, so no estimate could be folded — the start
+    // still succeeds and simply omits it.
+    expect(estimate).toBeUndefined();
     const stored = await getJob(job.id);
     // Legacy row: no plan, bookmark-only batch total.
     expect(stored?.nearDuplicatePlan).toBeUndefined();

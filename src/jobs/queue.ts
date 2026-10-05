@@ -5,7 +5,7 @@ import {
 } from "../decisions/near-duplicate-plan";
 import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
 import { db } from "../db/database";
-import { Job, JobUsage, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
+import { Job, JobUsage, MAX_JOB_BOOKMARK_IDS, NEAR_DUPLICATE_PLAN_VERSION } from "../schemas/job";
 import type {
   JobKind,
   JobProgress,
@@ -49,7 +49,8 @@ export type JobQueueErrorCode =
   | "invalid_input"
   | "not_found"
   | "illegal_transition"
-  | "persist_failed";
+  | "persist_failed"
+  | "job_in_progress";
 
 /** Rejection for every failure this module produces. Messages stay redacted. */
 export class JobQueueError extends Error {
@@ -237,6 +238,15 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
     );
   }
   if (
+    options.bookmarkIds !== undefined &&
+    options.bookmarkIds.length > MAX_JOB_BOOKMARK_IDS
+  ) {
+    throw new JobQueueError(
+      "invalid_input",
+      `bookmarkIds is capped at ${MAX_JOB_BOOKMARK_IDS} ids.`,
+    );
+  }
+  if (
     options.nearDuplicatePlan !== undefined &&
     options.kind !== "library_scan"
   ) {
@@ -289,8 +299,45 @@ export async function enqueueJob(options: EnqueueJobOptions): Promise<PersistedJ
   } catch {
     throw new JobQueueError("invalid_input", "The job description is invalid.");
   }
-  await db.jobs.add(job);
-  return job;
+  // One live job per kind (A07): a second start while a same-kind job is
+  // pending, running, or paused must refuse, never strand the first job's
+  // bookkeeping mid-flight. The check and the insert share one transaction,
+  // so two racing starts cannot both pass.
+  return db.transaction("rw", db.jobs, async () => {
+    const live = await findLiveJobByKind(options.kind);
+    if (live !== undefined) {
+      throw new JobQueueError(
+        "job_in_progress",
+        `A ${options.kind} job is already ${live.status} (job ${live.id}); cancel it before starting another.`,
+      );
+    }
+    await db.jobs.add(job);
+    return job;
+  });
+}
+
+/**
+ * The statuses a job may occupy while still unfinished (A07): everything a
+ * start guard must treat as "live". Terminal rows have empty outgoing
+ * transitions in `LEGAL_TRANSITIONS` and never block a restart.
+ */
+export const LIVE_JOB_STATUSES = ["pending", "running", "paused"] as const;
+
+/**
+ * The non-terminal job of `kind`, if one exists (A07). Inside
+ * `enqueueJob`'s transaction this reads within the atomic check; callers may
+ * also use it as a cheap preflight to skip work a live row would reject
+ * anyway — the transaction remains the only authoritative check.
+ */
+export async function findLiveJobByKind(
+  kind: JobKind,
+): Promise<PersistedJob | undefined> {
+  const row = await db.jobs
+    .where("status")
+    .anyOf(...LIVE_JOB_STATUSES)
+    .and((job) => job.kind === kind)
+    .first();
+  return row === undefined ? undefined : parseJob(row);
 }
 
 /** Read one job, or `undefined` when it does not exist. */

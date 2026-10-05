@@ -191,6 +191,73 @@ describe("RESTRUCTURE_START", () => {
     );
     expect(reply).toMatchObject({ ok: false, code: "aborted" });
   });
+
+  // A07: the start reply carries a pre-run estimate folded over the same
+  // leaf rows the job will process (the fake tree has 3 leaf bookmarks).
+  it("returns a pre-run estimate covering the resolved leaf rows", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+
+    expect(reply).toMatchObject({
+      ok: true,
+      code: "job_ok",
+      estimate: {
+        requests: 3, // one assignment request per leaf bookmark
+        pairs: 0,
+        totalBatches: 1,
+        truncated: false,
+      },
+    });
+  });
+
+  // A07: a second START while the first restructure job is non-terminal is a
+  // typed rejection — the enqueue guard is an atomic row check.
+  it("rejects a second start while a restructure job is non-terminal", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+
+    const first = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(first).toMatchObject({ ok: true, code: "job_ok" });
+
+    const second = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(second).toMatchObject({ ok: false, code: "job_in_progress" });
+    // The preflight refused before the proposal send — no wasted egress, no
+    // second job row, no second runner.
+    expect(proposeLayout).toHaveBeenCalledTimes(1);
+    expect(runJobCalls).toHaveLength(1);
+  });
 });
 
 describe("RESTRUCTURE_START consent admission", () => {

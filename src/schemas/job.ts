@@ -23,6 +23,38 @@ export const JobKind = z.enum([
 ]);
 export type JobKind = z.infer<typeof JobKind>;
 
+/**
+ * Hard cap on a job's explicit work set (A07): bounds the persisted row,
+ * the `JOB_START` message, and every enqueue caller. Generous above any
+ * realistic library (the stress tests seed 10k) while still refusing
+ * absurd payloads before they reach a row or a batch plan.
+ */
+export const MAX_JOB_BOOKMARK_IDS = 50_000;
+
+/** One batch's estimated input tokens (see `estimateJobCost`). */
+export const BatchCostEstimate = z.object({
+  batchIndex: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+});
+export type BatchCostEstimate = z.infer<typeof BatchCostEstimate>;
+
+/**
+ * The pre-run cost estimate a start reply carries (A07/FR7). Mirrors the
+ * shape `estimateJobCost` produces — counts and lower bounds only, never
+ * bookmark content.
+ */
+export const JobCostEstimate = z.object({
+  totalBatches: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+  batches: z.array(BatchCostEstimate),
+  requests: z.number().int().min(0),
+  pairs: z.number().int().min(0),
+  comparisons: z.number().int().min(0),
+  truncated: z.boolean(),
+  pairLimit: z.number().int().min(1),
+});
+export type JobCostEstimate = z.infer<typeof JobCostEstimate>;
+
 /** The closed job lifecycle. */
 export const JobStatus = z.enum([
   "pending",
@@ -132,7 +164,7 @@ export const Job = z
     controlRevision: z.number().int().min(0).default(0).optional(),
     progress: JobProgress,
     batchSize: z.number().int().positive().default(DEFAULT_BATCH_SIZE),
-    bookmarkIds: z.array(z.string().min(1)).optional(),
+    bookmarkIds: z.array(z.string().min(1)).max(MAX_JOB_BOOKMARK_IDS).optional(),
     cursor: z.number().int().min(0).optional(),
     usage: JobUsage,
     /**

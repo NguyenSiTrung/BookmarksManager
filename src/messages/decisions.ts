@@ -6,8 +6,8 @@ import type {
 import { DecisionSettings } from "../decisions/policy";
 import type { RerankSearchResult } from "../decisions/rerank";
 import type { DecisionRow } from "../decisions/store";
-import { Job, JobKind } from "../schemas/job";
-import type { Job as JobDocument } from "../schemas/job";
+import { Job, JobCostEstimate, JobKind, MAX_JOB_BOOKMARK_IDS } from "../schemas/job";
+import type { Job as JobDocument, JobCostEstimate as JobCostEstimateType } from "../schemas/job";
 import { z } from "../schemas/z";
 
 /**
@@ -90,7 +90,7 @@ export const DecisionMessage = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("JOB_START"),
     kind: JobKind,
-    bookmarkIds: z.array(z.string().min(1)).min(1),
+    bookmarkIds: z.array(z.string().min(1)).min(1).max(MAX_JOB_BOOKMARK_IDS),
   }),
   z.object({ type: z.literal("JOB_PAUSE"), jobId: z.string().min(1) }),
   z.object({ type: z.literal("JOB_RESUME"), jobId: z.string().min(1) }),
@@ -178,7 +178,13 @@ export const DecisionMessageResult = z.union([
     code: z.literal("rerank_ok"),
     result: RerankSummary,
   }),
-  z.object({ ok: z.literal(true), code: z.literal("job_ok"), job: Job }),
+  z.object({
+    ok: z.literal(true),
+    code: z.literal("job_ok"),
+    job: Job,
+    /** A07/FR7: the pre-run estimate JOB_START replies carry. */
+    estimate: JobCostEstimate.optional(),
+  }),
   z.object({
     ok: z.literal(true),
     code: z.literal("decision_ok"),
@@ -234,7 +240,10 @@ export interface DecisionsHandlers {
   revert(id: string): Promise<DecisionRow>;
   bulkApprove(ids: readonly string[]): Promise<BulkApproveResult>;
   /** Enqueue a job and start it running in the background. */
-  startJob(kind: JobDocument["kind"], bookmarkIds: readonly string[]): Promise<JobDocument>;
+  startJob(
+    kind: JobDocument["kind"],
+    bookmarkIds: readonly string[],
+  ): Promise<{ job: JobDocument; estimate?: JobCostEstimateType }>;
   pauseJob(id: string): Promise<JobDocument>;
   resumeJob(id: string): Promise<JobDocument>;
   cancelJob(id: string): Promise<JobDocument>;
@@ -373,12 +382,18 @@ async function dispatch(
       return analyzeResult(await handlers.saveSuggest(message.bookmark));
     case "RERANK":
       return rerankResult(await handlers.rerank(message.query));
-    case "JOB_START":
+    case "JOB_START": {
+      const { job, estimate } = await handlers.startJob(
+        message.kind,
+        message.bookmarkIds,
+      );
       return {
         ok: true,
         code: "job_ok",
-        job: await handlers.startJob(message.kind, message.bookmarkIds),
+        job,
+        ...(estimate === undefined ? {} : { estimate }),
       };
+    }
     case "JOB_PAUSE":
       return { ok: true, code: "job_ok", job: await handlers.pauseJob(message.jobId) };
     case "JOB_RESUME":

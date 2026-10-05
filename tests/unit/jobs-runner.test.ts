@@ -111,6 +111,8 @@ describe("JobRunner.run", () => {
       await running;
       expect(analyzer.calls, settlement).toEqual(["bm-0"]);
       expect(await db.jobs.get(job.id), settlement).toEqual(replacement);
+      // A07: the next iteration's enqueue needs this row terminal.
+      await cancelJob(job.id, now);
     }
   });
 

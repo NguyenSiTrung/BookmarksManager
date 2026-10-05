@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../src/db/database";
-import { Job } from "../../src/schemas/job";
+import { Job, MAX_JOB_BOOKMARK_IDS } from "../../src/schemas/job";
 import { planNearDuplicates } from "../../src/decisions/near-duplicate-plan";
 import { UsageRecord } from "../../src/schemas/usage";
 import {
@@ -130,6 +130,99 @@ describe("enqueueJob", () => {
         now,
       }),
     ).rejects.toBeInstanceOf(JobQueueError);
+  });
+
+  // A07: one non-terminal job per kind — the second start is a typed
+  // rejection, checked atomically inside the enqueue transaction.
+  describe("one-live-job-per-kind guard", () => {
+    it.each(["pending", "running", "paused"] as const)(
+      "rejects a second same-kind enqueue while one is %s",
+      async (status) => {
+        const live = await enqueueJob({
+          kind: "analyze_selection",
+          bookmarkIds: ["bm-1"],
+          now,
+        });
+        if (status === "running") await setJobStatus(live.id, "running", {}, now);
+        if (status === "paused") await pauseJob(live.id, now);
+        const error = await enqueueJob({
+          kind: "analyze_selection",
+          bookmarkIds: ["bm-2"],
+          now,
+        }).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(JobQueueError);
+        expect((error as JobQueueError).code).toBe("job_in_progress");
+        expect((error as JobQueueError).message).toContain(live.id);
+        // The first row is untouched and no stray row was written.
+        expect((await db.jobs.toArray()).length).toBe(1);
+      },
+    );
+
+    it("allows a different kind while one is non-terminal", async () => {
+      await enqueueJob({
+        kind: "analyze_selection",
+        bookmarkIds: ["bm-1"],
+        now,
+      });
+      const scan = await enqueueJob({ kind: "library_scan", cursor: 0, now });
+      expect(scan.status).toBe("pending");
+    });
+
+    it.each(["completed", "failed", "canceled"] as const)(
+      "allows a restart once the live row is %s",
+      async (terminal) => {
+        const first = await enqueueJob({
+          kind: "analyze_selection",
+          bookmarkIds: ["bm-1"],
+          now,
+        });
+        if (terminal === "canceled") {
+          await cancelJob(first.id, now);
+        } else {
+          await setJobStatus(first.id, "running", {}, now);
+          await setJobStatus(
+            first.id,
+            terminal,
+            terminal === "failed" ? { error: "provider 503" } : {},
+            now,
+          );
+        }
+        const second = await enqueueJob({
+          kind: "analyze_selection",
+          bookmarkIds: ["bm-2"],
+          now,
+        });
+        expect(second.status).toBe("pending");
+        expect(second.id).not.toBe(first.id);
+      },
+    );
+  });
+
+  it("rejects a bookmark id set over the cap with invalid_input", async () => {
+    const ids = Array.from(
+      { length: MAX_JOB_BOOKMARK_IDS + 1 },
+      (_, index) => `bm-${index}`,
+    );
+    const error = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ids,
+      now,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(JobQueueError);
+    expect((error as JobQueueError).code).toBe("invalid_input");
+  });
+
+  it("accepts a bookmark id set at the cap", async () => {
+    const ids = Array.from(
+      { length: MAX_JOB_BOOKMARK_IDS },
+      (_, index) => `bm-${index}`,
+    );
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ids,
+      now,
+    });
+    expect(job.bookmarkIds?.length).toBe(MAX_JOB_BOOKMARK_IDS);
   });
 });
 

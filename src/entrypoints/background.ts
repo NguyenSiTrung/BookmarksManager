@@ -37,6 +37,7 @@ import {
   setJobStatus,
 } from "../jobs/queue";
 import { coordinateJob } from "../jobs/coordinator";
+import { estimateJobCost } from "../jobs/estimate";
 import {
   JobRunner,
   JobRunnerError,
@@ -59,6 +60,7 @@ import {
   type ActiveJevProvider,
 } from "../jev/settings";
 import type { Job } from "../schemas/job";
+import type { JobCostEstimate as JobCostEstimateType } from "../schemas/job";
 import { loadSessionIndex, registerOmnibox } from "../search/omnibox";
 import { runQuery } from "../search/run";
 import { get, getTree } from "../sync/chrome-bookmarks";
@@ -241,23 +243,6 @@ async function resolveWorkSet(
     });
   }
   return bookmarks;
-}
-
-/**
- * Resolve a library scan's bounded near-duplicate work plan at enqueue time
- * from the live tree (Task 5), so the persisted `totalBatches` and the
- * pre-start estimate already cover the pair phase. Best-effort: a read
- * failure falls back to no plan, and the runner acquires one on its first
- * uncommitted run instead.
- */
-async function resolveLibraryScanPlan(
-  bookmarkIds: readonly string[],
-): Promise<NearDuplicatePlan | undefined> {
-  try {
-    return planNearDuplicates(await resolveWorkSet(bookmarkIds));
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -463,12 +448,35 @@ export function productionHandlers(
       // with no error surfaced. The panel renders the refusal verbatim.
       await requireActiveProvider();
       const ids = [...bookmarkIds];
-      // Resolve a library scan's bounded pair plan now, so the persisted
-      // work set (and its truthful batch total) is durable from the start.
-      const plan =
-        kind === "library_scan"
-          ? await resolveLibraryScanPlan(ids)
-          : undefined;
+      // Resolve the work set once: a library scan's bounded pair plan and
+      // the pre-run estimate both fold over the same minimized rows.
+      // Best-effort like `resolveLibraryScanPlan` — a read failure falls
+      // back to no plan and no estimate, never blocks the start.
+      const workSet = await resolveWorkSet(ids).catch(() => undefined);
+      let plan: NearDuplicatePlan | undefined;
+      try {
+        plan =
+          kind === "library_scan" && workSet !== undefined
+            ? planNearDuplicates(workSet)
+            : undefined;
+      } catch {
+        plan = undefined;
+      }
+      // The estimate reuses the persisted plan rather than re-planning, and
+      // is itself best-effort: a failure omits it, never blocks the start.
+      let estimate: JobCostEstimateType | undefined;
+      try {
+        estimate =
+          workSet === undefined
+            ? undefined
+            : estimateJobCost({
+                bookmarks: workSet,
+                kind,
+                ...(plan === undefined ? {} : { plan }),
+              });
+      } catch {
+        estimate = undefined;
+      }
       const job = await enqueueJob({
         kind,
         bookmarkIds: ids,
@@ -480,7 +488,7 @@ export function productionHandlers(
         // The runner marks the job `failed` itself; a transport/context
         // failure here leaves it for the next worker start to retry.
       });
-      return job;
+      return { job, estimate };
     },
     pauseJob: (id) => pauseJob(id),
     async resumeJob(id) {

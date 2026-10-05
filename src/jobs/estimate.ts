@@ -3,7 +3,12 @@ import {
   NEAR_DUPLICATE_PAIR_LIMIT,
   planNearDuplicates,
 } from "../decisions/near-duplicate-plan";
-import type { JobKind } from "../schemas/job";
+import type { NearDuplicatePlan } from "../decisions/near-duplicate-plan";
+import type {
+  BatchCostEstimate,
+  JobCostEstimate,
+  JobKind,
+} from "../schemas/job";
 
 /**
  * Pre-run cost estimation for batch jobs (spec FR7 "before a job starts, show
@@ -38,30 +43,8 @@ export interface EstimateBookmark {
   readonly url: string;
 }
 
-/** One batch's estimated input tokens. */
-export interface BatchCostEstimate {
-  readonly batchIndex: number;
-  readonly inputTokens: number;
-}
-
-/** The whole-job estimate: batch breakdown, token total, and request counts. */
-export interface JobCostEstimate {
-  /** Bookmark batches the token fold covers. */
-  readonly totalBatches: number;
-  /** Lower-bound input tokens over the minimized bookmark payloads. */
-  readonly inputTokens: number;
-  readonly batches: readonly BatchCostEstimate[];
-  /** Total AI requests: one per bookmark plus one per planned pair. */
-  readonly requests: number;
-  /** Near-duplicate pairs the scan will request (the bounded shortlist). */
-  readonly pairs: number;
-  /** Candidate attempts the planner made while selecting those pairs. */
-  readonly comparisons: number;
-  /** `true` when the pair plan is bounded — more pairs may exist. */
-  readonly truncated: boolean;
-  /** The planner's pair cap, so the UI can disclose the truncation scope. */
-  readonly pairLimit: number;
-}
+/** The canonical estimate shapes live in `schemas/job` (shared with the start-reply wire contract); re-exported here for the estimate's callers. */
+export type { BatchCostEstimate, JobCostEstimate };
 
 export interface EstimateJobCostOptions {
   /** The bookmarks the job will analyze, in order. */
@@ -73,6 +56,13 @@ export interface EstimateJobCostOptions {
   readonly kind?: JobKind;
   /** Bookmark batch size; defaults to {@link DEFAULT_BATCH_SIZE}. */
   readonly batchSize?: number;
+  /**
+   * An already-computed near-duplicate plan to count instead of re-planning.
+   * A start path that computed the persisted plan passes it here so the
+   * estimate and the row agree and the planner runs once. Ignored unless
+   * `kind` is `"library_scan"`.
+   */
+  readonly plan?: NearDuplicatePlan;
 }
 
 /**
@@ -109,10 +99,19 @@ export function estimateJobCost(
   );
   const plan =
     options.kind === "library_scan"
-      ? planNearDuplicates(options.bookmarks)
+      ? (options.plan ?? planNearDuplicates(options.bookmarks))
       : { pairs: [], comparisons: 0, truncated: false };
+  // `totalBatches` mirrors `progress.totalBatches` on the persisted row:
+  // bookmark batches plus the pair batches a `library_scan` drives after
+  // them, chunked at the same size (`enqueueJob`/`JobRunner` share the
+  // formula). `batches[]` stays the bookmark-only token fold — pair batches
+  // add requests, not folded input tokens.
+  const pairBatches =
+    options.kind === "library_scan"
+      ? Math.ceil(plan.pairs.length / batchSize)
+      : 0;
   return {
-    totalBatches: batches.length,
+    totalBatches: batches.length + pairBatches,
     inputTokens,
     batches,
     requests: options.bookmarks.length + plan.pairs.length,

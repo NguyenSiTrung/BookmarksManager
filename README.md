@@ -52,6 +52,13 @@ the background. Your native Chrome bookmarks stay the source of truth.
   by Jev.
 - Monthly spending budget you set; per-scope consent tied to the exact origin
   you configured.
+- The monthly USD cap covers every send through the LLM consent gate —
+  Explain, Escalate, Restructure, page Summary, the Jev summary-verify hop,
+  and Test-connection pings (`llm_*` scopes). Reported provider costs count
+  as billed; traffic a provider cannot price is conservatively estimated.
+  TypeSafe/Jev analysis sends (decisions, library scans, Ask rerank) are
+  not billed paths: they are bounded by per-request token and request
+  limits, not the USD cap.
 
 ## Privacy and security
 

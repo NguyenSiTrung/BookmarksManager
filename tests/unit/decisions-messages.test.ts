@@ -16,7 +16,7 @@ import {
   type SettingsSnapshot,
 } from "../../src/messages/decisions";
 import type { Job } from "../../src/schemas/job";
-import { Job as JobSchema } from "../../src/schemas/job";
+import { Job as JobSchema, MAX_JOB_BOOKMARK_IDS } from "../../src/schemas/job";
 import type { UsageRecord } from "../../src/schemas/usage";
 
 /**
@@ -179,7 +179,19 @@ function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
     },
     async startJob(kind, bookmarkIds) {
       calls.startJob.push({ kind, ids: bookmarkIds });
-      return job({ kind });
+      return {
+        job: job({ kind }),
+        estimate: {
+          totalBatches: 1,
+          inputTokens: 10,
+          batches: [{ batchIndex: 0, inputTokens: 10 }],
+          requests: bookmarkIds.length,
+          pairs: 0,
+          comparisons: 0,
+          truncated: false,
+          pairLimit: 500,
+        },
+      };
     },
     async pauseJob(id) {
       calls.pause.push(id);
@@ -242,6 +254,26 @@ describe("fall-through and totality", () => {
     );
     expect(result).toMatchObject({ ok: false, code: "malformed_message" });
     expect(calls.analyzeById).toEqual([]);
+  });
+
+  // A07: JOB_START bounds its id set — an over-cap payload never reaches
+  // the handler, let alone the queue.
+  it("answers malformed_message when JOB_START exceeds the id cap", async () => {
+    const { handlers, calls } = makeHandlers();
+    const result = await handleDecisionsMessage(
+      {
+        type: "JOB_START",
+        kind: "analyze_selection",
+        bookmarkIds: Array.from(
+          { length: MAX_JOB_BOOKMARK_IDS + 1 },
+          (_, index) => `bm-${index}`,
+        ),
+      },
+      sender,
+      handlers,
+    );
+    expect(result).toMatchObject({ ok: false, code: "malformed_message" });
+    expect(calls.startJob).toEqual([]);
   });
 
   it("never throws when a handler rejects, mapping its .code", async () => {
@@ -436,7 +468,12 @@ describe("intent dispatch", () => {
     expect(calls.startJob).toEqual([
       { kind: "library_scan", ids: ["bm-1", "bm-2"] },
     ]);
-    expect(start).toMatchObject({ ok: true, code: "job_ok" });
+    // A07: a handler-supplied pre-run estimate rides the job_ok reply.
+    expect(start).toMatchObject({
+      ok: true,
+      code: "job_ok",
+      estimate: { requests: 2 },
+    });
 
     const pause = await handleDecisionsMessage(
       { type: "JOB_PAUSE", jobId: "j-1" },
@@ -547,12 +584,12 @@ describe("job recovery on cold worker startup", () => {
     });
     await setJobStatus(running.id, "running", {}, () => NOW);
     // A job evicted between `enqueueJob` and the first `setJobStatus("running")`
-    // is still `pending` — it must also require an explicit Resume.
-    const pending = await enqueueJob({
-      kind: "analyze_selection",
-      bookmarkIds: ["bm-2"],
-      now: () => NOW,
-    });
+    // is still `pending` — it must also require an explicit Resume. The A07
+    // one-live-job-per-kind guard is an enqueue-time check: rows that
+    // predate it (or were written by an older version) still surface, so the
+    // remaining same-kind rows are seeded directly to simulate them.
+    const pending = job({ bookmarkIds: ["bm-2"], status: "pending" });
+    await db.jobs.put(pending);
     // A `paused` job only reaches that status via an explicit user action; it
     // must stay paused until the user resumes it, so startup must NOT restart
     // the egress/cost the user halted.
@@ -562,13 +599,8 @@ describe("job recovery on cold worker startup", () => {
       now: () => NOW,
     });
     await pauseJob(paused.id, () => NOW);
-    const completed = await enqueueJob({
-      kind: "analyze_selection",
-      bookmarkIds: ["bm-4"],
-      now: () => NOW,
-    });
-    await setJobStatus(completed.id, "running", {}, () => NOW);
-    await setJobStatus(completed.id, "completed", {}, () => NOW);
+    const completed = job({ bookmarkIds: ["bm-4"], status: "completed" });
+    await db.jobs.put(completed);
 
     await resumeJobs();
     expect((await db.jobs.get(running.id))?.status).toBe("paused");
@@ -584,12 +616,10 @@ describe("job recovery on cold worker startup", () => {
       now: () => NOW,
     });
     await setJobStatus(first.id, "running", {}, () => NOW);
-    const second = await enqueueJob({
-      kind: "analyze_selection",
-      bookmarkIds: ["bm-2"],
-      now: () => NOW,
-    });
-    await setJobStatus(second.id, "running", {}, () => NOW);
+    // A second same-kind live row can only predate the A07 enqueue guard —
+    // seed it directly to simulate that legacy state.
+    const second = job({ bookmarkIds: ["bm-2"], status: "running" });
+    await db.jobs.put(second);
 
     await expect(resumeJobs()).resolves.toBeUndefined();
     expect((await db.jobs.get(first.id))?.status).toBe("paused");

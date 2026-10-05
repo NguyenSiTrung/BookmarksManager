@@ -3,14 +3,18 @@ import { BlocklistReadError, readBlocklist } from "../decisions/blocklist";
 import { domainOf, isSensitiveUrl } from "../decisions/minimize";
 import { listMeta } from "../db/meta";
 import {
+  JobQueueError,
   cancelJob,
   enqueueJob,
+  findLiveJobByKind,
   getJob,
   pauseJob,
   resumeJob,
   setJobStatus,
 } from "../jobs/queue";
-import type { Job } from "../schemas/job";
+import { MAX_JOB_BOOKMARK_IDS } from "../schemas/job";
+import type { Job, JobCostEstimate } from "../schemas/job";
+import { estimateJobCost } from "../jobs/estimate";
 import { LlmHttpError } from "../llm/client";
 import { hasConsentAtOrigin } from "../consent/records";
 import {
@@ -89,7 +93,7 @@ export const RestructureMessage = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("RESTRUCTURE_CONFIRM"),
     jobId: z.string().min(1),
-    bookmarkIds: z.array(z.string().min(1)).optional(),
+    bookmarkIds: z.array(z.string().min(1)).max(MAX_JOB_BOOKMARK_IDS).optional(),
   }),
   // Undo the most recent apply (the top `restructure` snapshot).
   z.strictObject({ type: z.literal("RESTRUCTURE_UNDO") }),
@@ -124,6 +128,7 @@ export const RestructureErrorCode = z.enum([
   "read_failed",
   "mutation_failed",
   "illegal_transition",
+  "job_in_progress",
   "unregistered_scope",
   "no_provider",
   "invalid_provider",
@@ -161,6 +166,8 @@ export const RestructureMessageResult = z.union([
     ok: z.literal(true),
     code: z.literal("job_ok"),
     job: z.custom<Job>(),
+    /** A07/FR7: the pre-run estimate RESTRUCTURE_START replies carry. */
+    estimate: z.custom<JobCostEstimate>().optional(),
   }),
   z.object({
     ok: z.literal(true),
@@ -243,6 +250,18 @@ function mapError(cause: unknown): RestructureMessageResult {
       `The LLM provider answered HTTP ${cause.status}.`,
     );
   }
+  if (cause instanceof JobQueueError) {
+    // A07: relay only codes the reply enum actually declares — the queue's
+    // own bookkeeping codes (persist_failed, invalid_input) collapse to a
+    // static internal_error like every other unexpected failure.
+    const parsed = RestructureErrorCode.safeParse(cause.code);
+    return parsed.success
+      ? failure(parsed.data, cause.message)
+      : failure(
+          "internal_error",
+          "The request failed unexpectedly; nothing was sent or changed on purpose.",
+        );
+  }
   return failure(
     "internal_error",
     "The request failed unexpectedly; nothing was sent or changed on purpose.",
@@ -293,12 +312,25 @@ async function startRestructure(
       consent,
     };
   }
+  // A07 preflight: refuse a second start before spending the proposal send —
+  // the atomic guard inside `enqueueJob` still owns the invariant; this only
+  // skips the wasted egress when a live restructure job already exists.
+  const live = await findLiveJobByKind("restructure");
+  if (live !== undefined) {
+    return failure(
+      "job_in_progress",
+      `A restructure job is already ${live.status} (job ${live.id}); cancel it before starting another.`,
+    );
+  }
   const [tree, metas, userBlocklist] = await Promise.all([
     getSubTree(ROOT_NODE_ID),
     listMeta(),
     readBlocklist(),
   ]);
   const leafIds: string[] = [];
+  // The same leaf rows in the shape the pre-run estimate folds —
+  // `{id, title, url}` and nothing else.
+  const leafBookmarks: { id: string; title: string; url: string }[] = [];
   // Complete LOCAL provenance, before any synopsis caps. Even a host omitted
   // from `domains` can contribute counts/tags/titles and ancestor folder paths.
   // Already-blocked leaves contributed nothing and must not poison later sends.
@@ -308,6 +340,7 @@ async function startRestructure(
     const node = pending.pop()!;
     if (node.url !== undefined) {
       leafIds.push(node.id);
+      leafBookmarks.push({ id: node.id, title: node.title, url: node.url });
       if (!isSensitiveUrl(node.url, userBlocklist) && domainOf(node.url) !== null) {
         sourceUrls.push(node.url);
       }
@@ -357,6 +390,12 @@ async function startRestructure(
       if (cause instanceof LlmGateError) await beforeSend();
       throw cause;
     });
+    // A07/FR7: the estimate is computed before the job runs and returned
+    // with the start reply — one assignment request per leaf bookmark.
+    const estimate = estimateJobCost({
+      bookmarks: leafBookmarks,
+      kind: "restructure",
+    });
     const job = await enqueueJob({
       kind: "restructure",
       bookmarkIds: leafIds,
@@ -366,7 +405,7 @@ async function startRestructure(
     void deps.runJob(job.id).catch(() => {
       // Best-effort; resumeJobs on the next worker start retries.
     });
-    return { ok: true, code: "job_ok", job: { ...job, status: "running" } };
+    return { ok: true, code: "job_ok", job: { ...job, status: "running" }, estimate };
   } catch (cause) {
     const reply = mapError(cause);
     if (!reply.ok && reply.code === "confirmation_required") {
