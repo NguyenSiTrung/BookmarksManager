@@ -164,6 +164,9 @@ function EditForm({
         tags: chips.map((chip) => chip.key),
         category: category === "" ? null : category,
         notes: notes === "" ? null : notes,
+        // D12: record the url the bookmark now carries (the dialog may
+        // have edited it — `target.url` is stale by then).
+        ...(isBookmark ? { url } : {}),
       });
       toast.showToast({ message: `Saved “${displayName}”.` });
       onClose();

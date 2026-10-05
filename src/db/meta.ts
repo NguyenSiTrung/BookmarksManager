@@ -3,8 +3,10 @@ import {
   BookmarkMeta,
   TagDef,
   tagNameKey,
+  type CorruptMetaRow,
   type TagNameKey,
 } from "../schemas/meta";
+import { z } from "../schemas/z";
 import { db } from "./database";
 
 /**
@@ -92,6 +94,13 @@ export interface MetaPatch {
    * unchanged on merge paths. Written only by the verified summarize flow.
    */
   summary?: string | null;
+  /**
+   * The node's URL at write time (D12): enables URL-keyed tombstone
+   * re-attachment and undo's id+url existence check. Callers that know
+   * the node pass it; absent keeps the stored value on merge paths. Not
+   * a lazy-row field — a url alone never keeps a row alive.
+   */
+  url?: string | null;
 }
 
 export interface TagCreateOptions {
@@ -118,7 +127,7 @@ export interface RenameTagResult {
 
 type MetaFields = Pick<
   BookmarkMeta,
-  "tags" | "category" | "notes" | "summary"
+  "tags" | "category" | "notes" | "summary" | "url"
 >;
 
 function nowIso(): string {
@@ -147,7 +156,8 @@ function normalizeTagKeys(tags: readonly string[]): TagNameKey[] {
   return keys;
 }
 
-/** The lazy-row rule: a row with no tags/category/notes/summary must not exist. */
+/** The lazy-row rule: a row with no tags/category/notes/summary must not
+ * exist. `url` is bookkeeping, not metadata — a url-only row still dies. */
 function isEmptyMeta(fields: MetaFields): boolean {
   return (
     fields.tags.length === 0 &&
@@ -169,9 +179,44 @@ function parseTagDef(raw: unknown): TagDef | undefined {
 }
 
 /**
+ * Keep a forensic copy of a schema-invalid stored row before it is
+ * overwritten or deleted (D13): the raw value lands in `corruptMeta`
+ * verbatim, bounded to the newest {@link CORRUPT_META_CAP} rows. Returns
+ * true when a copy was retained — a VALID or missing row is a no-op.
+ */
+export async function retainCorruptMeta(
+  id: string,
+  reason: CorruptMetaRow["reason"],
+): Promise<boolean> {
+  const raw = await db.bookmarkMeta.get(id);
+  if (raw === undefined || parseMeta(raw) !== undefined) return false;
+  await db.corruptMeta.add({
+    bookmarkId: id,
+    raw,
+    reason,
+    retainedAt: nowIso(),
+  });
+  // Bounded: drop the oldest beyond the cap (retainedAt indexes order).
+  const excess = (await db.corruptMeta.count()) - CORRUPT_META_CAP;
+  if (excess > 0) {
+    const stale = await db.corruptMeta
+      .orderBy("retainedAt")
+      .limit(excess)
+      .primaryKeys();
+    await db.corruptMeta.bulkDelete(stale);
+  }
+  return true;
+}
+
+/** How many forensic copies `corruptMeta` keeps. */
+export const CORRUPT_META_CAP = 50;
+
+/**
  * Commit a fully-resolved field set for `id`: validate, apply the lazy-row
  * rule, and store a fresh object. Returns the stored meta, or `undefined`
  * when the lazy rule deleted the row (or kept a missing row absent).
+ * An unreadable row already stored under `id` is retained to
+ * `corruptMeta` BEFORE the overwrite/delete touches it (D13).
  */
 async function commitMeta(
   id: string,
@@ -180,17 +225,21 @@ async function commitMeta(
   // An emptied textarea is "no notes", not a one-character-shy payload.
   const notes = fields.notes === "" ? undefined : fields.notes;
   const summary = fields.summary === "" ? undefined : fields.summary;
+  const url = fields.url === "" ? undefined : fields.url;
   const parsed = BookmarkMeta.safeParse({
     id,
     tags: fields.tags,
     ...(fields.category === undefined ? {} : { category: fields.category }),
     ...(notes === undefined ? {} : { notes }),
     ...(summary === undefined ? {} : { summary }),
+    ...(url === undefined ? {} : { url }),
+    schemaVersion: 1,
     updatedAt: nowIso(),
   });
   if (!parsed.success) {
     throw new MetaRepoError("invalid_meta", firstIssue(parsed.error));
   }
+  await retainCorruptMeta(id, "overwrite");
   if (isEmptyMeta(parsed.data)) {
     await db.bookmarkMeta.delete(id);
     return undefined;
@@ -328,12 +377,17 @@ export async function putMeta(
   id: string,
   fields: MetaPatch,
 ): Promise<BookmarkMeta | undefined> {
-  return commitMeta(id, {
-    tags: normalizeTagKeys(fields.tags ?? []),
-    category: fields.category ?? undefined,
-    notes: fields.notes ?? undefined,
-    summary: fields.summary ?? undefined,
-  });
+  // The transaction must cover `corruptMeta`: commitMeta retains an
+  // unreadable prior row inside the same write scope (D13).
+  return db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () =>
+    commitMeta(id, {
+      tags: normalizeTagKeys(fields.tags ?? []),
+      category: fields.category ?? undefined,
+      notes: fields.notes ?? undefined,
+      summary: fields.summary ?? undefined,
+      url: fields.url ?? undefined,
+    }),
+  );
 }
 
 /**
@@ -347,8 +401,9 @@ export async function patchMeta(
   id: string,
   patch: MetaPatch,
 ): Promise<BookmarkMeta | undefined> {
-  return db.transaction("rw", db.bookmarkMeta, async () => {
-    // Invalid stored rows are absent — the patch merges onto an empty base.
+  return db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+    // Invalid stored rows are absent — the patch merges onto an empty
+    // base; the unreadable row is retained before the overwrite (D13).
     const existing = parseMeta(await db.bookmarkMeta.get(id));
     return commitMeta(id, {
       tags:
@@ -367,6 +422,10 @@ export async function patchMeta(
         patch.summary === undefined
           ? existing?.summary
           : (patch.summary ?? undefined),
+      url:
+        patch.url === undefined
+          ? existing?.url
+          : (patch.url ?? undefined),
     });
   });
 }
@@ -387,9 +446,12 @@ export async function setBookmarkSummary(
 }
 
 /**
- * Bulk delete by Chrome bookmark id — the cascade-delete hook fires this
- * for a removed node plus every descendant. Returns the number of rows
- * actually deleted.
+ * Bulk delete by Chrome bookmark id — the raw primitive. Callers that
+ * must preserve removed metadata go through `tombstoneMetaByIds` (D12),
+ * which retains a URL-keyed copy (or a forensic copy for unparseable
+ * rows, D13) before the row leaves; merge-compensation callers rely on
+ * the merge undo snapshot holding the same rows. Returns the number of
+ * rows actually deleted.
  */
 export async function deleteMetaByIds(
   ids: readonly string[],
@@ -399,6 +461,65 @@ export async function deleteMetaByIds(
     .where("id")
     .anyOf([...new Set(ids)])
     .delete();
+}
+
+// ---------------------------------------------------------------------------
+// Integrity surface (D13) — invalid rows are counted and surfaced
+// ---------------------------------------------------------------------------
+
+/**
+ * Count of `bookmarkMeta` rows that fail schema validation. Reads drop
+ * these silently (invalid ⇒ absent); this scan is how the count is
+ * surfaced — `reconcileMetadata` refreshes it and
+ * {@link getMetaIntegrity} reads it.
+ */
+export async function countInvalidMetaRows(): Promise<number> {
+  const rows = await db.bookmarkMeta.toArray();
+  let invalid = 0;
+  for (const row of rows) {
+    if (parseMeta(row) === undefined) invalid += 1;
+  }
+  return invalid;
+}
+
+/** `metadata` key under which the integrity snapshot is surfaced. */
+const META_INTEGRITY_KEY = "metaIntegrity";
+
+export interface MetaIntegrity {
+  /** Schema-invalid `bookmarkMeta` rows at the last reconcile scan. */
+  invalidRows: number;
+  /** Forensic copies currently held in `corruptMeta`. */
+  corruptRows: number;
+  checkedAt: string;
+}
+
+/**
+ * Refresh the surfaced integrity snapshot: counts invalid bookmarkMeta
+ * rows + held corrupt copies and writes them under the `metaIntegrity`
+ * metadata key (validated loosely on read — a corrupt entry reads as
+ * absent). Called by `reconcileMetadata`; safe to call anywhere.
+ */
+export async function refreshMetaIntegrity(): Promise<MetaIntegrity> {
+  const integrity: MetaIntegrity = {
+    invalidRows: await countInvalidMetaRows(),
+    corruptRows: await db.corruptMeta.count(),
+    checkedAt: nowIso(),
+  };
+  await db.metadata.put({ key: META_INTEGRITY_KEY, value: integrity });
+  return integrity;
+}
+
+/** Last surfaced integrity snapshot, or `undefined` before the first scan. */
+export async function getMetaIntegrity(): Promise<MetaIntegrity | undefined> {
+  const row = await db.metadata.get(META_INTEGRITY_KEY);
+  const parsed = z
+    .strictObject({
+      invalidRows: z.number().int().min(0),
+      corruptRows: z.number().int().min(0),
+      checkedAt: z.iso.datetime(),
+    })
+    .safeParse(row?.value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 // ---------------------------------------------------------------------------

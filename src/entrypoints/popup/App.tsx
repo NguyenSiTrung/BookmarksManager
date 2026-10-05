@@ -508,6 +508,7 @@ export function App() {
           tags: chips.map((chip) => chip.key),
           category: category === "" ? null : category,
           notes: notes === "" ? null : notes,
+          url: trimmedUrl,
         });
       } catch (metaCause) {
         // Nothing should reference a half-saved bookmark — unwind it so the

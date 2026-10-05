@@ -308,6 +308,7 @@ export async function mergeGroup<T extends DuplicateCandidate>(
         tags: merged.tags,
         category: merged.category ?? null,
         notes: merged.notes ?? null,
+        url: keptNode.url ?? null,
       });
       return {
         ok: true,

@@ -242,16 +242,26 @@ async function getRestructureNode(
   }
 }
 
-/** Legacy probes are total; restructure probes reject ambiguous failures. */
-async function nodeExists(id: string, ctx?: RestoreContext): Promise<boolean> {
-  if (ctx?.kind === "restructure") {
-    return (await getRestructureNode(id)) !== undefined;
-  }
-  try {
-    return (await get(id))[0] !== undefined;
-  } catch {
-    return false;
-  }
+/**
+ * Legacy probes are total; restructure probes reject ambiguous failures.
+ * `expectedUrl` (D12): when the caller knows the URL the id should point
+ * at — a snapshot node's recorded url, or a meta row's — a live id whose
+ * current URL differs does NOT count as existing (a re-used/repointed id
+ * is a different bookmark; its row must not attach there).
+ */
+async function nodeExists(
+  id: string,
+  ctx?: RestoreContext,
+  expectedUrl?: string,
+): Promise<boolean> {
+  const node =
+    ctx?.kind === "restructure"
+      ? await getRestructureNode(id)
+      : await get(id)
+          .then((found) => found[0])
+          .catch(() => undefined);
+  if (node === undefined) return false;
+  return expectedUrl === undefined || node.url === expectedUrl;
 }
 
 /**
@@ -339,7 +349,10 @@ async function recreateSubtree(
   ctx: RestoreContext,
 ): Promise<void> {
   let createdId = ctx.idMap[node.id];
-  if (createdId !== undefined && !(await nodeExists(createdId, ctx))) {
+  if (
+    createdId !== undefined &&
+    !(await nodeExists(createdId, ctx, node.url))
+  ) {
     // An earlier attempt's recreation has itself been removed since —
     // the persisted mapping is dead; recreate the node fresh.
     delete ctx.idMap[node.id];
@@ -395,7 +408,9 @@ async function recreateNodes(
 ): Promise<void> {
   const ordered = [...snapshot.nodes].sort((a, b) => a.index - b.index);
   for (const node of ordered) {
-    if (await nodeExists(node.id)) continue; // never deleted — do not clone
+    // never deleted — do not clone; a repointed id is a different
+    // bookmark and takes the recreate path (D12 url check)
+    if (await nodeExists(node.id, undefined, node.url)) continue;
     const parentId = await resolveParent(node.parentId, ctx);
     const count = await childCount(parentId, ctx);
     await recreateSubtree(node, parentId, Math.min(node.index, count), ctx);
@@ -428,6 +443,7 @@ function mergeSurvivorMeta(
   category: Category | null;
   notes: string | null;
   summary: string | null;
+  url: string | null;
 } {
   // The merge's own survivor write — kept row first, then the rest in
   // recorded order (capture order == the group order mergeMemberMeta saw).
@@ -474,6 +490,7 @@ function mergeSurvivorMeta(
         : null),
     notes: segments.length > 0 ? segments.join(MERGE_NOTES_SEPARATOR) : null,
     summary: recorded.summary ?? current?.summary ?? null,
+    url: current?.url ?? recorded.url ?? null,
   };
 }
 
@@ -496,10 +513,13 @@ async function restoreMetaRows(
         category: meta.category ?? null,
         notes: meta.notes ?? null,
         summary: meta.summary ?? null,
+        url: meta.url ?? null,
       });
       continue;
     }
-    if (!(await nodeExists(meta.id))) continue; // never manufacture orphans
+    // never manufacture orphans; the url check (D12) keeps a meta row
+    // from attaching to a re-used id pointing at a different bookmark
+    if (!(await nodeExists(meta.id, undefined, meta.url))) continue;
     if (snapshot.kind === "merge") {
       const current = await getMeta(meta.id);
       await putMeta(meta.id, mergeSurvivorMeta(meta, snapshot.meta, current));
@@ -509,6 +529,7 @@ async function restoreMetaRows(
         category: meta.category ?? null,
         notes: meta.notes ?? null,
         summary: meta.summary ?? null,
+        url: meta.url ?? null,
       });
     }
     ctx.restoredIds.push(meta.id);
@@ -528,11 +549,18 @@ async function restoreMoves(
 ): Promise<void> {
   const ordered = [...snapshot.nodes].sort((a, b) => a.index - b.index);
   for (const node of ordered) {
-    const current = snapshot.kind === "restructure"
-      ? await getRestructureNode(node.id)
-      : await get(node.id)
-          .then((found) => found[0])
-          .catch(() => undefined);
+    const found =
+      snapshot.kind === "restructure"
+        ? await getRestructureNode(node.id)
+        : await get(node.id)
+            .then((nodes) => nodes[0])
+            .catch(() => undefined);
+    // A live id pointing at a different URL is not this node (D12).
+    const current =
+      found !== undefined &&
+      (node.url === undefined || found.url === node.url)
+        ? found
+        : undefined;
     if (current === undefined) {
       // A plain move skips deleted nodes; restructure must recover them.
       if (snapshot.kind !== "restructure") continue;
@@ -644,7 +672,7 @@ async function restoreTagDelete(
     });
   }
   for (const meta of snapshot.meta) {
-    if (!(await nodeExists(meta.id))) continue;
+    if (!(await nodeExists(meta.id, undefined, meta.url))) continue;
     const current = await getMeta(meta.id);
     if (current !== undefined && current.tags.includes(tagDef.nameKey)) {
       continue; // already re-added — nothing changes
@@ -655,7 +683,10 @@ async function restoreTagDelete(
     // current list; not found (defensive) → append.
     const at = recorded < 0 ? tags.length : Math.min(recorded, tags.length);
     tags.splice(at, 0, tagDef.nameKey);
-    await patchMeta(meta.id, { tags });
+    await patchMeta(meta.id, {
+      tags,
+      ...(meta.url === undefined ? {} : { url: meta.url }),
+    });
     ctx.restoredIds.push(meta.id);
   }
 }

@@ -3,7 +3,12 @@ import type { BudgetReservation } from "../llm/budget";
 import type { AuditEvent } from "../schemas/audit";
 import type { Decision } from "../schemas/decision";
 import type { Job } from "../schemas/job";
-import type { BookmarkMeta, TagDef } from "../schemas/meta";
+import type {
+  BookmarkMeta,
+  CorruptMetaRow,
+  MetaTombstone,
+  TagDef,
+} from "../schemas/meta";
 import type { ConsentRecord } from "../schemas/provider";
 import type { RestructureAssignment } from "../schemas/restructure";
 import type { UndoSnapshot } from "../schemas/undo";
@@ -92,6 +97,8 @@ export class BookmarksManagerDB extends Dexie {
   declare llmUsageMonths: Table<LlmUsageMonthRollup, string>;
   declare llmReservations: Table<BudgetReservation, string>;
   declare restructureAssignments: Table<RestructureAssignmentRow, [string, string]>;
+  declare metaTombstones: Table<MetaTombstone, string>;
+  declare corruptMeta: Table<CorruptMetaRow, number>;
 
   constructor() {
     super("BookmarksManager");
@@ -181,6 +188,15 @@ export class BookmarksManagerDB extends Dexie {
       // `[kind+createdAt]` serves latestRestructureJob with a single index
       // read (`.last()`) — no full jobs-table scan.
       jobs: "id,status,createdAt,[kind+createdAt]",
+    });
+    this.version(7).stores({
+      // D12: removed bookmarks' metadata, keyed by URL so a re-created
+      // bookmark re-attaches it; `removedAt` indexed for the 30-day
+      // retention prune.
+      metaTombstones: "url,removedAt",
+      // D13: forensic copies of schema-invalid bookmarkMeta rows — never
+      // overwritten/deleted without a copy landing here first; bounded.
+      corruptMeta: "++id,retainedAt",
     });
   }
 }

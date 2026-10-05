@@ -85,6 +85,60 @@ export const BookmarkMeta = z.strictObject({
    * summarize path; ≤2,000 chars matching `SUMMARY_VERIFY_LIMITS.summary`.
    */
   summary: z.string().min(1).max(2_000).optional(),
+  /**
+   * The node's URL when the row was last written (D12). Keys tombstone
+   * re-attachment — a bookmark removed and later re-created with the same
+   * URL gets its metadata back — and lets undo's existence check reject a
+   * live id that now points at a different URL. Never a caller-facing
+   * metadata field: a row holding ONLY a url is still empty (lazy-row
+   * rule). Optional — pre-D12 rows lack it and keep id-only checks.
+   */
+  url: z.string().min(1).optional(),
+  /**
+   * Storage schema epoch (D13): `1` on new writes, absent on pre-D13
+   * rows (still read). A row carrying a higher version — or failing the
+   * schema in any other way — counts as invalid: invisible to reads,
+   * counted and surfaced, and never overwritten without a retained copy.
+   */
+  schemaVersion: z.literal(1).optional(),
   updatedAt: z.iso.datetime(),
 });
 export type BookmarkMeta = z.infer<typeof BookmarkMeta>;
+
+/**
+ * Re-attachable record of a removed bookmark's metadata (D12), keyed by
+ * the removed node's URL. When `chrome.bookmarks.onCreated` reports a node
+ * with the same URL inside the retention window, its fields are written
+ * onto the new id and the tombstone is consumed. `deadId` is provenance
+ * only — Chrome ids are never re-attached to.
+ */
+export const MetaTombstone = z.strictObject({
+  /** The removed bookmark's URL — primary key AND re-attach key. */
+  url: z.string().min(1),
+  tags: z.array(TagNameKey).default([]),
+  category: Category.optional(),
+  notes: z.string().max(NOTES_MAX_LENGTH).optional(),
+  summary: z.string().min(1).max(2_000).optional(),
+  /** The bookmarkMeta id the fields came from (provenance only). */
+  deadId: z.string(),
+  removedAt: z.iso.datetime(),
+});
+export type MetaTombstone = z.infer<typeof MetaTombstone>;
+
+/**
+ * Forensic copy of a `bookmarkMeta` row that failed schema validation
+ * (D13): kept verbatim so an overwrite/delete never silently destroys
+ * whatever the row actually held. Bounded — the table is pruned to the
+ * newest entries when it grows past the cap.
+ */
+export const CorruptMetaRow = z.strictObject({
+  id: z.number().int().positive().optional(), // ++id assigned by IndexedDB
+  /** The `bookmarkMeta` primary key of the unreadable row. */
+  bookmarkId: z.string(),
+  /** The raw stored value, kept verbatim. */
+  raw: z.unknown(),
+  /** Which path found the row unreadable. */
+  reason: z.enum(["overwrite", "delete", "reconcile"]),
+  retainedAt: z.iso.datetime(),
+});
+export type CorruptMetaRow = z.infer<typeof CorruptMetaRow>;

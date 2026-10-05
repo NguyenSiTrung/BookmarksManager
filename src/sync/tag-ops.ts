@@ -191,7 +191,7 @@ export async function bulkAddTag(
     // Read-modify-write inside one transaction: each getMeta reads the
     // row's CURRENT committed+in-transaction state, so a concurrent op
     // can't slip a stale whole-array rewrite between our read and write.
-    await db.transaction("rw", db.bookmarkMeta, async () => {
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
       for (const id of new Set(ids)) {
         const current = await getMeta(id);
         if (current !== undefined && current.tags.includes(key)) continue;
@@ -223,7 +223,7 @@ export async function bulkRemoveTag(
     // Same transactional RMW as bulkAddTag — the read and the rewrite are
     // atomic per selection, so concurrent ops on shared ids can't lose
     // each other's changes.
-    await db.transaction("rw", db.bookmarkMeta, async () => {
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
       for (const id of new Set(ids)) {
         const current = await getMeta(id);
         if (current === undefined || !current.tags.includes(key)) continue;
@@ -255,7 +255,7 @@ export async function bulkSetCategory(
     // Transactional RMW as in bulkAddTag — each row is read and patched
     // atomically, so an overlapping category/tag write can't be clobbered
     // by a rewrite based on a stale read.
-    await db.transaction("rw", db.bookmarkMeta, async () => {
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
       for (const id of new Set(ids)) {
         const current = await getMeta(id);
         if (category === null) {
@@ -343,6 +343,7 @@ export async function deleteTagWithUndo(
       "rw",
       db.tags,
       db.bookmarkMeta,
+      db.corruptMeta,
       db.undo,
       db.decisions,
       async () => {

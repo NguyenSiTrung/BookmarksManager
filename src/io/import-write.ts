@@ -150,6 +150,9 @@ async function writeMeta(
       ...(meta.category === undefined ? {} : { category: meta.category }),
       ...(meta.notes === undefined ? {} : { notes: meta.notes }),
       ...(meta.summary === undefined ? {} : { summary: meta.summary }),
+      // D12: record the node's URL so a later remove→recreate re-attaches
+      // and undo's id+url check can tell a re-used id apart.
+      ...(item.kind === "bookmark" ? { url: item.url } : {}),
     });
   } catch (cause) {
     summary.failures.push({
