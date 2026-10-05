@@ -1371,3 +1371,29 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - **Verify before writing**: the duplicates banner clause needed zero code —
   the correct implementation landed under D07+D09 and is pinned by an
   existing test. Check spec items against current code before implementing.
+
+## Phase 6 Task 7 — U08 (5473200)
+
+- **Radix focus restore needs a trigger**: DialogContentModal's default
+  onCloseAutoFocus focuses context.triggerRef and preventDefaults the
+  FocusScope restore — with no Radix trigger (context-menu open) it
+  no-ops and strands focus on <body>. Capture document.activeElement in
+  onOpenAutoFocus (it fires BEFORE the scope moves focus) and restore it
+  in onCloseAutoFocus with an isConnected guard.
+- **Radix owns Title ids**: passing your own id to DialogTitle renders
+  the id but leaves aria-labelledby pointing at the generated context id
+  — a dangling reference. Let Radix wire it; tests should resolve the
+  referenced element, not hardcode an id.
+- **Radix v2 has no aria-modal**: modality is enforced via inert siblings.
+  Assert the labelledby linkage and focus behavior instead of the attr.
+- **react-hooks/refs bans ref writes during render**: capture pre-open
+  DOM state inside the autofocus event hook instead — it runs before the
+  focus scope moves focus.
+- **Single named dismiss**: when a labeled footer button is the close
+  control, hide the icon-only X (its sr-only "Close" name creates a
+  duplicate accessible name and an unlabeled affordance).
+- **Fire-and-forget sends get "Continue in background"**: no cancel
+  message exists, so honesty is the label, not a pretend-cancel.
+- **git wrapper requires -m**: `-F` is rejected; avoid apostrophes in
+  `-m` bodies (they terminate the single-quoted arg early and silently
+  truncate the message — verify %B after committing).

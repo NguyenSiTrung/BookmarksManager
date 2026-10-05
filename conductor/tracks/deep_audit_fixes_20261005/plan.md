@@ -402,7 +402,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     edit id survives tree changes at startup; banner Undo performs the undo and
     shows its real result.
   - Fix: delta patch, consume key after resolve, call undo directly.
-- [ ] Task 7: U08 — SummaryDialog on shared Dialog
+- [x] Task 7: U08 — SummaryDialog on shared Dialog (5473200)
   <!-- files: src/entrypoints/sidepanel/SummaryDialog.tsx, src/ui/components/dialog.tsx -->
   - Tests: focus is trapped and restored; dark theme tokens used; Close while
     running cancels or is labeled "continue in background".
