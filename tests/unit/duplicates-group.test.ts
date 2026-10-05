@@ -36,17 +36,52 @@ describe("groupDuplicates — shapes and labels", () => {
 
   it("labels cross-variant duplicates as a normalized group keyed by the normalized URL", () => {
     const groups = groupDuplicates([
-      bm("a", "http://www.example.com/a/"),
+      bm("a", "https://www.example.com/a/"),
       bm("b", "https://example.com/a?utm_source=x"),
     ]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ key: "example.com/a", kind: "normalized" });
+    expect(groups[0]).toMatchObject({ key: "https://example.com/a", kind: "normalized" });
     expect(groups[0]?.items.map((i) => i.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not group http and https spellings of the same URL (D01)", () => {
+    // Scheme is part of the page identity — a redirect hop or different
+    // content must never merge the two bookmarks.
+    const groups = groupDuplicates([
+      bm("a", "http://example.com/a"),
+      bm("b", "https://example.com/a"),
+    ]);
+    expect(groups).toEqual([]);
+  });
+
+  it("does not group distinct SPA routes (D01)", () => {
+    const groups = groupDuplicates([
+      bm("a", "https://app.com/#/inbox"),
+      bm("b", "https://app.com/#/settings"),
+    ]);
+    expect(groups).toEqual([]);
+  });
+
+  it("does not group different `ref` values on a repo host (D01)", () => {
+    const groups = groupDuplicates([
+      bm("a", "https://github.com/o/r?ref=a"),
+      bm("b", "https://github.com/o/r?ref=b"),
+    ]);
+    expect(groups).toEqual([]);
+  });
+
+  it("still groups true tracking-param duplicates", () => {
+    const groups = groupDuplicates([
+      bm("a", "https://example.com/a?utm_source=x&id=1"),
+      bm("b", "https://www.example.com/a?id=1&utm_campaign=y"),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ kind: "normalized" });
   });
 
   it("keeps group items in input order", () => {
     const groups = groupDuplicates([
-      bm("z-first", "http://example.com/"),
+      bm("z-first", "https://www.example.com/"),
       bm("unrelated", "https://other.com/"),
       bm("a-second", "https://example.com/"),
     ]);
@@ -77,7 +112,7 @@ describe("groupDuplicates — exact/normalized overlap rule", () => {
     const groups = groupDuplicates([
       bm("a", "https://example.com/x"),
       bm("b", "https://example.com/x"),
-      bm("c", "http://example.com/x?utm_source=y"),
+      bm("c", "https://example.com/x?utm_source=y"),
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0]).toMatchObject({
@@ -85,7 +120,7 @@ describe("groupDuplicates — exact/normalized overlap rule", () => {
       key: "https://example.com/x",
     });
     expect(groups[0]?.items.map((i) => i.id)).toEqual(["a", "b"]);
-    expect(groups[1]).toMatchObject({ kind: "normalized", key: "example.com/x" });
+    expect(groups[1]).toMatchObject({ kind: "normalized", key: "https://example.com/x" });
     expect(groups[1]?.items.map((i) => i.id)).toEqual(["a", "b", "c"]);
   });
 
@@ -93,8 +128,8 @@ describe("groupDuplicates — exact/normalized overlap rule", () => {
     const groups = groupDuplicates([
       bm("a", "https://example.com/x"),
       bm("b", "https://example.com/x"),
-      bm("c", "http://example.com/x"),
-      bm("d", "http://example.com/x"),
+      bm("c", "https://www.example.com/x"),
+      bm("d", "https://www.example.com/x"),
     ]);
     expect(groups).toHaveLength(3);
     const kinds = groups.map((g) => g.kind);
@@ -151,20 +186,20 @@ describe("groupDuplicates — singletons and ordering", () => {
     // rule: exact groups in first-seen order, then normalized groups in
     // first-seen order — NOT input order across kinds.
     const groups = groupDuplicates([
-      bm("n1", "http://www.shared.com/p/"), // normalized key first-seen 1st
+      bm("n1", "https://www.shared.com/p/"), // normalized key first-seen 1st
       bm("e1", "https://same.com/z"), // exact key first-seen 2nd
       bm("n2", "https://shared.com/p"), // completes normalized bucket
       bm("e2", "https://same.com/z"), // completes exact bucket
       bm("e3", "https://other.com/q"), // exact key first-seen 3rd
       bm("e4", "https://other.com/q"),
-      bm("n3", "http://www.late.com/m?utm_source=z"),
+      bm("n3", "https://www.late.com/m?utm_source=z"),
       bm("n4", "https://late.com/m"),
     ]);
     expect(groups.map((g) => [g.kind, g.key])).toEqual([
       ["exact", "https://same.com/z"],
       ["exact", "https://other.com/q"],
-      ["normalized", "shared.com/p"],
-      ["normalized", "late.com/m"],
+      ["normalized", "https://shared.com/p"],
+      ["normalized", "https://late.com/m"],
     ]);
   });
 

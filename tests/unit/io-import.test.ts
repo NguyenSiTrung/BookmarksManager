@@ -255,8 +255,8 @@ describe("planImport — preview counts", () => {
 
 describe("planImport — duplicate skip by normalized URL", () => {
   it("skips a bookmark whose normalized URL already exists in the library", () => {
-    // The seeded bookmark is https://existing.example/page → "existing.example/page".
-    // www., utm_*, the fragment and the https scheme all normalize away.
+    // The seeded bookmark is https://existing.example/page → "https://existing.example/page".
+    // www., utm_* and the plain anchor fragment all normalize away.
     const plan = planImport({
       items: [
         bm("dup", "https://www.existing.example/page?utm_source=x#frag"),
@@ -269,6 +269,26 @@ describe("planImport — duplicate skip by normalized URL", () => {
     expect(plan.duplicatesSkipped).toBe(1);
     expect(plan.bookmarks).toBe(1);
     expect(plan.items).toEqual([bm("new", "https://new.example/")]);
+  });
+
+  it("keeps distinct SPA routes, repo `ref` values, and http vs https (D01)", () => {
+    // The normalized key is scheme- and route-aware: none of these may be
+    // skipped as duplicates of the https bookmark already in the library.
+    const plan = planImport({
+      items: [
+        bm("r1", "https://app.com/#/inbox"),
+        bm("r2", "https://app.com/#/settings"),
+        bm("ref", "https://github.com/o/r?ref=dev"),
+        bm("plain", "http://existing.example/page"),
+      ],
+      existingUrls: new Set([
+        normalizeUrl("https://app.com/#/inbox") as string,
+        normalizeUrl("https://github.com/o/r?ref=main") as string,
+        normalizeUrl(EXISTING_URL) as string,
+      ]),
+    });
+    expect(plan.duplicatesSkipped).toBe(1); // only the exact r1 match
+    expect(plan.bookmarks).toBe(3);
   });
 
   it("importDuplicates re-includes skipped bookmarks", () => {

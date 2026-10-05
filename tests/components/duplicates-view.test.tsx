@@ -62,7 +62,7 @@ import { installBookmarksFake } from "../fakes/chrome-bookmarks";
  * Expected groups (exact first, first-seen order):
  *  1. exact     "https://x.example/"  → x1, x2, x3
  *  2. exact     "https://m.example/"  → mA, mB
- *  3. normalized "a.example/page"     → n1, n2
+ *  3. normalized "https://a.example/page"     → n1, n2
  * (the normalized buckets for x.example and m.example equal their exact
  * member sets and are suppressed by groupDuplicates.)
  */
@@ -227,7 +227,7 @@ describe("resolveDuplicateGroups", () => {
     expect(groups.map((group) => group.key)).toEqual([
       "https://x.example/",
       "https://m.example/",
-      "a.example/page",
+      "https://a.example/page",
     ]);
     expect(groups[0]?.items.map((item) => item.id)).toEqual([
       "x1",
@@ -263,11 +263,11 @@ describe("DuplicatesView rendering", () => {
     );
     expect(exact.textContent).toMatch(/3 (members|duplicates)/);
 
-    const normalized = groupCard("a.example/page");
+    const normalized = groupCard("https://a.example/page");
     expect(within(normalized).getByText("Normalized")).toBeTruthy();
     expect(normalized.textContent).toContain("a.example");
     expect(normalized.querySelector("header")?.getAttribute("title")).toBe(
-      "a.example/page",
+      "https://a.example/page",
     );
     expect(normalized.textContent).toMatch(/2 (members|duplicates)/);
 

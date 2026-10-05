@@ -39,6 +39,9 @@ import type { NetscapeNode } from "./netscape";
  * library) and every KEPT bookmark's key is added to it, so a URL appearing
  * twice inside one file is also skipped on its second occurrence (importing
  * the twin would create the very duplicate the preview promised to avoid).
+ * The key is scheme-aware (D01): an `http:` page does not dedup against an
+ * `https:` one, and route fragments / `ref` params on non-tracking hosts
+ * keep otherwise-equal URLs distinct.
  * Bookmarks whose URL has no normalized form (`normalizeUrl` → `null`:
  * `ftp:`, `chrome:`, schemeless, unparseable) can never be duplicates and are
  * always kept. `options.importDuplicates` disables the whole check.

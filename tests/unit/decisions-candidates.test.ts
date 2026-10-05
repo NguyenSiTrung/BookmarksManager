@@ -411,7 +411,7 @@ describe("nearDuplicatePairs", () => {
     ]);
     expect(exact).toEqual([]);
     const normalized = nearDuplicatePairs([
-      near("a", "Same title", "http://www.example.com/x?utm_source=y"),
+      near("a", "Same title", "https://www.example.com/x?utm_source=y"),
       near("b", "Same title", "https://example.com/x"),
       near("c", "Same title", "https://example.com/different"),
     ]);

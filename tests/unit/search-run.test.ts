@@ -608,10 +608,10 @@ describe("runQuery — input forms and warnings", () => {
 
 describe("collectDuplicateIds", () => {
   it("unions exact and normalized group members, empty otherwise", () => {
-    // http/https pair is a normalized-only duplicate.
+    // www./non-www pair is a normalized-only duplicate.
     const ids = collectDuplicateIds([
       { id: "a", url: "https://x.example/1" },
-      { id: "b", url: "http://x.example/1" },
+      { id: "b", url: "https://www.x.example/1" },
       { id: "c", url: "https://y.example/" },
     ]);
     expect(ids).toEqual(new Set(["a", "b"]));
