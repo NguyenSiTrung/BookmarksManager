@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { patchMeta } from "../../db/meta";
+import type { MetaPatch } from "../../db/meta";
 import { Category } from "../../schemas/bookmark";
 import { tagNameKey } from "../../schemas/meta";
 import type { BookmarkMeta } from "../../schemas/meta";
 import { moveNode, renameFolder, updateBookmark } from "../../sync/mutations";
 import type { FlattenedTree, TreeEntry } from "../../sync/tree";
-import { bulkAddTag } from "../../sync/tag-ops";
+import { bulkAddTag, bulkRemoveTag } from "../../sync/tag-ops";
 import {
   Dialog,
   DialogContent,
@@ -21,16 +22,21 @@ import { errorMessage, useToast } from "./UndoToast";
  * Edit dialog for a bookmark OR a folder: title, url (bookmarks only), the
  * parent folder, tag chips, category and notes.
  *
- *  - **Save is staged, one write path per field group.** Title/url go through
- *    `updateBookmark` (or `renameFolder` for a folder), a changed parent
- *    through `moveNode`, and tags/category/notes through ONE `patchMeta`
- *    (merge semantics: `null` clears). Chrome is written first, then the
- *    metadata sidecar — the same order the mutation service documents.
+ *  - **Save is staged, one write path per field group, and only fields the
+ *    user changed are written.** Title/url go through `updateBookmark` (or
+ *    `renameFolder` for a folder), a changed parent through `moveNode`, and
+ *    tag/category/notes reach `patchMeta` only when they differ from the
+ *    opening snapshot — merge semantics keep every untouched field (and any
+ *    external write) intact. Chrome is written first, then the metadata
+ *    sidecar — the same order the mutation service documents.
  *  - **Tag chips resolve-or-create defs on demand.** Chips stage display
- *    names locally; on Save each one runs through `bulkAddTag`, which
- *    resolves the case-insensitive `nameKey` and creates the definition when
- *    it is new, then the final `patchMeta` writes the exact staged key list
- *    (so removed chips are dropped and the stored order is the visible one).
+ *    names locally; on Save only the delta against the opening tag set is
+ *    applied — added chips run `bulkAddTag` (which resolves the
+ *    case-insensitive `nameKey`, creates the definition when new, and
+ *    appends to the LIVE tag list), removed keys run `bulkRemoveTag`
+ *    (filter the live list). Both are transactional read-modify-writes, so
+ *    a tag that landed while the dialog was open — say from an applied
+ *    suggestion — is preserved instead of lost to a stale whole-list write.
  *  - **Parent picker deny list.** Managed folders are disabled, and when the
  *    target is a folder its own subtree is disabled too (`moveDeniedIds`) —
  *    the same deny list the "Move to…" dialog uses.
@@ -154,20 +160,40 @@ function EditForm({
       if (parentId !== "" && parentId !== target.parentId) {
         await moveNode(target.id, { parentId });
       }
-      // 2. Tag definitions — resolve-or-create through tag-ops.
+      // 2. Tag deltas against the OPENING tag set: new chips resolve-or-
+      //    create their def and append to the live list; removed chips are
+      //    filtered from it. Untouched keys — and any tag added externally
+      //      while this dialog was open — are preserved.
+      const openKeys = new Set(meta?.tags ?? []);
+      const stagedKeys = new Set(chips.map((chip) => chip.key));
       for (const chip of chips) {
+        if (openKeys.has(chip.key)) continue;
         const result = await bulkAddTag([target.id], chip.label);
         if (!result.ok) throw new Error(result.message);
       }
-      // 3. One meta merge: exact staged tags, category/notes (null clears).
-      await patchMeta(target.id, {
-        tags: chips.map((chip) => chip.key),
-        category: category === "" ? null : category,
-        notes: notes === "" ? null : notes,
-        // D12: record the url the bookmark now carries (the dialog may
-        // have edited it — `target.url` is stale by then).
-        ...(isBookmark ? { url } : {}),
-      });
+      for (const key of openKeys) {
+        if (stagedKeys.has(key)) continue;
+        const result = await bulkRemoveTag([target.id], key);
+        if (!result.ok) throw new Error(result.message);
+      }
+      // 3. Meta merge for only the fields the user changed — absent keys
+      //    keep their stored values, so an external category/notes edit is
+      //    never clobbered by the dialog's opening snapshot. `url` (D12)
+      //    records the url the bookmark now carries when the dialog edited
+      //    it — `target.url` is stale by then.
+      const metaPatch: MetaPatch = {};
+      if (category !== (meta?.category ?? "")) {
+        metaPatch.category = category === "" ? null : category;
+      }
+      if (notes !== (meta?.notes ?? "")) {
+        metaPatch.notes = notes === "" ? null : notes;
+      }
+      if (isBookmark && url !== target.url) {
+        metaPatch.url = url;
+      }
+      if (Object.keys(metaPatch).length > 0) {
+        await patchMeta(target.id, metaPatch);
+      }
       toast.showToast({ message: `Saved “${displayName}”.` });
       onClose();
     } catch (cause) {

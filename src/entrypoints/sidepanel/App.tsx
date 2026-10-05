@@ -549,16 +549,18 @@ export function App(props?: {
    *  - the MOUNT/TREE read catches an id stashed before the panel existed,
    *    which only becomes resolvable once the first `getTree()` lands.
    *
-   * In both paths the key is cleared as soon as it is read — unconditionally,
-   * before the id is resolved — so a stale id whose bookmark was deleted can
-   * never be replayed into a later mount. Absent session storage degrades to
+   * In both paths the key is consumed only AFTER the id resolves — an
+   * unresolved id keeps its slot so a tree that is still loading (or a
+   * bookmark the popup just created) retries on the next tree change
+   * instead of losing the handoff. Absent session storage degrades to
    * `null` / an inert unsubscribe (no-op).
    */
-  const openPendingEdit = useCallback((id: string): void => {
+  const openPendingEdit = useCallback((id: string): boolean => {
     const entry =
       treeRef.current.bookmarks.get(id) ?? treeRef.current.folders.get(id);
-    if (entry === undefined) return;
+    if (entry === undefined) return false;
     setEditTarget(entry);
+    return true;
   }, []);
 
   useEffect(() => {
@@ -567,9 +569,14 @@ export function App(props?: {
 
   useEffect(() => {
     return onPendingEditId((id) => {
-      // Clear first: the id is consumed whether or not it still resolves.
-      void clearPendingEditId();
-      openPendingEdit(id);
+      // Consume only once the id resolves — an unresolvable one keeps its
+      // key for the mount/tree reader to retry on the next tree change.
+      if (!openPendingEdit(id)) return;
+      // Compare-then-clear: a NEWER id may have been stashed while this one
+      // resolved — remove the key only if it is still ours.
+      void (async () => {
+        if ((await readPendingEditId()) === id) await clearPendingEditId();
+      })();
     });
   }, [openPendingEdit]);
 
@@ -581,11 +588,15 @@ export function App(props?: {
     void (async () => {
       const pendingId = await readPendingEditId();
       if (pendingId === null) return;
-      await clearPendingEditId();
-      if (cancelled) return;
       const entry =
         tree.bookmarks.get(pendingId) ?? tree.folders.get(pendingId);
-      if (entry === undefined) return;
+      // The id survives tree changes until it resolves: an unknown id
+      // leaves its key in place and this effect retries on the next tree.
+      if (entry === undefined || cancelled) return;
+      // Compare-then-clear — do not clobber a newer handoff.
+      if ((await readPendingEditId()) === pendingId) {
+        await clearPendingEditId();
+      }
       setEditTarget(entry);
     })();
     return () => {

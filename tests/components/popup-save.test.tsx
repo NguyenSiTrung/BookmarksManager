@@ -737,13 +737,43 @@ describe("SidePanelApp — pending edit handoff", () => {
     await waitFor(() => expect(session.has(PENDING_EDIT_KEY)).toBe(false));
   });
 
-  it("clears a stale pending id whose bookmark no longer exists", async () => {
+  it("keeps a pending id whose bookmark cannot resolve yet", async () => {
+    // Consume-on-resolve (U07): an id that does not resolve keeps its slot
+    // — it may name a bookmark the tree has not loaded yet.
     session.set(PENDING_EDIT_KEY, "deleted-bookmark");
     render(<SidePanelApp />);
 
     await screen.findByRole("treeitem", { name: "Other bookmarks" });
-    // Read → cleared unconditionally, even though nothing resolves for it.
-    await waitFor(() => expect(session.has(PENDING_EDIT_KEY)).toBe(false));
+    // The id is NOT consumed by a failed resolve.
+    expect(session.get(PENDING_EDIT_KEY)).toBe("deleted-bookmark");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps an unresolved pending id across tree changes", async () => {
+    // The startup path re-checks the stashed id on every tree change and
+    // only consumes it once the entry resolves.
+    const getTreeSpy = vi.spyOn(fake, "getTree");
+    session.set(PENDING_EDIT_KEY, "ghost-id");
+    render(<SidePanelApp />);
+    await screen.findByRole("treeitem", { name: "Other bookmarks" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(session.get(PENDING_EDIT_KEY)).toBe("ghost-id");
+    const readsAtLoad = getTreeSpy.mock.calls.length;
+
+    // A structural bookmark event re-derives the tree (through the
+    // coalescing window) — the stashed id is re-checked, still unresolved,
+    // still kept.
+    await act(async () => {
+      await fake.create({
+        parentId: "1",
+        title: "Later",
+        url: "https://later.example/",
+      });
+    });
+    await waitFor(() =>
+      expect(getTreeSpy.mock.calls.length).toBeGreaterThan(readsAtLoad),
+    );
+    expect(session.get(PENDING_EDIT_KEY)).toBe("ghost-id");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

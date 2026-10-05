@@ -19,7 +19,7 @@ import {
   vi,
 } from "vitest";
 import { db } from "../../src/db/database";
-import { createTag, getMeta, getTag, putMeta } from "../../src/db/meta";
+import { createTag, getMeta, getTag, patchMeta, putMeta } from "../../src/db/meta";
 import { flattenTree } from "../../src/sync/tree";
 import { App } from "../../src/entrypoints/sidepanel/App";
 import { EditDialog } from "../../src/entrypoints/sidepanel/EditDialog";
@@ -254,6 +254,80 @@ describe("EditDialog", () => {
     expect(meta?.notes).toBe("hello");
     // The tag definition was created on demand through tag-ops.
     expect(await getTag("urgent")).toBeDefined();
+  });
+
+  it("keeps a tag added externally while the dialog was open (U07)", async () => {
+    await patchMeta("b1", { tags: ["one"] });
+    await renderApp();
+
+    await openItemMenu("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog");
+    // The opening tag list is staged.
+    expect(within(dialog).getByText("one")).toBeTruthy();
+
+    // An approval applies its tag while the dialog is open — a stale
+    // whole-list write would drop it.
+    await patchMeta("b1", { tags: ["one", "approved"] });
+
+    // The user adds their own tag and saves.
+    fireEvent.change(within(dialog).getByLabelText("New tag name"), {
+      target: { value: "Two" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add tag" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // The delta merged into the live row: approved survived, two appended.
+    const meta = await getMeta("b1");
+    expect(meta?.tags).toEqual(["one", "approved", "two"]);
+  });
+
+  it("removes a staged-away tag without touching externally added ones (U07)", async () => {
+    await patchMeta("b1", { tags: ["one", "two"] });
+    await renderApp();
+
+    await openItemMenu("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog");
+
+    // External tag lands mid-edit.
+    await patchMeta("b1", { tags: ["one", "two", "approved"] });
+
+    // The user removes "one" and saves — only that delta applies.
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Remove tag one" }),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    const meta = await getMeta("b1");
+    expect(meta?.tags).toEqual(["two", "approved"]);
+  });
+
+  it("does not clobber category/notes set externally while open (U07)", async () => {
+    await renderApp();
+
+    await openItemMenu("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog");
+
+    // A decision approval sets category/notes while the dialog is open.
+    await patchMeta("b1", { category: "docs", notes: "from approval" });
+
+    // The user changes ONLY the title — no meta fields were touched, so no
+    // meta write may clear the external values.
+    fireEvent.change(within(dialog).getByLabelText("Title"), {
+      target: { value: "Alpha renamed" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect((await fake.get("b1"))[0]?.title).toBe("Alpha renamed");
+    expect(await getMeta("b1")).toMatchObject({
+      category: "docs",
+      notes: "from approval",
+    });
   });
 
   it("edits a folder: rename, move and meta, denying its own subtree", async () => {
