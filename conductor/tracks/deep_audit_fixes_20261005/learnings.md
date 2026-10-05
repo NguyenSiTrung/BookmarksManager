@@ -1562,3 +1562,29 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   would have counted history rows as hidden popup placeholders).
 - Standalone `render(<ReviewView/>)` mounts no toast host — assert the
   store transition + sent intent, not `undo-toast`, outside App renders.
+
+## Phase 7 Task 4 (H06 — documentation and store sync, 6060739)
+
+- Docs-only task: edit ONLY where behavior changed this track — enumerate
+  track commits first (`git log 58814f6..HEAD`), then verify each
+  changed-behavior claim against code before editing. Claims that were
+  already synced (store/permissions.md `alarms`, consent versions in
+  privacy-policy) need no edit; check:manifest green is the proof of
+  parity.
+- Credential claim per spec: the real boundary is a NON-EXTRACTABLE
+  CryptoKey in IndexedDB (`keyMaterials`, `credential:<id>`) + ciphertext
+  envelope in chrome.storage.local; plaintext never persists. README's
+  vaguer "encrypted at rest" had to be rewritten, not reworded.
+- Auto-apply provenance belongs in the jev_decisions section of the
+  privacy policy, not the LLM paragraph: auto-apply is a Jev confidence
+  feature. Split sentences by which feature actually owns the behavior.
+- `sourceDomains` is the affected BOOKMARK domains (from bookmarkIds'
+  URLs), not the provider origin — phrased "the bookmarked site domains
+  it touched" everywhere to avoid implying provider attribution.
+- Pushback works: reviewer flagged "no sendBeacon syntax selector" as
+  Important from a stale review artifact; pointing at
+  eslint.config.mjs:91-95 + the egress-lint test case resolved it with
+  no doc change. Verify against the checked-out file, not the report.
+- check:site only asserts required strings md→html; mirroring the two
+  new sentences into site/privacy/index.html keeps the docs consistent
+  beyond what the gate requires.

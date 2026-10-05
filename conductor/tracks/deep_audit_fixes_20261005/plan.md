@@ -453,7 +453,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     auto-applied rows show the source domain; folder names are length-limited
     and stripped of URLs/markdown; persisted summaries strip URLs/markdown.
   - Fix: reuse `isNonPublicUrl`; sanitizers; UI label.
-- [ ] Task 4: H06 — documentation and store sync
+- [x] Task 4: H06 — documentation and store sync (6060739)
   <!-- files: README.md, store/listing.md, store/privacy-policy.md, store/privacy-practices.md, store/permissions.md, store/reviewer-notes.md, site/privacy/index.html, conductor/tech-stack.md, conductor/patterns.md -->
   <!-- depends: task1, task2, task3 -->
   - Tests: `check:manifest`, `check:store`, `check:site` pass; README claims
