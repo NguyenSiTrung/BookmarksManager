@@ -426,7 +426,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     produces bounded tree refreshes (preserve the I02 behavior of the previous
     track).
   - Fix: mount queries only while open; throttle during writes.
-- [ ] Task: Conductor - Automated Verification 'Phase 6: UI correctness and safety' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 6: UI correctness and safety' (automated gates; no manual wait)
   - Full local gate + e2e; visual check of dialogs in Chromium light/dark via
     Playwright screenshots (automated, no manual wait).
 
