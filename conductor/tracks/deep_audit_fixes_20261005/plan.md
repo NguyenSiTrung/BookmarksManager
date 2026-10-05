@@ -233,7 +233,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     mid-scan is skipped, not applied and not a job failure; `assertFresh`
     covers url/title for add_tags/set_category/merge.
   - Fix: deterministic ids; guard captured from the sent snapshot.
-- [ ] Task 4: J06 + J07 + J08 — approval exclusion, near-dup and escalate rules
+- [x] Task 4: J06 + J07 + J08 — approval exclusion, near-dup and escalate rules (`8a66fa9`)
   <!-- files: src/decisions/apply.ts, src/decisions/store.ts, src/decisions/duplicates.ts, src/decisions/policy.ts, src/jev/wire.ts, src/llm/escalate.ts -->
   <!-- depends: task3 -->
   - Tests: concurrent double approve applies once; approve-vs-reject safe;

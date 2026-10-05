@@ -760,3 +760,51 @@ claim that any audit finding has been fixed or reproduced.
   (the resurrection fence above).
 - Full gate green at commit: lint, typecheck, 3045 unit/173 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## Phase 3 Task 4 — J06 + J07 + J08 (8a66fa9)
+
+- **Mutual exclusion is two layers, not one.** In-worker `Map<string,
+  Promise>` serializes same-context calls (`prior.then(run, run)`, the
+  loser re-reads status fresh); the persisted `claim` sidecar covers
+  cross-context races — `claimDecision` writes `{token, at}` inside one
+  rw tx, `transitionStatus` verifies `claimToken` and refuses a live
+  claim for tokenless/foreign-token calls, `releaseDecisionClaim`
+  deletes only the holder's token. A 120s TTL rescues crashed claims;
+  every success path deletes the claim, every failure path releases it.
+- **`void p.finally(...)` leaks rejections** — the derived promise is
+  unobserved (16 unhandled-rejection warnings in vitest). Cleanup hooks
+  on a settling promise use `p.then(f, f)`, which swallows into a
+  resolved derived promise.
+- **`captureGuard` (the live-read fallback) captures placements only,**
+  never url/title snapshots — those exist only on send-time guards. A
+  test needing `bookmark_edited` staleness must seed `guard.snapshots`
+  explicitly via `persistDecision(doc, {guard})`.
+- **`db.decisions` is typed `Table<DecisionDocument>`** — sidecars
+  (`guard`, `undoSnapshotId`, `claim`, `escalationSkipped`) are
+  invisible to `get`/`update`; tests read rows via
+  `as Promise<DecisionRow|undefined>` and write sidecars with a full
+  `put` + `as DecisionRow` cast.
+- **J07 strength choice:** "not persisted as approvable" was
+  implemented as NO row at all for level-1/2 pairs (an `unsure` merge
+  row is still approvable — `unsure → applied` is legal). Gated on
+  `outcome === "unsure"` so any future sub-floor path also stays
+  un-persisted; `DuplicatePairResult.decision` becomes optional.
+- **Skip-markers can't ride the `escalation` schema object** (it
+  requires verdict+model) — a `budget_exceeded` refusal surfaces as
+  `{skipped:"budget"}` from `maybeEscalateDecision` → a NEW
+  `escalationSkipped` sidecar via `persistDecision` options (same
+  additive-field channel as `guard`), rendered by ReviewView.
+- **Two `illegal_transition` surfaces never collide:** `JobQueueError`
+  (lost job authority) maps to `DecisionPipelineError` by CLASS, while
+  `DecisionApplyError` claim-loss stays inside `approveDecision`'s
+  benign-skip branch — same code token, different classes, different
+  semantics (runner-fatal vs per-item benign).
+- **Mid-flow authority loss needs a seam,** not pre-seeding: spy on
+  `db.jobs.get` — call 1 (Jev send's `beforeSend`) returns the real
+  row, call 2 (escalation's `beforeSend`) returns a superseded row —
+  the only two job reads in the flow.
+- Independent review (child 7ac8d994): PASS/PASS, zero findings —
+  verified claim-gate matrix, compensation coverage, serialize-map
+  ordering, and the benign-loss scoping.
+- Full gate green at commit: lint, typecheck, 3062 unit/173 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
