@@ -224,6 +224,51 @@ describe("approveDecision — merge_duplicates", () => {
     // mergeGroup pushed its own merge snapshot.
     expect((await peekLatest())?.kind).toBe("merge");
   });
+
+  it("records the merge snapshot's own id even when another snapshot interleaves (D04)", async () => {
+    // A foreign context pushes a snapshot between mergeGroup's push and the
+    // decision's snapshot recording — the recorded undoSnapshotId must be
+    // the merge row's, not whatever sits at the head.
+    const realAdd = db.undo.add.bind(db.undo);
+    let mergeSnapshotId: number | undefined;
+    const spy = vi.spyOn(db.undo, "add").mockImplementation((row) => {
+      const pushed = (async () => {
+        const id = await realAdd(row as never);
+        if ((row as { kind?: string }).kind === "merge") {
+          mergeSnapshotId = Number(id);
+          // Simulate the interleave: the head moves to a foreign snapshot.
+          await pushSnapshot({ kind: "delete", nodes: [], meta: [] });
+        }
+        return id;
+      })();
+      return pushed as never;
+    });
+    try {
+      const d = await persistDecision(
+        decision({
+          kind: "merge_duplicates",
+          bookmarkIds: ["bm-c", "bm-d"],
+          keepId: "bm-c",
+        }),
+      );
+      const row = await approveDecision(d.id);
+      expect(mergeSnapshotId).toBeDefined();
+      expect(row.status).toBe("applied");
+      expect(row.undoSnapshotId).toBe(mergeSnapshotId);
+      // The head IS the foreign decoy — under the old peekLatest() read this
+      // is the id that would have been recorded instead.
+      expect((await peekLatest())?.kind).toBe("delete");
+      // The recorded id resolves to the merge row — the decoy's id, by
+      // contrast, would point at an empty delete snapshot.
+      const recorded = await db.undo.get(row.undoSnapshotId as number);
+      expect(recorded?.kind).toBe("merge");
+      expect(
+        (recorded?.nodes as { id: string }[]).map((n) => n.id),
+      ).toEqual(["bm-d"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

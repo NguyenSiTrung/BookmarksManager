@@ -34,7 +34,7 @@ import { installBookmarksFake } from "../fakes/chrome-bookmarks";
  * │  └─ bm-solo             https://solo.example/      (unrelated)
  * ├─ 2 Other bookmarks
  * │  └─ managed             folder, unmodifiable: "managed"
- * │     └─ bm-managed       https://managed.example/   (writable guard victim)
+ * │     └─ bm-managed       https://example.com/page   (writable guard victim)
  * └─ 3 Mobile bookmarks
  * ```
  */
@@ -43,7 +43,7 @@ const URLS: Record<string, string> = {
   "bm-l1": "https://example.com/page",
   "bm-l2": "https://example.com/page",
   "bm-solo": "https://solo.example/",
-  "bm-managed": "https://managed.example/",
+  "bm-managed": "https://example.com/page",
 };
 
 /** Build the group object a Duplicates view would hand to mergeGroup. */
@@ -75,7 +75,7 @@ beforeEach(async () => {
         title: "Policy",
         unmodifiable: "managed",
         children: [
-          { id: "bm-managed", title: "MG", url: "https://managed.example/" },
+          { id: "bm-managed", title: "MG", url: "https://example.com/page" },
         ],
       },
     ],
@@ -387,7 +387,13 @@ describe("mergeGroup — failures", () => {
     await expect(get("bm-l1")).rejects.toThrow('Can\'t find bookmark');
     expect(await getMeta("bm-l1")).toBeUndefined(); // removed rows still cleaned
     expect((await get("bm-managed"))[0]).toBeDefined(); // managed loser intact
-    expect(await getMeta("bm-k")).toMatchObject({ tags: ["keep", "l1"] });
+    // Removals run BEFORE the survivor write (D03): the merge failed mid-
+    // removals, so the kept row carries its original meta — the merged
+    // fields were never written.
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep"],
+      notes: "k note",
+    });
     const snapshot = await peekLatest();
     expect(snapshot?.kind).toBe("merge");
     expect(snapshot?.nodes.map((n) => n.id)).toEqual([
@@ -438,6 +444,74 @@ describe("mergeGroup — failures", () => {
     ]);
   });
 
+  it("drops a member whose URL was edited since grouping — keeps its node and meta (D02)", async () => {
+    await putMeta("bm-k", { tags: ["keep"], notes: "k note" });
+    await putMeta("bm-l1", { tags: ["l1"] });
+    await putMeta("bm-l2", { tags: ["l2"], notes: "l2 note" });
+    // bm-l2 drifted into a different page after the group was formed.
+    await fake.update("bm-l2", { url: "https://different.example/" });
+    const result = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1", "bm-l2"), "bm-k"),
+    );
+    expect(result.removedIds).toEqual(["bm-l1"]);
+    expect(result.droppedIds).toEqual(["bm-l2"]);
+    // The drifted member survives with its meta intact; the union only saw
+    // the kept row + the member that still matched.
+    expect((await get("bm-l2"))[0]?.url).toBe("https://different.example/");
+    expect(await getMeta("bm-l2")).toMatchObject({
+      tags: ["l2"],
+      notes: "l2 note",
+    });
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep", "l1"],
+      notes: "k note",
+    });
+    // The snapshot holds only what the merge actually removed.
+    const snapshot = await peekLatest();
+    expect(snapshot?.nodes.map((n) => n.id)).toEqual(["bm-l1"]);
+    expect(
+      snapshot?.meta.some((row) => row.id === "bm-l2"),
+    ).toBe(false);
+  });
+
+  it("still merges a member whose URL changed but resolves to the same key (D02)", async () => {
+    // Tracking-param churn is not drift — the page is the same under the
+    // normalized key.
+    await fake.update("bm-l1", {
+      url: "https://example.com/page?utm_source=feed",
+    });
+    const result = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k"),
+    );
+    expect(result.removedIds).toEqual(["bm-l1"]);
+    expect(result.droppedIds).toEqual([]);
+    await expect(get("bm-l1")).rejects.toThrow("Can't find bookmark");
+  });
+
+  it("is a no-op when every member drifted — no snapshot, nothing removed (D02)", async () => {
+    await putMeta("bm-k", { tags: ["keep"], notes: "k note" });
+    await fake.update("bm-l1", { url: "https://one.example/" });
+    await fake.update("bm-l2", { url: "https://two.example/" });
+    const result = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1", "bm-l2"), "bm-k"),
+    );
+    expect(result.removedIds).toEqual([]);
+    expect(result.droppedIds).toEqual(["bm-l1", "bm-l2"]);
+    expect(result.snapshotId).toBeUndefined();
+    expect(await listSnapshots()).toEqual([]);
+    // Kept meta untouched — nothing was merged onto it.
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep"],
+      notes: "k note",
+    });
+    expect(await barChildIds()).toEqual([
+      "bm-k",
+      "bm-l1",
+      "bm-l2",
+      "bm-solo",
+    ]);
+  });
+
   it("does not union meta of members that vanished before the merge", async () => {
     // A stale meta row survives for a node that no longer exists — it must
     // not leak onto the kept bookmark.
@@ -455,10 +529,11 @@ describe("mergeGroup — failures", () => {
     expect(await getMeta("bm-k")).toMatchObject({ tags: ["l1"] });
   });
 
-  it("leaves live losers untouched on undo when the merge failed before removals", async () => {
-    // Joined notes exceed the 10k meta cap: patchMeta throws invalid_meta
-    // AFTER the snapshot was pushed, so nothing was ever removed. Replaying
-    // the snapshot must not duplicate the live losers.
+  it("refuses over-cap merged notes BEFORE any snapshot or write (D03)", async () => {
+    // Joined notes exceed the 10k meta cap: the merge must refuse before
+    // pushing a snapshot — nothing mutated, nothing on the undo stack, and
+    // no phantom row for undo to replay or duplicate.
+    await putMeta("bm-k", { notes: "k note" });
     await putMeta("bm-l1", { notes: "x".repeat(6000) });
     await putMeta("bm-l2", { notes: "y".repeat(6000) });
     const result = await mergeGroup(
@@ -467,15 +542,45 @@ describe("mergeGroup — failures", () => {
     );
     expect(result).toMatchObject({ ok: false, code: "invalid_meta" });
     expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
-
-    const undo = expectUndoOk(await undoLatest());
-    expect(undo.idMap).toEqual({}); // nothing was recreated
-    // Both losers still exist exactly once — replay created no duplicates.
-    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+    expect(await getMeta("bm-k")).toMatchObject({ notes: "k note" });
+    expect(await listSnapshots()).toEqual([]);
     expect(await peekLatest()).toBeUndefined();
   });
 
-  it("does not duplicate a loser whose removeTree failed when the merge is undone", async () => {
+  it("discards its snapshot when nothing was removed, and a retry merges clean (D03)", async () => {
+    // First attempt: removeTree throws on the FIRST loser — nothing was
+    // removed, so the pushed snapshot is discarded and leaves no head for
+    // undo to replay.
+    await putMeta("bm-k", { notes: "k note" });
+    await putMeta("bm-l1", { notes: "l1 note" });
+    const removeSpy = vi
+      .spyOn(fake, "removeTree")
+      .mockRejectedValueOnce(new Error("chrome boom"));
+    const first = await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k");
+    expect(first).toMatchObject({ ok: false, code: "api" });
+    expect(await peekLatest()).toBeUndefined(); // discarded, not retained
+    removeSpy.mockRestore();
+
+    // Retry: merges normally — exactly one snapshot, notes joined once.
+    const second = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k"),
+    );
+    expect(second.snapshotId).toBeDefined();
+    const merged = `k note${MERGE_NOTES_SEPARATOR}l1 note`;
+    expect(await getMeta("bm-k")).toMatchObject({ notes: merged });
+
+    // A retry of the COMPLETED merge can never double-append notes: the
+    // losers and their rows are gone, so the union is the kept row alone.
+    const retry = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k"),
+    );
+    expect(retry.removedIds).toEqual([]);
+    expect(await getMeta("bm-k")).toMatchObject({ notes: merged });
+  });
+
+  it("leaves the stack empty when removeTree failed before any removal (D03)", async () => {
+    // The nothing-changed failure discards its snapshot, so there is no
+    // head for undo to replay — the live loser can never be duplicated.
     await putMeta("bm-l1", { tags: ["l1"] });
     const removeSpy = vi
       .spyOn(fake, "removeTree")
@@ -483,18 +588,16 @@ describe("mergeGroup — failures", () => {
     const result = await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k");
     expect(result).toMatchObject({ ok: false, code: "api" });
     expect(removeSpy).toHaveBeenCalledTimes(1);
-    // bm-l1 was never removed — the loser is still live.
+    // bm-l1 was never removed — the loser is still live with its meta.
     expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
+    expect(await getMeta("bm-l1")).toMatchObject({ tags: ["l1"] });
     removeSpy.mockRestore();
 
-    const undo = expectUndoOk(await undoLatest());
-    // The live loser is skipped — no duplicate is created for it.
-    expect(undo.idMap["bm-l1"]).toBeUndefined();
-    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
-    expect(
-      (await barChildIds()).filter((id) => id === "bm-l1"),
-    ).toHaveLength(1);
-    expect(await getMeta("bm-l1")).toMatchObject({ tags: ["l1"] });
+    // The pushed snapshot was discarded BY ID: the stack is empty and undo
+    // reports `empty` rather than replaying a nothing-changed row.
     expect(await peekLatest()).toBeUndefined();
+    const undo = await undoLatest();
+    expect(undo).toMatchObject({ ok: false, code: "empty" });
+    expect(await barChildIds()).toEqual(["bm-k", "bm-l1", "bm-l2", "bm-solo"]);
   });
 });

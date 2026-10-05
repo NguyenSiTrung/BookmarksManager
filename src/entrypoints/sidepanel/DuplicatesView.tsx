@@ -611,6 +611,8 @@ export function DuplicatesView({
               " · notes combined"}
             {outcome.result.mergedMeta.category !== undefined &&
               ` · category ${outcome.result.mergedMeta.category}`}
+            {outcome.result.droppedIds.length > 0 &&
+              ` · ${outcome.result.droppedIds.length} skipped (edited since grouping)`}
           </p>
           <span className="ml-auto flex items-center gap-2">
             {outcome.undo.status === "idle" && (

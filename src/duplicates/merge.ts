@@ -7,12 +7,15 @@ import {
 import type { MetaRepoErrorCode } from "../db/meta";
 import type { Category } from "../schemas/bookmark";
 import type { BookmarkMeta } from "../schemas/meta";
+import { NOTES_MAX_LENGTH } from "../schemas/meta";
 import type { UndoMeta, UndoNode } from "../schemas/undo";
 import { get } from "../sync/chrome-bookmarks";
 import { MutationError, removeTree } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
+import { discardById } from "../undo/restore";
 import { captureSubtree, pushSnapshot } from "../undo/snapshot";
 import type { DuplicateCandidate, DuplicateGroup } from "./group";
+import { normalizeUrl } from "./normalize";
 
 /**
  * "Keep this one" merge for a duplicate group (spec §6): union the group's
@@ -48,12 +51,35 @@ import type { DuplicateCandidate, DuplicateGroup } from "./group";
  *   otherwise leak its tags/notes onto the kept bookmark. Stored `tags`
  *   are nameKeys — merged output stays in nameKeys (patchMeta
  *   re-normalizes anyway).
+ * - **Drifted members are dropped, not merged (D02).** A member whose live
+ *   URL no longer matches the kept node's normalized key — it was edited
+ *   between grouping and merging — is dropped: its node stays, its meta
+ *   rows are neither snapshotted nor unioned (merging a different page's
+ *   data onto the kept bookmark would be silent clobbering). Dropped ids
+ *   are reported on {@link MergeSuccess.droppedIds}.
  * - **Notes join.** Non-empty `notes` values are joined verbatim with
  *   {@link MERGE_NOTES_SEPARATOR}; members with no row, no notes, or an
- *   empty-string note contribute no segment.
- * - **The kept node must exist.** `patchMeta` lazily creates rows, so a
- *   stale `keepId` would grow an orphan meta row — the function reports
- *   `not_found` before touching anything instead.
+ *   empty-string note contribute no segment. The joined result is
+ *   pre-validated against {@link NOTES_MAX_LENGTH} BEFORE the snapshot is
+ *   pushed — an over-cap merge refuses `invalid_meta` with nothing mutated
+ *   and nothing on the undo stack (D03).
+ * - **The kept node must exist and be a leaf.** `patchMeta` lazily creates
+ *   rows, so a stale `keepId` would grow an orphan meta row — the function
+ *   reports `not_found` before touching anything instead; a folder keepId
+ *   reports `invalid`.
+ * - **Removals before the survivor write (D03).** Losers are removed first
+ *   and their meta rows deleted; only then does `patchMeta` write the
+ *   merged fields onto the kept node. A merge that fails before/during
+ *   removals therefore leaves the kept row untouched — undo only restores
+ *   removed losers — and a retry can never re-append already-merged notes
+ *   onto an already-merged kept row.
+ * - **A nothing-changed failure discards its snapshot (D03).** When no
+ *   loser was removed, the pushed snapshot describes a merge that never
+ *   happened; it is deleted by id so the undo stack stays honest and the
+ *   retry starts clean.
+ * - **No-op merges push nothing.** Every member vanished or drifted →
+ *   success with `removedIds: []`, `snapshotId: undefined` — an empty
+ *   snapshot could only clobber the kept row's meta on undo.
  * - **Mutations go through the guarded service.** `removeTree` enforces
  *   root/managed/not_found rules per loser; a rejection mid-list leaves a
  *   partial merge that the already-pushed snapshot still covers — undo
@@ -97,7 +123,20 @@ export interface MergeSuccess {
   keptId: string;
   /** Non-kept members actually removed (vanished members are skipped). */
   removedIds: string[];
+  /**
+   * Members dropped because their live URL no longer matches the kept
+   * node's key — edited since grouping (D02). They keep their nodes and
+   * their meta; they are simply not part of this merge anymore.
+   */
+  droppedIds: string[];
   mergedMeta: MergedMetaValues;
+  /**
+   * The `merge` snapshot pushed for undo (D04) — `undefined` when the
+   * merge was a no-op (every member vanished or drifted; nothing to
+   * restore). Callers record THIS id; never `peekLatest()` — a concurrent
+   * push could move the stack head in between.
+   */
+  snapshotId?: number;
 }
 
 export interface MergeFailure {
@@ -139,14 +178,25 @@ export async function mergeGroup<T extends DuplicateCandidate>(
   ];
 
   // patchMeta lazily creates a row — refuse before it can grow an orphan.
-  const keptExists = await get(keepId)
-    .then((nodes) => nodes[0] !== undefined)
-    .catch(() => false);
-  if (!keptExists) {
+  // The live kept node is also the drift anchor: every member must still
+  // resolve to the same normalized key it was grouped under (D02).
+  const keptNode = await get(keepId)
+    .then((nodes) => nodes[0])
+    .catch(() => undefined);
+  if (keptNode === undefined) {
     return {
       ok: false,
       code: "not_found",
       message: `Kept bookmark "${keepId}" does not exist.`,
+    };
+  }
+  if (keptNode.url === undefined) {
+    return {
+      ok: false,
+      code: "invalid",
+      message:
+        `Kept member "${keepId}" is a folder — ` +
+        `merge only accepts leaf bookmarks.`,
     };
   }
 
@@ -159,6 +209,7 @@ export async function mergeGroup<T extends DuplicateCandidate>(
     const nodes: UndoNode[] = [];
     const meta: UndoMeta[] = [];
     const captured: string[] = [];
+    const droppedIds: string[] = [];
     for (const id of others) {
       const capture = await captureSubtree(id);
       if (capture === undefined) continue; // vanished — nothing to restore
@@ -175,6 +226,15 @@ export async function mergeGroup<T extends DuplicateCandidate>(
             `merge only accepts leaf bookmarks.`,
         };
       }
+      if (!urlsStillMatch(capture.node.url, keptNode.url)) {
+        // Edited since grouping — the page that was grouped no longer
+        // exists under this id. Drop it whole: keep its node, keep its
+        // meta rows out of the snapshot AND the union (a different page's
+        // data must not be restored onto it by undo, nor folded onto the
+        // kept bookmark).
+        droppedIds.push(id);
+        continue;
+      }
       nodes.push(capture.node);
       meta.push(...capture.meta);
       captured.push(id);
@@ -190,32 +250,95 @@ export async function mergeGroup<T extends DuplicateCandidate>(
         updatedAt: new Date().toISOString(),
       },
     );
-    await pushSnapshot({ kind: "merge", nodes, meta });
 
-    // --- Apply: merged fields onto the kept node, then delete the losers. ---
-    // Only rows of the kept node and successfully captured members feed the
-    // union — a vanished member's stale row must not leak onto the kept one.
+    // --- Merged field set: union of the kept row + captured members only —
+    // a vanished member's stale row must not leak onto the kept one.
     const merged = mergeMemberMeta(
       memberMeta.filter(
         (row) => row.id === keepId || capturedIds.has(row.id),
       ),
     );
-    await patchMeta(keepId, {
-      tags: merged.tags,
-      category: merged.category ?? null,
-      notes: merged.notes ?? null,
-    });
-    for (const id of captured) {
-      await removeTree(id);
-      removedIds.push(id);
+
+    if (captured.length === 0) {
+      // Every member vanished or drifted — nothing to remove, nothing to
+      // union. A snapshot would only clobber the kept row's meta on undo,
+      // so this merge pushes none (no-op success).
+      return {
+        ok: true,
+        keptId: keepId,
+        removedIds,
+        droppedIds,
+        mergedMeta: merged,
+      };
     }
-    await deleteMetaByIds(removedIds);
-    return { ok: true, keptId: keepId, removedIds, mergedMeta: merged };
+
+    // D03: refuse over-cap notes BEFORE the snapshot is pushed — the merge
+    // must fail with nothing mutated and nothing left on the undo stack.
+    if (merged.notes !== undefined && merged.notes.length > NOTES_MAX_LENGTH) {
+      return {
+        ok: false,
+        code: "invalid_meta",
+        message:
+          `Merged notes are ${merged.notes.length} characters — ` +
+          `the ${NOTES_MAX_LENGTH}-character cap would be exceeded.`,
+      };
+    }
+
+    const snapshotId = await pushSnapshot({ kind: "merge", nodes, meta });
+
+    try {
+      // --- Apply: remove the losers first; the survivor write is LAST
+      // (D03). A failure before or during removals leaves kept meta
+      // untouched, and a retried merge can never double-append already-
+      // merged notes onto the kept row.
+      for (const id of captured) {
+        await removeTree(id);
+        removedIds.push(id);
+      }
+      await deleteMetaByIds(removedIds);
+      await patchMeta(keepId, {
+        tags: merged.tags,
+        category: merged.category ?? null,
+        notes: merged.notes ?? null,
+      });
+      return {
+        ok: true,
+        keptId: keepId,
+        removedIds,
+        droppedIds,
+        mergedMeta: merged,
+        snapshotId,
+      };
+    } catch (cause) {
+      // Whatever was already removed must not leave its meta rows behind.
+      await deleteMetaByIds(removedIds).catch(() => {});
+      if (removedIds.length === 0) {
+        // Nothing changed — the snapshot describes a merge that never
+        // happened. Discard it BY ID (never the head) so the stack stays
+        // honest and the retry starts clean (D03).
+        await discardById(snapshotId).catch(() => {});
+      }
+      return toMergeFailure(cause);
+    }
   } catch (cause) {
-    // Whatever was already removed must not leave its meta rows behind.
-    await deleteMetaByIds(removedIds).catch(() => {});
     return toMergeFailure(cause);
   }
+}
+
+/**
+ * Whether a member's live URL still identifies the page the group was
+ * formed around: both sides compared under the same normalized key the
+ * grouping used, raw equality when either URL has no normalized form
+ * (non-http(s), unparseable). Anything else means the member was edited
+ * into a different page since grouping — it is dropped, not merged (D02).
+ */
+function urlsStillMatch(memberUrl: string, keptUrl: string): boolean {
+  const memberKey = normalizeUrl(memberUrl);
+  const keptKey = normalizeUrl(keptUrl);
+  if (memberKey !== null && keptKey !== null) {
+    return memberKey === keptKey;
+  }
+  return memberUrl === keptUrl;
 }
 
 /**

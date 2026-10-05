@@ -59,11 +59,15 @@ export type TagDef = z.infer<typeof TagDef>;
  * `tags` holds tag nameKeys (not display names) so renames propagate without
  * rewriting every row.
  */
+/** Hard cap on a bookmark's `notes` field — callers that compose notes
+ * (e.g. merge joins) must pre-validate against this before writing. */
+export const NOTES_MAX_LENGTH = 10_000;
+
 export const BookmarkMeta = z.strictObject({
   id: z.string(), // Chrome bookmark node id — the Dexie `bookmarkMeta` primary key
   tags: z.array(TagNameKey).default([]),
   category: Category.optional(),
-  notes: z.string().max(10_000).optional(),
+  notes: z.string().max(NOTES_MAX_LENGTH).optional(),
   /**
    * A Jev-verified page summary (spec FR10.8). Optional and absent on
    * pre-Phase-4 rows — backward compatible. Written only by the verified

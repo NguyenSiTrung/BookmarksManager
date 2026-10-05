@@ -12,7 +12,7 @@ import { bulkAddTag, bulkSetCategory } from "../sync/tag-ops";
 import type { TagOpsErrorCode } from "../sync/tag-ops";
 import { discardById, undoExpected } from "../undo/restore";
 import type { UndoFailureCode } from "../undo/restore";
-import { captureNodes, peekLatest, pushSnapshot } from "../undo/snapshot";
+import { captureNodes, pushSnapshot } from "../undo/snapshot";
 import type { UndoMeta } from "../schemas/undo";
 import {
   claimDecision,
@@ -364,8 +364,10 @@ async function applyMerge(
   if (!result.ok) {
     throw new DecisionApplyError(result.code, result.message);
   }
-  // mergeGroup pushed its own `merge` snapshot; record it for revert.
-  return (await peekLatest())?.id;
+  // mergeGroup pushed its own `merge` snapshot and returns its id (D04) —
+  // never peekLatest(): a snapshot pushed concurrently in another context
+  // could sit at the head and be recorded against this decision instead.
+  return result.snapshotId;
 }
 
 /** Dispatch the decision's kind to its apply path. */
