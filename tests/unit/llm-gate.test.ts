@@ -12,6 +12,7 @@ import { monthlyBudgetSnapshot, type BudgetReservation } from "../../src/llm/bud
 import {
   LlmGateError,
   settleLlmUsage,
+  sweepStaleLlmReservations,
   STALE_RESERVATION_TTL_MS,
 } from "../../src/net/llm-send";
 import { sendLlmForTest as sendLlmConsented, scopeRequest, TEST_LLM_SCOPES } from "../fakes/llm";
@@ -1345,5 +1346,143 @@ describe("sendLlmConsented happy path", () => {
         (r) => r.status === "active",
       ),
     ).toHaveLength(1);
+  });
+});
+
+describe("reservation orphan sweep and bookkeeping guard (A03)", () => {
+  const STALE = new Date(NOW.getTime() + STALE_RESERVATION_TTL_MS + 1);
+
+  beforeEach(async () => {
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
+    await saveCredential(PROVIDER_ID, "sk-test-1234");
+  });
+
+  function reservationRow(overrides: Partial<BudgetReservation> = {}): BudgetReservation {
+    return {
+      id: crypto.randomUUID(),
+      providerId: PROVIDER_ID,
+      model: MODEL,
+      month: "2026-09",
+      reservedUsd: 0.0004,
+      maxInputTokens: 100,
+      maxOutputTokens: 50,
+      kind: "manual",
+      status: "active",
+      createdAt: NOW.toISOString(),
+      ...overrides,
+    };
+  }
+
+  it("settles the reservation when sent-log bookkeeping throws after dispatch", async () => {
+    await saveLlmProvider(providerRecord());
+    vi.spyOn(db.sentLog, "add").mockRejectedValue(new Error("sent log down"));
+    vi.spyOn(db.sentLog, "update").mockRejectedValue(new Error("sent log down"));
+    await expectGateBlock(
+      send({}, {
+        fetchImpl: async () => { throw new TypeError("socket"); },
+        retries: 0,
+      }).result,
+      "transport",
+    );
+    const rows = await db.llmReservations.toArray();
+    expect(rows.map((row) => row.status)).toEqual(["settled"]);
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it("still reports the transport outcome when settlement bookkeeping fails once", async () => {
+    await saveLlmProvider(providerRecord());
+    const realPut = db.llmReservations.put.bind(db.llmReservations);
+    let failures = 1;
+    vi.spyOn(db.llmReservations, "put").mockImplementation((row: BudgetReservation) => {
+      if (row.status !== "active" && failures > 0) {
+        failures -= 1;
+        return Promise.reject(new Error("bookkeeping down")) as never;
+      }
+      return realPut(row);
+    });
+    await expectGateBlock(
+      send({}, {
+        fetchImpl: async () => { throw new TypeError("socket"); },
+        retries: 0,
+      }).result,
+      "transport",
+    );
+    expect(failures).toBe(0);
+    expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
+    expect(await db.llmUsage.count()).toBe(1);
+  });
+
+  it("leaves the row active for the startup sweep when settlement keeps failing", async () => {
+    await saveLlmProvider(providerRecord({
+      provider: { kind: "preset", preset: "openai", model: UNPRICED_MODEL },
+    }));
+    const realPut = db.llmReservations.put.bind(db.llmReservations);
+    const putSpy = vi.spyOn(db.llmReservations, "put").mockImplementation((row: BudgetReservation) => {
+      if (row.status === "active") return realPut(row);
+      return Promise.reject(new Error("bookkeeping down")) as never;
+    });
+    await expectGateBlock(
+      send({ request: validRequest(UNPRICED_MODEL) }, {
+        fetchImpl: async () => { throw new TypeError("socket"); },
+        retries: 0,
+      }).result,
+      "transport",
+    );
+    const [orphaned] = await db.llmReservations.toArray();
+    expect(orphaned?.status).toBe("active");
+    expect(await db.llmUsage.count()).toBe(0);
+    putSpy.mockRestore();
+
+    // The next worker start sweeps it under the conservative rule.
+    expect(await sweepStaleLlmReservations(STALE)).toBe(1);
+    expect((await db.llmReservations.get(orphaned!.id))?.status).toBe("settled");
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({
+      providerId: PROVIDER_ID, inputTokens: 100, outputTokens: 50,
+    });
+    expect(usage[0]?.costUsd).toBeUndefined();
+    expect(usage[0]?.estimatedCostUsd).toBeUndefined();
+  });
+
+  it("stamps the consent scope on new reservations for honest sweep accounting", async () => {
+    await saveLlmProvider(providerRecord());
+    const { reservation } = await send().result;
+    expect((await db.llmReservations.get(reservation.id))?.feature).toBe("llm_explain");
+  });
+
+  it("sweeps only active rows older than the stale threshold", async () => {
+    const stale = reservationRow({ id: "stale", createdAt: new Date(NOW.getTime() - STALE_RESERVATION_TTL_MS - 1).toISOString() });
+    const fresh = reservationRow({ id: "fresh", createdAt: NOW.toISOString() });
+    const settled = reservationRow({ id: "settled", status: "settled", createdAt: new Date(NOW.getTime() - STALE_RESERVATION_TTL_MS - 1).toISOString() });
+    const released = reservationRow({ id: "released", status: "released", createdAt: new Date(NOW.getTime() - STALE_RESERVATION_TTL_MS - 1).toISOString() });
+    await db.llmReservations.bulkPut([stale, fresh, settled, released]);
+    expect(await sweepStaleLlmReservations(NOW)).toBe(1);
+    const rows = await db.llmReservations.toArray();
+    expect(rows.find((row) => row.id === "stale")?.status).toBe("settled");
+    expect(rows.find((row) => row.id === "fresh")?.status).toBe("active");
+    expect(rows.find((row) => row.id === "settled")?.status).toBe("settled");
+    expect(rows.find((row) => row.id === "released")?.status).toBe("released");
+  });
+
+  it("settles a legacy row without a stamped feature under the orphan marker", async () => {
+    await db.llmReservations.put(reservationRow({ id: "legacy" }));
+    expect(await sweepStaleLlmReservations(STALE)).toBe(1);
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]?.feature).toBe("llm_orphan_sweep");
+  });
+
+  it("carries the stamped feature into the swept usage row", async () => {
+    await db.llmReservations.put(reservationRow({ id: "scoped", feature: "llm_explain" }));
+    expect(await sweepStaleLlmReservations(STALE)).toBe(1);
+    expect((await db.llmUsage.toArray())[0]?.feature).toBe("llm_explain");
+  });
+
+  it("keeps an unswept row active when the store keeps failing", async () => {
+    await db.llmReservations.put(reservationRow({ id: "unlucky" }));
+    vi.spyOn(db.llmReservations, "put").mockRejectedValue(new Error("store down"));
+    await expect(sweepStaleLlmReservations(STALE)).resolves.toBe(0);
+    expect((await db.llmReservations.get("unlucky"))?.status).toBe("active");
   });
 });

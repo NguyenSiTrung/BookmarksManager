@@ -311,7 +311,7 @@ function sleep(ms: number): Promise<void> {
  */
 export async function settleLlmUsage(
   reservationId: string,
-  feature: ConsentScope,
+  feature: ConsentScope | typeof ORPHAN_SWEEP_FEATURE,
   usage: ActualUsage,
   now: Date = new Date(),
 ): Promise<void> {
@@ -339,6 +339,50 @@ export async function settleLlmUsage(
       });
     },
   );
+}
+
+/**
+ * Feature stamped on swept usage rows whose reservation predates scope
+ * stamping: the authorizing scope died with the worker, so the row records
+ * the honest provenance rather than fabricating a scope.
+ */
+export const ORPHAN_SWEEP_FEATURE = "llm_orphan_sweep";
+
+/**
+ * Settle reservations orphaned by a dead worker — called once at background
+ * start. Any `active` row older than {@link STALE_RESERVATION_TTL_MS} cannot
+ * be backed by a live fetch (its owning request died with the previous
+ * worker), so it settles under the conservative missing-usage rule:
+ * reserved token bounds substituted, estimated-or-unknown cost — the row
+ * stops pinning budget exposure forever without ever fabricating spend.
+ * Best-effort per row: a persistently failing store retries on the next
+ * worker start. Local-only; no consent, network, or egress.
+ */
+export async function sweepStaleLlmReservations(
+  now: Date = new Date(),
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - STALE_RESERVATION_TTL_MS)
+    .toISOString();
+  const stale = await db.llmReservations
+    .where("status")
+    .equals("active")
+    .filter((row) => row.createdAt < cutoff)
+    .toArray();
+  let settled = 0;
+  for (const row of stale) {
+    try {
+      // The stamped field is persisted data: carry only a registered scope,
+      // anything else falls back to the honest orphan marker.
+      const feature = row.feature !== undefined && isRegisteredScope(row.feature)
+        ? row.feature
+        : ORPHAN_SWEEP_FEATURE;
+      await settleLlmUsage(row.id, feature, {}, now);
+      settled += 1;
+    } catch {
+      // A failing store retries the row on the next worker start.
+    }
+  }
+  return settled;
 }
 
 /**
@@ -517,6 +561,7 @@ async function sendLlmRequest(
         reservations: reservationRows,
         now: nowDate,
         unknownCostConfirmed,
+        feature: input.scope,
       });
       if (result.status === "reserved") {
         await db.llmReservations.put(result.reservation);
@@ -539,6 +584,31 @@ async function sendLlmRequest(
     );
   }
   const reservation = reservationResult.reservation;
+
+  // Post-admission bookkeeping is durable but its IO is best-effort: a
+  // transient Dexie failure must neither mask the transport outcome nor
+  // strand the reservation `active` — one immediate retry, then the
+  // worker-start sweep settles any still-orphaned row conservatively.
+  const settleGuarded = async (usage: ActualUsage): Promise<void> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await settleLlmUsage(reservation.id, input.scope, usage, now());
+        return;
+      } catch {
+        // Retry once; persistent failure defers to the startup sweep.
+      }
+    }
+  };
+  const releaseGuarded = async (): Promise<void> => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await db.llmReservations.put(releaseBudget(reservation, now()));
+        return;
+      } catch {
+        // Retry once; persistent failure defers to the startup sweep.
+      }
+    }
+  };
 
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retries = options?.retries ?? DEFAULT_RETRIES;
@@ -564,7 +634,7 @@ async function sendLlmRequest(
   try {
     await options?.beforeSend?.();
   } catch (cause) {
-    await db.llmReservations.put(releaseBudget(reservation, now()));
+    await releaseGuarded();
     throw cause;
   }
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -572,7 +642,7 @@ async function sendLlmRequest(
     ? AbortSignal.any([options.signal, timeoutSignal])
     : timeoutSignal;
   if (signal.aborted) {
-    await db.llmReservations.put(releaseBudget(reservation, now()));
+    await releaseGuarded();
     throw new LlmGateError(classifyAbort(signal)!, "Outbound LLM request was aborted before dispatch.");
   }
   // No awaited bookkeeping between final feature admission and fetch.
@@ -596,7 +666,7 @@ async function sendLlmRequest(
     // Capture at transport failure, not after awaited settlement: a deadline
     // expiring during bookkeeping must not relabel an earlier socket failure.
     const abortCode = classifyAbort(signal, cause);
-    await settleLlmUsage(reservation.id, input.scope, {}, now());
+    await settleGuarded({});
     if (cause instanceof LlmGateError) {
       await finishLog("transport");
       throw cause;
@@ -616,7 +686,7 @@ async function sendLlmRequest(
   }
 
   if (response.type === "opaqueredirect") {
-    await settleLlmUsage(reservation.id, input.scope, {}, now());
+    await settleGuarded({});
     await finishLog("redirect");
     throw new LlmGateError("transport", "Outbound LLM request answered with an opaque redirect.");
   }
@@ -630,7 +700,7 @@ async function sendLlmRequest(
         // A malformed retry body leaves conservative unknown usage.
       }
     }
-    await settleLlmUsage(reservation.id, input.scope, usage, now());
+    await settleGuarded(usage);
     await finishLog("retried");
     const wait = retryDelay(retryIndex, {
       retryAfterMs: parseRetryAfter(response.headers.get("retry-after"), now().getTime()),

@@ -9,6 +9,7 @@ import {
 } from "../decisions/apply";
 import { normalizeBlocklistEntry } from "../decisions/minimize";
 import { prunePopupDecisions } from "../decisions/store";
+import { sweepStaleLlmReservations } from "../net/llm-send";
 import {
   DECISION_BLOCKLIST_KEY,
   readBlocklist,
@@ -560,6 +561,12 @@ export default defineBackground(() => {
   // start (or save-suggest) retries.
   void prunePopupDecisions().catch(() => {
     // Best-effort; the next worker start or save-suggest retries.
+  });
+  // A03: settle `active` reservations a dead worker left behind — local
+  // only, under the same conservative rule a late response would have used.
+  // Fire-and-forget like the sweeps above; a failure retries next start.
+  void sweepStaleLlmReservations().catch(() => {
+    // Best-effort; the next worker start retries.
   });
 
   const decisionsHandlers = productionHandlers();

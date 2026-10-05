@@ -77,6 +77,10 @@ export interface BudgetReservation {
   status: ReservationStatus;
   createdAt: string;
   settledAt?: string;
+  /** Consent scope that authorized the request, stamped so a startup sweep
+   * can settle an orphaned row under its true feature (additive; absent on
+   * rows written before stamping existed). */
+  feature?: string;
 }
 
 export interface ReserveBudgetInput {
@@ -98,6 +102,8 @@ export interface ReserveBudgetInput {
   now: Date;
   /** Manual-only confirmation that this request may proceed at unknown cost. */
   unknownCostConfirmed?: boolean;
+  /** Consent scope stamped onto the row for honest later accounting. */
+  feature?: string;
 }
 
 export type ReserveBudgetResult =
@@ -267,6 +273,7 @@ export function reserveBudget(input: ReserveBudgetInput): ReserveBudgetResult {
     kind: input.kind,
     status: "active",
     createdAt: input.now.toISOString(),
+    ...(input.feature !== undefined ? { feature: input.feature } : {}),
   };
   return { status: "reserved", reservation };
 }
