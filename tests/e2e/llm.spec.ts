@@ -173,14 +173,20 @@ test("accounting: omitted successful usage commits conservative estimated exposu
     });
     const reservations = await readStoreRows<BudgetReservation>(page, "llmReservations");
     expect(reservations).toHaveLength(1);
+    // A04: the reservation covers the real serialized prompt — the estimate
+    // beats the declared 64-token bound on this body. Independently derived
+    // from the wire body: (bound * $2 + 16 * $4) / million.
+    const inputBound = Math.ceil(
+      (JSON.stringify(wire.requests[0]!.postData).length / 4) * 1.25,
+    );
+    const reservedUsd = (inputBound * 2 + 16 * 4) / 1e6;
     expect(reservations[0]).toMatchObject({
-      maxInputTokens: 64,
+      maxInputTokens: inputBound,
       maxOutputTokens: 16,
-      reservedUsd: 0.000192,
+      reservedUsd,
       status: "settled",
       pricing: { inputPerMillion: 2, outputPerMillion: 4 },
     });
-    // Independently derived: (64 * $2 + 16 * $4) / million.
     const rows = await readStoreRows<LlmUsageRow>(page, "llmUsage");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -188,16 +194,16 @@ test("accounting: omitted successful usage commits conservative estimated exposu
       model: ACCOUNTING_MODEL,
       configuredModel: ACCOUNTING_MODEL,
       feature: "llm_test",
-      inputTokens: 64,
+      inputTokens: inputBound,
       outputTokens: 16,
-      estimatedCostUsd: 0.000192,
+      estimatedCostUsd: reservedUsd,
     });
     // Estimated provenance is represented by estimatedCostUsd, not costUsd.
     expect(rows[0]).not.toHaveProperty("costUsd");
     expect(await sendLlmMessage(page, { type: "LLM_BUDGET_SNAPSHOT", providerId: ACCOUNTING_PROVIDER }))
       .toMatchObject({ ok: true, snapshot: {
-        requestCount: 1, reportedCostUsd: 0, estimatedCostUsd: 0.000192,
-        unknownCostRequests: 0, reservedUsd: 0, committedUsd: 0.000192,
+        requestCount: 1, reportedCostUsd: 0, estimatedCostUsd: reservedUsd,
+        unknownCostRequests: 0, reservedUsd: 0, committedUsd: reservedUsd,
       } });
     await settleLlmUsageAgain(page, reservations[0]!.id);
     expect(await readStoreRows<LlmUsageRow>(page, "llmUsage")).toEqual(rows);
@@ -240,8 +246,12 @@ test("accounting: held real probe settles once after trusted revoke and key remo
     await expect.poll(() => wire.requests.length).toBe(1);
     expect(wire.requests[0]?.postData).toMatchObject({ model: ACCOUNTING_MODEL, max_tokens: 16 });
     const [reservation] = await readStoreRows<BudgetReservation>(page, "llmReservations");
+    // A04: honest input bound from the real serialized probe body.
+    const inputBound = Math.ceil(
+      (JSON.stringify(wire.requests[0]!.postData).length / 4) * 1.25,
+    );
     expect(reservation).toMatchObject({
-      status: "active", reservedUsd: 0.000192,
+      status: "active", reservedUsd: (inputBound * 2 + 16 * 4) / 1e6,
       pricing: { inputPerMillion: 2, outputPerMillion: 4 },
     });
     expect(await readStoreRows(page, "llmUsage")).toHaveLength(0);

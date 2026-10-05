@@ -14,8 +14,11 @@ import type {
  *  - Months are UTC calendar months (`YYYY-MM`), derived from `recordedAt`/
  *    `now` timestamps — a row just inside the local month but outside the
  *    UTC month does not count.
- *  - Cost provenance is three-way: provider-`reported`, locally `estimated`
- *    from configured rates, or `unknown` — unknown is never presented as 0.
+ *  - Cost provenance is four-way: provider-`reported`, locally `estimated`
+ *    from configured rates, `unknown` — unknown is never presented as 0 —
+ *    or `not_billed` for a pre-response provider rejection (the request
+ *    egressed but the provider refused before producing it), which is
+ *    excluded from the monthly cap.
  *  - Before a request, `reserveBudget` computes a conservative maximum from
  *    caller-supplied token upper bounds and refuses when committed spend
  *    (usage + active reservations) plus the new reservation would exceed
@@ -40,10 +43,15 @@ export interface LlmUsageRow {
   costUsd?: number;
   /** Locally estimated USD cost from configured rates. */
   estimatedCostUsd?: number;
+  /** Explicit "not billed" provenance: the provider rejected the request
+   * before producing a response (e.g. a capability-probe refusal). Rows
+   * marked this way record the egressed traffic but carry no cost fields
+   * and are excluded from the monthly cap. */
+  notBilled?: boolean;
 }
 
 export type ReservationStatus = "active" | "settled" | "released";
-export type CostProvenance = "reported" | "estimated" | "unknown";
+export type CostProvenance = "reported" | "estimated" | "unknown" | "not_billed";
 export type RequestKind = "manual" | "automatic";
 
 /**
@@ -178,6 +186,9 @@ export function monthlyBudgetSnapshot(input: {
   for (const row of rows) {
     inputTokens += row.inputTokens;
     outputTokens += row.outputTokens;
+    // A not-billed row is egressed traffic (counted) but never spend: it
+    // must not be classified as unknown cost either.
+    if (row.notBilled === true) continue;
     if (row.costUsd !== undefined) {
       reported += row.costUsd;
     } else if (row.estimatedCostUsd !== undefined) {
@@ -298,22 +309,34 @@ export interface ReconciledUsage {
  * bound for each missing token dimension; otherwise the cost is unknown.
  * Settling frees the reserved amount — the snapshot then counts the actual
  * row instead of the reservation.
+ *
+ * `options.notBilled` settles the row as explicitly not billed — a
+ * pre-response provider rejection (e.g. a capability probe refused before
+ * any generation): no cost fields, no bound substitution (nothing was
+ * processed, so the reserved bound must not fabricate spend), only the
+ * wire-reported token counts if any.
  */
 export function reconcileBudget(
   reservation: BudgetReservation,
   usage: ActualUsage,
   now: Date,
+  options?: { notBilled?: boolean },
 ): ReconciledUsage {
+  const notBilled = options?.notBilled === true;
   const usageRow: LlmUsageRow & { provenance: CostProvenance } = {
     providerId: reservation.providerId,
     model: reservation.model,
-    inputTokens: usage.inputTokens ?? reservation.maxInputTokens,
-    outputTokens: usage.outputTokens ?? reservation.maxOutputTokens,
+    inputTokens: notBilled ? (usage.inputTokens ?? 0) : (usage.inputTokens ?? reservation.maxInputTokens),
+    outputTokens: notBilled ? (usage.outputTokens ?? 0) : (usage.outputTokens ?? reservation.maxOutputTokens),
     recordedAt: now.toISOString(),
-    provenance: "unknown",
+    provenance: notBilled ? "not_billed" : "unknown",
+    ...(notBilled ? { notBilled: true } : {}),
   };
 
-  if (
+  if (notBilled) {
+    // The caller's rejection classification wins over any wire data: a
+    // reported cost cannot contradict an explicit not-billed settle.
+  } else if (
     typeof usage.reportedCostUsd === "number" &&
     Number.isFinite(usage.reportedCostUsd) &&
     usage.reportedCostUsd >= 0

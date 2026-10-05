@@ -234,6 +234,27 @@ describe("reconcileBudget", () => {
     expect(settled.usageRow.estimatedCostUsd).toBeUndefined();
   });
 
+  it("marks a pre-response rejection as not billed: no cost fields, no bound substitution", () => {
+    for (const { usage, input, output } of [
+      { usage: {}, input: 0, output: 0 },
+      { usage: { inputTokens: 10 }, input: 10, output: 0 },
+      { usage: { inputTokens: 10, outputTokens: 5, reportedCostUsd: 0.02 }, input: 10, output: 5 },
+    ]) {
+      const settled = reconcileBudget(activeReservation(), usage, SEP_15, {
+        notBilled: true,
+      });
+      expect(settled.usageRow, JSON.stringify(usage)).toMatchObject({
+        inputTokens: input,
+        outputTokens: output,
+        notBilled: true,
+        provenance: "not_billed",
+      });
+      expect(settled.usageRow.costUsd, JSON.stringify(usage)).toBeUndefined();
+      expect(settled.usageRow.estimatedCostUsd, JSON.stringify(usage)).toBeUndefined();
+      expect(settled.reservation.status).toBe("settled");
+    }
+  });
+
   it("settles with reported cost when the provider returned one", () => {
     const settled = reconcileBudget(activeReservation(), {
       inputTokens: 800,
@@ -420,6 +441,28 @@ describe("monthlyBudgetSnapshot", () => {
     });
     expect(snap.remainingUsd).toBeNull();
     expect(snap.budgetUsd).toBeNull();
+  });
+
+  it("excludes not-billed rows from the cap while still counting their traffic", () => {
+    const usage = [
+      row({ costUsd: 0.5 }),
+      row({ notBilled: true, inputTokens: 40, outputTokens: 0 }),
+    ];
+    const snap = monthlyBudgetSnapshot({
+      providerId: "preset:openai",
+      usage,
+      reservations: [],
+      now: SEP_15,
+      monthlyBudgetUsd: 1,
+    });
+    // The not-billed row is egressed traffic (counted) but never spend:
+    // no reported/estimated cost and it does not count as unknown either.
+    expect(snap.requestCount).toBe(2);
+    expect(snap.inputTokens).toBe(1040);
+    expect(snap.reportedCostUsd).toBe(0.5);
+    expect(snap.estimatedCostUsd).toBe(0);
+    expect(snap.unknownCostRequests).toBe(0);
+    expect(snap.committedUsd).toBe(0.5);
   });
 
   it("ignores settled and released reservations in the reserved total", () => {

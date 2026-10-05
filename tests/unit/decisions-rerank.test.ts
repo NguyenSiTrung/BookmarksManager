@@ -384,7 +384,7 @@ describe("rerankSearch", () => {
     expect(result.results.map((r) => r.id)).toEqual(["bm-1"]);
   });
 
-  it("rejects an answer ID that was not among the candidates sent (no usage row)", async () => {
+  it("rejects an answer ID that was not among the candidates sent (usage still recorded)", async () => {
     const error = await rerankSearch(
       options({
         client: fakeClient({
@@ -397,10 +397,11 @@ describe("rerankSearch", () => {
 
     expect(error).toBeInstanceOf(RerankError);
     expect((error as RerankError).code).toBe("answer_mismatch");
-    expect(await db.usage.count()).toBe(0);
+    // The mismatched answers still egressed — the request's cost is recorded.
+    expect(await db.usage.count()).toBe(1);
   });
 
-  it("rejects an answer of the wrong type (no usage row)", async () => {
+  it("rejects an answer of the wrong type (usage still recorded)", async () => {
     const error = await rerankSearch(
       options({
         client: fakeClient({
@@ -417,7 +418,7 @@ describe("rerankSearch", () => {
 
     expect(error).toBeInstanceOf(RerankError);
     expect((error as RerankError).code).toBe("answer_mismatch");
-    expect(await db.usage.count()).toBe(0);
+    expect(await db.usage.count()).toBe(1);
   });
 
   it("uses an injected client's model and records its usage", async () => {

@@ -315,7 +315,7 @@ describe("scanNearDuplicates", () => {
     expect(await db.usage.count()).toBe(0);
   });
 
-  it("rejects an out-of-range same_content level (no decision, no usage)", async () => {
+  it("rejects an out-of-range same_content level (no decision; usage still recorded)", async () => {
     const error = await scanNearDuplicates(
       options({ client: sequenceClient([scoreAnswer(5)]) }),
     ).catch((caught: unknown) => caught);
@@ -323,7 +323,8 @@ describe("scanNearDuplicates", () => {
     expect(error).toBeInstanceOf(DuplicateScanError);
     expect((error as DuplicateScanError).code).toBe("answer_mismatch");
     expect(server.requests).toHaveLength(0);
-    expect(await db.usage.count()).toBe(0);
+    // The mismatched answers still egressed — the request's cost is recorded.
+    expect(await db.usage.count()).toBe(1);
     expect(await db.decisions.count()).toBe(0);
   });
 
@@ -339,6 +340,7 @@ describe("scanNearDuplicates", () => {
     ).catch((caught: unknown) => caught);
     expect((error as DuplicateScanError).code).toBe("answer_mismatch");
     expect(await db.decisions.count()).toBe(0);
+    expect(await db.usage.count()).toBe(1);
   });
 
   it("records one usage row per pair egress", async () => {

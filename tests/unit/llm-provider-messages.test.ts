@@ -21,7 +21,8 @@ import {
   saveCredential,
 } from "../../src/security/credentials";
 import type { LlmProviderRecord } from "../../src/schemas/llm";
-import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
+import { createLlmForTest as createLlmClient, reservedInputBound, scopeRequest } from "../fakes/llm";
+import { pingRequest } from "../../src/llm/prompt-contracts";
 import type { BudgetReservation } from "../../src/llm/budget";
 import { settleLlmUsage } from "../../src/net/llm-send";
 import { deleteAllExtensionData } from "../../src/security/delete-all";
@@ -33,6 +34,15 @@ const OPTIONS_URL = "chrome-extension://test-id/options.html";
 const PROVIDER_ID = "preset:openai";
 const ORIGIN = "https://api.openai.com";
 const MODEL = "gpt-4o-mini";
+
+// A04: the serialized explain request estimates above the declared
+// 100-token bound, so reservations use the honest bound instead.
+const BOUND_INPUT = reservedInputBound(scopeRequest("llm_explain", MODEL), 100, 50);
+const rateCost = (input: number, output: number) =>
+  (input * 2 + output * 4) / 1e6;
+const BOUND_COST = rateCost(BOUND_INPUT, 50);
+// The LLM_TEST probe's ping request estimates above its declared 64.
+const PING_BOUND = reservedInputBound(pingRequest(MODEL, "json_schema"), 64, 16);
 
 const SENDER = { url: OPTIONS_URL };
 
@@ -569,7 +579,7 @@ describe("LLM_TEST", () => {
     const pending = call({ type: "LLM_TEST", providerId: PROVIDER_ID });
     await held.invoked;
     const [reservation] = await db.llmReservations.toArray();
-    expect(reservation).toMatchObject({ status: "active", maxInputTokens: 64, maxOutputTokens: 16 });
+    expect(reservation).toMatchObject({ status: "active", maxInputTokens: PING_BOUND, maxOutputTokens: 16 });
     return { ...held, pending, reservationId: reservation!.id };
   }
 
@@ -796,7 +806,7 @@ describe("LLM_REVOKE", () => {
     const inFlight = held.client.send(held.request);
     await held.invoked;
     const [reservation] = await db.llmReservations.toArray();
-    expect(reservation).toMatchObject({ status: "active", reservedUsd: 0.0004 });
+    expect(reservation).toMatchObject({ status: "active", reservedUsd: BOUND_COST });
 
     expect(await call(REVOKE)).toMatchObject({ ok: true });
     expect(await readLlmProvider(PROVIDER_ID)).toBeNull();
@@ -829,9 +839,9 @@ describe("LLM_REVOKE", () => {
   it("accounts for a late attempt outcome without allowing another attempt", async () => {
     for (const { label, response, error, tokens, cost } of [
       { label: "HTTP error with reported usage", response: () => Response.json({ usage: { prompt_tokens: 3, completion_tokens: 2, cost: 0.02 } }, { status: 400 }), error: { status: 400 }, tokens: [3, 2], cost: { costUsd: 0.02 } },
-      { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-      { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
-      { label: "aborted transport", response: () => null, error: { code: "aborted" }, tokens: [100, 50], cost: { estimatedCostUsd: 0.0004 } },
+      { label: "retryable HTTP error", response: () => Response.json({ error: "temporary failure" }, { status: 503 }), error: { code: "no_provider" }, tokens: [BOUND_INPUT, 50], cost: { estimatedCostUsd: BOUND_COST } },
+      { label: "malformed success", response: () => new Response("not JSON"), error: { code: "transport" }, tokens: [BOUND_INPUT, 50], cost: { estimatedCostUsd: BOUND_COST } },
+      { label: "aborted transport", response: () => null, error: { code: "aborted" }, tokens: [BOUND_INPUT, 50], cost: { estimatedCostUsd: BOUND_COST } },
     ] as const) {
     await resetEnv();
     await seedExplainProvider();
@@ -929,12 +939,12 @@ describe("LLM_REVOKE", () => {
       type: "LLM_CONFIGURE",
       settings: { ...PRESET_SETTINGS, model: "gpt-4o", pricing: { inputPerMillion: 100, outputPerMillion: 200 } },
       key: "sk-synthetic-reenabled",
-      // New request costs 0.02; only the retained 0.0004 exposure blocks it.
+      // New request costs 0.02; only the retained exposure blocks it.
       monthlyBudgetUsd: 0.0203,
     })).toMatchObject({ ok: true });
     expect(await call({ type: "LLM_BUDGET_SNAPSHOT" })).toMatchObject({
       ok: true,
-      snapshot: { reservedUsd: 0.0004, requestCount: 0 },
+      snapshot: { reservedUsd: BOUND_COST, requestCount: 0 },
     });
     await grantConsentAtOrigin("llm_explain", ORIGIN);
     // A new configuration starts a new input-bound client operation; retain

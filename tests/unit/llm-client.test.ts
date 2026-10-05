@@ -6,7 +6,7 @@ import { grantConsentAtOrigin } from "../../src/consent/records";
 import { readBlocklist } from "../../src/decisions/blocklist";
 import { db } from "../../src/db/database";
 import { LlmHttpError } from "../../src/llm/client";
-import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
+import { createLlmForTest as createLlmClient, reservedInputBound, scopeRequest } from "../fakes/llm";
 import { LlmGateError, settleLlmUsage } from "../../src/net/llm-send";
 import { monthlyBudgetSnapshot } from "../../src/llm/budget";
 import { LlmCapabilityError } from "../../src/llm/structured";
@@ -59,6 +59,14 @@ const record: LlmProviderRecord = {
 };
 
 const REQUEST = scopeRequest("llm_explain", "gpt-4o-mini");
+
+// A04: the serialized REQUEST estimates above the declared 100-token bound,
+// so the reservation — and every missing-usage settle — uses this honest
+// bound instead. Rate: $0.15/$0.60 per 1M input/output tokens (preset).
+const BOUND_INPUT = reservedInputBound(REQUEST, 100, 50);
+const rateCost = (input: number, output: number) =>
+  (input * 0.15 + output * 0.6) / 1e6;
+const BOUND_COST = rateCost(BOUND_INPUT, 50);
 
 function client(fetchImpl: typeof fetch, beforeSend?: () => Promise<void>) {
   return createLlmClient(PROVIDER_ID, {
@@ -167,8 +175,8 @@ describe("createLlmClient", () => {
       expect(server.requests).toHaveLength(1);
       expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled"]);
       expect(await db.llmUsage.toArray()).toMatchObject([{
-        feature: "llm_explain", inputTokens: 100, outputTokens: 50,
-        estimatedCostUsd: expect.closeTo(0.000045, 10),
+        feature: "llm_explain", inputTokens: BOUND_INPUT, outputTokens: 50,
+        estimatedCostUsd: expect.closeTo(BOUND_COST, 10),
       }]);
     }
   });
@@ -447,8 +455,8 @@ describe("createLlmClient", () => {
     expect(error).toBeInstanceOf(Error);
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(1);
-    expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
-    expect(usage[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+    expect(usage[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 50 });
+    expect(usage[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
   });
 
   // These exercise wire -> real client -> gate -> Dexie accounting. Zero
@@ -457,18 +465,18 @@ describe("createLlmClient", () => {
   describe.each([200, 400])("usage settlement for HTTP %s", (status) => {
     it("preserves missing versus explicit zero usage across field variants", async () => {
       for (const { usage, input, output, cost } of [
-        { usage: undefined, input: 100, output: 50, cost: 0.000045 },
-        { usage: {}, input: 100, output: 50, cost: 0.000045 },
-        { usage: { total_tokens: 20 }, input: 100, output: 50, cost: 0.000045 },
+        { usage: undefined, input: BOUND_INPUT, output: 50, cost: BOUND_COST },
+        { usage: {}, input: BOUND_INPUT, output: 50, cost: BOUND_COST },
+        { usage: { total_tokens: 20 }, input: BOUND_INPUT, output: 50, cost: BOUND_COST },
         { usage: { prompt_tokens: 10 }, input: 10, output: 50, cost: 0.0000315 },
-        { usage: { completion_tokens: 5 }, input: 100, output: 5, cost: 0.000018 },
+        { usage: { completion_tokens: 5 }, input: BOUND_INPUT, output: 5, cost: rateCost(BOUND_INPUT, 5) },
         { usage: { prompt_tokens: 0 }, input: 0, output: 50, cost: 0.00003 },
-        { usage: { completion_tokens: 0 }, input: 100, output: 0, cost: 0.000015 },
+        { usage: { completion_tokens: 0 }, input: BOUND_INPUT, output: 0, cost: rateCost(BOUND_INPUT, 0) },
         { usage: { prompt_tokens: 0, completion_tokens: 0 }, input: 0, output: 0, cost: 0 },
         { usage: { prompt_tokens: 10, cost: null }, input: 10, output: 50, cost: 0.0000315 },
         { usage: { prompt_tokens: 10, cost: -1 }, input: 10, output: 50, cost: 0.0000315 },
-        { usage: { prompt_tokens: null, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
-        { usage: { prompt_tokens: -1, completion_tokens: 1000 }, input: 100, output: 1000, cost: 0.000615 },
+        { usage: { prompt_tokens: null, completion_tokens: 1000 }, input: BOUND_INPUT, output: 1000, cost: rateCost(BOUND_INPUT, 1000) },
+        { usage: { prompt_tokens: -1, completion_tokens: 1000 }, input: BOUND_INPUT, output: 1000, cost: rateCost(BOUND_INPUT, 1000) },
         { usage: { prompt_tokens: 10, cost: "unavailable" }, input: 10, output: 50, cost: 0.0000315 },
         { usage: { prompt_tokens: 10, total_tokens: null }, input: 10, output: 50, cost: 0.0000315 },
       ] as const) {
@@ -508,7 +516,7 @@ describe("createLlmClient", () => {
       else await call;
       const rows = await db.llmUsage.toArray();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50, costUsd: cost });
+      expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 50, costUsd: cost });
       expect(rows[0]?.estimatedCostUsd).toBeUndefined();
       }
     });
@@ -526,7 +534,7 @@ describe("createLlmClient", () => {
       else await call;
       const rows = await db.llmUsage.toArray();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: cost });
+      expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 1000, costUsd: cost });
       expect(rows[0]?.estimatedCostUsd).toBeUndefined();
       }
     });
@@ -545,14 +553,14 @@ describe("createLlmClient", () => {
       expectRedacted(error);
       const rows = await db.llmUsage.toArray();
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
-      expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+      expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 50 });
+      expect(rows[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
       }
     });
   });
 
   it("blocks subsequent priced admission after a successful missing-usage response", async () => {
-    await saveLlmProvider({ ...record, monthlyBudgetUsd: 0.00005 });
+    await saveLlmProvider({ ...record, monthlyBudgetUsd: 0.0001 });
     const server = makeOpenAiServer({
       completion: () => ({ model: "gpt-4o-mini", choices: [{ message: { content: "{}" } }] }),
     });
@@ -566,10 +574,10 @@ describe("createLlmClient", () => {
   // send would understate committed spend and admit the third provider send.
   it("settles retry-to-success attempts separately and blocks subsequent admission", async () => {
     for (const { prior, final, estimated, reported } of [
-      { prior: undefined, final: undefined, estimated: 0.00009, reported: 0 },
-      { prior: { prompt_tokens: 10 }, final: { completion_tokens: 5 }, estimated: 0.0000495, reported: 0 },
-      { prior: undefined, final: { cost: 0 }, estimated: 0.000045, reported: 0 },
-      { prior: { completion_tokens: 1000 }, final: { cost: 0 }, estimated: 0.000615, reported: 0 },
+      { prior: undefined, final: undefined, estimated: 2 * BOUND_COST, reported: 0 },
+      { prior: { prompt_tokens: 10 }, final: { completion_tokens: 5 }, estimated: rateCost(10, 50) + rateCost(BOUND_INPUT, 5), reported: 0 },
+      { prior: undefined, final: { cost: 0 }, estimated: BOUND_COST, reported: 0 },
+      { prior: { completion_tokens: 1000 }, final: { cost: 0 }, estimated: rateCost(BOUND_INPUT, 1000), reported: 0 },
       { prior: { prompt_tokens: 10, completion_tokens: 1000, cost: 0.02 }, final: { cost: 0 }, estimated: 0, reported: 0.02 },
     ] as const) {
       await db.llmUsage.clear();
@@ -636,7 +644,7 @@ describe("createLlmClient", () => {
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(2);
     expect(usage.every((row) => row.costUsd === undefined)).toBe(true);
-    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(2 * BOUND_COST, 12);
     expect(server.requests).toHaveLength(2);
   });
 
@@ -656,8 +664,90 @@ describe("createLlmClient", () => {
     expect(server.requests).toHaveLength(1);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[0]).toMatchObject({
+      inputTokens: reservedInputBound({ ...REQUEST, model }, 100, 50),
+      outputTokens: 50,
+    });
     expect(rows[0]?.costUsd).toBeUndefined();
     expect(rows[0]?.estimatedCostUsd).toBeUndefined();
+  });
+});
+
+describe("input estimate and not-billed provenance (A04/A05)", () => {
+  it("reserves max(declared, estimate) when the serialized prompt exceeds the declared bound", async () => {
+    const declared = 100;
+    const server = makeOpenAiServer({});
+    const payload = JSON.parse(REQUEST.messages[1]!.content as string) as Record<string, unknown>;
+    const request = {
+      ...REQUEST,
+      messages: [
+        REQUEST.messages[0]!,
+        { role: "user", content: JSON.stringify({ ...payload, question: `Which category? ${"x".repeat(20_000)}` }) },
+      ],
+    };
+
+    await client(server.fetch).send(request);
+
+    const expected = Math.ceil(
+      (JSON.stringify(server.requests[0]!.body).length / 4) * 1.25,
+    );
+    expect(expected).toBeGreaterThan(declared);
+    const reservations = await db.llmReservations.toArray();
+    expect(reservations).toHaveLength(1);
+    expect(reservations[0]?.maxInputTokens).toBe(expected);
+    // The send still completes; reported usage wins at settle as usual.
+    expect((await db.llmUsage.toArray())[0]).toMatchObject({ inputTokens: 10, outputTokens: 5 });
+    expect(reservations[0]?.status).toBe("settled");
+  });
+
+  it("settles a capability-probe rejection as not billed — excluded from the cap", async () => {
+    const server = makeOpenAiServer({
+      failures: [
+        { status: 400, body: { error: { message: "response_format is not supported by this model" } } },
+      ],
+    });
+
+    await expect(client(server.fetch).send(REQUEST)).rejects.toBeInstanceOf(LlmCapabilityError);
+
+    const usage = await db.llmUsage.toArray();
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ notBilled: true, inputTokens: 0, outputTokens: 0 });
+    expect(usage[0]?.costUsd).toBeUndefined();
+    expect(usage[0]?.estimatedCostUsd).toBeUndefined();
+    expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+    // Egressed traffic is recorded but contributes nothing to the monthly
+    // cap: no reported/estimated figure and not an "unknown cost" either.
+    const snap = monthlyBudgetSnapshot({
+      providerId: PROVIDER_ID,
+      usage,
+      reservations: await db.llmReservations.toArray(),
+      now: new Date(),
+      monthlyBudgetUsd: 5,
+    });
+    expect(snap.requestCount).toBe(1);
+    expect(snap.committedUsd).toBe(0);
+    expect(snap.unknownCostRequests).toBe(0);
+    expect(snap.hasUnknownCost).toBe(false);
+  });
+
+  it("keeps conservative billing for every non-capability failure shape", async () => {
+    for (const mode of ["other_4xx", "5xx_then_success", "non_json_200"] as const) {
+      await db.llmUsage.clear();
+      await db.llmReservations.clear();
+      const fetchImpl: typeof fetch =
+        mode === "other_4xx"
+          ? makeOpenAiServer({ failures: [{ status: 401, body: { error: { message: "bad key" } } }] }).fetch
+          : mode === "5xx_then_success"
+            ? makeOpenAiServer({ failures: [{ status: 500, body: { error: { message: "upstream" } } }] }).fetch
+            : (async () => new Response("<html>oops</html>", { status: 200 })) as typeof fetch;
+      await client(fetchImpl).send(REQUEST).catch(() => {});
+
+      const rows = await db.llmUsage.toArray();
+      expect(rows.length).toBeGreaterThan(0);
+      // No row may be marked not billed; the first row is the settled failure
+      // (for 5xx a second settled row belongs to the retried success).
+      for (const row of rows) expect(row.notBilled).toBeUndefined();
+      expect(rows[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
+    }
   });
 });

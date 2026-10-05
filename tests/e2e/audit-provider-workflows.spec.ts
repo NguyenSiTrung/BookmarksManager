@@ -207,9 +207,14 @@ test("bounded output and missing usage: the reserved cap is on the wire and abse
 
     const reservations = await auditLlmReservations(options);
     expect(reservations).toHaveLength(1);
+    // A04: the reservation covers the real serialized prompt — the estimate
+    // beats the declared 64-token bound on this body.
+    const inputBound = Math.ceil(
+      (JSON.stringify(wire.requests[0]!.postData).length / 4) * 1.25,
+    );
     expect(reservations[0]).toMatchObject({
       status: "settled",
-      maxInputTokens: 64,
+      maxInputTokens: inputBound,
       maxOutputTokens: AUDIT_TEST_MAX_TOKENS,
     });
     const reservedUsd = reservations[0]!.reservedUsd;
@@ -221,7 +226,7 @@ test("bounded output and missing usage: the reserved cap is on the wire and abse
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({
       feature: "llm_test",
-      inputTokens: 64,
+      inputTokens: inputBound,
       outputTokens: 16,
       estimatedCostUsd: reservedUsd,
     });

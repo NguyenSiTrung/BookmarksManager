@@ -56,12 +56,14 @@ import type { Job } from "../schemas/job";
  *     questions"),
  *  4. sends it through a `createJevClient` bound to the `jev_decisions`
  *     scope,
- *  5. cross-checks every answer against the candidates that were actually
- *     sent — a choice outside the sent option keys (or an answer of the wrong
- *     type) is an `answer_mismatch`, the FR2 hard boundary,
+ *  5. records one `usage` row, then cross-checks every answer against the
+ *     candidates that were actually sent — a choice outside the sent option
+ *     keys (or an answer of the wrong type) is an `answer_mismatch`, the
+ *     FR2 hard boundary (the mismatched response still egressed, so its
+ *     cost is still recorded),
  *  6. applies the §10.2 policy and persists each decision (with
  *     `source.model` from the response and `source.questionSetVersion` from
- *     the task) plus one `usage` row.
+ *     the task).
  *
  * A blocklisted/sensitive bookmark is skipped with `{sent: false}` and makes
  * NO request. Auto-apply (only `add_tags`/`set_category`, only with the
@@ -835,13 +837,15 @@ async function runAnalysis(
     string,
     { type: string; noul?: number; choice?: string; confidence?: number; probabilities?: Record<string, number> }
   >;
+  // Record the usage row BEFORE any validation that can abort: the request
+  // already left the device (cost incurred), so an `answer_mismatch` — like
+  // a decision that fails to persist/apply — must not drop the per-request
+  // cost accounting. Exactly one row per call.
+  const usage = await recordUsage(result, options.job?.id);
+
   crossCheckAnswers(built, answers);
 
   const drafts = interpret(built, answers);
-  // Record the usage row BEFORE persisting decisions: the request already left
-  // the device (cost incurred), so a decision that fails to persist/apply must
-  // not drop the per-request cost accounting. Exactly one row per call.
-  const usage = await recordUsage(result, options.job?.id);
   const decisions: DecisionRow[] = [];
   for (const draft of drafts) {
     decisions.push(await persistDraft(draft, options, result.model, sent));

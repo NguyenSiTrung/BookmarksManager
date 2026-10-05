@@ -31,15 +31,15 @@ import type { Job } from "../schemas/job";
  *     `createJevClient` bound to the `jev_decisions` scope (caller may inject
  *     `client`/`transport`; production defaults to `sendConsented`), with
  *     state `{bookmark, pairPartner}` — Chrome node ids never enter a request,
- *  4. cross-checks the `same_content` answer (the only field; a `score`
- *     answer in 1–4) — anything else is an `answer_mismatch`, the FR2 hard
- *     boundary,
+ *  4. records exactly one `usage` row per egress, then cross-checks the
+ *     `same_content` answer (the only field; a `score` answer in 1–4) —
+ *     anything else is an `answer_mismatch`, the FR2 hard boundary (the
+ *     mismatched response still egressed, so its cost is still recorded),
  *  5. maps the level onto a §10.1 confidence ({@link levelToConfidence}) and
  *     applies the §10.2 `merge_duplicates` policy — always `review` (≥ 0.5)
  *     or `unsure`, NEVER auto-applied,
  *  6. persists one `merge_duplicates` decision per pair (with `keepId` set to
- *     the pair's canonical `a` side) and records exactly one `usage` row per
- *     egress.
+ *     the pair's canonical `a` side).
  *
  * An empty pair list makes NO request (`{sent:false, reason:"empty"}`); a list
  * whose every pair is blocklisted also makes no request
@@ -221,7 +221,8 @@ function mismatch(): DuplicateScanError {
  * FR2 hard boundary: the one field `same_content` must be answered with a
  * `score` level inside the declared 1–4 range, and no other answer key may be
  * present. Returns the level; a violation throws `answer_mismatch` before
- * anything is persisted or recorded.
+ * anything is persisted (the usage row is already recorded — the mismatched
+ * response still egressed, so its cost still counts).
  */
 function crossCheckLevel(
   answers: Record<string, { type: string; score?: number }>,
@@ -405,16 +406,17 @@ async function runPairs(
       string,
       { type: string; score?: number; probabilities?: Record<string, number> }
     >;
+    // The request left the device, so record its cost BEFORE the answer
+    // cross-check: an `answer_mismatch` throws after this point, and the
+    // mismatched response still egressed — its cost must still be recorded
+    // (matching the analyze pipeline). Exactly one row per completed call.
+    usage.push(await recordUsage(result, options.job?.id));
+
     const level = crossCheckLevel(answers);
     // Deliberate §10.2-sound divergence from §10.1: the confidence is a fixed
     // map of the level ({@link levelToConfidence}); the answer's returned
     // `confidence`, when present, is intentionally NOT blended in.
     const confidence = levelToConfidence(level);
-
-    // The request left the device, so record its cost. This runs AFTER the
-    // answer cross-check: an `answer_mismatch` throws before reaching here, so
-    // it writes no usage row. Exactly one row per completed call.
-    usage.push(await recordUsage(result, options.job?.id));
 
     const outcome = evaluatePolicy({ kind: "merge_duplicates", confidence });
     // A merge is never auto-applied; a `review` decision lands `pending`.

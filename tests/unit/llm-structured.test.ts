@@ -4,7 +4,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { LlmHttpError } from "../../src/llm/client";
-import { createLlmForTest as createLlmClient, scopeRequest } from "../fakes/llm";
+import { createLlmForTest as createLlmClient, reservedInputBound, scopeRequest } from "../fakes/llm";
 import { ExplainResponse } from "../../src/llm/prompt-contracts";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { makeOpenAiServer } from "../mock-servers/openai";
@@ -398,12 +398,28 @@ describe("structured output caps through the real client and gate", () => {
     expect(reservations.every((row) => row.status === "settled")).toBe(true);
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(7);
-    for (const row of usage) {
-      expect(row).toMatchObject({ inputTokens: 100, outputTokens: 50 });
-      expect(row.costUsd).toBeUndefined();
-      expect(row.estimatedCostUsd).toBeCloseTo(0.0002, 12);
-    }
-    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.0014, 12);
+    // A04/A05: attempts settle in request order. Each reserves the honest
+    // bound for ITS serialized body (tier and repair prompts differ);
+    // capability-probe rejections (attempts 1 and 3) egressed but carry
+    // explicit "not billed" provenance — no substituted bound, no cost.
+    usage.forEach((row, index) => {
+      const bound = reservedInputBound(bodies[index]!, 100, 50);
+      if (index === 1 || index === 3) {
+        expect(row).toMatchObject({ inputTokens: 0, outputTokens: 0, notBilled: true });
+        expect(row.costUsd).toBeUndefined();
+        expect(row.estimatedCostUsd).toBeUndefined();
+      } else {
+        expect(row).toMatchObject({ inputTokens: bound, outputTokens: 50 });
+        expect(row.costUsd).toBeUndefined();
+        expect(row.estimatedCostUsd).toBeCloseTo((bound + 50 * 2) / 1e6, 12);
+      }
+    });
+    const expectedTotal = bodies.reduce(
+      (sum, body, index) =>
+        sum + (index === 1 || index === 3 ? 0 : (reservedInputBound(body, 100, 50) + 100) / 1e6),
+      0,
+    );
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(expectedTotal, 12);
   });
 
   it("retains caller limit clamping through fallback and repair", async () => {

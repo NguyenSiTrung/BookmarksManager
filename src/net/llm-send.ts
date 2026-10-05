@@ -314,6 +314,7 @@ export async function settleLlmUsage(
   feature: ConsentScope | typeof ORPHAN_SWEEP_FEATURE,
   usage: ActualUsage,
   now: Date = new Date(),
+  options?: { notBilled?: boolean },
 ): Promise<void> {
   await db.transaction(
     "rw",
@@ -328,6 +329,7 @@ export async function settleLlmUsage(
         reservation,
         usage,
         now,
+        options,
       );
       await db.llmReservations.put(settled);
       const { provenance, ...row } = usageRow;
@@ -493,6 +495,18 @@ async function sendLlmRequest(
   }
   const admission = admitPayload(input, request, destination.origin, userBlocklist, session);
 
+  // Serialize AFTER admission — an unparsable/canonicalizing payload must
+  // fail with the gate's typed refusal, never a native stringify error.
+  // The reservation must cover the real serialized prompt, not just the
+  // caller's declared bound: chars/4 × 1.25 margin (the same heuristic the
+  // Jev planner uses) — under-reserving would settle a missing-usage
+  // failure below true exposure.
+  const body = JSON.stringify(request);
+  const reservedInputTokens = Math.max(
+    input.maxInputTokens,
+    Math.ceil((body.length / 4) * 1.25),
+  );
+
   if (!(await hasConsentAtOrigin(input.scope, destination.origin))) {
     throw new LlmGateError(
       "no_consent",
@@ -550,7 +564,7 @@ async function sendLlmRequest(
         reservationId,
         providerId: record.providerId,
         model: destination.model,
-        maxInputTokens: input.maxInputTokens,
+        maxInputTokens: reservedInputTokens,
         maxOutputTokens,
         ...(pricing !== undefined ? { pricing } : {}),
         kind: input.kind,
@@ -620,13 +634,15 @@ async function sendLlmRequest(
   } else if (destination.auth === "api-key") {
     headers["api-key"] = key!;
   }
-  const body = JSON.stringify(request);
 
   // One durable reservation per attempt. Prior attempts are already settled
   // when the full gate reserves again, so both budget and current admission
   // include their exposure. Keep the normalized, clamped request immutable.
   const retry = () => sendLlmRequest(
-    { ...input, request, maxInputTokens: reservation.maxInputTokens, maxOutputTokens },
+    // `input.maxInputTokens` (the caller's declared bound) must pass through
+    // unchanged: the session binding canonicalizes it, and the reservation
+    // bound is re-derived from the same body on every attempt anyway.
+    { ...input, request, maxOutputTokens },
     { ...options, retries: retries - 1 },
     session,
     retryIndex + 1,

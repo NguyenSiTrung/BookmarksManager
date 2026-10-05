@@ -185,3 +185,18 @@
   files cannot conflict; task 6's later `database.ts` work is unaffected
   (union member only). No spec behavior, retry policy, wait cap, or
   dependency change.
+
+## Revision 14 — 2026-10-05 (task 3 file ownership)
+
+- `src/decisions/rerank.ts` joins Phase 2 task 3 ownership: Bead
+  `BookmarksManager-eov` explicitly covers both answer cross-check call
+  sites ("Covers both modules") — pipeline.ts AND rerank.ts share the
+  recordUsage-after-crossCheck ordering bug plus rerank.ts:288-291's
+  misleading comment. The plan's file list mentioned pipeline.ts only;
+  the bead (reused by this task) is the authority.
+- `src/decisions/duplicates.ts` also joins: implementation surfaced the
+  identical defect at its `crossCheckLevel` call site (same
+  recordUsage-after-crossCheck order, same stale "writes no usage row"
+  comment). The finding's true scope is every cross-check site, so it
+  gets the same fix in this task; its mismatch tests flip 0→1 usage rows
+  like the other two modules.

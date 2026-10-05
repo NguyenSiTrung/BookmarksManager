@@ -24,6 +24,23 @@ export function createLlmForTest(
   return createLlmClient(providerId, productionConfig);
 }
 
+/** The gate's A04 reserved input bound for a send: the serialized body
+ * estimate (chars/4 × 1.25, the Jev planner's heuristic) may only raise the
+ * caller's declared bound, never lower it. `maxOutputTokens` is the send's
+ * clamped ceiling — the wire `max_tokens` after `min()` clamping. */
+export function reservedInputBound(
+  request: ChatCompletionRequest,
+  declaredMaxInputTokens: number,
+  maxOutputTokens: number,
+): number {
+  const maxTokens = Math.min(request.max_tokens ?? maxOutputTokens, maxOutputTokens);
+  const body = JSON.stringify({ ...request, max_tokens: maxTokens });
+  return Math.max(
+    declaredMaxInputTokens,
+    Math.ceil((body.length / 4) * 1.25),
+  );
+}
+
 export const TEST_LLM_SCOPES = [
   "llm_test", "llm_explain", "llm_escalate", "llm_restructure", "llm_summary",
 ] as const;

@@ -37,7 +37,10 @@ export type UsageRecord = z.infer<typeof UsageRecord>;
  *
  * Cost provenance is derivable, never stored: `costUsd` present →
  * provider-reported; `estimatedCostUsd` present → locally estimated from
- * configured rates; neither → unknown (never rendered as $0.00).
+ * configured rates; neither → unknown (never rendered as $0.00);
+ * `notBilled === true` → not billed (a pre-response provider rejection,
+ * e.g. a capability-probe refusal — egressed traffic recorded, excluded
+ * from the monthly cap).
  */
 export const LlmUsageRecord = z.strictObject({
   id: z.number().int().positive().optional(), // assigned by IndexedDB
@@ -49,6 +52,7 @@ export const LlmUsageRecord = z.strictObject({
   outputTokens: z.number().int().min(0),
   costUsd: z.number().min(0).optional(),
   estimatedCostUsd: z.number().min(0).optional(),
+  notBilled: z.boolean().optional(),
   recordedAt: z.iso.datetime(),
 });
 export type LlmUsageRecord = z.infer<typeof LlmUsageRecord>;

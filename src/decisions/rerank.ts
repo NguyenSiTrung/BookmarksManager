@@ -25,12 +25,13 @@ import { isNoMatch } from "./policy";
  *  4. sends it as ONE `createJevClient` request bound to the `jev_decisions`
  *     scope (caller may inject `client`/`transport`; production defaults to
  *     `sendConsented`),
- *  5. cross-checks every answer key against the candidates that were actually
- *     sent — an answer outside `candidate_<i>` (or of the wrong type) is an
- *     `answer_mismatch`, the FR2 hard boundary,
+ *  5. records exactly one `usage` row, then cross-checks every answer key
+ *     against the candidates that were actually sent — an answer outside
+ *     `candidate_<i>` (or of the wrong type) is an `answer_mismatch`, the
+ *     FR2 hard boundary (the mismatched response still egressed, so its
+ *     cost is still recorded),
  *  6. sorts the results by probability (descending) and applies the §10.2
- *     no-match bar (`isNoMatch`),
- *  7. records exactly one `usage` row per egress.
+ *     no-match bar (`isNoMatch`).
  *
  * The query is user input, so it is sent ONLY as `DecisionState.query` — never
  * embedded in question text or anywhere else. An empty or all-blocklisted
@@ -283,13 +284,14 @@ async function runRerank(
     string,
     { type: string; noul?: number }
   >;
-  crossCheckAnswers(answers, sent.length);
 
-  // The request left the device, so record its cost. This runs AFTER the
-  // answer cross-check above: an `answer_mismatch` throws before reaching
-  // here, so it writes no usage row (matching the analyze pipeline). Exactly
-  // one row per completed call.
+  // The request left the device, so record its cost BEFORE the answer
+  // cross-check: an `answer_mismatch` throws after this point, and the
+  // mismatched response still egressed — its cost must still be recorded
+  // (matching the analyze pipeline). Exactly one row per completed call.
   const usage = await recordUsage(result);
+
+  crossCheckAnswers(answers, sent.length);
 
   const ranked = sent.map((entry, index) => ({
     id: entry.id,

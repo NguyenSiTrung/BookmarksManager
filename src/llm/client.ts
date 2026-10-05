@@ -132,12 +132,20 @@ export function createLlmClient(
 
       if (response.status >= 400) {
         const details = await errorDetails(response);
-        await settleLlmUsage(reservation.id, config.scope, details.usage);
         if (details.capabilityRejected) {
+          // The provider rejected the request before producing a response
+          // (a capability probe on the structured tier): settle with the
+          // explicit not-billed provenance — egressed traffic is recorded
+          // but nothing counts toward the monthly cap. Every other failure
+          // shape keeps the conservative bound-substituted billing.
+          await settleLlmUsage(reservation.id, config.scope, details.usage, new Date(), {
+            notBilled: true,
+          });
           throw new LlmCapabilityError(
             `Provider rejected structured output (HTTP ${response.status}).`,
           );
         }
+        await settleLlmUsage(reservation.id, config.scope, details.usage);
         throw new LlmHttpError(
           response.status,
           `LLM provider answered HTTP ${response.status}.`,

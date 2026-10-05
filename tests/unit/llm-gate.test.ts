@@ -15,7 +15,7 @@ import {
   sweepStaleLlmReservations,
   STALE_RESERVATION_TTL_MS,
 } from "../../src/net/llm-send";
-import { sendLlmForTest as sendLlmConsented, scopeRequest, TEST_LLM_SCOPES } from "../fakes/llm";
+import { reservedInputBound, sendLlmForTest as sendLlmConsented, scopeRequest, TEST_LLM_SCOPES } from "../fakes/llm";
 import { makeOpenAiServer } from "../mock-servers/openai";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { saveCredential } from "../../src/security/credentials";
@@ -101,6 +101,15 @@ function customProviderRecord(
 function validRequest(model = MODEL) {
   return scopeRequest("llm_explain", model);
 }
+
+// A04: the serialized request estimates above the declared 100-token bound,
+// so reservations — and every missing-usage settle — use the honest bound.
+const rateCost = (input: number, output: number) =>
+  (input * 0.15 + output * 0.6) / 1e6;
+const BOUND_INPUT = reservedInputBound(validRequest(), 100, 50);
+const BOUND_COST = rateCost(BOUND_INPUT, 50);
+const BOUND25 = reservedInputBound({ ...validRequest(), max_tokens: 25 }, 100, 50);
+const BOUND_UNPRICED = reservedInputBound(validRequest(UNPRICED_MODEL), 100, 50);
 
 function send(overrides: object = {}, options: object = {}) {
   const server = makeOpenAiServer();
@@ -587,7 +596,8 @@ describe("sendLlmConsented happy path", () => {
     for (const failure of ["missing", "reported overrun", "transport"] as const) {
       await db.llmUsage.clear();
       await db.llmReservations.clear();
-      await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
+      // Cap admits one honest-bound reservation but not a second.
+      await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.0001 }));
       const server = makeOpenAiServer({
         failures: [failure === "transport"
           ? { throw: new TypeError("synthetic reset") }
@@ -601,10 +611,10 @@ describe("sendLlmConsented happy path", () => {
       const rows = await db.llmUsage.toArray();
       expect(rows).toHaveLength(1);
       if (failure === "reported overrun") {
-        expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: 0.02 });
+        expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 1000, costUsd: 0.02 });
         expect(rows[0]?.estimatedCostUsd).toBeUndefined();
       } else {
-        expect(rows[0]?.estimatedCostUsd).toBeCloseTo(0.000045, 12);
+        expect(rows[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
       }
       expect((await db.llmReservations.toArray()).map((row) => row.status)).toEqual(["settled"]);
     }
@@ -630,7 +640,7 @@ describe("sendLlmConsented happy path", () => {
       await expectGateBlock(send({}, { fetchImpl }).result, change === "permission" ? "no_permission" : change === "origin" ? "invalid_provider" : "no_consent");
       expect(server.requests).toHaveLength(1);
       expect(await db.llmUsage.toArray()).toMatchObject([{
-        estimatedCostUsd: expect.closeTo(0.000045, 12),
+        estimatedCostUsd: expect.closeTo(BOUND_COST, 12),
       }]);
     }
   });
@@ -646,13 +656,13 @@ describe("sendLlmConsented happy path", () => {
     expect(reservations.filter((row) => row.id === reservation.id && row.status === "active")).toHaveLength(1);
     for (const row of reservations) {
       expect(row.maxOutputTokens).toBe(25);
-      expect(row.reservedUsd).toBeCloseTo(0.00003, 12);
+      expect(row.reservedUsd).toBeCloseTo(rateCost(BOUND25, 25), 12);
     }
     expect(server.requests.map((row) => row.body)).toEqual([
       { ...validRequest(), max_tokens: 25 }, { ...validRequest(), max_tokens: 25 },
     ]);
     expect(await db.llmUsage.toArray()).toMatchObject([{
-      inputTokens: 100, outputTokens: 25, estimatedCostUsd: expect.closeTo(0.00003, 12),
+      inputTokens: BOUND25, outputTokens: 25, estimatedCostUsd: expect.closeTo(rateCost(BOUND25, 25), 12),
     }]);
   });
 
@@ -683,8 +693,8 @@ describe("sendLlmConsented happy path", () => {
       const reservations = await db.llmReservations.toArray();
       expect(reservations.map((row) => row.status).sort()).toEqual(["released", "settled"]);
       expect(await db.llmUsage.toArray()).toMatchObject([{
-        inputTokens: 100, outputTokens: 50,
-        estimatedCostUsd: expect.closeTo(0.000045, 10),
+        inputTokens: BOUND_INPUT, outputTokens: 50,
+        estimatedCostUsd: expect.closeTo(BOUND_COST, 10),
       }]);
       await settleLlmUsage(reservations.find((row) => row.status === "settled")!.id, "llm_explain", {
         inputTokens: 100, outputTokens: 50,
@@ -722,10 +732,10 @@ describe("sendLlmConsented happy path", () => {
     expect(usage).toHaveLength(2);
     for (const row of usage) {
       expect(row).toMatchObject({
-        inputTokens: 100, outputTokens: 50, estimatedCostUsd: expect.closeTo(0.000045, 12),
+        inputTokens: BOUND_INPUT, outputTokens: 50, estimatedCostUsd: expect.closeTo(BOUND_COST, 12),
       });
     }
-    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(2 * BOUND_COST, 12);
     expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled", "settled"]);
   });
 
@@ -750,7 +760,7 @@ describe("sendLlmConsented happy path", () => {
     expect((await db.llmReservations.toArray()).map((row) => row.status).sort()).toEqual(["released", "settled"]);
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(1);
-    expect(usage[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(usage[0]).toMatchObject({ inputTokens: BOUND_UNPRICED, outputTokens: 50 });
     expect(usage[0]?.costUsd).toBeUndefined();
     expect(usage[0]?.estimatedCostUsd).toBeUndefined();
   });
@@ -800,17 +810,18 @@ describe("sendLlmConsented happy path", () => {
   });
 
   it("clamps caller max_tokens on the wire and in the reservation", async () => {
-    for (const [caller, expected, cost] of [
-      [1, 1, 0.0000156],
-      [25, 25, 0.00003],
-      [50, 50, 0.000045],
-      [1000, 50, 0.000045],
+    for (const [caller, expected] of [
+      [1, 1],
+      [25, 25],
+      [50, 50],
+      [1000, 50],
     ] as const) {
     const request = { ...validRequest(), max_tokens: caller };
     const { result, fetch } = send({ request });
     const { reservation } = await result;
     expect(reservation.maxOutputTokens).toBe(expected);
-    expect(reservation.reservedUsd).toBeCloseTo(cost, 10);
+    const inputBound = reservedInputBound(request, 100, 50);
+    expect(reservation.reservedUsd).toBeCloseTo(rateCost(inputBound, expected), 10);
     expect((await db.llmReservations.get(reservation.id))?.maxOutputTokens).toBe(expected);
     expect(fetch.requests).toHaveLength(1);
     expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: expected });
@@ -819,12 +830,12 @@ describe("sendLlmConsented happy path", () => {
   });
 
   it("uses the tighter limit when admitting a request against the monthly cap", async () => {
-    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.000031 }));
+    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00008 }));
     const { result, fetch } = send({
       request: { ...validRequest(), max_tokens: 25 },
     });
     const { reservation } = await result;
-    expect(reservation.reservedUsd).toBeCloseTo(0.00003, 10);
+    expect(reservation.reservedUsd).toBeCloseTo(rateCost(BOUND25, 25), 10);
     expect(reservation.maxOutputTokens).toBe(25);
     expect(fetch.requests[0]?.body).toMatchObject({ max_tokens: 25 });
   });
@@ -879,8 +890,8 @@ describe("sendLlmConsented happy path", () => {
       status: "settled", maxOutputTokens: 25,
     });
     expect(await db.llmUsage.toArray()).toMatchObject([{
-      inputTokens: 100, outputTokens: 25,
-      estimatedCostUsd: expect.closeTo(0.00003, 10),
+      inputTokens: BOUND25, outputTokens: 25,
+      estimatedCostUsd: expect.closeTo(rateCost(BOUND25, 25), 10),
     }]);
   });
 
@@ -995,8 +1006,8 @@ describe("sendLlmConsented happy path", () => {
     expect(response.status).toBe(200);
     expect(fetch.requests).toHaveLength(1);
     expect(reservation.reservedUsd).toBeGreaterThan(0);
-    // 0.15 USD/1M × 100 tokens + 0.60 USD/1M × 50 tokens = 0.000045.
-    expect(reservation.reservedUsd).toBeCloseTo(0.000045, 8);
+    // 0.15 USD/1M × BOUND_INPUT tokens + 0.60 USD/1M × 50 tokens.
+    expect(reservation.reservedUsd).toBeCloseTo(BOUND_COST, 8);
   });
 
   it("a manual price override beats the built-in preset table", async () => {
@@ -1017,8 +1028,10 @@ describe("sendLlmConsented happy path", () => {
     const { response, reservation } = await result;
     expect(response.status).toBe(200);
     expect(fetch.requests).toHaveLength(1);
-    // 3 USD/1M × 100 tokens + 4 USD/1M × 50 tokens = 0.0005.
-    expect(reservation.reservedUsd).toBeCloseTo(0.0005, 8);
+    // 3 USD/1M × BOUND_UNPRICED tokens + 4 USD/1M × 50 tokens.
+    expect(reservation.reservedUsd).toBeCloseTo(
+      (BOUND_UNPRICED * 3 + 50 * 4) / 1e6, 8,
+    );
   });
 
   it("retries a transport failure once, then succeeds", async () => {
@@ -1109,8 +1122,8 @@ describe("sendLlmConsented happy path", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("settled");
     expect(await db.llmUsage.toArray()).toMatchObject([{
-      inputTokens: 100, outputTokens: 50,
-      estimatedCostUsd: expect.closeTo(0.000045, 12),
+      inputTokens: BOUND_INPUT, outputTokens: 50,
+      estimatedCostUsd: expect.closeTo(BOUND_COST, 12),
     }]);
     expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "aborted" }]);
   });
@@ -1126,10 +1139,10 @@ describe("sendLlmConsented happy path", () => {
     expect(usage).toHaveLength(2);
     for (const row of usage) {
       expect(row).toMatchObject({
-        inputTokens: 100, outputTokens: 50, estimatedCostUsd: expect.closeTo(0.000045, 12),
+        inputTokens: BOUND_INPUT, outputTokens: 50, estimatedCostUsd: expect.closeTo(BOUND_COST, 12),
       });
     }
-    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(0.00009, 12);
+    expect(usage.reduce((sum, row) => sum + (row.estimatedCostUsd ?? 0), 0)).toBeCloseTo(2 * BOUND_COST, 12);
     expect(await db.sentLog.toArray()).toMatchObject([{ outcome: "retried" }, { outcome: "transport" }]);
   });
 
@@ -1191,7 +1204,8 @@ describe("sendLlmConsented happy path", () => {
   });
 
   it("retains stale sent exposure against the cap and accepts one late honest settlement", async () => {
-    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.00005 }));
+    // Cap admits one honest-bound reservation but not a second.
+    await saveLlmProvider(providerRecord({ monthlyBudgetUsd: 0.0001 }));
     const { reservation } = await send().result;
     const late = new Date(NOW.getTime() + STALE_RESERVATION_TTL_MS + 1);
     const next = send({}, { now: () => late });
@@ -1207,7 +1221,7 @@ describe("sendLlmConsented happy path", () => {
     await settleLlmUsage(reservation.id, "llm_explain", {}, late);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 1000, costUsd: 0.02 });
+    expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 1000, costUsd: 0.02 });
     expect(rows[0]?.estimatedCostUsd).toBeUndefined();
     expect((await db.llmReservations.get(reservation.id))?.status).toBe("settled");
   });
@@ -1231,7 +1245,7 @@ describe("sendLlmConsented happy path", () => {
     ]);
     const rows = await db.llmUsage.toArray();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+    expect(rows[0]).toMatchObject({ inputTokens: BOUND_UNPRICED, outputTokens: 50 });
     expect(rows[0]?.costUsd).toBeUndefined();
     expect(rows[0]?.estimatedCostUsd).toBeUndefined();
     expect(await snapshot()).toMatchObject({ hasUnknownCost: true, unknownCostRequests: 2 });
@@ -1439,7 +1453,7 @@ describe("reservation orphan sweep and bookkeeping guard (A03)", () => {
     const usage = await db.llmUsage.toArray();
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({
-      providerId: PROVIDER_ID, inputTokens: 100, outputTokens: 50,
+      providerId: PROVIDER_ID, inputTokens: BOUND_UNPRICED, outputTokens: 50,
     });
     expect(usage[0]?.costUsd).toBeUndefined();
     expect(usage[0]?.estimatedCostUsd).toBeUndefined();

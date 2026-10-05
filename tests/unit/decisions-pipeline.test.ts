@@ -330,7 +330,7 @@ describe("analyzeBookmark", () => {
     expect(await db.audit.count()).toBe(0);
   });
 
-  it("rejects an answer ID that was not among the sent candidates", async () => {
+  it("rejects an answer ID that was not among the sent candidates (usage still recorded)", async () => {
     server.queue({
       kind: "answer",
       answerOverrides: {
@@ -350,7 +350,8 @@ describe("analyzeBookmark", () => {
     expect(error).toBeInstanceOf(DecisionPipelineError);
     expect((error as DecisionPipelineError).code).toBe("answer_mismatch");
     expect(await db.decisions.count()).toBe(0);
-    expect(await db.usage.count()).toBe(0);
+    // The mismatched answers still egressed — the request's cost is recorded.
+    expect(await db.usage.count()).toBe(1);
   });
 
   it("persists a pending move for a placement suggestion (never auto-applied)", async () => {
