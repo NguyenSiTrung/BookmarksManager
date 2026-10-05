@@ -228,3 +228,49 @@ describe("ChatCompletionResponse", () => {
     }
   });
 });
+
+describe("response size bounds (A06)", () => {
+  const base = {
+    model: "m",
+    choices: [{ message: { role: "assistant", content: "ok" } }],
+  };
+
+  it("accepts a response at the bounds", () => {
+    const parsed = ChatCompletionResponse.parse({
+      ...base,
+      model: "x".repeat(300),
+      choices: Array.from({ length: 8 }, () => ({
+        message: { role: "assistant", content: "x".repeat(262_144) },
+      })),
+    });
+    expect(parsed.choices).toHaveLength(8);
+  });
+
+  it("rejects over-bound model, choice count, and content", () => {
+    for (const [label, body] of [
+      ["model id", { ...base, model: "x".repeat(301) }],
+      [
+        "choice count",
+        { ...base, choices: Array.from({ length: 9 }, () => ({ message: { content: "x" } })) },
+      ],
+      [
+        "content",
+        { ...base, choices: [{ message: { content: "x".repeat(262_145) } }] },
+      ],
+      [
+        "finish_reason",
+        { ...base, choices: [{ message: { content: "x" }, finish_reason: "x".repeat(65) }] },
+      ],
+      [
+        "token count",
+        { ...base, usage: { prompt_tokens: 1_000_000_001 } },
+      ],
+      [
+        "cost",
+        { ...base, usage: { cost: 1_000_001 } },
+      ],
+    ] as const) {
+      expect(() => ChatCompletionResponse.parse(body), label).toThrow();
+    }
+  });
+});

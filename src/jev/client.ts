@@ -1,4 +1,5 @@
 import { sendConsented, NetworkGateError } from "../net/send";
+import { readJsonCapped } from "../net/body";
 import type { NetworkGateErrorCode } from "../net/send";
 import { BudgetError, planBatches } from "./budget";
 import {
@@ -259,6 +260,14 @@ export function createJevClient(options: JevClientOptions): JevClient {
   ): Promise<SendOutcome> {
     const status = response.status;
     if (status < 200 || status >= 300) {
+      // The body is never read on a failure path (only the retry-after
+      // header, which cannot carry content) — cancel it so an unread body
+      // cannot hold the connection open or leak buffer memory.
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Cancel is best-effort; the failure classification already holds.
+      }
       const retryAfterMs = parseRetryAfter(
         response.headers.get("retry-after"),
         now(),
@@ -298,7 +307,10 @@ export function createJevClient(options: JevClientOptions): JevClient {
 
     let parsed: SystemOneResponse;
     try {
-      parsed = SystemOneResponse.parse(await response.json());
+      // Byte+depth-capped read (A06): an admitted request can still draw an
+      // unbounded or deeply nested success body; cap before parse and cancel
+      // the stream when the cap trips.
+      parsed = SystemOneResponse.parse(await readJsonCapped(response));
     } catch {
       // No `cause`: a SyntaxError embeds a body snippet and a ZodError's
       // issues carry response `input` values — either could leak provider

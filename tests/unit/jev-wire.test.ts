@@ -321,3 +321,82 @@ describe("makeSyntheticRequest", () => {
     }
   });
 });
+
+describe("response size bounds (A06)", () => {
+  const base = {
+    model: "m",
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+  const noul = { type: "noul" as const, noul: 0.5 };
+
+  it("accepts a response at the answer-count bound", () => {
+    const answers = Object.fromEntries(
+      Array.from({ length: 256 }, (_, i) => [`q${i}`, noul]),
+    );
+    expect(SystemOneResponse.safeParse({ ...base, answers }).success).toBe(true);
+  });
+
+  it("rejects a response over the answer-count bound", () => {
+    const answers = Object.fromEntries(
+      Array.from({ length: 257 }, (_, i) => [`q${i}`, noul]),
+    );
+    expect(SystemOneResponse.safeParse({ ...base, answers }).success).toBe(false);
+  });
+
+  it("rejects over-long model, choice text, and record fields", () => {
+    for (const [label, body] of [
+      ["model id", { ...base, model: "x".repeat(301), answers: {} }],
+      [
+        "choice text",
+        {
+          ...base,
+          answers: { q: { type: "choice", choice: "x".repeat(1025), probabilities: {}, confidence: 0 } },
+        },
+      ],
+      [
+        "probabilities",
+        {
+          ...base,
+          answers: {
+            q: {
+              type: "choice",
+              choice: "a",
+              probabilities: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`o${i}`, 0])),
+              confidence: 0,
+            },
+          },
+        },
+      ],
+      [
+        "legend",
+        {
+          ...base,
+          answers: {
+            q: {
+              type: "score",
+              score: 1,
+              legend: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`l${i}`, "x"])),
+              probabilities: {},
+              confidence: 0,
+            },
+          },
+        },
+      ],
+      ["id", { ...base, answers: {}, id: "x".repeat(301) }],
+      [
+        "token count",
+        { ...base, answers: {}, usage: { input_tokens: 1_000_000_001, output_tokens: 1 } },
+      ],
+      [
+        "negative tokens",
+        { ...base, answers: {}, usage: { input_tokens: -1, output_tokens: 1 } },
+      ],
+      [
+        "cost",
+        { ...base, answers: {}, usage: { input_tokens: 1, output_tokens: 1, cost: 1_000_001 } },
+      ],
+    ] as const) {
+      expect(SystemOneResponse.safeParse(body).success, label).toBe(false);
+    }
+  });
+});

@@ -51,33 +51,41 @@ export const SystemOneRequest = z.object({
   questions: z.record(z.string(), Question),
 });
 
+/** Record fields use key-count refines — the same bound style as the
+ *  criteria options guard above (`2 to 255 options`). */
+const boundedRecord = <V extends z.ZodType>(value: V, max = 256) =>
+  z.record(z.string(), value).refine(
+    (r) => Object.keys(r).length <= max,
+    `at most ${max} entries`,
+  );
+
 export const Answer = z.discriminatedUnion("type", [
   z.object({ type: z.literal("noul"), noul: z.number().min(0).max(1) }),
   z.object({
     type: z.literal("choice"),
-    choice: z.string(),
-    probabilities: z.record(z.string(), z.number()),
+    choice: z.string().max(1_024),
+    probabilities: boundedRecord(z.number()),
     confidence: z.number(),
   }),
   z.object({
     type: z.literal("score"),
     score: z.number(),
-    legend: z.record(z.string(), z.string()),
-    probabilities: z.record(z.string(), z.number()),
+    legend: boundedRecord(z.string().max(1_024)),
+    probabilities: boundedRecord(z.number()),
     confidence: z.number(),
   }),
 ]);
 
 export const SystemOneResponse = z.object({
-  model: z.string(), // versioned id that answered
-  answers: z.record(z.string(), Answer),
+  model: z.string().max(300), // versioned id that answered
+  answers: boundedRecord(Answer),
   usage: z.object({
-    input_tokens: z.number().int(),
-    output_tokens: z.number().int(),
-    cost: z.number().optional(), // OpenRouter only
+    input_tokens: z.number().int().nonnegative().max(1_000_000_000),
+    output_tokens: z.number().int().nonnegative().max(1_000_000_000),
+    cost: z.number().nonnegative().max(1_000_000).optional(), // OpenRouter only
   }),
-  id: z.string().optional(), // OpenRouter only
-  provider: z.string().optional(), // OpenRouter only
+  id: z.string().max(300).optional(), // OpenRouter only
+  provider: z.string().max(300).optional(), // OpenRouter only
 });
 
 export type NoulQuestion = z.infer<typeof NoulQuestion>;

@@ -47,26 +47,27 @@ export const ChatCompletionRequest = z.strictObject({
 export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequest>;
 
 export const ChatCompletionResponse = z.looseObject({
-  model: z.string().min(1),
+  model: z.string().min(1).max(300),
   choices: z
     .array(
       z.looseObject({
         message: z.looseObject({
-          role: z.string().optional(),
+          role: z.string().max(32).optional(),
           // Providers may return null content on refusals/tool calls.
-          content: z.string().nullable(),
+          content: z.string().max(262_144).nullable(),
         }),
-        finish_reason: z.string().nullable().optional(),
+        finish_reason: z.string().max(64).nullable().optional(),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(8),
   usage: z
     .looseObject({
-      prompt_tokens: z.number().int().nonnegative().optional(),
-      completion_tokens: z.number().int().nonnegative().optional(),
-      total_tokens: z.number().int().nonnegative().optional(),
+      prompt_tokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+      completion_tokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
+      total_tokens: z.number().int().nonnegative().max(1_000_000_000).optional(),
       // OpenRouter reports per-request USD cost; absent elsewhere.
-      cost: z.number().nullable().optional(),
+      cost: z.number().max(1_000_000).nullable().optional(),
     })
     .optional(),
 });

@@ -12,6 +12,7 @@ import type {
   SystemOneRequest,
 } from "../../src/jev/wire";
 import { NetworkGateError } from "../../src/net/send";
+import { MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH } from "../../src/net/body";
 import { startMockJevServer } from "../mock-servers/jev";
 import type { MockJevServer } from "../mock-servers/jev";
 import { db } from "../../src/db/database";
@@ -840,5 +841,51 @@ describe("mock Jev server end-to-end", () => {
       .run(requestOf(questions))
       .catch((caught: unknown) => caught);
     expect((error as JevClientError).code).toBe("model_mismatch");
+  });
+});
+
+describe("response size caps and body cancellation (A06)", () => {
+  it("rejects an over-cap success body before parse and cancels the stream", async () => {
+    const cancel = vi.fn();
+    const encoder = new TextEncoder();
+    let delivered = false;
+    // An open stream that yields one over-cap chunk and stays open: only
+    // cancellation ends it — a closed stream would consume cancel() instead.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (delivered) return;
+        delivered = true;
+        controller.enqueue(encoder.encode("x".repeat(MAX_RESPONSE_BYTES + 1)));
+      },
+      cancel,
+    });
+    const transport = makeTransport(() => new Response(stream, { status: 200 }));
+    const error = await client(transport)
+      .run(requestOf({ q: noulQuestion() }))
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(JevClientError);
+    expect((error as JevClientError).code).toBe("invalid_response");
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it("rejects a deeply nested success body before parse", async () => {
+    const nested = "[".repeat(MAX_RESPONSE_DEPTH + 1) + "]".repeat(MAX_RESPONSE_DEPTH + 1);
+    const transport = makeTransport(() => new Response(nested, { status: 200 }));
+    const error = await client(transport)
+      .run(requestOf({ q: noulQuestion() }))
+      .catch((caught: unknown) => caught);
+    expect((error as JevClientError).code).toBe("invalid_response");
+  });
+
+  it("cancels an unread non-2xx body", async () => {
+    const cancel = vi.fn();
+    // A stream that never yields: the only way it ends is cancellation.
+    const stream = new ReadableStream<Uint8Array>({ pull() {}, cancel });
+    const transport = makeTransport(() => new Response(stream, { status: 503 }));
+    const error = await client(transport, { maxRetries: 0 })
+      .run(requestOf({ q: noulQuestion() }))
+      .catch((caught: unknown) => caught);
+    expect((error as JevClientError).code).toBe("retry_later");
+    expect(cancel).toHaveBeenCalled();
   });
 });

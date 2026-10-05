@@ -8,6 +8,7 @@ import { db } from "../../src/db/database";
 import { LlmHttpError } from "../../src/llm/client";
 import { createLlmForTest as createLlmClient, reservedInputBound, scopeRequest } from "../fakes/llm";
 import { LlmGateError, settleLlmUsage } from "../../src/net/llm-send";
+import { MAX_RESPONSE_BYTES, MAX_RESPONSE_DEPTH } from "../../src/net/body";
 import { monthlyBudgetSnapshot } from "../../src/llm/budget";
 import { LlmCapabilityError } from "../../src/llm/structured";
 import { saveLlmProvider } from "../../src/llm/settings";
@@ -749,5 +750,50 @@ describe("input estimate and not-billed provenance (A04/A05)", () => {
       for (const row of rows) expect(row.notBilled).toBeUndefined();
       expect(rows[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
     }
+  });
+});
+
+describe("response size caps (A06)", () => {
+  it("rejects an over-cap success body before parse, cancels the stream, and settles conservatively", async () => {
+    const cancel = vi.fn();
+    const encoder = new TextEncoder();
+    let delivered = false;
+    // An open stream that yields one over-cap chunk and stays open: only
+    // cancellation ends it — a closed stream would consume cancel() instead.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (delivered) return;
+        delivered = true;
+        controller.enqueue(encoder.encode("x".repeat(MAX_RESPONSE_BYTES + 1)));
+      },
+      cancel,
+    });
+    const fetchImpl = (async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+    const error = await client(fetchImpl).send(REQUEST).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(LlmGateError);
+    expect((error as LlmGateError).code).toBe("transport");
+    expectRedacted(error);
+    expect(cancel).toHaveBeenCalled();
+
+    // The over-cap body still egressed — missing usage settles at the
+    // honest reserved bound like any other unusable response.
+    const rows = await db.llmUsage.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ inputTokens: BOUND_INPUT, outputTokens: 50 });
+    expect(rows[0]?.estimatedCostUsd).toBeCloseTo(BOUND_COST, 12);
+    expect((await db.llmReservations.toArray())[0]?.status).toBe("settled");
+  });
+
+  it.each([
+    ["deeply nested", "[".repeat(MAX_RESPONSE_DEPTH + 1) + "]".repeat(MAX_RESPONSE_DEPTH + 1)],
+    ["malformed", "not json{"],
+  ])("rejects a %s success body before parse", async (_label, text) => {
+    const fetchImpl = (async () => new Response(text, { status: 200 })) as typeof fetch;
+    const error = await client(fetchImpl).send(REQUEST).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(LlmGateError);
+    expect((error as LlmGateError).code).toBe("transport");
+    expectRedacted(error);
+    expect(await db.llmUsage.count()).toBe(1);
   });
 });

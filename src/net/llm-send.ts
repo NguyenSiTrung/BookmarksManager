@@ -1,5 +1,6 @@
 import { beginSentLog } from "./sent-log";
 import { classifyAbort } from "./abort";
+import { readJsonCapped } from "./body";
 import { parseRetryAfter, retryDelay } from "../jev/retry";
 import {
   hasConsentAtOrigin,
@@ -727,11 +728,13 @@ async function sendLlmRequest(
   }
 
   await finishLog(response.ok ? "ok" : `http_${response.status}`);
-  // Bind the reader now, before exposing Response to the client/caller.
-  // Supplying a fabricated parsed result cannot register a repair transcript.
-  const readJson = response.json.bind(response);
+  // Read through the byte+depth cap (A06): a hostile or broken provider can
+  // answer an admitted request with an unbounded or deeply nested body, and
+  // `response.json()` would hand it arbitrary memory and stack. Bind the
+  // reader now, before exposing Response to the client/caller — supplying a
+  // fabricated parsed result cannot register a repair transcript.
   return { response, reservation, readResponse: async () => {
-    const raw: unknown = await readJson();
+    const raw: unknown = await readJsonCapped(response);
     if (session !== undefined && admission.contract !== undefined && response.status < 400 &&
         request.messages.length < 2 + MAX_REPAIRS * 2) {
       const parsedResponse = ChatCompletionResponse.safeParse(raw);
