@@ -20,9 +20,12 @@ import { useToast } from "./UndoToast";
  *
  * - **Messages out, polling in.** The view holds no Dexie handles — it asks
  *   `RESTRUCTURE_STATUS` for the latest restructure job on mount and again
- *   every second while a job is `pending`/`running` (the worker may die
- *   mid-run; polling also covers the resume path). A terminal job stops the
- *   poll.
+ *   every second while a job is `pending`/`running` or a start is still
+ *   in flight (the worker may die mid-run; polling also covers the resume
+ *   path and a START reply that never lands). A terminal job stops the
+ *   poll. Polls are serialized and coalesced: a tick while a poll link is
+ *   still queued or in flight is dropped, so a slow STATUS read never
+ *   piles up a backlog that fires stale reads later.
  * - **Confidence is never color-only.** Each diff row carries a text chip
  *   (`High`/`Low`/`Unresolved`) in addition to shading, so the confidence
  *   signal survives monochrome and screen readers.
@@ -305,23 +308,50 @@ export function RestructureView(props: { className?: string }) {
   const { showToast } = useToast();
   const mounted = useRef(true);
   const starting = useRef(false);
+  const applyingRef = useRef(false);
+  const [applying, setApplying] = useState(false);
+  // The interval reads the phase through a ref so it never needs a setState
+  // side-channel, and refresh promises are chained so a poll never overlaps
+  // an in-flight STATUS read.
+  const phaseRef = useRef<Phase>(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  });
+  const refreshTail = useRef<Promise<void>>(Promise.resolve());
+  // Coalescing flag: caller-driven refreshes always queue (each intent
+  // deserves its own read), but the interval contributes at most one
+  // pending link — a STATUS slower than the interval must not accumulate.
+  const pollPending = useRef(false);
 
-  const refresh = useCallback(async () => {
-    const reply = await send({ type: "RESTRUCTURE_STATUS" });
-    if (!mounted.current) return;
-    if (!reply.ok) {
-      if (reply.code === "not_found") setPhase({ kind: "idle" });
-      return; // transient read failures just retry on the next poll
-    }
-    if (reply.code === "job_state") {
-      const { job, diff } = reply.result;
-      setPhase((current) =>
-        // Don't tear down the destructive-confirm arm on a background poll.
-        current.kind === "arm_apply"
-          ? current
-          : { kind: "active", job, ...(diff !== undefined ? { diff } : {}) },
-      );
-    }
+  const refresh = useCallback((): Promise<void> => {
+    const next = refreshTail.current.then(async () => {
+      const reply = await send({ type: "RESTRUCTURE_STATUS" });
+      if (!mounted.current) return;
+      if (!reply.ok) {
+        if (reply.code === "not_found") {
+          // A vanished job tears the view down only from settled phases — a
+          // poll landing before the START reply must not clobber
+          // starting/consent/arm_apply and drop the in-flight flow.
+          setPhase((current) =>
+            current.kind === "idle" || current.kind === "active"
+              ? { kind: "idle" }
+              : current,
+          );
+        }
+        return; // transient read failures just retry on the next poll
+      }
+      if (reply.code === "job_state") {
+        const { job, diff } = reply.result;
+        setPhase((current) =>
+          // Don't tear down the destructive-confirm arm on a background poll.
+          current.kind === "arm_apply"
+            ? current
+            : { kind: "active", job, ...(diff !== undefined ? { diff } : {}) },
+        );
+      }
+    });
+    refreshTail.current = next.catch(() => {});
+    return next;
   }, []);
 
   useEffect(() => {
@@ -330,15 +360,20 @@ export function RestructureView(props: { className?: string }) {
     // setState chain; the microtask keeps mount-order identical.
     queueMicrotask(() => void refresh());
     const timer = setInterval(() => {
-      setPhase((current) => {
-        if (current.kind === "active") {
-          const status = current.job.status;
-          if (status === "pending" || status === "running") {
-            void refresh();
-          }
-        }
-        return current;
-      });
+      const current = phaseRef.current;
+      const shouldPoll =
+        current.kind === "starting" ||
+        (current.kind === "active" &&
+          (current.job.status === "pending" ||
+            current.job.status === "running"));
+      if (shouldPoll && !pollPending.current) {
+        pollPending.current = true;
+        void refresh()
+          .catch(() => {})
+          .finally(() => {
+            pollPending.current = false;
+          });
+      }
     }, POLL_MS);
     return () => {
       mounted.current = false;
@@ -395,30 +430,40 @@ export function RestructureView(props: { className?: string }) {
     diff: RestructureDiff,
     bookmarkIds?: string[],
   ) => {
-    const reply = await send({
-      type: "RESTRUCTURE_CONFIRM",
-      jobId: job.id,
-      ...(bookmarkIds !== undefined ? { bookmarkIds } : {}),
-    });
-    if (!reply.ok) {
-      setPhase({ kind: "active", job, diff });
-      setError(reply.message);
-      return;
-    }
-    if (reply.code === "applied") {
-      setPhase({ kind: "applied", moved: reply.moved });
-      // `undoable` arms the shell toast's Undo — with `reply.snapshotId`
-      // the toast replays exactly this apply's row (D07: moves back +
-      // created empty folders removed) even if something else pushed on
-      // top. No custom callback needed.
-      showToast({
-        message: `Restructure applied — ${reply.moved} bookmark${reply.moved === 1 ? "" : "s"} moved.`,
-        undoable: true,
-        snapshotId: reply.snapshotId,
+    // Synchronous guard: a second click while CONFIRM is in flight must
+    // not double-apply — `applying` mirrors the ref for the disabled prop.
+    if (applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
+    try {
+      const reply = await send({
+        type: "RESTRUCTURE_CONFIRM",
+        jobId: job.id,
+        ...(bookmarkIds !== undefined ? { bookmarkIds } : {}),
       });
-      return;
+      if (!reply.ok) {
+        setPhase({ kind: "active", job, diff });
+        setError(reply.message);
+        return;
+      }
+      if (reply.code === "applied") {
+        setPhase({ kind: "applied", moved: reply.moved });
+        // `undoable` arms the shell toast's Undo — with `reply.snapshotId`
+        // the toast replays exactly this apply's row (D07: moves back +
+        // created empty folders removed) even if something else pushed on
+        // top. No custom callback needed.
+        showToast({
+          message: `Restructure applied — ${reply.moved} bookmark${reply.moved === 1 ? "" : "s"} moved.`,
+          undoable: true,
+          snapshotId: reply.snapshotId,
+        });
+        return;
+      }
+      await refresh();
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
     }
-    await refresh();
   };
 
   const job = phase.kind === "active" || phase.kind === "arm_apply" ? phase.job : null;
@@ -429,12 +474,19 @@ export function RestructureView(props: { className?: string }) {
       ? Math.round((progress.committedBatches / progress.totalBatches) * 100)
       : 0;
 
-  const [selectedIds, setSelectedIds] = useState<Set<string> | null>(null);
+  // Selection is keyed by job id: a superseding job's diff must not
+  // inherit a deselection made against a different plan's rows.
+  const [selectedIds, setSelectedIds] = useState<{
+    jobId: string;
+    ids: ReadonlySet<string>;
+  } | null>(null);
 
   const activeDiff =
     phase.kind === "active" || phase.kind === "arm_apply"
       ? phase.diff
       : undefined;
+
+  const activeJobId = job?.id;
 
   const activeMoves = useMemo(() => {
     if (activeDiff === undefined) return [];
@@ -444,32 +496,49 @@ export function RestructureView(props: { className?: string }) {
   }, [activeDiff]);
 
   const effectiveSelectedIds = useMemo(() => {
-    if (selectedIds !== null) return selectedIds;
+    if (
+      selectedIds !== null &&
+      activeJobId !== undefined &&
+      selectedIds.jobId === activeJobId
+    ) {
+      return selectedIds.ids;
+    }
     return new Set(activeMoves.map((m) => m.bookmarkId));
-  }, [selectedIds, activeMoves]);
+  }, [selectedIds, activeMoves, activeJobId]);
 
   const handleToggle = useCallback(
     (bookmarkId: string) => {
+      if (activeJobId === undefined) return;
+      const jobId = activeJobId;
       setSelectedIds((current) => {
-        const set = new Set(current ?? activeMoves.map((m) => m.bookmarkId));
+        const base =
+          current !== null && current.jobId === jobId
+            ? current.ids
+            : new Set(activeMoves.map((m) => m.bookmarkId));
+        const set = new Set(base);
         if (set.has(bookmarkId)) {
           set.delete(bookmarkId);
         } else {
           set.add(bookmarkId);
         }
-        return set;
+        return { jobId, ids: set };
       });
     },
-    [activeMoves],
+    [activeMoves, activeJobId],
   );
 
   const handleSelectAll = useCallback(() => {
-    setSelectedIds(new Set(activeMoves.map((m) => m.bookmarkId)));
-  }, [activeMoves]);
+    if (activeJobId === undefined) return;
+    setSelectedIds({
+      jobId: activeJobId,
+      ids: new Set(activeMoves.map((m) => m.bookmarkId)),
+    });
+  }, [activeMoves, activeJobId]);
 
   const handleDeselectAll = useCallback(() => {
-    setSelectedIds(new Set());
-  }, []);
+    if (activeJobId === undefined) return;
+    setSelectedIds({ jobId: activeJobId, ids: new Set() });
+  }, [activeJobId]);
 
   const selectedMovesCount = activeMoves.filter((m) =>
     effectiveSelectedIds.has(m.bookmarkId),
@@ -629,7 +698,7 @@ export function RestructureView(props: { className?: string }) {
               type="button"
               // Autofocus keeps keyboard flow: confirm lands on focus.
               autoFocus
-              disabled={selectedMovesCount === 0}
+              disabled={selectedMovesCount === 0 || applying}
               onClick={() =>
                 void confirmApply(
                   phase.job,

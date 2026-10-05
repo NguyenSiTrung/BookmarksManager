@@ -525,3 +525,187 @@ describe("RestructureView apply", () => {
     expect(screen.getByText("Article A")).toBeTruthy();
   });
 });
+
+describe("RestructureView U03 — re-entrancy and polling", () => {
+  it("disables Yes, apply while CONFIRM is in flight", async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise<unknown>((r) => {
+      release = r;
+    });
+    let confirmCalls = 0;
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "completed" }), diff: DIFF },
+        };
+      }
+      if (msg.type === "RESTRUCTURE_CONFIRM") {
+        confirmCalls += 1;
+        return gate;
+      }
+      return workerFor(jobRow({ status: "completed" }))(raw);
+    });
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Apply selected moves/i }),
+    );
+    const yes = (await screen.findByRole("button", {
+      name: "Yes, apply",
+    })) as HTMLButtonElement;
+    fireEvent.click(yes);
+    await waitFor(() => expect(yes.disabled).toBe(true));
+    fireEvent.click(yes);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(confirmCalls).toBe(1);
+    release({ ok: true, code: "applied", moved: 1, snapshotId: 7 });
+    expect(
+      await screen.findByText(/Applied — 1 bookmark moved/),
+    ).toBeTruthy();
+  });
+
+  it("polls while a start is in flight and reflects the live job", async () => {
+    let startCalls = 0;
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_START") {
+        startCalls += 1;
+        // The START reply never lands — the poll must carry the UI.
+        return new Promise(() => {});
+      }
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        if (startCalls === 0) {
+          return { ok: false, code: "not_found", message: "none" };
+        }
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "running" }) },
+        };
+      }
+      return { ok: false, code: "internal_error", message: "?" };
+    });
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Propose a layout…" }),
+    );
+    expect(
+      await screen.findByText("Asking the provider for a layout…"),
+    ).toBeTruthy();
+    // Poll interval is 1s — the job appears without the START reply.
+    expect(
+      await screen.findByText(/Assigning… 1\/4 batches/, undefined, {
+        timeout: 3000,
+      }),
+    ).toBeTruthy();
+    expect(startCalls).toBe(1);
+  });
+
+  it("serializes refreshes and drops extra polls — no backlog pile-up", async () => {
+    let inflight = 0;
+    let maxInflight = 0;
+    let statusCalls = 0;
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        statusCalls += 1;
+        inflight += 1;
+        maxInflight = Math.max(maxInflight, inflight);
+        // The first two reads take ~3s each (≫ POLL_MS): an uncoalesced
+        // queue would bank every tick and drain them all later — visibly.
+        if (statusCalls <= 2) {
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        inflight -= 1;
+        return {
+          ok: true,
+          code: "job_state",
+          result: { job: jobRow({ status: "running" }) },
+        };
+      }
+      return { ok: false, code: "internal_error", message: "?" };
+    });
+    mount();
+    // Timeline: mount read 0–3s, first poll link ~3–6s, then instant reads
+    // at each tick — ~4-5 calls by 8.5s. Uncoalesced, ticks would bank a
+    // backlog and the count would already be 8+.
+    await waitFor(() => expect(statusCalls).toBeGreaterThanOrEqual(4), {
+      timeout: 9500,
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(statusCalls).toBeLessThanOrEqual(6);
+    expect(maxInflight).toBe(1);
+  }, 12000);
+
+  it("keys the move selection to the job — a new job resets to all selected", async () => {
+    const moves = [
+      {
+        bookmarkId: "11",
+        title: "Article A",
+        fromPath: "Bookmarks bar/Old",
+        toPath: "Bookmarks bar/Dev",
+        confidence: 0.9,
+        status: "resolved" as const,
+      },
+      {
+        bookmarkId: "12",
+        title: "Article B",
+        fromPath: "Bookmarks bar/Old",
+        toPath: "Bookmarks bar/News",
+        confidence: 0.85,
+        status: "resolved" as const,
+      },
+    ];
+    const diff1 = { resolved: 2, unresolved: 0, stale: 0, rows: moves };
+    const diff2 = {
+      resolved: 2,
+      unresolved: 0,
+      stale: 0,
+      rows: moves.map((r) => ({ ...r, title: `${r.title} v2` })),
+    };
+    // Another context supersedes: STATUS swaps job-1 (failed) for job-2.
+    let current: Record<string, unknown> | null = {
+      job: jobRow({ status: "failed" }),
+      diff: diff1,
+    };
+    sendMessage = vi.fn(async (raw: unknown): Promise<unknown> => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        if (current === null) {
+          return { ok: false, code: "not_found", message: "none" };
+        }
+        return { ok: true, code: "job_state", result: current };
+      }
+      if (msg.type === "RESTRUCTURE_RESUME") {
+        return {
+          ok: true,
+          code: "job_ok",
+          job: jobRow({ id: "job-2", status: "running" }),
+        };
+      }
+      return workerFor(null)(raw);
+    });
+    mount();
+    expect(await screen.findByText(/Moves \(2\/2 selected\)/)).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Apply move for Article A/i }),
+    );
+    expect(
+      await screen.findByText(/Moves \(1\/2 selected\)/),
+    ).toBeTruthy();
+
+    // Swap the live job, then drive a refresh through Resume on the
+    // failed row — the reply is job_ok so the view re-reads STATUS.
+    current = { job: jobRow({ id: "job-2", status: "completed" }), diff: diff2 };
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+
+    // Job-2's diff paints fully selected — job-1's deselection did not leak.
+    expect(
+      await screen.findByText(/Moves \(2\/2 selected\)/),
+    ).toBeTruthy();
+    expect(screen.getByText("Article A v2")).toBeTruthy();
+  });
+});
+
