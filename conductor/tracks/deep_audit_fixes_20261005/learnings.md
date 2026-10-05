@@ -851,3 +851,27 @@ claim that any audit finding has been fixed or reproduced.
   record-write-in-try compensation invariant, and managed propagation.
 - Full gate green at commit: lint, typecheck, 3069 unit/173 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+### Phase 3 Task 6 (J13 — `479aae2`)
+- **Dedicated `restructureAssignments` table `[jobId+bookmarkId],jobId`** beats
+  the per-batch merge alternative: the old merge re-parsed and re-put the
+  whole job row per item (O(N²) serialized JSON writes for a 5k library,
+  each write revalidating through `Job.parse`); the table makes the merge a
+  single `bulkPut`, and last-write-wins rides on the compound PK for free.
+- **Dexie nested-transaction scope rule: every outer `db.jobs` tx that
+  transitively calls `setJobStatus`/`mergeRestructureAssignments`/
+  `pruneTerminalJobsLocked` must list `db.restructureAssignments`** — a miss
+  is a loud `TableNotIncludedInTransaction` throw (the RESUME handler
+  broke until `resumeJob`'s inner tx was widened).
+- **`restructurePlanFor` must preserve `applied`/`proposal`** via spread —
+  only `assignments` is overridden by the table merge.
+- **`latestRestructureJob` index idiom**: `.where("[kind+createdAt]")
+  .between(["restructure", Dexie.minKey], ["restructure", Dexie.maxKey])
+  .last()` — canonical Dexie prefix-scan; `.last()` in index order gives
+  max createdAt with PK tiebreak.
+- Independent review (child 7ac8d994): PASS/PASS, 11 info notes — flagged
+  that `jobStateReply` still serializes the raw job with empty inline
+  `assignments` (no src consumer reads it; diff carries the data) and that
+  table rows skip `Job.parse` (producer-validated upstream).
+- Full gate green at commit: lint, typecheck, 3073 unit, build, manifest,
+  bundle, 43 e2e (1 intentional screenshot skip).

@@ -249,7 +249,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     managed bookmarks are `unresolved` and skipped, apply does not fail
     mid-way (`BookmarksManager-2v9`).
   - Fix: persisted applied state under a transaction/lock; `undoExpected`.
-- [ ] Task 6: J13 — restructure assignment storage
+- [x] Task 6: J13 — restructure assignment storage (`479aae2`)
   <!-- files: src/restructure/assign.ts, src/jobs/queue.ts, src/schemas/job.ts, src/messages/restructure.ts, src/db/database.ts -->
   <!-- depends: task1, task5 -->
   - Tests: 5k-bookmark restructure performs O(batches) job writes (spy);

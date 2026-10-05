@@ -1,16 +1,16 @@
 {
   "current_phase": "Phase 3: Jobs and decisions resilience",
   "current_phase_index": 2,
-  "current_task_index": 5,
+  "current_task_index": 6,
   "completed_phases": [
     "Phase 1: Privacy and consent enforcement",
     "Phase 2: Accounting and egress robustness"
   ],
-  "last_updated": "2026-10-05T07:05:00Z",
+  "last_updated": "2026-10-05T08:25:00Z",
   "status": "in_progress",
   "checkpoint_blockers": [],
   "task_review": {
-    "task": "BookmarksManager-2v9",
+    "task": "BookmarksManager-3op.3.5",
     "fix_round": 0,
     "status": "closed"
   },
