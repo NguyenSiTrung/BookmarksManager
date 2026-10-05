@@ -564,3 +564,31 @@ claim that any audit finding has been fixed or reproduced.
 - Independent review (child `7ac8d994`): PASS/PASS clean, zero warnings.
 - Full gate green at commit: lint, typecheck, 2962 unit/168 files, build,
   manifest, bundle, 44 e2e (1 intentional screenshot skip).
+
+## 2026-10-05 — A06 completed (`d96aa4d`)
+
+- A fixed `Uint8Array(MAX)` read buffer makes the byte-cap check trivial:
+  `chunk.length > MAX - filled` throws before a single byte is written —
+  no partial state, no reallocation. Mirror `readLlmErrorBody` exactly.
+- Depth-check the COMPLETE text BEFORE `JSON.parse`: `JSON.parse`
+  recurses, so deep nesting must be refused ahead of it. The scanner is
+  string/escape-aware (braces inside strings don't count); on parseable
+  JSON its count equals parse depth.
+- `finally`-block cancellation is the only reliable place: throwing paths
+  (cap, depth, decode) all exit through it. But cancel on a CLOSED
+  stream is a spec no-op — cancellation tests must keep the stream open
+  after the over-cap chunk or the spy never fires.
+- `reader.cancel()` on a never-read non-2xx body is itself awaitable and
+  may be left-open by design — run it best-effort at the TOP of the
+  error branch so it can't mask `retry_later` classification.
+- Wire schemas and stored-usage schemas are DIFFERENT trust layers:
+  `UsageRecord.parse` enforced `.min(0)` at persist, but the wire had no
+  upper bound — review caught unbounded tokens/cost persisting as
+  absurd usage. Bound both layers; the wire bound wins by also
+  classifying as `invalid_response` instead of `persist_failed`.
+- Records can't take `.max()` — use a `refine` on `Object.keys().length`
+  (the codebase's `criteria` 2-255-entry bound is the pattern).
+- Independent review (child `7ac8d994`): PASS/PASS after one fix round
+  (Jev usage bounds mirrored to LLM).
+- Full gate green at commit: lint, typecheck, 2982 unit/169 files, build,
+  manifest, bundle, 43 e2e (1 intentional screenshot skip).

@@ -183,7 +183,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     timeout/5xx/non-JSON-200 still are; cross-check-failed Jev responses record
     usage (`BookmarksManager-eov`).
   - Fix: estimator in `sendLlmConsented`; explicit `not_billed` provenance.
-- [ ] Task 4: A06 — response size caps
+- [x] Task 4: A06 — response size caps (`d96aa4d`)
   <!-- files: src/jev/client.ts, src/llm/client.ts, src/jev/wire.ts, src/schemas/llm.ts -->
   <!-- depends: task3 -->
   - Tests: oversize or deeply nested success body is rejected before parse;
