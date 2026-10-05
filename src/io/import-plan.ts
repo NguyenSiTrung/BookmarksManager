@@ -4,7 +4,7 @@ import type { BookmarkMeta } from "../schemas/meta";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 import { normalizeUrl } from "../duplicates/normalize";
 import { isBlockedScheme } from "./netscape";
-import type { CsvBookmarkRow } from "./csv";
+import { splitFolderPath, type CsvBookmarkRow } from "./csv";
 import type { NetscapeNode } from "./netscape";
 
 /**
@@ -326,12 +326,15 @@ export function fromCsvRows(rows: readonly CsvBookmarkRow[]): ImportItem[] {
   const folders = new Map<string, ImportFolder>();
   for (const row of rows) {
     let siblings = root;
-    let pathKey = "";
-    for (const segment of row.folderPath
-      .split("/")
+    const pathSegments: string[] = [];
+    for (const segment of splitFolderPath(row.folderPath)
       .map((part) => part.trim())
       .filter((part) => part !== "")) {
-      pathKey = pathKey === "" ? segment : `${pathKey}/${segment}`;
+      pathSegments.push(segment);
+      // The dedup key must distinguish an escaped single folder "A/B" from
+      // the nested path A → B — join DELIMITED segments on / would collide,
+      // so the key is the segment list itself.
+      const pathKey = JSON.stringify(pathSegments);
       let folder = folders.get(pathKey);
       if (folder === undefined) {
         folder = { kind: "folder", title: segment, children: [] };

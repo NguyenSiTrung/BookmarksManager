@@ -21,15 +21,18 @@ import { MAX_FILE_BYTES } from "./netscape";
  * - `folder_path` — `/`-joined ancestor folder titles, topmost first
  *                   (`Work/Docs`); "" means top level. The string is carried
  *                   verbatim — the import writer owns splitting/validation.
- *                   **Known format limitation:** `/` is an UNESCAPED
- *                   delimiter, so a folder title that itself contains `/`
- *                   cannot round-trip — it splits into nested folders on
- *                   import (`"A/B"` becomes `A` → `B`). Titles are written
- *                   verbatim on export; the corruption only surfaces if the
- *                   file is re-imported. Use JSON export for lossless trees.
+ *                   Segments are `\`-escaped on the wire so a folder title
+ *                   containing `/` or `\` round-trips (see
+ *                   {@link joinFolderPath}/{@link splitFolderPath}); callers
+ *                   building the cell MUST use `joinFolderPath`, and the
+ *                   import writer splits with `splitFolderPath`. A
+ *                   hand-written file with raw `/` still splits per the
+ *                   legacy behavior — only escape pairs `\/` and `\\`
+ *                   are special.
  * - `tags`        — `;`-separated tag names inside ONE cell (`;` because `,`
- *                   is the CSV delimiter). Import splits, trims each, drops
- *                   empties.
+ *                   is the CSV delimiter). Tag names carrying `;` or `\`
+ *                   are `\`-escaped (see {@link joinTags}/{@link splitTags}).
+ *                   Import splits, trims each, drops empties.
  * - `category`    — a `Category` enum value or empty (⇔ `undefined`).
  * - `notes`       — free text, verbatim.
  * - `created`     — ISO 8601 date or datetime, or empty (⇔ `undefined`).
@@ -45,13 +48,14 @@ import { MAX_FILE_BYTES } from "./netscape";
  *   only — no trim: every major spreadsheet treats a whitespace-prefixed
  *   cell as text, so escaping it would be a false positive that import (see
  *   below) could never undo.
- * - Import does NOT strip the `'` escape. Keeping it means imported data is
- *   permanently inert no matter which path it later leaves the app by (a
- *   foreign CSV's `=evil()` payload can never wake up via JSON/Netscape
- *   export or a naive re-export), and CSV parse→export is byte-stable. The
- *   cost: a user's own literal leading `'` stays put too — an acceptable
- *   cosmetic trade-off since stripping could not distinguish our escape from
- *   a real apostrophe anyway.
+ * - Import strips ONE leading `'` when — and only when — the character
+ *   after it is a formula trigger (`= + - @ TAB CR`). That is exactly the
+ *   inverse of the export escape, so our own `'-5 degrees` / `'+1 tip` /
+ *   `'@handle` cells come back as the user wrote them. The trade-off is
+ *   unavoidable: a foreign file's literal `'=x` title also loses its `'` —
+ *   the escape was never distinguishable from real data — while a foreign
+ *   `=evil()` with no `'` stays verbatim in stored data (the `'` only ever
+ *   mattered to spreadsheet apps reading the FILE, never to us).
  *
  * ## Import semantics
  *
@@ -68,6 +72,13 @@ import { MAX_FILE_BYTES } from "./netscape";
  *   tolerated as empty), missing/invalid/non-http(s) url, unknown category,
  *   non-ISO created. `url`, `category`, `created`, `folder_path` are trimmed;
  *   `title` and `notes` stay verbatim.
+ * - Unterminated-quote recovery: a `"` that never closes would legally
+ *   swallow every following line into one cell (embedded newlines are valid
+ *   inside quotes). The parser instead ends the record at the first
+ *   physical line break inside the open cell, reports the head as invalid
+ *   (`unterminated quoted field`), and re-parses the remainder as fresh
+ *   records — so the rows after the broken one are recovered rather than
+ *   silently swallowed.
  */
 
 /** The exact export header line. */
@@ -87,6 +98,77 @@ export const CSV_HEADER = CSV_COLUMNS.join(",");
 
 /** In-cell tag list separator (commas are the CSV delimiter). */
 export const TAG_SEPARATOR = ";";
+
+/**
+ * `\`-escape a single `folder_path` segment or tag name so the wire
+ * delimiters (`/` in paths, `;` in tag cells) can live inside real titles.
+ * Only `\` and the delimiter are escaped; any other character is verbatim.
+ */
+function escapeDelimited(text: string, delimiter: "/" | ";"): string {
+  return text.replaceAll("\\", "\\\\").replaceAll(delimiter, `\\${delimiter}`);
+}
+
+/**
+ * Inverse of {@link escapeDelimited}: split on UNESCAPED delimiters and
+ * restore `\/`/`\;`/`\\` pairs. A `\` followed by any other character
+ * is kept literally (forward-compatible — foreign files lose nothing).
+ */
+function splitDelimited(text: string, delimiter: "/" | ";"): string[] {
+  const parts: string[] = [];
+  let current = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (c === "\\") {
+      const next = text.charAt(i + 1);
+      if (next === delimiter || next === "\\") {
+        current += next;
+        i++;
+      } else {
+        current += c;
+      }
+      continue;
+    }
+    if (c === delimiter) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Wire form of a `folder_path` cell from ancestor folder titles (topmost
+ * first): each title is `\`-escaped and the segments joined with `/`.
+ * Counterpart of {@link splitFolderPath}.
+ */
+export function joinFolderPath(ancestors: readonly string[]): string {
+  return ancestors.map((title) => escapeDelimited(title, "/")).join("/");
+}
+
+/**
+ * Split a `folder_path` cell into ancestor titles. Unescaped `/` separates
+ * segments (the legacy behavior for hand-written files); `\/` and `\\`
+ * unescape back into the title text. Trimming/emptiness policy lives with
+ * the import writer, not here.
+ */
+export function splitFolderPath(path: string): string[] {
+  if (path === "") return [];
+  return splitDelimited(path, "/");
+}
+
+/** Join real tag names into the single `;`-delimited `tags` cell. */
+export function joinTags(tags: readonly string[]): string {
+  return tags.map((tag) => escapeDelimited(tag, ";")).join(TAG_SEPARATOR);
+}
+
+/** Split the `tags` cell into tag names: unescaped `;` separates, escapes restore. */
+export function splitTags(cell: string): string[] {
+  if (cell === "") return [];
+  return splitDelimited(cell, TAG_SEPARATOR);
+}
 
 /** One bookmark as a flat CSV record — input to {@link exportCsv}, output of {@link parseCsv}. */
 export interface CsvBookmarkRow {
@@ -156,7 +238,7 @@ export function exportCsv(rows: readonly CsvBookmarkRow[]): string {
       escapeCell(row.title),
       escapeCell(row.url),
       escapeCell(row.folderPath),
-      escapeCell(row.tags.join(TAG_SEPARATOR)),
+      escapeCell(joinTags(row.tags)),
       escapeCell(row.category ?? ""),
       escapeCell(row.notes ?? ""),
       escapeCell(row.created ?? ""),
@@ -188,7 +270,7 @@ const BOM = 0xfeff;
  * addition to CRLF, and a leading UTF-8 BOM. Malformed quoting never throws:
  * the record is marked with `defect` and reported as an invalid row.
  */
-function parseRecords(text: string): RawRecord[] {
+function parseRecords(text: string, recoverUnterminated = true): RawRecord[] {
   const records: RawRecord[] = [];
   let fields: string[] = [];
   let cell = "";
@@ -266,7 +348,30 @@ function parseRecords(text: string): RawRecord[] {
   }
 
   if (state === "quoted") {
-    defect ??= "unterminated quoted field";
+    // An unmatched `"` legally swallows the rest of the file into this cell
+    // (newlines inside quotes are data). Recover: end the record at the
+    // first physical line break and re-parse the remainder as fresh
+    // records, so one stray quote forfeits only its own record. The
+    // re-parse runs with recovery off — a second unterminated quote inside
+    // the tail reports plainly instead of recursing per line.
+    const breakAt = recoverUnterminated ? cell.search(/\r\n|\r|\n/) : -1;
+    if (breakAt === -1) {
+      defect ??= "unterminated quoted field";
+    } else {
+      const rest = cell.slice(breakAt).replace(/^(\r\n|\r|\n)/, "");
+      cell = cell.slice(0, breakAt);
+      const recovered = parseRecords(rest, false);
+      fields.push(cell);
+      records.push({
+        fields,
+        defect:
+          recovered.length === 0
+            ? "unterminated quoted field"
+            : `unterminated quoted field; ${recovered.length} following record(s) recovered`,
+      });
+      records.push(...recovered);
+      return records;
+    }
   }
   // Trailing record without a final line break; a clean pushRecord() already
   // reset state, so this cannot double-push after a terminated file.
@@ -357,8 +462,15 @@ export function parseCsv(text: string): CsvParseResult {
       continue;
     }
 
+    // Inverse of the export formula escape: ONE leading `'` is stripped
+    // only when the next char is a formula trigger — our own `'=x` cells
+    // return to `=x` while foreign `'` data stays verbatim.
+    const unescapeCell = (value: string): string =>
+      value.charAt(0) === "'" && FORMULA_TRIGGER.test(value.charAt(1))
+        ? value.slice(1)
+        : value;
     const cell = (col: CsvColumn): string =>
-      record.fields[columnIndex.get(col)!] ?? "";
+      unescapeCell(record.fields[columnIndex.get(col)!] ?? "");
 
     const url = cell("url").trim();
     if (url === "") {
@@ -394,8 +506,7 @@ export function parseCsv(text: string): CsvParseResult {
       continue;
     }
 
-    const tags = cell("tags")
-      .split(TAG_SEPARATOR)
+    const tags = splitTags(cell("tags"))
       .map((tag) => tag.trim())
       .filter((tag) => tag !== "");
 

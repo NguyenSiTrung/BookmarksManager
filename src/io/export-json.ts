@@ -46,7 +46,17 @@ export type ExportErrorCode =
 
 /** Total result of {@link buildExport}: never throws. */
 export type BuildExportResult =
-  | { ok: true; data: ExportEnvelope }
+  | {
+      ok: true;
+      data: ExportEnvelope;
+      /**
+       * Non-fatal notes about the export, e.g. subtrees deeper than
+       * {@link MAX_TREE_DEPTH} that were flattened to keep the envelope
+       * schema-valid (structure below the cap is lost, bookmarks kept).
+       * Present only when something noteworthy happened.
+       */
+      warnings?: string[];
+    }
   | { ok: false; code: ExportErrorCode; message: string };
 
 /** Total result of {@link serializeExport}: never throws. */
@@ -136,14 +146,13 @@ export function buildExportTree(
  * issues in the message) rather than emitting a bad file.
  */
 export function buildExport(options: BuildExportOptions): BuildExportResult {
-  if (exceedsMaxDepth(options.tree)) {
-    return {
-      ok: false,
-      code: "invalid_envelope",
-      message: `tree exceeds the maximum nesting depth of ${MAX_TREE_DEPTH}`,
-    };
-  }
-  const scope = scopeForest(options);
+  // Depth normalization (I06): a subtree whose `children` would sit below
+  // MAX_TREE_DEPTH is flattened — its descendant bookmarks are hoisted to
+  // the boundary folder in depth-first order — and reported via `warnings`
+  // instead of failing the whole export with `invalid_envelope`.
+  const warnings: string[] = [];
+  const treeInput = flattenOverDeep(options.tree, 0, warnings);
+  const scope = scopeForest({ ...options, tree: treeInput });
   if (!scope.ok) {
     return { ok: false, code: "scope_not_found", message: scope.message };
   }
@@ -167,7 +176,75 @@ export function buildExport(options: BuildExportOptions): BuildExportResult {
       message: `envelope failed schema validation: ${validated.message}`,
     };
   }
-  return { ok: true, data: validated.data };
+  return {
+    ok: true,
+    data: validated.data,
+    ...(warnings.length === 0 ? {} : { warnings }),
+  };
+}
+
+/**
+ * Clamp `children` nesting to {@link MAX_TREE_DEPTH}: the last legal
+ * `children` array sits at the cap, and every node in it must be childless,
+ * so a folder whose descendants would nest deeper gets a FLAT child list —
+ * childless children keep their nodes (folders included), deeper subtrees
+ * contribute their bookmarks depth-first — with a recorded warning. Depth
+ * counting matches {@link exceedsMaxDepth}: only `children` hops consume
+ * depth.
+ */
+function flattenOverDeep(
+  nodes: readonly BookmarksTreeNode[],
+  depth: number,
+  warnings: string[],
+): BookmarksTreeNode[] {
+  return nodes.map((node) => {
+    if (node.children === undefined || node.children.length === 0) {
+      return node;
+    }
+    // The children array sits at the last legal depth: only childless
+    // nodes are legal there, so any descendant structure is hoisted into a
+    // flat child list. If every child is already childless the boundary is
+    // legal as-is — no flattening, no warning.
+    if (
+      depth + 1 >= MAX_TREE_DEPTH &&
+      node.children.some((c) => c.children !== undefined && c.children.length > 0)
+    ) {
+      const flat: BookmarksTreeNode[] = [];
+      for (const child of node.children) {
+        if (child.children !== undefined && child.children.length > 0) {
+          collectDescendantBookmarks(child.children, flat);
+        } else {
+          // Bookmarks and childless folders are legal at the boundary —
+          // keep them verbatim (folder titles/meta survive).
+          flat.push(child);
+        }
+      }
+      warnings.push(
+        `folder "${node.title}" exceeds the ${MAX_TREE_DEPTH}-level export depth; ` +
+          `${flat.length} descendant node(s) were flattened into it and deeper folders were dropped`,
+      );
+      return { ...node, children: flat };
+    }
+    return {
+      ...node,
+      children: flattenOverDeep(node.children, depth + 1, warnings),
+    };
+  });
+}
+
+/** Depth-first collection of every url-bearing descendant (bookmarks). */
+function collectDescendantBookmarks(
+  nodes: readonly BookmarksTreeNode[],
+  out: BookmarksTreeNode[],
+): void {
+  for (const node of nodes) {
+    if (node.children !== undefined && node.children.length > 0) {
+      collectDescendantBookmarks(node.children, out);
+    } else if (node.url !== undefined) {
+      out.push({ ...node, children: undefined });
+    }
+    // Childless folders below the cap are dropped — nothing to keep.
+  }
 }
 
 /** Internal pre-validation shape — `version`/`exportedAt` may be invalid. */

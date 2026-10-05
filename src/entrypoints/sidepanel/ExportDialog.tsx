@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { exportCsv } from "../../io/csv";
+import { exportCsv, joinFolderPath } from "../../io/csv";
 import type { CsvBookmarkRow } from "../../io/csv";
 import { buildExport, serializeExport } from "../../io/export-json";
 import { exportNetscape } from "../../io/netscape";
@@ -122,7 +122,14 @@ interface UiError {
 }
 
 type BuiltFile =
-  | { ok: true; text: string; ext: "json" | "html" | "csv"; mime: string }
+  | {
+      ok: true;
+      text: string;
+      ext: "json" | "html" | "csv";
+      mime: string;
+      /** Non-fatal export notes (e.g. over-deep subtrees flattened). */
+      warnings?: string[];
+    }
   | { ok: false; code: string; message: string };
 
 /** meta.tags hold nameKeys — file formats carry display names. */
@@ -203,7 +210,7 @@ function collectCsvRows(
     const row: CsvBookmarkRow = {
       title: bookmark.title,
       url: bookmark.url,
-      folderPath: ancestors.join("/"),
+      folderPath: joinFolderPath(ancestors),
       tags: tagDisplayNames(meta, tagNameByKey),
     };
     if (meta?.category !== undefined) row.category = meta.category;
@@ -280,6 +287,7 @@ function buildFile(
         text: serialized.data,
         ext: "json",
         mime: "application/json",
+        ...(built.warnings === undefined ? {} : { warnings: built.warnings }),
       };
     }
     case "netscape": {
@@ -380,6 +388,7 @@ export function ExportDialog({
   const [scope, setScope] = useState<ExportScope>("all");
   const [error, setError] = useState<UiError | null>(null);
   const [exportedFile, setExportedFile] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const metaById = useMemo(
     () => new Map(meta.map((row) => [row.id, row])),
@@ -402,6 +411,7 @@ export function ExportDialog({
     setScope("all");
     setError(null);
     setExportedFile(null);
+    setWarnings([]);
   };
   const handleOpenChange = (next: boolean): void => {
     if (!next) reset();
@@ -411,6 +421,7 @@ export function ExportDialog({
   const handleExport = (): void => {
     setError(null);
     setExportedFile(null);
+    setWarnings([]);
     const scopeFolderId = scope === "folder" ? currentFolderId : undefined;
     if (scope === "folder" && !folderScopeAvailable) {
       setError({
@@ -443,6 +454,7 @@ export function ExportDialog({
       return;
     }
     setExportedFile(fileName);
+    setWarnings(built.warnings ?? []);
   };
 
   return (
@@ -517,6 +529,15 @@ export function ExportDialog({
             Exported {exportedFile}
           </p>
         )}
+        {warnings.map((warning) => (
+          <p
+            key={warning}
+            role="status"
+            className="text-sm text-amber-600 dark:text-amber-400"
+          >
+            {warning}
+          </p>
+        ))}
 
         <DialogFooter showCloseButton>
           <button

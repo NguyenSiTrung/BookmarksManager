@@ -541,12 +541,76 @@ describe("secret-bearing fields never reach the output", () => {
 });
 
 describe("buildExport — depth cap", () => {
-  it("fails with invalid_envelope when the input tree exceeds MAX_TREE_DEPTH", () => {
-    let node: BookmarksTreeNode = { id: "leaf", title: "Leaf", url: "https://l/" };
+  it("flattens subtrees below MAX_TREE_DEPTH with a warning instead of failing", () => {
+    // I06: an over-deep library still exports — bookmarks past the cap are
+    // hoisted into the boundary folder, folder structure below it is lost.
+    let node: BookmarksTreeNode = {
+      id: "leaf",
+      title: "Leaf",
+      url: "https://l/",
+    };
     for (let i = 0; i < MAX_TREE_DEPTH + 10; i++) {
       node = { id: `f${i}`, title: `f${i}`, children: [node] };
     }
     const result = buildExport({ tree: [node], meta: [], tags: [] });
-    expect(result).toMatchObject({ ok: false, code: "invalid_envelope" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings?.[0]).toContain(`${MAX_TREE_DEPTH}-level`);
+    // Every descendant bookmark survives: descend to the depth-64 boundary
+    // folder and check its flattened children.
+    let cursor = result.data.tree[0];
+    let hops = 0;
+    while (cursor?.children !== undefined && cursor.children.length > 0) {
+      const next = cursor.children.find((c) => c.children !== undefined);
+      if (next === undefined) break;
+      cursor = next;
+      hops++;
+    }
+    expect(hops).toBe(MAX_TREE_DEPTH - 1);
+    const flatLeaf = cursor?.children?.find((c) => c.title === "Leaf");
+    expect(flatLeaf?.url).toBe("https://l/");
+    expect(flatLeaf?.children).toBeUndefined();
+    // The boundary folder carries no nested folders below it.
+    expect(
+      cursor?.children?.every((c) => c.children === undefined),
+    ).toBe(true);
+  });
+
+  it("boundary-depth trees still export without warnings", () => {
+    let node: BookmarksTreeNode = {
+      id: "leaf",
+      title: "Leaf",
+      url: "https://l/",
+    };
+    for (let i = 0; i < MAX_TREE_DEPTH; i++) {
+      node = { id: `f${i}`, title: `f${i}`, children: [node] };
+    }
+    const result = buildExport({ tree: [node], meta: [], tags: [] });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.warnings).toBeUndefined();
+  });
+
+  it("meta for dropped over-deep folders does not leak into the envelope", () => {
+    let node: BookmarksTreeNode = {
+      id: "leaf",
+      title: "Leaf",
+      url: "https://l/",
+    };
+    for (let i = 0; i < MAX_TREE_DEPTH + 5; i++) {
+      node = { id: `f${i}`, title: `f${i}`, children: [node] };
+    }
+    // Meta on the deepest folder (which is flattened away) and on the leaf.
+    const stamp = "2026-01-15T10:30:00Z";
+    const meta = [
+      { id: "f0", tags: ["gone"], updatedAt: stamp },
+      { id: "leaf", tags: ["kept"], updatedAt: stamp },
+    ];
+    const result = buildExport({ tree: [node], meta, tags: [] });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const metaIds = result.data.meta.map((m) => m.id);
+    expect(metaIds).toContain("leaf");
+    expect(metaIds).not.toContain("f0");
   });
 });
