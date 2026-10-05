@@ -210,7 +210,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
 ## Phase 3: Jobs and decisions resilience
 <!-- execution: parallel -->
 
-- [ ] Task 1: J01 + J02 + J09 — job failure policy, resume, circuit breaker
+- [x] Task 1: J01 + J02 + J09 — job failure policy, resume, circuit breaker (`95e03fb`)
   <!-- files: src/jobs/queue.ts, src/jobs/runner.ts, src/schemas/job.ts, src/entrypoints/background.ts -->
   - Tests: one throwing item is recorded and skipped; `failed` resumes from
     `committedBatches`; deleted ids on resume are filtered; empty work set

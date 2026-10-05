@@ -648,3 +648,40 @@ claim that any audit finding has been fixed or reproduced.
   (notBilledRequests preserves the A05 semantic in rollups).
 - Full gate green at commit: lint, typecheck, 3009 unit/171 files,
   build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
+
+## Phase 3 Task 1: J01 + J02 + J09 (95e03fb)
+
+- `failed` becoming a resumable status changes the lane rules: the A07
+  one-live-job invariant only covers pending/running/paused, so BOTH
+  `claimJobOwner` (failed->running) and `resumeJob` must re-check for a
+  live same-kind job explicitly, or a dead-in-duplicate-lane resume can
+  race two same-kind jobs.
+- Resume dedupes against committed PROGRESS but a committed batch
+  window is POSITIONAL in the original persisted lists (bookmarks AND
+  plan pairs): filter live ids only inside the uncommitted tail, or one
+  mid-window deletion silently re-runs committed sends and shifts the
+  uncommitted tail left by one — the reviewer caught this.
+- `budget_exceeded` is an `LlmGateError` code, not a
+  `DecisionPipelineErrorCode` — it joins JOB_FATAL_ERROR_CODES because
+  a budget refusal is permanently fatal, never an item-skip.
+- drivePersistedJob error paths are ordered: mark `failed` with the
+  redacted code, THEN re-throw — degrading the row and propagating the
+  caller's typed refusal (`request_not_allowed` for BlocklistReadError)
+  are both required; swallowing the throw dropped a typed contract.
+- Per-item pause honored BEFORE each send (not just at batch drain)
+  changes e2e semantics: the worker-restart test's resume now genuinely
+  re-sends the uncommitted tail, which exposed a real Playwright gap —
+  a persistent-profile service worker that spawns before context.route
+  registration is NOT bound by routing, and --host-resolver-rules don't
+  reach it either (verified: sends escaped to real api.typesafe.ai 401s).
+  Deterministic fix: patch self.fetch inside that worker realm via
+  worker.evaluate, scoped to the provider origin, plus a send-count
+  assertion so a send-free completed can't pass vacuously.
+- Worker waits for breaker.openUntil must chunk <=15s under MV3's ~30s
+  idle limit; the wait loop re-reads the row each chunk so a
+  pause/cancel/supersede landing mid-wait exits immediately.
+- Independent review (child 7ac8d994): PASS/PASS across 4 rounds —
+  lane-guard asymmetry, committed-window positional rule, the
+  re-throw propagation, and the e2e fetch-patch scope all verified.
+- Full gate green at commit: lint, typecheck, 3021 unit/171 files,
+  build, manifest, bundle, 43 e2e (1 intentional screenshot skip).
