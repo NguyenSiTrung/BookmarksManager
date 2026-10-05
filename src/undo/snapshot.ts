@@ -1,8 +1,9 @@
 import { db } from "../db/database";
+import type { DecisionRow } from "../decisions/store";
 import { getMetaByIds } from "../db/meta";
 import type { TagDef } from "../schemas/meta";
 import { UndoSnapshot } from "../schemas/undo";
-import type { UndoKind, UndoMeta, UndoNode } from "../schemas/undo";
+import type { UndoKind, UndoMeta, UndoNode, UndoOrigin } from "../schemas/undo";
 import { get, getSubTree, isFixedRoot } from "../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 
@@ -35,16 +36,30 @@ import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
  * - **Fresh objects.** `pushSnapshot` stores a newly parsed object graph;
  *   Dexie writes the generated inbound key back onto the object passed to
  *   `add`, so the caller's input is never handed to the table.
- * - **Bounded stack.** The table is capped at {@link UNDO_STACK_LIMIT}
- *   rows; insertion keeps the newest by primary key (`++id` is the recency
- *   order) and drops the oldest. The cap runs inside the same transaction
- *   as the insert, so a concurrent push cannot overshoot it.
+ * - **Bounded stack, per origin (D05).** Rows are bucketed by `origin`
+ *   (`user` UI flows vs `decision` applies — absent reads as `user`); each
+ *   bucket is capped at {@link UNDO_STACK_LIMIT} rows AND
+ *   {@link UNDO_NODE_BUDGET} captured nodes, so a burst of decision
+ *   approvals can never evict the snapshot a user just pushed, and one
+ *   giant capture cannot crowd out everything behind it. Eviction drops
+ *   the bucket's OLDEST unprotected rows inside the same transaction as
+ *   the insert; a row referenced by a live decision's `undoSnapshotId`
+ *   (status not `rejected`/`reverted`) is never evicted, even past the
+ *   cap — a revert must always find its snapshot.
  * - `meta` rows keep their pre-mutation Chrome ids; the id remap at
  *   restore time is `restore.ts`'s job.
  */
 
-/** Maximum number of snapshots kept in the `undo` table (LIFO stack depth). */
+/** Maximum snapshots kept PER ORIGIN in the `undo` table (LIFO depth). */
 export const UNDO_STACK_LIMIT = 20;
+
+/**
+ * Maximum total captured nodes PER ORIGIN. A single huge delete-all can
+ * legitimately sit at 10k nodes, but twenty of them must not pile up —
+ * eviction drops the origin's oldest unprotected rows until the bucket is
+ * back under the bound.
+ */
+export const UNDO_NODE_BUDGET = 100_000;
 
 /** `captureSubtree` result: the recursive node plus the subtree's meta rows. */
 export interface SubtreeCapture {
@@ -73,6 +88,11 @@ export interface UndoSnapshotInput {
   tagDef?: TagDef;
   /** `restructure` snapshots: folders the apply created, parents-first. */
   createdFolderIds?: readonly string[];
+  /**
+   * Retention bucket (D05): `user` for UI-driven flows, `decision` for
+   * decision/job applies. Defaults to `user`.
+   */
+  origin?: UndoOrigin;
   createdAt?: string;
 }
 
@@ -186,14 +206,16 @@ export async function captureNodes(
 }
 
 /**
- * Append a snapshot to the `undo` table and enforce the stack cap in one
- * transaction. `createdAt` is stamped when absent; the document is
+ * Append a snapshot to the `undo` table and enforce the retention bounds
+ * in one transaction. `createdAt` is stamped when absent; the document is
  * schema-validated before the write and a fresh object is stored, so the
  * auto-incremented `id` Dexie writes back never reaches the caller's
- * object. Rows beyond {@link UNDO_STACK_LIMIT} are dropped oldest-first
- * (primary-key order = recency). Resolves to the new row id. Rejects with
- * a plain `Error` when the assembled document violates `UndoSnapshot` —
- * a caller-construction bug, not a runtime condition.
+ * object. Eviction is per-origin: the new row's bucket is trimmed to
+ * {@link UNDO_STACK_LIMIT} rows and {@link UNDO_NODE_BUDGET} captured
+ * nodes, oldest-first, skipping rows a live decision still references
+ * (D05). Resolves to the new row id. Rejects with a plain `Error` when
+ * the assembled document violates `UndoSnapshot` — a caller-construction
+ * bug, not a runtime condition.
  */
 export async function pushSnapshot(
   input: UndoSnapshotInput,
@@ -208,15 +230,48 @@ export async function pushSnapshot(
       `undo snapshot failed schema validation: ${issue?.message ?? "invalid document"}`,
     );
   }
-  return db.transaction("rw", db.undo, async () => {
+  // The transaction covers `decisions` too: the protected-id read must see
+  // the same snapshot of the world as the eviction that follows it.
+  return db.transaction("rw", db.undo, db.decisions, async () => {
     const id = await db.undo.add({ ...parsed.data });
-    const keys = await db.undo.toCollection().primaryKeys();
-    const excess = keys.length - UNDO_STACK_LIMIT;
-    if (excess > 0) {
-      await db.undo.bulkDelete(
-        keys.slice(0, excess).map((key) => Number(key)),
-      );
+
+    // Snapshot ids a live decision can still revert through — never
+    // evicted, whatever the cap says (D05). `undoSnapshotId` exists only on
+    // applied/auto_applied rows (the DecisionRow sidecar, not the base
+    // Decision schema); rejected/reverted decisions no longer need theirs.
+    const protectedIds = new Set<number>();
+    await db.decisions
+      .filter((row) => {
+        const sidecar = row as DecisionRow;
+        return (
+          sidecar.undoSnapshotId !== undefined &&
+          sidecar.status !== "rejected" &&
+          sidecar.status !== "reverted"
+        );
+      })
+      .each((row) => {
+        protectedIds.add((row as DecisionRow).undoSnapshotId as number);
+      });
+
+    const origin: UndoOrigin = parsed.data.origin ?? "user";
+    const bucket = (await db.undo.toArray()).filter(
+      (row) => (row.origin as UndoOrigin | undefined ?? "user") === origin,
+    ); // toArray() is primary-key order: oldest first
+    const excess = bucket.length - UNDO_STACK_LIMIT;
+    let nodeTotal = 0;
+    for (const row of bucket) {
+      nodeTotal += (row.nodes as unknown[] | undefined)?.length ?? 0;
     }
+    const evict: number[] = [];
+    for (const row of bucket) {
+      if (evict.length >= excess && nodeTotal <= UNDO_NODE_BUDGET) break;
+      const rowId = row.id as number | undefined;
+      if (rowId === undefined || rowId === id) continue; // never the new row
+      if (protectedIds.has(rowId)) continue;
+      evict.push(rowId);
+      nodeTotal -= (row.nodes as unknown[] | undefined)?.length ?? 0;
+    }
+    if (evict.length > 0) await db.undo.bulkDelete(evict);
     return id;
   });
 }
@@ -238,7 +293,19 @@ export async function listSnapshots(): Promise<UndoSnapshot[]> {
   return snapshots;
 }
 
-/** The newest valid snapshot on the stack, or `undefined` when empty. */
+/**
+ * The newest VALID snapshot on the stack (D06): a reverse cursor reads one
+ * row at a time, newest-first, skipping corrupt rows exactly like
+ * `listSnapshots` — instead of loading and validating the whole stack.
+ */
 export async function peekLatest(): Promise<UndoSnapshot | undefined> {
-  return (await listSnapshots())[0];
+  let row = await db.undo.toCollection().reverse().first();
+  while (row !== undefined) {
+    const parsed = UndoSnapshot.safeParse(row);
+    if (parsed.success) return parsed.data;
+    const id = row.id as number;
+    // Step back one row: the corrupt head does not poison the rest.
+    row = await db.undo.where(":id").below(id).reverse().first();
+  }
+  return undefined;
 }

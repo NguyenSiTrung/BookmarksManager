@@ -8,7 +8,7 @@ import type { MetaRepoErrorCode } from "../db/meta";
 import type { Category } from "../schemas/bookmark";
 import type { BookmarkMeta } from "../schemas/meta";
 import { NOTES_MAX_LENGTH } from "../schemas/meta";
-import type { UndoMeta, UndoNode } from "../schemas/undo";
+import type { UndoMeta, UndoNode, UndoOrigin } from "../schemas/undo";
 import { get } from "../sync/chrome-bookmarks";
 import { MutationError, removeTree } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
@@ -156,6 +156,8 @@ export type MergeResult = MergeSuccess | MergeFailure;
 export async function mergeGroup<T extends DuplicateCandidate>(
   group: DuplicateGroup<T>,
   keepId: string,
+  /** D05: retention bucket for the pushed snapshot. Defaults to `user`. */
+  origin: UndoOrigin = "user",
 ): Promise<MergeResult> {
   if (group.items.length < 2) {
     return {
@@ -284,7 +286,12 @@ export async function mergeGroup<T extends DuplicateCandidate>(
       };
     }
 
-    const snapshotId = await pushSnapshot({ kind: "merge", nodes, meta });
+    const snapshotId = await pushSnapshot({
+      kind: "merge",
+      nodes,
+      meta,
+      origin,
+    });
 
     try {
       // --- Apply: remove the losers first; the survivor write is LAST

@@ -12,6 +12,16 @@ export const UndoKind = z.enum([
 export type UndoKind = z.infer<typeof UndoKind>;
 
 /**
+ * Who pushed the snapshot (D05). `user` rows come from UI-driven flows
+ * (delete, move, merge, tag-delete via the panels); `decision` rows come
+ * from decision/job applies. Retention caps and the node budget are
+ * enforced PER ORIGIN so a burst of decision approvals can never evict a
+ * snapshot the user just pushed. Absent = `user` (pre-D05 rows).
+ */
+export const UndoOrigin = z.enum(["user", "decision"]);
+export type UndoOrigin = z.infer<typeof UndoOrigin>;
+
+/**
  * One Chrome bookmark node captured before removal/move, sufficient to
  * re-create the subtree at its original position (`parentId` + `index`).
  * `url` is absent on folders. `children` recurses — a removed folder carries
@@ -64,6 +74,8 @@ export const UndoSnapshot = z
      * kept.
      */
     createdFolderIds: z.array(z.string().min(1)).optional(),
+    /** D05 retention bucket; absent rows read as `user`. */
+    origin: UndoOrigin.optional(),
   })
   .superRefine((snapshot, ctx) => {
     if (snapshot.kind === "tag_delete" && snapshot.tagDef === undefined) {

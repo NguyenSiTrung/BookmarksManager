@@ -262,7 +262,9 @@ async function preChangeMeta(
 /** Push a `delete`-kind snapshot carrying only the pre-change meta rows. */
 async function pushMetaUndo(ids: readonly string[]): Promise<number> {
   const meta = await preChangeMeta(ids);
-  return pushSnapshot({ kind: "delete", nodes: [], meta });
+  // Decision-origin (D05): approvals push in bursts and must not crowd the
+  // user bucket.
+  return pushSnapshot({ kind: "delete", nodes: [], meta, origin: "decision" });
 }
 
 /**
@@ -335,7 +337,12 @@ async function applyMove(
   row: Extract<DecisionDocument, { kind: "move" }>,
 ): Promise<number> {
   const { nodes, meta } = await captureNodes(row.bookmarkIds);
-  const snapshotId = await pushSnapshot({ kind: "bulk_move", nodes, meta });
+  const snapshotId = await pushSnapshot({
+    kind: "bulk_move",
+    nodes,
+    meta,
+    origin: "decision",
+  });
   let movedAny = false;
   try {
     for (const id of row.bookmarkIds) {
@@ -360,7 +367,9 @@ async function applyMerge(
     url: nodes[index]?.url ?? "",
   }));
   const group: DuplicateGroup = { key: row.keepId, kind: "exact", items };
-  const result = await mergeGroup(group, row.keepId);
+  // Decision-origin (D05): `merge` snapshots are shared with the UI flow,
+  // so the origin comes in as a parameter rather than living in mergeGroup.
+  const result = await mergeGroup(group, row.keepId, "decision");
   if (!result.ok) {
     throw new DecisionApplyError(result.code, result.message);
   }

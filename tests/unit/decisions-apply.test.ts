@@ -110,26 +110,38 @@ async function expectApplyError(
 }
 
 /**
- * Pause the FIRST stack read (`listSnapshots`'s Dexie `toArray`) so a test can
- * push an unrelated snapshot into the window between a caller's head check and
- * its replay — the B13 interleave. Returns a handle to observe the pause and
- * release it.
+ * Pause the FIRST stack read (`peekLatest`'s Dexie
+ * `toCollection().reverse().first()`, D06) so a test can push an unrelated
+ * snapshot into the window between a caller's head check and its replay —
+ * the B13 interleave. Returns a handle to observe the pause and release it.
  *
- * Dexie resolves a `PromiseExtended`, so the gate chains on the real promise;
- * an `async` wrapper would return a plain promise and fail the spy's type.
+ * Dexie resolves a `PromiseExtended`, so the gate chains on the real
+ * promise; an `async` wrapper would return a plain promise and fail the
+ * spy's type. (The gate must NOT touch `db.undo.toArray`: `pushSnapshot`
+ * calls it inside its own transaction, and awaiting a foreign promise in
+ * there would trip a PrematureCommit abort.)
  */
 function gateFirstStackRead(): { delayed: () => boolean; release: () => void } {
-  const realToArray = db.undo.toArray.bind(db.undo);
+  const realToCollection = db.undo.toCollection.bind(db.undo);
   let delayed = false;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
-  vi.spyOn(db.undo, "toArray").mockImplementation(() =>
-    realToArray().then((rows) => {
-      if (delayed) return rows;
-      delayed = true;
-      return gate.then(() => rows);
-    }),
-  );
+  vi.spyOn(db.undo, "toCollection").mockImplementation(() => {
+    const collection = realToCollection();
+    const realReverse = collection.reverse.bind(collection);
+    collection.reverse = () => {
+      const reversed = realReverse();
+      const realFirst = reversed.first.bind(reversed);
+      reversed.first = () =>
+        realFirst().then((row) => {
+          if (delayed) return row;
+          delayed = true;
+          return gate.then(() => row);
+        });
+      return reversed;
+    };
+    return collection;
+  });
   return { delayed: () => delayed, release };
 }
 

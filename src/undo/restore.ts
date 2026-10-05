@@ -24,6 +24,7 @@ import {
 } from "../sync/mutations";
 import type { MutationErrorCode } from "../sync/mutations";
 import { UndoLockError, withUndoLock } from "./lock";
+import type { UndoLockHold } from "./lock";
 import { peekLatest } from "./snapshot";
 
 /**
@@ -522,8 +523,10 @@ function toFailure(cause: unknown): UndoFailure {
  * extension-wide undo lock, queued behind earlier calls in this context, and
  * returns the union described in the module header — never throws.
  */
-export function undoLatest(): Promise<UndoResult> {
-  return serialize(() => withUndoLock(runUndoLatest).catch(toFailure));
+export function undoLatest(hold?: UndoLockHold): Promise<UndoResult> {
+  return serialize(() =>
+    withUndoLock(runUndoLatest, hold).catch(toFailure),
+  );
 }
 
 async function runUndoLatest(): Promise<UndoResult> {
@@ -598,9 +601,12 @@ async function replaySnapshot(snapshot: UndoSnapshot): Promise<UndoResult> {
  * codes); a head that is not `snapshotId` — including a stack that became
  * empty — reports `conflict` and mutates nothing. Never throws.
  */
-export function undoExpected(snapshotId: number): Promise<UndoResult> {
+export function undoExpected(
+  snapshotId: number,
+  hold?: UndoLockHold,
+): Promise<UndoResult> {
   return serialize(() =>
-    withUndoLock(() => runUndoExpected(snapshotId)).catch(toFailure),
+    withUndoLock(() => runUndoExpected(snapshotId), hold).catch(toFailure),
   );
 }
 
@@ -633,7 +639,7 @@ async function runUndoExpected(snapshotId: number): Promise<UndoResult> {
  * The row below the discarded head becomes the next undo target. Never
  * throws.
  */
-export function discardLatest(): Promise<DiscardResult> {
+export function discardLatest(hold?: UndoLockHold): Promise<DiscardResult> {
   return serialize(() =>
     withUndoLock(async (): Promise<DiscardResult> => {
       try {
@@ -646,7 +652,7 @@ export function discardLatest(): Promise<DiscardResult> {
       } catch (cause) {
         return toFailure(cause);
       }
-    }).catch(toFailure),
+    }, hold).catch(toFailure),
   );
 }
 
@@ -661,7 +667,10 @@ export function discardLatest(): Promise<DiscardResult> {
  * `discardLatest` and taken under the same extension-wide undo lock; a
  * missing row reports `empty` and never throws.
  */
-export function discardById(id: number): Promise<DiscardResult> {
+export function discardById(
+  id: number,
+  hold?: UndoLockHold,
+): Promise<DiscardResult> {
   return serialize(() =>
     withUndoLock(async (): Promise<DiscardResult> => {
       try {
@@ -674,6 +683,6 @@ export function discardById(id: number): Promise<DiscardResult> {
       } catch (cause) {
         return toFailure(cause);
       }
-    }).catch(toFailure),
+    }, hold).catch(toFailure),
   );
 }

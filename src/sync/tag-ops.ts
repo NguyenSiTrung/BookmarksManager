@@ -333,18 +333,36 @@ export async function deleteTagWithUndo(
   const key = tagNameKey(tag);
   if (key === "") return invalidTagName();
   try {
-    const tagDef = await getTag(key);
-    if (tagDef === undefined) return tagNotFound(key);
-    // Capture BEFORE the mutation: every row carrying the key, plus the def.
-    const meta = await getMetaByTag(key);
-    const snapshotId = await pushSnapshot({
-      kind: "tag_delete",
-      nodes: [],
-      meta,
-      tagDef,
-    });
-    const affected = await deleteTag(key);
-    return { ok: true, affected, snapshotId };
+    // D10: capture + push + delete run in ONE Dexie transaction, so a
+    // deleteTag failure rolls the snapshot back with it — there is no
+    // window where the stack claims an undo for a delete that never
+    // happened. (Nested transactions reuse this one: pushSnapshot's
+    // undo+decisions tables and deleteTag's tags+bookmarkMeta tables are
+    // all covered here.)
+    const result = await db.transaction(
+      "rw",
+      db.tags,
+      db.bookmarkMeta,
+      db.undo,
+      db.decisions,
+      async () => {
+        const tagDef = await getTag(key);
+        if (tagDef === undefined) return undefined;
+        // Capture BEFORE the mutation: every row carrying the key, plus the
+        // def.
+        const meta = await getMetaByTag(key);
+        const snapshotId = await pushSnapshot({
+          kind: "tag_delete",
+          nodes: [],
+          meta,
+          tagDef,
+        });
+        const affected = await deleteTag(key);
+        return { affected, snapshotId };
+      },
+    );
+    if (result === undefined) return tagNotFound(key);
+    return { ok: true, affected: result.affected, snapshotId: result.snapshotId };
   } catch (cause) {
     return toFailure(cause);
   }

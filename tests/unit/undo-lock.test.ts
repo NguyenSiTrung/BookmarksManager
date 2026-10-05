@@ -132,26 +132,36 @@ function requireLocks(): NonNullable<ReturnType<typeof currentWebLocksFake>> {
 }
 
 /**
- * Pause the FIRST stack read (`listSnapshots`'s Dexie `toArray`) so a test can
- * push an unrelated snapshot into the window between a replay's head check and
- * its replay — the B13 interleave. Returns a handle to observe the pause and
- * release it.
+ * Pause the FIRST stack read (`peekLatest`'s Dexie
+ * `toCollection().reverse().first()`, D06) so a test can push an unrelated
+ * snapshot into the window between a replay's head check and its replay —
+ * the B13 interleave. Returns a handle to observe the pause and release it.
  *
- * Dexie resolves a `PromiseExtended`, so the gate chains on the real promise;
- * an `async` wrapper would return a plain promise and fail the spy's type.
+ * Dexie resolves a `PromiseExtended`, so the gate chains on the real
+ * promise; an `async` wrapper would return a plain promise and fail the
+ * spy's type.
  */
 function gateFirstStackRead(): { delayed: () => boolean; release: () => void } {
-  const realToArray = db.undo.toArray.bind(db.undo);
+  const realToCollection = db.undo.toCollection.bind(db.undo);
   let delayed = false;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => (release = resolve));
-  vi.spyOn(db.undo, "toArray").mockImplementation(() =>
-    realToArray().then((rows) => {
-      if (delayed) return rows;
-      delayed = true;
-      return gate.then(() => rows);
-    }),
-  );
+  vi.spyOn(db.undo, "toCollection").mockImplementation(() => {
+    const collection = realToCollection();
+    const realReverse = collection.reverse.bind(collection);
+    collection.reverse = () => {
+      const reversed = realReverse();
+      const realFirst = reversed.first.bind(reversed);
+      reversed.first = () =>
+        realFirst().then((row) => {
+          if (delayed) return row;
+          delayed = true;
+          return gate.then(() => row);
+        });
+      return reversed;
+    };
+    return collection;
+  });
   return { delayed: () => delayed, release };
 }
 
@@ -329,17 +339,101 @@ describe("withUndoLock", () => {
     expect(UNDO_LOCK_NAME).toBe(EXTENSION_LOCK_NAME);
   });
 
-  it("is re-entrant in one context: a nested call cannot deadlock", async () => {
+  it("is re-entrant via the hold token: a nested call joins instead of deadlocking (D11)", async () => {
     const snapshotId = await snapshotAndDelete("bm-b");
 
-    const result = await withUndoLock(async () => {
-      // A nested acquisition from the same context must run inside the hold
-      // instead of queueing behind it forever.
-      return undoExpected(snapshotId);
+    const result = await withUndoLock(async (hold) => {
+      // A nested acquisition joins its caller's critical section ONLY by
+      // presenting the live hold — a token-less call would queue behind the
+      // very hold it sits inside and deadlock, which is now the contract.
+      return undoExpected(snapshotId, hold);
     });
 
     expectOk(result);
     expect(await peekLatest()).toBeUndefined();
+  });
+
+  it("an unrelated same-context call cannot bypass an open hold (D11)", async () => {
+    // Under the old module-global holdDepth, ANY call launched while a hold
+    // was open — nested or not — ran inline, silently joining a critical
+    // section it was never part of. Now only the token joins.
+    const order: string[] = [];
+    let interloper!: Promise<void>;
+
+    const section = withUndoLock(async () => {
+      order.push("section:start");
+      // Launch the unrelated call from INSIDE the granted hold — the exact
+      // window where holdDepth used to admit it inline. A token-less request
+      // queues behind this very hold (making the hold await it would be the
+      // honest deadlock the contract now describes — so it is captured, not
+      // returned).
+      interloper = withUndoLock(async () => {
+        order.push("interloper");
+      });
+      await flush();
+      // Still inside the open hold: the interloper must NOT have run.
+      order.push(`section:checked:${order.includes("interloper")}`);
+      order.push("section:end");
+    });
+
+    await Promise.all([section, interloper]);
+    expect(order).toEqual([
+      "section:start",
+      "section:checked:false",
+      "section:end",
+      "interloper",
+    ]);
+  });
+
+  it("drains joined work before releasing the lock — a joiner's tail never escapes (D11)", async () => {
+    const locks = requireLocks();
+    const order: string[] = [];
+    let releaseJoiner!: () => void;
+    const joinerGate = new Promise<void>((r) => (releaseJoiner = r));
+
+    const holder = withUndoLock(async (hold) => {
+      order.push("holder:start");
+      // A joiner that outlives the holder's own body must still complete
+      // INSIDE the hold — the platform lock is not released until it does.
+      void withUndoLock(async () => {
+        await joinerGate;
+        order.push("joiner:end");
+      }, hold);
+      order.push("holder:end");
+    });
+
+    // Queued BEHIND the hold: it can only run once the lock is released.
+    const after = withUndoLock(async () => {
+      order.push("after");
+    });
+    await flush();
+    // The holder body has finished; only the gated joiner is left inside.
+    releaseJoiner();
+    await Promise.all([holder, after]);
+
+    // "after" could only be granted once the lock was free, so the joiner's
+    // completion before it proves the release waited the joiner out.
+    expect(order).toEqual([
+      "holder:start",
+      "holder:end",
+      "joiner:end",
+      "after",
+    ]);
+    expect(locks.inspect().held).toEqual([]);
+  });
+
+  it("a stale token re-requests the lock like a fresh call — it can never bypass (D11)", async () => {
+    let captured!: Parameters<typeof withUndoLock>[1];
+    await withUndoLock(async (hold) => {
+      captured = hold;
+    });
+
+    // The hold is long released; reusing its token must take the platform
+    // path (a real request), not slip into a dead section.
+    const locks = requireLocks();
+    const ran = await withUndoLock(async () => "fresh", captured);
+    expect(ran).toBe("fresh");
+    expect(locks.inspect().held).toEqual([]);
   });
 
   it("serializes two same-context callers, even while the first is awaiting", async () => {

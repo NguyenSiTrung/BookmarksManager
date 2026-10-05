@@ -667,7 +667,10 @@ describe("undoLatest — idempotent restore", () => {
   });
 
   it("returns a typed failure instead of throwing when the stack read fails", async () => {
-    vi.spyOn(db.undo, "toArray").mockRejectedValue(new Error("idb boom"));
+    // peekLatest's read path (D06): toCollection().reverse().first().
+    vi.spyOn(db.undo, "toCollection").mockImplementation(() => {
+      throw new Error("idb boom");
+    });
     await expect(undoLatest()).resolves.toMatchObject({
       ok: false,
       code: "api",

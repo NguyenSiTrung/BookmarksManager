@@ -428,6 +428,33 @@ describe("deleteTagWithUndo", () => {
     expect(await getTag("empty")).toMatchObject({ name: "Empty" });
   });
 
+  it("is atomic: a delete failure rolls back the snapshot AND the strip (D10)", async () => {
+    await createTag("Atomic", { color: "#aa0000" });
+    await putMeta("bm-a", { tags: ["atomic", "keep"] });
+    await putMeta("bm-b", { tags: ["atomic"] });
+
+    // Fail the actual delete inside the shared transaction — after the
+    // snapshot push — so the whole unit (capture + push + strip + delete)
+    // must roll back together.
+    const deleteSpy = vi
+      .spyOn(db.tags, "delete")
+      .mockRejectedValue(new Error("simulated delete failure"));
+    try {
+      const result = await deleteTagWithUndo("atomic");
+      expect(result).toMatchObject({ ok: false });
+    } finally {
+      deleteSpy.mockRestore();
+    }
+
+    // Nothing happened: the def survives, the rows still carry the key,
+    // and the stack does NOT claim an undo for a delete that never ran.
+    expect(await getTag("atomic")).toMatchObject({ name: "Atomic" });
+    expect((await getMeta("bm-a"))?.tags).toEqual(["atomic", "keep"]);
+    expect((await getMeta("bm-b"))?.tags).toEqual(["atomic"]);
+    expect(await db.undo.count()).toBe(0);
+    expect(await peekLatest()).toBeUndefined();
+  });
+
   it("fails not_found/invalid_tag on unknown or blank refs and writes no snapshot", async () => {
     // Rows carrying an orphaned key are left alone too — only a real def is
     // deletable through this path (there is nothing to snapshot/restore).

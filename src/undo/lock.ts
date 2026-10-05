@@ -19,23 +19,36 @@
  * - **One name, exclusive.** {@link UNDO_LOCK_NAME} is the only lock the undo
  *   stack uses; all requests take it in `exclusive` mode so a replay and a
  *   discard can never overlap.
- * - **Never recursively acquire.** `navigator.locks.request` is not
- *   re-entrant: a context that requested the lock while holding it would wait
- *   on itself forever. Nested calls from the context that holds the lock (a
- *   caller composing `withUndoLock` around `undoExpected`, say) therefore join
- *   the existing critical section instead of requesting the lock again. This
- *   is safe for cross-context exclusion — while the lock is held, no other
- *   context can enter, so everything running inside the hold is still
- *   serialized against every OTHER context. Same-context ordering remains
- *   `restore.ts`'s module-local queue, which is what it exists for.
+ * - **Joining a hold needs its token (D11).** `navigator.locks.request` is
+ *   not re-entrant, so work that legitimately belongs inside a critical
+ *   section joins it by passing the {@link UndoLockHold} the holder's
+ *   callback received as `withUndoLock(fn, hold)`. A call WITHOUT a live
+ *   token ALWAYS requests the platform lock — an unrelated same-context
+ *   task can no longer slip inside another flow's hold just because a
+ *   module-global depth counter was non-zero (the old `holdDepth` model
+ *   could not tell "lexically nested" from "concurrently started"; it also
+ *   let joined work outlive the hold that admitted it, running unprotected
+ *   in its tail). Work joined via a live token is tracked on the hold and
+ *   the platform lock is only released after every joiner settles — joined
+ *   work is part of the critical section, never a free ride out of it.
+ * - **The token is unforgeable.** `UndoLockHold` is a branded interface a
+ *   caller can only obtain from inside a granted callback; the module keeps
+ *   the set of live holds, and a stale (already-released) token simply
+ *   re-requests the lock like any fresh call — it can never bypass.
+ * - **Deadlock honesty.** A call awaiting a fresh request while its own
+ *   hold is still open waits on itself forever — that is now a caller bug
+ *   the API makes explicit (pass the hold) instead of a silent bypass.
+ *   Joined work must likewise never await a token-less acquisition.
  * - **Typed refusal, never a fallback.** A runtime without Web Locks, a
  *   rejected request, or an aborted request raises {@link UndoLockError}
- *   rather than running the critical section unprotected; `restore.ts` maps it
- *   onto the typed `conflict` undo failure.
+ *   rather than running the critical section unprotected; `restore.ts` maps
+ *   it onto the typed `conflict` undo failure.
  * - **Body failures are not lock failures.** The callback's own rejection is
  *   rethrown unchanged, so callers keep seeing their real error (a native
- *   `chrome.bookmarks` failure, say). The lock is released either way, because
- *   the release is driven by the callback's returned promise settling.
+ *   `chrome.bookmarks` failure, say). The lock is released either way —
+ *   after every joined task has also settled — because the release is
+ *   driven by the callback's returned promise settling plus the joiner
+ *   drain.
  */
 
 /**
@@ -58,11 +71,34 @@ export class UndoLockError extends Error {
 }
 
 /**
- * Nesting depth of holds inside THIS module instance. Non-zero means the
- * current context is inside its own critical section, so a nested call must
- * run inline instead of requesting the lock again (see the module header).
+ * Brand marker — a real Symbol (inferred `unique symbol`), so the token type
+ * is unforgeable at the type level AND the key exists at runtime.
  */
-let holdDepth = 0;
+const HOLD_BRAND = Symbol("bookmarks-manager:undo-hold");
+
+/**
+ * Proof that the caller's code is running inside a granted critical section.
+ * `withUndoLock`'s callback receives the only valid values of this type;
+ * pass it as the second argument to a nested `withUndoLock` (or to a
+ * restore.ts API that accepts one) to run inside the same hold instead of
+ * queueing behind it. A hold is valid only while its section is open.
+ */
+export interface UndoLockHold {
+  readonly [HOLD_BRAND]: true;
+}
+
+/** Internal hold record: the public token plus the joiner bookkeeping. */
+interface ActiveHold extends UndoLockHold {
+  /** Settled-or-pending joiner promises the release must wait out (D11). */
+  readonly pending: Set<Promise<unknown>>;
+}
+
+/**
+ * Holds currently open in THIS module instance. Membership is what makes a
+ * token live; a hold is removed only after its section AND its joiners have
+ * settled, so a token can never outlive the release that owns it.
+ */
+const activeHolds = new Set<ActiveHold>();
 
 /** The platform lock manager, or `undefined` when this runtime has none. */
 function currentLockManager(): LockManager | undefined {
@@ -77,20 +113,36 @@ function currentLockManager(): LockManager | undefined {
 
 /**
  * Run `run` inside the extension-wide exclusive undo lock, resolving with its
- * result. A nested call from this same context runs inline (the lock is not
- * re-entrant); a call from another context — or a same-context call made
- * before this one's critical section began — queues on the platform lock.
+ * result. `run` receives the {@link UndoLockHold}; pass it as `hold` to a
+ * nested `withUndoLock` (or a restore API accepting one) to join THIS
+ * critical section — the join is tracked and the platform lock releases only
+ * once every joiner has settled. A call without a live `hold` always makes a
+ * fresh platform request: it queues behind any current holder, and from
+ * inside a still-open hold it waits on itself forever — thread the token.
+ *
  * Rejects with {@link UndoLockError} when no lock can be taken, and with the
  * body's own error otherwise.
  */
-export function withUndoLock<T>(run: () => Promise<T>): Promise<T> {
-  if (holdDepth > 0) {
-    holdDepth += 1;
-    return Promise.resolve()
-      .then(run)
-      .finally(() => {
-        holdDepth -= 1;
-      });
+export function withUndoLock<T>(
+  run: (hold: UndoLockHold) => Promise<T> | T,
+  hold?: UndoLockHold,
+): Promise<T> {
+  if (hold !== undefined && activeHolds.has(hold as ActiveHold)) {
+    // The token is live → this context owns the platform lock right now, so
+    // the join runs inline. Track it: the hold does not release while joined
+    // work is still running (a joiner's tail must never escape the section).
+    const active = hold as ActiveHold;
+    const joined = Promise.resolve().then(() => run(active));
+    active.pending.add(joined);
+    joined.then(
+      () => {
+        active.pending.delete(joined);
+      },
+      () => {
+        active.pending.delete(joined);
+      },
+    );
+    return joined;
   }
 
   return Promise.resolve()
@@ -103,16 +155,30 @@ export function withUndoLock<T>(run: () => Promise<T>): Promise<T> {
         );
       }
       return locks.request(UNDO_LOCK_NAME, { mode: "exclusive" }, async () => {
-        holdDepth += 1;
+        const active: ActiveHold = {
+          [HOLD_BRAND]: true,
+          pending: new Set(),
+        };
+        activeHolds.add(active);
         try {
           // The wrapper keeps a body failure out of the request rejection
           // path, so only an acquisition failure is ever reported as a lock
           // failure below.
-          return { failed: false as const, value: await run() };
+          return { failed: false as const, value: await run(active) };
         } catch (cause) {
           return { failed: true as const, cause };
         } finally {
-          holdDepth -= 1;
+          try {
+            // Joined work is part of this critical section: the platform
+            // lock stays held until every joiner has settled. Joiners may
+            // spawn more joiners, so drain to empty rather than settling a
+            // single snapshot of the set.
+            while (active.pending.size > 0) {
+              await Promise.allSettled([...active.pending]);
+            }
+          } finally {
+            activeHolds.delete(active);
+          }
         }
       });
     })

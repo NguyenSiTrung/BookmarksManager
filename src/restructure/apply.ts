@@ -321,6 +321,7 @@ export async function applyRestructurePlan(
           nodes: capture.nodes,
           meta: capture.meta,
           createdFolderIds,
+          origin: "decision",
         });
 
         for (const p of pending) {
