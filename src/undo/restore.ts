@@ -25,8 +25,9 @@ import {
   moveNode,
   removeNode,
   MutationError,
+  newMutationVerifyCache,
 } from "../sync/mutations";
-import type { MutationErrorCode } from "../sync/mutations";
+import type { MutationErrorCode, MutationVerifyCache } from "../sync/mutations";
 import { UndoLockError, withUndoLock } from "./lock";
 import type { UndoLockHold } from "./lock";
 import { peekLatest } from "./snapshot";
@@ -183,6 +184,16 @@ interface RestoreContext {
   fellBackToOther: boolean;
   /** Row id of the snapshot being replayed — progress writes go here. */
   snapshotId?: number;
+  /**
+   * Per-replay verification cache (D08): every `requireNode`/`writableParent`
+   * guard and index check in `src/sync/mutations.ts` resolves through it,
+   * so a 5k-node subtree costs one `get`/`getChildren` per DISTINCT
+   * ancestor/folder instead of one per node (and one ancestor re-walk per
+   * ancestor). Fresh per replay — never shared.
+   */
+  verify: MutationVerifyCache;
+  /** New `idMap` entries not yet flushed to the row by {@link persistProgress}. */
+  unpersisted: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +268,10 @@ async function resolveParent(
 }
 
 /**
- * Write the in-flight `idMap` back to the snapshot row — the resume anchor
- * that lets a failed restore continue where it stopped instead of
- * duplicating already-recreated nodes on retry.
+ * Flush the in-flight `idMap` to the snapshot row unconditionally.
  */
-async function persistProgress(ctx: RestoreContext): Promise<void> {
-  if (ctx.snapshotId === undefined) return;
+async function flushProgress(ctx: RestoreContext): Promise<void> {
+  if (ctx.snapshotId === undefined || ctx.unpersisted === 0) return;
   // modify() rather than update(): UpdateSpec's mapped type hits TS2615 on
   // UndoNode's recursive `children`.
   await db.undo
@@ -271,6 +280,47 @@ async function persistProgress(ctx: RestoreContext): Promise<void> {
     .modify((row) => {
       row.idMap = { ...ctx.idMap };
     });
+  ctx.unpersisted = 0;
+}
+
+/**
+ * Write the in-flight `idMap` back to the snapshot row — the resume anchor
+ * that lets a failed restore continue where it stopped instead of
+ * duplicating already-recreated nodes on retry.
+ *
+ * Batched (D08): each `modify` rewrites the WHOLE map, so per-node writes
+ * are O(n²) bytes on a big subtree. Progress is therefore flushed every
+ * {@link IDMAP_PERSIST_BATCH} new mappings — bounding a hard-kill loss to
+ * under a batch — and ALWAYS on a thrown failure (see
+ * {@link replaySnapshot}'s catch), so a retried typed failure resumes
+ * with no duplicates at all.
+ */
+async function persistProgress(ctx: RestoreContext): Promise<void> {
+  if (ctx.snapshotId === undefined) return;
+  ctx.unpersisted += 1;
+  if (ctx.unpersisted < IDMAP_PERSIST_BATCH) return;
+  await flushProgress(ctx);
+}
+
+/** How many new `idMap` entries a restore batches between row writes. */
+const IDMAP_PERSIST_BATCH = 50;
+
+/**
+ * Live child count of `parentId` — seeded by ONE `getChildren` per folder
+ * (D08) and afterwards kept exact by the mutation cache as this module's
+ * own creates/moves land. Clamping indexes against this local count is
+ * what makes a 5k-node subtree restore read each folder once instead of
+ * once per node.
+ */
+async function childCount(
+  parentId: string,
+  ctx: RestoreContext,
+): Promise<number> {
+  const known = ctx.verify.childCounts.get(parentId);
+  if (known !== undefined) return known;
+  const count = (await getChildren(parentId)).length;
+  ctx.verify.childCounts.set(parentId, count);
+  return count;
 }
 
 /**
@@ -298,24 +348,33 @@ async function recreateSubtree(
   if (createdId === undefined) {
     const created =
       node.url !== undefined
-        ? await createBookmark({
-            parentId,
-            title: node.title,
-            url: node.url,
-            index,
-          })
-        : await createFolder({ parentId, title: node.title, index });
+        ? await createBookmark(
+            {
+              parentId,
+              title: node.title,
+              url: node.url,
+              index,
+            },
+            ctx.verify,
+          )
+        : await createFolder(
+            { parentId, title: node.title, index },
+            ctx.verify,
+          );
     createdId = created.id;
     ctx.idMap[node.id] = createdId;
     ctx.restoredIds.push(createdId);
+    // A folder we just created is empty by construction — seed its child
+    // count instead of paying a `getChildren` read for it (D08).
+    if (node.url === undefined) ctx.verify.childCounts.set(createdId, 0);
     await persistProgress(ctx);
   }
   for (const child of node.children ?? []) {
-    const siblings = await getChildren(createdId);
+    const count = await childCount(createdId, ctx);
     await recreateSubtree(
       child,
       createdId,
-      Math.min(child.index, siblings.length),
+      Math.min(child.index, count),
       ctx,
     );
   }
@@ -338,8 +397,8 @@ async function recreateNodes(
   for (const node of ordered) {
     if (await nodeExists(node.id)) continue; // never deleted — do not clone
     const parentId = await resolveParent(node.parentId, ctx);
-    const siblings = await getChildren(parentId);
-    await recreateSubtree(node, parentId, Math.min(node.index, siblings.length), ctx);
+    const count = await childCount(parentId, ctx);
+    await recreateSubtree(node, parentId, Math.min(node.index, count), ctx);
   }
 }
 
@@ -478,8 +537,8 @@ async function restoreMoves(
       // A plain move skips deleted nodes; restructure must recover them.
       if (snapshot.kind !== "restructure") continue;
       const parentId = await resolveParent(node.parentId, ctx);
-      const siblings = await getChildren(parentId);
-      await recreateSubtree(node, parentId, Math.min(node.index, siblings.length), ctx);
+      const count = await childCount(parentId, ctx);
+      await recreateSubtree(node, parentId, Math.min(node.index, count), ctx);
       continue;
     }
     if (
@@ -492,16 +551,16 @@ async function restoreMoves(
       continue;
     }
     const parentId = await resolveParent(node.parentId, ctx);
-    const siblings = await getChildren(parentId);
     // Post-removal indexing: moving within the same parent frees one slot.
     const capacity =
-      siblings.length - (current.parentId === parentId ? 1 : 0);
+      (await childCount(parentId, ctx)) -
+      (current.parentId === parentId ? 1 : 0);
     const index = Math.min(node.index, Math.max(capacity, 0));
     if (current.parentId === parentId && current.index === index) {
       ctx.restoredIds.push(node.id);
       continue; // already back in place
     }
-    await moveNode(node.id, { parentId, index });
+    await moveNode(node.id, { parentId, index }, ctx.verify);
     ctx.restoredIds.push(node.id);
   }
 }
@@ -541,6 +600,13 @@ async function restoreRestructure(
     if (children.length > 0) continue; // user filed into it since — keep
     // Chrome's non-recursive remove protects even a racing child insertion.
     await removeNode(id);
+    // `removeNode` is not cache-aware (guard must read live children): the
+    // removal shrinks the folder's parent — drop the seeded count so the
+    // next writer re-reads it instead of clamping against a stale high
+    // water mark.
+    if (current.parentId !== undefined) {
+      ctx.verify.childCounts.delete(current.parentId);
+    }
     ctx.restoredIds.push(id);
   }
 }
@@ -651,28 +717,40 @@ async function replaySnapshot(snapshot: UndoSnapshot): Promise<UndoResult> {
     idMap: { ...(snapshot.idMap ?? {}) },
     fellBackToOther: false,
     snapshotId: snapshot.id,
+    // Fresh per replay: cached verifications must never leak into the
+    // next operation (D08).
+    verify: newMutationVerifyCache(),
+    unpersisted: 0,
   };
-  switch (snapshot.kind) {
-    case "delete":
-    case "merge":
-      // A merge snapshot is a delete restore plus the kept node's
-      // pre-merge row riding in `meta` (its id is absent from `nodes`,
-      // which is what tells it apart from the losers' rows).
-      await recreateNodes(snapshot, ctx);
-      await restoreMetaRows(snapshot, ctx);
-      break;
-    case "bulk_move":
-      await restoreMoves(snapshot, ctx);
-      break;
-    case "restructure":
-      await restoreRestructure(snapshot, ctx);
-      break;
-    case "tag_delete":
-      await restoreTagDelete(snapshot, ctx);
-      break;
-  }
-  if (snapshot.id !== undefined) {
-    await db.undo.delete(snapshot.id);
+  try {
+    switch (snapshot.kind) {
+      case "delete":
+      case "merge":
+        // A merge snapshot is a delete restore plus the kept node's
+        // pre-merge row riding in `meta` (its id is absent from `nodes`,
+        // which is what tells it apart from the losers' rows).
+        await recreateNodes(snapshot, ctx);
+        await restoreMetaRows(snapshot, ctx);
+        break;
+      case "bulk_move":
+        await restoreMoves(snapshot, ctx);
+        break;
+      case "restructure":
+        await restoreRestructure(snapshot, ctx);
+        break;
+      case "tag_delete":
+        await restoreTagDelete(snapshot, ctx);
+        break;
+    }
+    if (snapshot.id !== undefined) {
+      await db.undo.delete(snapshot.id);
+    }
+  } catch (cause) {
+    // Progress writes are batched (D08) — flush the tail now so a retried
+    // typed failure (replay OR the pop itself) resumes with ZERO
+    // duplicates. A flush failure must not mask the real one.
+    await flushProgress(ctx).catch(() => undefined);
+    throw cause;
   }
   return {
     ok: true,

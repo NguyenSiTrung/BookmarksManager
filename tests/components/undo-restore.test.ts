@@ -19,6 +19,8 @@ import {
   peekLatest,
   pushSnapshot,
 } from "../../src/undo/snapshot";
+import type { UndoNode } from "../../src/schemas/undo";
+import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
 /**
@@ -32,10 +34,12 @@ import { installBookmarksFake } from "../fakes/chrome-bookmarks";
  * other.
  */
 
+let fake: FakeBookmarksApi;
+
 beforeEach(async () => {
   await db.open();
   await db.undo.clear();
-  installBookmarksFake({
+  fake = installBookmarksFake({
     bookmarksBar: [
       { id: "bm-a", title: "A", url: "https://a.example/" },
       { id: "bm-b", title: "B", url: "https://b.example/" },
@@ -224,5 +228,113 @@ describe("restoreById (D07 — targeted undo)", () => {
     expect(await get("bm-c")).toMatchObject([
       { parentId: OTHER_BOOKMARKS_ID },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D08 — linear-time restore
+// ---------------------------------------------------------------------------
+
+/** 50 folders × 100 leaves under one root = 5051 nodes. */
+function bigTree(): UndoNode {
+  const folders: UndoNode[] = [];
+  for (let f = 0; f < 50; f += 1) {
+    const children: UndoNode[] = [];
+    for (let i = 0; i < 100; i += 1) {
+      children.push({
+        id: `n-${f}-${i}`,
+        parentId: `f-${f}`,
+        index: i,
+        title: `L${f}-${i}`,
+        url: `https://l${f}-${i}.example/`,
+      });
+    }
+    folders.push({
+      id: `f-${f}`,
+      parentId: "big-root",
+      index: f,
+      title: `F${f}`,
+      children,
+    });
+  }
+  return {
+    id: "big-root",
+    parentId: BOOKMARKS_BAR_ID,
+    index: 0,
+    title: "Big",
+    children: folders,
+  };
+}
+const BIG_TREE_NODES = 5051;
+
+describe("linear-time restore (D08)", () => {
+  it("a 5k-node subtree costs one getChildren per folder and batched idMap writes", async () => {
+    const rowId = await pushSnapshot({
+      kind: "delete",
+      nodes: [bigTree()],
+      meta: [],
+    });
+    const childrenSpy = vi.spyOn(fake, "getChildren");
+    // `db.undo.where` is only reached by persistProgress's batched flush —
+    // every other stack read in the replay path uses `get`/`toCollection`.
+    const writeSpy = vi.spyOn(db.undo, "where");
+
+    const result = await restoreById(rowId);
+    expect(result.ok).toBe(true);
+    expect((result as { restoredIds: string[] }).restoredIds).toHaveLength(
+      BIG_TREE_NODES,
+    );
+
+    // One read for the recorded parent — recreated folders seed their own
+    // count (a fresh folder is empty by construction), so the 51 internal
+    // folders never hit the API at all.
+    expect(childrenSpy).toHaveBeenCalledTimes(1);
+    expect(childrenSpy).toHaveBeenLastCalledWith(BOOKMARKS_BAR_ID);
+    // 5051 mappings / batch of 50 → 101 flushes, not 5051 writes (the
+    // last partial batch rides pop-on-success, which deletes the row).
+    expect(writeSpy).toHaveBeenCalledTimes(Math.floor(BIG_TREE_NODES / 50));
+
+    await expect(get("big-root")).rejects.toThrow(); // old id is dead…
+    const recreated = (await getChildren(BOOKMARKS_BAR_ID)).find(
+      (node) => node.title === "Big",
+    );
+    expect(recreated).toBeDefined();
+    expect((await getChildren(recreated!.id))).toHaveLength(50);
+  });
+
+  it("a failed 5k restore resumes with zero duplicated nodes", async () => {
+    const rowId = await pushSnapshot({
+      kind: "delete",
+      nodes: [bigTree()],
+      meta: [],
+    });
+    let attempts = 0;
+    let created = 0;
+    const realCreate = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation((details) => {
+      attempts += 1;
+      if (attempts === 120) {
+        throw new Error("controlled create failure");
+      }
+      created += 1;
+      return realCreate(details);
+    });
+
+    const first = await restoreById(rowId);
+    expect(first.ok).toBe(false);
+    // The failure flushed buffered progress — every create before the
+    // throw is on the resume anchor.
+    const row = await db.undo.get(rowId);
+    expect(Object.keys(row?.idMap ?? {})).toHaveLength(119);
+
+    vi.restoreAllMocks();
+    vi.spyOn(fake, "create").mockImplementation((details) => {
+      created += 1;
+      return realCreate(details);
+    });
+    const second = await restoreById(rowId);
+    expect(second.ok).toBe(true);
+    // 119 pre-failure + 4932 resumed = 5051 creates, exactly once each.
+    expect(created).toBe(BIG_TREE_NODES);
   });
 });

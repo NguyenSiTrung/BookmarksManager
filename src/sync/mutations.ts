@@ -136,11 +136,47 @@ export interface CreateFolderOptions {
  */
 const NODE_NOT_FOUND = /can't find bookmark/i;
 
+/**
+ * A per-operation verification cache (D08). Callers replaying many writes
+ * — undo restores, restructure applies — share ancestors and destination
+ * parents across hundreds of calls; without a cache every node re-walks
+ * the whole chain (`O(nodes × depth)` `get`s, one `getChildren` per
+ * write). A cache instance makes each `get`/`getChildren` fire once per
+ * DISTINCT id/folder and keeps child counts locally consistent as this
+ * module's own creates/moves succeed.
+ *
+ * Staleness cannot corrupt: a dead cached entry only defers the failure
+ * to the API call itself, which reports `api` typed — the same outcome a
+ * check-then-act race had before. Pass a FRESH instance per batch (undo
+ * restores create one per replay); never share across operations.
+ */
+export interface MutationVerifyCache {
+  /** node id → resolved node (successful `get`s only — a `not_found` or
+   * `api` failure is never cached). */
+  nodes: Map<string, BookmarksTreeNode>;
+  /** parentId → verified writable parent + its ancestor chain. */
+  parents: Map<
+    string,
+    { parent: BookmarksTreeNode; chain: BookmarksTreeNode[] }
+  >;
+  /** parentId → last known child count; seeded by a real `getChildren`
+   * read (or `0` on a just-created folder) and kept exact by this
+   * module's own create/move/remove writes while the cache lives. */
+  childCounts: Map<string, number>;
+}
+
+export function newMutationVerifyCache(): MutationVerifyCache {
+  return { nodes: new Map(), parents: new Map(), childCounts: new Map() };
+}
+
 /** One `get` call mapped onto the error model; `role` names the id's job. */
 async function requireNode(
   id: string,
   role: string,
+  cache?: MutationVerifyCache,
 ): Promise<BookmarksTreeNode> {
+  const cached = cache?.nodes.get(id);
+  if (cached !== undefined) return cached;
   let nodes: BookmarksTreeNode[];
   try {
     nodes = await apiGet(id);
@@ -164,6 +200,7 @@ async function requireNode(
   if (node === undefined) {
     throw new MutationError("not_found", `${role} "${id}" does not exist.`);
   }
+  cache?.nodes.set(id, node);
   return node;
 }
 
@@ -185,11 +222,14 @@ async function apiCall<T>(op: () => Promise<T>, what: string): Promise<T> {
  * `[node, ...ancestors]` walking `parentId` until the chain ends (the root
  * "0" has no parentId). A dangling ancestor id rejects `not_found`.
  */
-async function ancestry(node: BookmarksTreeNode): Promise<BookmarksTreeNode[]> {
+async function ancestry(
+  node: BookmarksTreeNode,
+  cache?: MutationVerifyCache,
+): Promise<BookmarksTreeNode[]> {
   const chain = [node];
   let current = node;
   while (current.parentId !== undefined) {
-    current = await requireNode(current.parentId, "ancestor");
+    current = await requireNode(current.parentId, "ancestor", cache);
     chain.push(current);
   }
   return chain;
@@ -209,15 +249,16 @@ function managedAncestor(
 async function writableNode(
   id: string,
   action: string,
+  cache?: MutationVerifyCache,
 ): Promise<BookmarksTreeNode> {
-  const node = await requireNode(id, "node");
+  const node = await requireNode(id, "node", cache);
   if (isFixedRoot(node.id)) {
     throw new MutationError(
       "root",
       `Cannot ${action} the fixed root folder "${node.id}".`,
     );
   }
-  const managed = managedAncestor(await ancestry(node));
+  const managed = managedAncestor(await ancestry(node, cache));
   if (managed !== undefined) {
     throw new MutationError(
       "managed",
@@ -239,8 +280,11 @@ async function writableNode(
 async function writableParent(
   parentId: string,
   action: string,
+  cache?: MutationVerifyCache,
 ): Promise<{ parent: BookmarksTreeNode; chain: BookmarksTreeNode[] }> {
-  const parent = await requireNode(parentId, "parent");
+  const cached = cache?.parents.get(parentId);
+  if (cached !== undefined) return cached;
+  const parent = await requireNode(parentId, "parent", cache);
   if (parent.id === ROOT_NODE_ID) {
     throw new MutationError(
       "root",
@@ -250,7 +294,7 @@ async function writableParent(
   // Managed BEFORE leaf-ness, matching Chrome's own check order: a managed
   // bookmark as parent is a `managed` violation, not "a bookmark, not a
   // folder" — `invalid` would misreport what is actually a permission wall.
-  const chain = await ancestry(parent);
+  const chain = await ancestry(parent, cache);
   const managed = managedAncestor(chain);
   if (managed !== undefined) {
     throw new MutationError(
@@ -265,7 +309,9 @@ async function writableParent(
       `Cannot ${action} under "${parentId}": it is a bookmark, not a folder.`,
     );
   }
-  return { parent, chain };
+  const verified = { parent, chain };
+  cache?.parents.set(parentId, verified);
+  return verified;
 }
 
 /**
@@ -277,9 +323,20 @@ async function assertIndexInRange(
   index: number,
   parentId: string,
   removed: number,
+  cache?: MutationVerifyCache,
 ): Promise<void> {
-  const siblings = await apiCall(() => apiGetChildren(parentId), "getChildren");
-  const capacity = siblings.length - removed;
+  // A seeded child count skips the `getChildren` read entirely — restore
+  // callers keep the count exact via this module's own writes (D08).
+  let count = cache?.childCounts.get(parentId);
+  if (count === undefined) {
+    const siblings = await apiCall(
+      () => apiGetChildren(parentId),
+      "getChildren",
+    );
+    count = siblings.length;
+    cache?.childCounts.set(parentId, count);
+  }
+  const capacity = count - removed;
   if (!Number.isInteger(index) || index < 0 || index > capacity) {
     throw new MutationError(
       "invalid",
@@ -332,11 +389,12 @@ async function writeMeta(
  */
 export async function createBookmark(
   options: CreateBookmarkOptions,
+  cache?: MutationVerifyCache,
 ): Promise<BookmarksTreeNode> {
   const { parentId } = options;
-  await writableParent(parentId, "create");
+  await writableParent(parentId, "create", cache);
   if (options.index !== undefined) {
-    await assertIndexInRange(options.index, parentId, 0);
+    await assertIndexInRange(options.index, parentId, 0, cache);
   }
   const details: BookmarkCreateDetails = {
     parentId,
@@ -345,6 +403,8 @@ export async function createBookmark(
   };
   if (options.index !== undefined) details.index = options.index;
   const created = await apiCall(() => apiCreate(details), "create");
+  const count = cache?.childCounts.get(parentId);
+  if (count !== undefined) cache?.childCounts.set(parentId, count + 1);
   if (options.meta !== undefined) {
     await writeMeta(created.id, options.meta, "put");
   }
@@ -357,11 +417,12 @@ export async function createBookmark(
  */
 export async function createFolder(
   options: CreateFolderOptions,
+  cache?: MutationVerifyCache,
 ): Promise<BookmarksTreeNode> {
   const { parentId } = options;
-  await writableParent(parentId, "create");
+  await writableParent(parentId, "create", cache);
   if (options.index !== undefined) {
-    await assertIndexInRange(options.index, parentId, 0);
+    await assertIndexInRange(options.index, parentId, 0, cache);
   }
   const details: BookmarkCreateDetails = {
     parentId,
@@ -369,6 +430,8 @@ export async function createFolder(
   };
   if (options.index !== undefined) details.index = options.index;
   const created = await apiCall(() => apiCreate(details), "create");
+  const count = cache?.childCounts.get(parentId);
+  if (count !== undefined) cache?.childCounts.set(parentId, count + 1);
   if (options.meta !== undefined) {
     await writeMeta(created.id, options.meta, "put");
   }
@@ -446,6 +509,7 @@ export async function renameFolder(
 export async function moveNode(
   id: string,
   destination: BookmarkMoveDestination,
+  cache?: MutationVerifyCache,
 ): Promise<BookmarksTreeNode> {
   if (destination.parentId === undefined && destination.index === undefined) {
     throw new MutationError(
@@ -453,9 +517,9 @@ export async function moveNode(
       `moveNode("${id}") requires a parentId and/or an index.`,
     );
   }
-  const node = await writableNode(id, "move");
+  const node = await writableNode(id, "move", cache);
   if (destination.parentId !== undefined) {
-    const { chain } = await writableParent(destination.parentId, "move");
+    const { chain } = await writableParent(destination.parentId, "move", cache);
     if (chain.some((ancestor) => ancestor.id === node.id)) {
       throw new MutationError(
         "invalid",
@@ -469,9 +533,18 @@ export async function moveNode(
   const destParentId = destination.parentId ?? node.parentId;
   if (destination.index !== undefined && destParentId !== undefined) {
     const removed = destParentId === node.parentId ? 1 : 0;
-    await assertIndexInRange(destination.index, destParentId, removed);
+    await assertIndexInRange(destination.index, destParentId, removed, cache);
   }
-  return apiCall(() => apiMove(id, destination), "move");
+  const moved = await apiCall(() => apiMove(id, destination), "move");
+  if (cache !== undefined && destParentId !== node.parentId) {
+    const from = cache.childCounts.get(node.parentId ?? "");
+    if (from !== undefined) {
+      cache.childCounts.set(node.parentId ?? "", from - 1);
+    }
+    const to = cache.childCounts.get(destParentId ?? "");
+    if (to !== undefined) cache.childCounts.set(destParentId ?? "", to + 1);
+  }
+  return moved;
 }
 
 // ---------------------------------------------------------------------------
