@@ -1078,3 +1078,26 @@ claim that any audit finding has been fixed or reproduced.
 - Decisions are not re-attached — tombstones carry meta only; a removed
   bookmark's pending suggestions stay deleted (J14) — semantic seam
   noted for the track file.
+
+## Task 7 — D14 (search/omnibox cost)
+
+- **Shared index:** `sharedSearchIndex()` = worker-lifetime `{generation,
+  promise}` cache in `src/search/omnibox.ts`; `invalidateSearchIndex()`
+  only bumps the generation — rebuild is lazy on next access and a
+  pre-bump handle is never re-served. A failed build resolves `null` and
+  self-evicts so the next call retries (reviewer Info fix).
+- **Cross-context invalidation:** `META_CHANGED_CHANNEL`
+  BroadcastChannel — `emitMetaChanged()` fires in `commitMeta`,
+  `rewriteTagRows`, `deleteMetaByIds`, `tombstoneMetaByIds`, and
+  `delete-all.ts`'s `db.delete()` reset (reviewer Warning: the drop
+  bypasses every repo write — emit directly). Bookmark events bump via
+  listeners in the same worker.
+- **`bookmarks-changed` broadcast deleted whole** — schemas, types,
+  `declare const chrome`, the `z` import. Zero receivers existed; tests
+  now pin `sendMessage` NEVER called.
+- **group.ts dedupe:** member-set fingerprint (sorted ids, NUL-joined)
+  indexed in a Set — O(1) per normalized bucket; 5k-group bound test at
+  2s (indexed path ~tens of ms).
+- Fake reorder helper wants the FULL child-id permutation of the target
+  parent; `fake.create` needs explicit `parentId: BOOKMARKS_BAR_ID` to
+  land in the bar.

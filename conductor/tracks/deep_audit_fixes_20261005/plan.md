@@ -312,7 +312,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     counted, surfaced and never overwritten without a retained copy; old rows
     without `schemaVersion` still read.
   - Fix: additive Dexie version, tombstone table, `schemaVersion`.
-- [ ] Task 7: D14 — search/omnibox cost
+- [x] Task 7: D14 — search/omnibox cost (b9835b9)
   <!-- files: src/search/omnibox.ts, src/search/run.ts, src/duplicates/group.ts, src/sync/listeners.ts -->
   <!-- depends: task1, task6 -->
   - Tests: second omnibox query reuses the cached index; cache invalidates on
