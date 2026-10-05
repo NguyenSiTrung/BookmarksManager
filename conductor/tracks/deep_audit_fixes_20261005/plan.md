@@ -383,7 +383,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     not overwrite a newer phase; `starting` recovers after a transient status
     failure; `selectedIds` resets per job.
   - Fix: sync ref guard, interval ref with in-flight guard, job-keyed state.
-- [ ] Task 4: U04 + U05 — list keyboard safety and dnd indices
+- [x] Task 4: U04 + U05 — list keyboard safety and dnd indices (SHA 6a98b61)
   <!-- files: src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/dnd.tsx -->
   - Tests: Delete/Escape/Ctrl+A with the context menu open do not reach the
     list; key repeat deletes once; same-parent forward multi-move lands in

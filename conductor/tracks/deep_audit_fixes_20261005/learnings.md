@@ -1295,3 +1295,26 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   argument, don't lower waitFor timeouts below the poll cadence.
 - **Backticks in `git -m` strings get eaten by bash** — use single
   quotes for commit/notes bodies containing code tokens.
+
+## Phase 6 Task 4 — U04+U05 keyboard safety + dnd indices
+
+- **React portals leak keys through the React tree**: a Radix
+  ContextMenu.Portal's children bubble keydowns up to listbox onKeyDown
+  while their DOM sits in document.body. `currentTarget.contains(target)`
+  is the discriminator — portal children fail it, every legit in-list
+  target passes (the listbox itself counts as contained).
+- **Async keyboard actions need a promise-lived re-entrancy ref**: set it
+  before dispatching, clear when the handler's promise settles — and
+  wrap the call in `Promise.resolve().then(() => fn())` so a
+  synchronously-throwing handler becomes a rejection that still clears
+  (reviewer Info). `void fn()` prop wiring silently drops the promise and
+  defeats the guard — pass the promise through.
+- **event.repeat on held keys**: `keydown` autorepeat fires with
+  repeat=true; guard with it before the in-flight ref check.
+- **Chrome move() is post-removal indexed**: for same-parent forward
+  moves, count dragged siblings before the slot
+  (removedBefore), rebase base = index - removedBefore, and place the
+  block DESCENDING move(node_i, base+i) — each insert lands at its final
+  position undisturbed. Backward/cross-parent keep forward index+moved.
+- **Spy the method the path actually calls**: deleteNodesWithUndo uses
+  removeTree uniformly (leaf or folder) — spying fake.remove saw 0 calls.
