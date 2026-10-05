@@ -298,9 +298,8 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     palette undo likewise; merge undo keeps notes/tags edited after the merge;
     `bulk_move` undo skips a node moved since.
   - Fix: carry `snapshotId`; `undoExpected`; merge-not-replace for survivor.
-- [ ] Task 5: D08 — linear-time restore
+- [x] Task 5: D08 — linear-time restore (`a2777bd`)
   <!-- files: src/undo/restore.ts, src/sync/mutations.ts -->
-  <!-- depends: task4 -->
   - Tests: 5k-node subtree restore on the fake performs one `getChildren` per
     folder and batched `idMap` writes (spies); resume still works.
   - Fix: batch persistence, local child counts, skip repeated ancestor walk.

@@ -1018,3 +1018,30 @@ claim that any audit finding has been fixed or reproduced.
   assert `[0]`/`toMatchObject([...])`. Merge fixtures must model the REAL
   `mergeMemberMeta` output (verbatim kept-first tag union, `\n\n---\n\n` notes
   join) or the union semantics legitimately read them as post-merge edits.
+
+## Phase 4 Task 5 — D08 (a2777bd)
+
+- **Verify cache in mutations:** `MutationVerifyCache` (nodes/parents/
+  childCounts) — positive hits only; failures never cached; staleness
+  defers to the API (`api`-typed), never fabricates success. Fresh per
+  replay, never shared.
+- **Child-count locality:** `childCount(parentId)` seeds once per distinct
+  folder; a JUST-created folder seeds `0` by construction — internal
+  folders of a restored subtree never hit the API. mutations keeps seeded
+  counts exact on its own create/move writes (create +1, cross-parent
+  move src−1/dst+1).
+- **Batched idMap:** `persistProgress` batches 50 mappings per `modify`
+  (per-node was O(n²) bytes). The WHOLE dispatch + the pop sit in a try —
+  catch flushes the tail so a retried typed failure resumes with zero
+  duplicates; a hard kill loses ≤49.
+- **`flushProgress` guard:** no-op when `unpersisted === 0` — a failed
+  restore that created nothing must not write an empty `idMap` (pinned by
+  undo.test.ts restructure tests).
+- **Cache invalidation on removeNode:** it is deliberately not
+  cache-aware (empty-folder guard needs live children), so a remove must
+  `childCounts.delete(parent)` — a stale high-water count would
+  over-allow later indexes.
+- **Test spy trick:** `db.undo.where` is reached ONLY by persistProgress
+  in the replay path — a `vi.spyOn(db.undo, "where")` counts flushes
+  without touching Dexie internals. `fake.getChildren` counts all reads
+  through mutations too (the module wraps the same fake).
