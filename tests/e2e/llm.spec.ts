@@ -103,7 +103,7 @@ test("fresh install: every LLM intent refuses with zero egress", async () => {
 
   for (const msg of [
     { type: "RESTRUCTURE_START", providerId: "preset:openai" },
-    { type: "RESTRUCTURE_UNDO" },
+    { type: "RESTRUCTURE_UNDO", snapshotId: 1 },
   ]) {
     const reply = (await sendLlmMessage(page, msg)) as {
       ok: boolean;
@@ -379,7 +379,7 @@ test("restructure: propose → assign → preview → apply → undo", async () 
   const confirmed = (await sendLlmMessage(panel, {
     type: "RESTRUCTURE_CONFIRM",
     jobId: start.id,
-  })) as { ok: boolean; code: string; moved?: number };
+  })) as { ok: boolean; code: string; moved?: number; snapshotId?: number };
   expect(confirmed).toMatchObject({ ok: true, code: "applied", moved: 1 });
   const moved = await panel.evaluate(async (id: string) => {
     const [node] = await chrome.bookmarks.get(id);
@@ -393,6 +393,7 @@ test("restructure: propose → assign → preview → apply → undo", async () 
 
   const undone = (await sendLlmMessage(panel, {
     type: "RESTRUCTURE_UNDO",
+    snapshotId: confirmed.snapshotId,
   })) as { ok: boolean; code: string };
   expect(undone).toMatchObject({ ok: true, code: "undone" });
   const restored = await panel.evaluate(async (id: string) => {

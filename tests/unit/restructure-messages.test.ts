@@ -589,12 +589,23 @@ describe("RESTRUCTURE_CONFIRM", () => {
 });
 
 describe("RESTRUCTURE_UNDO", () => {
-  it("reports empty when nothing was applied", async () => {
+  it("requires a snapshotId in the wire payload", async () => {
     const reply = await handleRestructureMessage(
       { type: "RESTRUCTURE_UNDO" },
       SENDER,
       deps,
     );
-    expect(reply).toMatchObject({ ok: false, code: "empty" });
+    expect(reply).toMatchObject({ ok: false, code: "malformed_message" });
+  });
+
+  it("refuses a snapshotId that is not the undo-stack head", async () => {
+    // An id on an empty stack (or a stale id after a later push) resolves
+    // to `conflict` in undoExpected — surfaced as `stale` to the page.
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_UNDO", snapshotId: 1 },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "stale" });
   });
 });

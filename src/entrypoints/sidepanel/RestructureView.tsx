@@ -84,6 +84,7 @@ type Phase =
 const POLL_MS = 1_000;
 
 function confidenceLabel(row: DiffRow): string {
+  if (row.managed === true) return "Managed";
   if (row.status === "unresolved") return "Unresolved";
   if (row.status === "stale") return "Stale";
   const c = row.confidence;
@@ -284,7 +285,9 @@ function DiffList(props: DiffListProps) {
                   <span className="text-muted-foreground">
                     {row.status === "stale"
                       ? `Stale — ${row.fromPath}`
-                      : `${row.fromPath} (kept)`}
+                      : row.managed === true
+                        ? `Managed — ${row.fromPath} (kept)`
+                        : `${row.fromPath} (kept)`}
                   </span>
                 </li>
               ))}

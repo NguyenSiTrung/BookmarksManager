@@ -136,6 +136,22 @@ export type JobUsage = z.infer<typeof JobUsage>;
 export const RestructureJobPlan = z.strictObject({
   proposal: RestructureProposal,
   assignments: z.array(RestructureAssignment),
+  /**
+   * Terminal apply record — written once, inside the extension-wide undo
+   * lock, after a CONFIRM has finished (moved ≥ 0). Its presence makes a
+   * second CONFIRM a replay of the recorded result, never a second apply:
+   * `moved === 0` applies pushed no snapshot, so their record carries none.
+   */
+  applied: z
+    .object({
+      /** ISO timestamp of the terminal apply record. */
+      at: z.string(),
+      moved: z.number().int().nonnegative(),
+      /** Absent when the apply moved nothing and pushed no snapshot. */
+      snapshotId: z.number().int().nonnegative().optional(),
+      reusedPaths: z.array(z.string()),
+    })
+    .optional(),
 });
 export type RestructureJobPlan = z.infer<typeof RestructureJobPlan>;
 

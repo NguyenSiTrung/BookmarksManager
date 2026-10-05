@@ -27,6 +27,13 @@ export interface DiffRow {
   /** Jev's confidence, `null` when unresolved. */
   readonly confidence: number | null;
   readonly status: DiffRowStatus;
+  /**
+   * Present when the row is `unresolved` because the bookmark sits inside a
+   * managed (administrator-controlled) subtree — such nodes reject every
+   * write, so apply skips them before any mutation instead of failing
+   * mid-way. The preview flags the row so it is never offered as movable.
+   */
+  readonly managed?: true;
 }
 
 export interface RestructureDiff {
@@ -41,24 +48,39 @@ interface FlatEntry {
   readonly node: BookmarksTreeNode;
   /** Parent folder path, e.g. "Dev/Tools"; "" for root-level. */
   readonly path: string;
+  /** The node or any ancestor carries `unmodifiable: "managed"`. */
+  readonly managed: boolean;
 }
 
-/** Flatten the live tree into {id → {node, parent path}} in pre-order. */
+/**
+ * Flatten the live tree into {id → {node, parent path, managed}} in
+ * pre-order. `managed` propagates: Chrome marks the managed root and its
+ * descendants, and a managed ancestor makes a child unwritable even when
+ * the child's own flag is absent.
+ */
 function flatten(tree: readonly BookmarksTreeNode[]): Map<string, FlatEntry> {
   const out = new Map<string, FlatEntry>();
-  const stack: Array<{ node: BookmarksTreeNode; path: string }> = tree
-    .map((node) => ({ node, path: "" }))
+  const stack: Array<{ node: BookmarksTreeNode; path: string; managed: boolean }> = tree
+    .map((node) => ({
+      node,
+      path: "",
+      managed: node.unmodifiable === "managed",
+    }))
     .reverse();
   while (stack.length > 0) {
-    const { node, path } = stack.pop()!;
+    const { node, path, managed } = stack.pop()!;
     if (node.url === undefined) {
       const folderPath = path === "" ? node.title : `${path}/${node.title}`;
       for (const child of [...(node.children ?? [])].reverse()) {
-        stack.push({ node: child, path: folderPath });
+        stack.push({
+          node: child,
+          path: folderPath,
+          managed: managed || child.unmodifiable === "managed",
+        });
       }
       continue;
     }
-    out.set(node.id, { node, path });
+    out.set(node.id, { node, path, managed });
   }
   return out;
 }
@@ -98,6 +120,20 @@ export function buildRestructureDiff(
         toPath: assignment.proposedPath,
         confidence: assignment.confidence,
         status: "stale",
+      });
+      continue;
+    }
+    if (entry.managed) {
+      // Managed/root-adjacent bookmarks reject every write — flag the row
+      // as unresolved so apply skips it rather than failing mid-apply.
+      rows.push({
+        bookmarkId: assignment.bookmarkId,
+        title: entry.node.title,
+        fromPath: entry.path,
+        toPath: assignment.proposedPath,
+        confidence: assignment.confidence,
+        status: "unresolved",
+        managed: true,
       });
       continue;
     }

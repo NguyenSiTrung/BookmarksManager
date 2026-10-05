@@ -95,8 +95,13 @@ export const RestructureMessage = z.discriminatedUnion("type", [
     jobId: z.string().min(1),
     bookmarkIds: z.array(z.string().min(1)).max(MAX_JOB_BOOKMARK_IDS).optional(),
   }),
-  // Undo the most recent apply (the top `restructure` snapshot).
-  z.strictObject({ type: z.literal("RESTRUCTURE_UNDO") }),
+  // Undo a specific apply — the `snapshotId` the CONFIRM reply returned.
+  // `undoExpected` refuses when that id is no longer the stack head, so a
+  // stale handle can never replay an unrelated snapshot.
+  z.strictObject({
+    type: z.literal("RESTRUCTURE_UNDO"),
+    snapshotId: z.number().int(),
+  }),
 ]);
 export type RestructureMessage = z.infer<typeof RestructureMessage>;
 
@@ -178,7 +183,8 @@ export const RestructureMessageResult = z.union([
     ok: z.literal(true),
     code: z.literal("applied"),
     moved: z.number().nonnegative(),
-    snapshotId: z.number(),
+    /** Absent when the apply moved nothing — no snapshot was pushed. */
+    snapshotId: z.number().optional(),
   }),
   z.object({
     ok: z.literal(true),
@@ -503,10 +509,15 @@ export async function handleRestructureMessage(
         };
       }
       case "RESTRUCTURE_UNDO": {
-        const result = await undoRestructurePlan();
+        const result = await undoRestructurePlan(parsed.data.snapshotId);
         if (!result.ok) {
+          // `conflict` = the id is not the stack head — a stale handle.
           return failure(
-            result.code === "empty" ? "empty" : "internal_error",
+            result.code === "empty"
+              ? "empty"
+              : result.code === "conflict"
+                ? "stale"
+                : "internal_error",
             result.message,
           );
         }

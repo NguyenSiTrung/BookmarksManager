@@ -140,6 +140,31 @@ describe("buildRestructureDiff", () => {
       status: "resolved",
     });
   });
+
+  it("marks managed/root-adjacent rows unresolved and flags them (J12)", async () => {
+    const job = await completedJob(
+      ["11", "41", "71"],
+      [
+        { bookmarkId: "11", proposedPath: "dev", confidence: 0.9 },
+        // "41" sits under the managed bar folder "40"; "71" under the
+        // managed Other folder "70" — neither node carries its own
+        // `unmodifiable` flag, the status must come from the ancestor.
+        { bookmarkId: "41", proposedPath: "dev", confidence: 0.9 },
+        { bookmarkId: "71", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    const diff = buildRestructureDiff(await api.getTree(), job.restructure!);
+    const byId = Object.fromEntries(diff.rows.map((r) => [r.bookmarkId, r]));
+    expect(byId["41"]).toMatchObject({
+      status: "unresolved",
+      managed: true,
+      toPath: "dev",
+    });
+    expect(byId["71"]).toMatchObject({ status: "unresolved", managed: true });
+    expect(byId["11"]).toMatchObject({ status: "resolved" });
+    expect(diff.resolved).toBe(1);
+    expect(diff.unresolved).toBe(2);
+  });
 });
 
 describe("applyRestructurePlan", () => {
@@ -273,7 +298,7 @@ describe("applyRestructurePlan", () => {
     expect(snapshot?.nodes.map((node) => node.id)).toEqual(["11", "51", "61"]);
 
     // Undo replays every move back to its original root.
-    expect(await undoRestructurePlan()).toMatchObject({ ok: true });
+    expect(await undoRestructurePlan(result.snapshotId!)).toMatchObject({ ok: true });
     expect((await api.get("11"))[0]?.parentId).toBe("10");
     expect((await api.get("51"))[0]?.parentId).toBe("50");
     expect((await api.get("61"))[0]?.parentId).toBe("60");
@@ -308,7 +333,7 @@ describe("applyRestructurePlan", () => {
     expect(snapshot?.nodes.map((node) => node.id)).toEqual(["11", "51"]);
   });
 
-  it("refuses a managed row from another root and compensates the whole batch", async () => {
+  it("flags a managed row as unresolved and applies the rest of the batch (J12)", async () => {
     const job = await completedJob(
       ["11", "71"],
       [
@@ -316,16 +341,16 @@ describe("applyRestructurePlan", () => {
         { bookmarkId: "71", proposedPath: "dev", confidence: 0.9 },
       ],
     );
-    await expect(
-      applyRestructurePlan(job.id, ["11", "71"]),
-    ).rejects.toMatchObject({ code: "mutation_failed" });
+    const result = await applyRestructurePlan(job.id, ["11", "71"]);
+    expect(result.moved).toBe(1);
 
-    // The managed row never moved...
+    // The managed row never moved and never reached the mutation layer —
+    // the diff pre-filtered it to `unresolved`, so no compensation was
+    // needed and the apply did not fail mid-way.
     expect((await api.get("71"))[0]?.parentId).toBe("70");
-    // ...and the move already applied to the bar row was rolled back.
-    expect((await api.get("11"))[0]?.parentId).toBe("10");
     const bar = await api.getSubTree("1");
-    expect(bar[0]!.children!.some((c) => c.title === "dev")).toBe(false);
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    expect((await api.get("11"))[0]?.parentId).toBe(dev.id);
   });
 
   it("revalidates live positions when the user moves a bookmark between review and apply", async () => {
@@ -350,7 +375,7 @@ describe("applyRestructurePlan", () => {
     expect((await api.get("11"))[0]?.parentId).toBe(dev.id);
 
     // Undo restores the position captured at apply time — Other, not the bar.
-    expect(await undoRestructurePlan()).toMatchObject({ ok: true });
+    expect(await undoRestructurePlan(result.snapshotId!)).toMatchObject({ ok: true });
     expect((await api.get("11"))[0]?.parentId).toBe("50");
   });
 
@@ -476,7 +501,7 @@ describe("applyRestructurePlan", () => {
     expect(snapshot?.createdFolderIds).toContain(toolsId);
 
     vi.restoreAllMocks();
-    expect(await undoRestructurePlan()).toMatchObject({ ok: true, idMap: {} });
+    expect(await undoRestructurePlan(snapshot!.id!)).toMatchObject({ ok: true, idMap: {} });
     expect((await api.get("11"))[0]?.parentId).toBe("10");
     expect((await api.getChildren("1")).some((node) => node.id === devId)).toBe(false);
     expect(await listSnapshots()).toEqual([]);
@@ -514,9 +539,10 @@ describe("applyRestructurePlan", () => {
       .toEqual(["11", "12", "21", "30", "41"]);
     await expect(api.get(filedId)).resolves.toMatchObject([{ parentId: toolsId }]);
     expect((await api.get(toolsId))[0]?.title).toBe("tools");
-    expect(await listSnapshots()).toHaveLength(1);
+    const [snapshot] = await listSnapshots();
+    expect(snapshot).toBeDefined();
     vi.restoreAllMocks();
-    expect(await undoRestructurePlan()).toMatchObject({ ok: true });
+    expect(await undoRestructurePlan(snapshot!.id!)).toMatchObject({ ok: true });
     await expect(api.get(filedId)).resolves.toMatchObject([{ parentId: toolsId }]);
   });
 
@@ -561,7 +587,7 @@ describe("applyRestructurePlan", () => {
   it("never moves a fixed root or managed bookmark", async () => {
     for (const [id, code] of [
       ["1", "stale"],
-      ["41", "mutation_failed"],
+      ["41", "stale"],
     ] as const) {
       const job = await completedJob(
         [id],
@@ -575,6 +601,121 @@ describe("applyRestructurePlan", () => {
   });
 });
 
+describe("apply idempotency (J10)", () => {
+  it("a second confirm replays the recorded terminal state and pushes no second snapshot", async () => {
+    const job = await completedJob();
+    const first = await applyRestructurePlan(job.id);
+    expect(first.moved).toBe(2);
+    expect(first.snapshotId).toBeGreaterThan(0);
+    const [snapshot] = await listSnapshots();
+
+    const second = await applyRestructurePlan(job.id);
+    expect(second).toEqual({
+      moved: first.moved,
+      reusedPaths: first.reusedPaths,
+      snapshotId: first.snapshotId,
+    });
+    // Exactly one snapshot, and the terminal record is persisted.
+    expect((await listSnapshots()).map((s) => s.id)).toEqual([snapshot!.id]);
+    const persisted = await db.jobs.get(job.id);
+    expect(persisted?.restructure?.applied).toMatchObject({
+      moved: 2,
+      snapshotId: first.snapshotId,
+    });
+  });
+
+  it("concurrent confirms apply once under the undo lock", async () => {
+    const job = await completedJob();
+    const [first, second] = await Promise.all([
+      applyRestructurePlan(job.id),
+      applyRestructurePlan(job.id),
+    ]);
+    expect(first.moved).toBe(2);
+    expect(second).toEqual(first);
+    expect(await listSnapshots()).toHaveLength(1);
+  });
+
+  it("moved === 0 pushes no snapshot, removes folders it created, and records the apply", async () => {
+    // Pre-move "11" into an existing "dev" folder so its proposed path is
+    // already satisfied; "misc" is proposed but unused.
+    const job = await completedJob(
+      ["11"],
+      [{ bookmarkId: "11", proposedPath: "dev", confidence: 0.9 }],
+      { folders: [
+        { path: "dev", description: "" },
+        { path: "misc", description: "" },
+      ] },
+    );
+    const dev = await api.create({ parentId: "1", title: "dev" });
+    await api.move("11", { parentId: dev.id });
+
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(0);
+    expect(result.snapshotId).toBeUndefined();
+    expect(result.reusedPaths).toEqual(["dev"]);
+    expect(await listSnapshots()).toEqual([]);
+    // The unused "misc" folder was created and then cleaned up.
+    const bar = await api.getSubTree("1");
+    expect(bar[0]!.children!.some((c) => c.title === "misc")).toBe(false);
+    // Terminal state persisted: a replay returns the same record.
+    const persisted = await db.jobs.get(job.id);
+    expect(persisted?.restructure?.applied?.moved).toBe(0);
+    const replay = await applyRestructurePlan(job.id);
+    expect(replay).toEqual(result);
+  });
+
+  it("re-applies for real after its snapshot was undone", async () => {
+    const job = await completedJob();
+    const first = await applyRestructurePlan(job.id);
+    expect(first.moved).toBe(2);
+    await expect(undoRestructurePlan(first.snapshotId!)).resolves.toMatchObject(
+      { ok: true },
+    );
+    expect((await api.get("11"))[0]?.parentId).toBe("10");
+
+    // The popped snapshot makes the stale record inert: this is a fresh
+    // apply with a fresh snapshot, not a replay of the recorded result.
+    const second = await applyRestructurePlan(job.id);
+    expect(second.moved).toBe(2);
+    expect(second.snapshotId).toBeGreaterThan(0);
+    expect(second.snapshotId).not.toBe(first.snapshotId);
+    const dev = (await api.getSubTree("1"))[0]!.children!.find(
+      (c) => c.title === "dev",
+    )!;
+    expect((await api.get("11"))[0]?.parentId).toBe(
+      dev.children!.find((c) => c.title === "tools")!.id,
+    );
+  });
+});
+
+describe("undoRestructurePlan", () => {
+  it("refuses a stale snapshotId without replaying anything (J11)", async () => {
+    const job = await completedJob();
+    const result = await applyRestructurePlan(job.id);
+    expect(result.snapshotId).toBeGreaterThan(0);
+
+    const stale = await undoRestructurePlan(result.snapshotId! + 999);
+    expect(stale).toMatchObject({ ok: false, code: "conflict" });
+    // Nothing was replayed: the moved bookmarks stayed put, snapshot kept.
+    const dev = (await api.getSubTree("1"))[0]!.children!.find(
+      (c) => c.title === "dev",
+    )!;
+    expect((await api.get("11"))[0]?.parentId).toBe(
+      dev.children!.find((c) => c.title === "tools")!.id,
+    );
+    expect(await listSnapshots()).toHaveLength(1);
+
+    // The real undo still works on the recorded id — and a SECOND undo of
+    // the same id is refused (it is no longer the head).
+    await expect(
+      undoRestructurePlan(result.snapshotId!),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      undoRestructurePlan(result.snapshotId!),
+    ).resolves.toMatchObject({ ok: false, code: "conflict" });
+  });
+});
+
 describe("undoRestructurePlan", () => {
   it("recreates a deleted captured bookmark under a new id with its metadata", async () => {
     await putMeta("11", { tags: ["docs"], category: "docs", notes: "captured note" });
@@ -582,7 +723,7 @@ describe("undoRestructurePlan", () => {
     const result = await applyRestructurePlan(job.id);
     await api.removeTree("11");
     await deleteMetaByIds(["11"]);
-    const undone = await undoRestructurePlan();
+    const undone = await undoRestructurePlan(result.snapshotId!);
     expect(undone.ok).toBe(true);
     if (undone.ok) {
       expect(undone.idMap["11"]).toBeDefined();
@@ -605,8 +746,8 @@ describe("undoRestructurePlan", () => {
         { bookmarkId: "21", proposedPath: "dev", confidence: 0.8 },
       ],
     );
-    await applyRestructurePlan(job.id);
-    const undone = await undoRestructurePlan();
+    const applied = await applyRestructurePlan(job.id);
+    const undone = await undoRestructurePlan(applied.snapshotId!);
     expect(undone.ok).toBe(true);
     const bar = await api.getSubTree("1");
     // Bookmarks back under "Old" / "News".

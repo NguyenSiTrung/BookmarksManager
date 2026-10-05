@@ -446,9 +446,11 @@ test("failed restructure compensation keeps originals and occupied folders (B01)
       );
 
       // The snapshot is retained, so the apply stays retryable via undo.
-      expect((await undoRows(driver)).length).toBeGreaterThan(0);
+      const snapshots = await undoRows(driver);
+      expect(snapshots.length).toBeGreaterThan(0);
       const undone = await sendWorkerMessage(driver, {
         type: "RESTRUCTURE_UNDO",
+        snapshotId: snapshots[snapshots.length - 1]!.id,
       });
       expect(undone).toMatchObject({ ok: true, code: "undone" });
       await expect.poll(async () => bookmarkParentId(driver, first.id)).toBe("1");
