@@ -446,7 +446,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     `navigator.sendBeacon`, `importScripts` outside `src/net/**` fails; code
     inside `src/net/**` passes (`BookmarksManager-bih`).
   - Fix: extend `no-restricted-globals`/`properties`.
-- [ ] Task 3: H04 + H05 — custom host warning and injection mitigations
+- [x] Task 3: H04 + H05 — custom host warning and injection mitigations (`e55bff9`)
   <!-- files: src/entrypoints/options/LlmProviderSetup.tsx, src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/sidepanel/ReviewView.tsx, src/restructure/propose.ts, src/llm/summarize.ts, src/decisions/summaries.ts -->
   <!-- depends: task1 -->
   - Tests: private-IP/intranet custom host shows a warning but saves;

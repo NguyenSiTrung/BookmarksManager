@@ -1523,3 +1523,42 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
 - `tsc` gap: tests/unit/credentials.test.ts's `globalThis as` cast needed
   `as unknown as` — tsc had not been re-run after the test-file addition
   in the previous task; run tsc AFTER test edits, not before.
+
+## Phase 7 Task 3 (H04 + H05 — host warning and injection mitigations)
+
+- Warn-but-save ordering: `LlmBaseUrl.safeParse` gates first, then
+  `isNonPublicUrl(parsed)` — the fail-closed predicate never sees
+  unparseable input, and an invalid URL fails Enable instead of
+  warning (test pins all three states).
+- `isNonPublicUrl` reuse is verbatim per spec: loopback hosts DO warn.
+  That is disclosure of the same predicate that gates egress, not noise.
+- `stripUrlsAndMarkdown` (src/llm/sanitize.ts): md-links keep the visible
+  label, bare `scheme://` + `//` and `www.` URLs drop, line-leading
+  structural markdown + emphasis + leftover `[]()/ `brackets drop, C0/C1
+  control chars drop (needs a scoped `no-control-regex` disable — the
+  range is the point), whitespace collapses incl. trailing space before
+  newline. Idempotent; `\t`/`\n` deliberately survive for summaries.
+- `sanitizeProposal` re-parses instead of truncating: strip only removes
+  chars and drops emptied segments, so it cannot create
+  length/depth/dupes that evade `RestructureProposal` — over-limit or
+  duplicated output still rejects honestly. Reviewer confirmed: the
+  transform is monotone, so re-parse is fail-honestly, not laundering.
+- Wire schema first means grossly malformed paths (stray `//`) reject
+  upstream of sanitize — sanitize only handles legal-but-dirty names;
+  test with `*emphasis*`/`[label](x)`, not `https://` in a segment.
+- Folder-name segments get an extra `[\t\n]+ → " "` flatten before
+  re-parse (review Info): legal on the wire but a rendering artifact in
+  a folder name.
+- Empty-after-strip is a coded error, not Zod min(1): throw `Error` +
+  `Object.assign(error, {code:"empty_summary"})` at the summarize output
+  — `codeOf` propagates `cause.code`, so the pipeline reports
+  `stage:"summarize", code:"empty_summary"` instead of an opaque
+  persist-time schema failure. Double-strip at decisions/summaries.ts
+  keeps the persist boundary producer-agnostic.
+- Review feed shape: `listReviewable` + `listAutoApplied(50)` merge in
+  App; ReviewView narrows `reviewQueue` to pending|unsure so the badge
+  stays actionable, and `hiddenUnsaved` must count only
+  `isUnsavedDecision` rows (the old `decisions.length - queue.length`
+  would have counted history rows as hidden popup placeholders).
+- Standalone `render(<ReviewView/>)` mounts no toast host — assert the
+  store transition + sent intent, not `undo-toast`, outside App renders.
