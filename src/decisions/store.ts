@@ -467,6 +467,77 @@ export async function prunePopupDecisions(): Promise<number> {
   });
 }
 
+/**
+ * Shared sweep behind both J14 delete paths (the `onRemoved` cascade and
+ * the startup reconcile): remove every still-reviewable row — `pending`,
+ * `unsure`, `approved`, each of which can still reach `applied`/`rejected`
+ * — whose bookmark set is intersected by `isGone`. Rows already decided
+ * (`applied`/`auto_applied`/`rejected`/`reverted`) are history and stay
+ * for undo and the audit trail.
+ *
+ * Two exemptions:
+ *  - Synthetic `popup:` ids never appear in the tree, so they are exempt
+ *    from liveness tests — a row mixing a dead real id still dies; an
+ *    all-popup row never does.
+ *  - A row under a live J06 claim is skipped: its holder owns the
+ *    transition, and a merge apply removes the loser's ids as its own
+ *    action — the cascade must not delete the row out from under
+ *    `transitionStatus` mid-apply (the raced `not_found` would drive the
+ *    compensate path to roll back a completed merge).
+ *
+ * Runs inside its own `decisions` transaction, which also nests legally
+ * under a caller's `{bookmarkMeta, decisions}` scope (the removed-subtree
+ * cascade deletes meta and decisions atomically).
+ */
+async function sweepReviewableDecisions(
+  isGone: (id: string) => boolean,
+): Promise<number> {
+  return db.transaction("rw", db.decisions, async () => {
+    const rows = (await db.decisions
+      .where("status")
+      .anyOf("pending", "unsure", "approved")
+      .toArray()) as DecisionRow[];
+    const victims = rows
+      .filter(
+        (row) =>
+          !claimLive(row.claim) &&
+          row.bookmarkIds.some(
+            (id) => !id.startsWith(POPUP_ID_PREFIX) && isGone(id),
+          ),
+      )
+      .map((row) => row.id);
+    if (victims.length === 0) return 0;
+    await db.decisions.bulkDelete(victims);
+    return victims.length;
+  });
+}
+
+/**
+ * Cascade hook for `chrome.bookmarks.onRemoved` (J14): delete every
+ * still-reviewable decision whose bookmark set intersects the removed ids.
+ * A row spanning several bookmarks dies when ANY member is removed: the
+ * suggestion's premise no longer matches the library.
+ */
+export async function deleteReviewableByBookmarkIds(
+  ids: readonly string[],
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const gone = new Set(ids);
+  return sweepReviewableDecisions((id) => gone.has(id));
+}
+
+/**
+ * Reconcile counterpart (J14): delete every still-reviewable decision whose
+ * bookmark set contains a real id absent from `liveIds` — the sweep for
+ * deletions the worker slept through (Chrome fires no events while the MV3
+ * service worker is suspended).
+ */
+export async function deleteReviewableAbsentIds(
+  liveIds: ReadonlySet<string>,
+): Promise<number> {
+  return sweepReviewableDecisions((id) => !liveIds.has(id));
+}
+
 // ---------------------------------------------------------------------------
 // Status transitions + audit
 // ---------------------------------------------------------------------------

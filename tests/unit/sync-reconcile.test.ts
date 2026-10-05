@@ -12,6 +12,7 @@ import {
 import { db } from "../../src/db/database";
 import { getMeta, listMeta, putMeta } from "../../src/db/meta";
 import { reconcileMetadata } from "../../src/sync/reconcile";
+import { Decision } from "../../src/schemas/decision";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 
 const ISO = "2026-09-26T10:00:00.000Z";
@@ -22,6 +23,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.bookmarkMeta.clear();
+  await db.decisions.clear();
 });
 
 afterEach(() => {
@@ -211,6 +213,56 @@ describe("reconcileMetadata", () => {
     // treat the corrupt row as absent, so keeping it is harmless.
     expect(await reconcileMetadata()).toBe(0);
     expect(await db.bookmarkMeta.get("live")).not.toBeUndefined();
+  });
+
+  it("sweeps reviewable decisions whose real ids are dead — even with no meta orphans (J14)", async () => {
+    installBookmarksFake({
+      bookmarksBar: [
+        { id: "live", title: "Live", url: "https://live.dev/" },
+      ],
+    });
+    const row = (status: Decision["status"], bookmarkIds: string[]): Decision =>
+      Decision.parse({
+        id: crypto.randomUUID(),
+        bookmarkIds,
+        confidence: 0.9,
+        status,
+        source: {
+          engine: "jev",
+          providerId: "typesafe",
+          model: "jev-1",
+          questionSetVersion: "v1",
+        },
+        createdAt: "2026-10-05T00:00:00.000Z",
+        kind: "set_category",
+        category: "article",
+      });
+    await db.decisions.bulkAdd([
+      // Dead id with NO meta row — meta-orphan gating must not skip this.
+      row("pending", ["ghost"]),
+      row("approved", ["ghost", "live"]), // one dead member is enough
+      row("applied", ["ghost"]),          // decided → history stays
+      row("pending", ["popup:dead"]),     // synthetic → never a tree id
+      row("pending", ["live"]),
+    ]);
+
+    expect(await reconcileMetadata()).toBe(2);
+
+    const remaining = await db.decisions.toArray();
+    expect(remaining).toHaveLength(3);
+    expect(remaining.map((r) => r.status).sort()).toEqual([
+      "applied",
+      "pending",
+      "pending",
+    ]);
+    // The `applied` history row legitimately keeps "ghost" (audit trail);
+    // no reviewable row may still reference it.
+    const reviewable = remaining.filter((r) =>
+      ["pending", "unsure", "approved"].includes(r.status),
+    );
+    expect(reviewable.every((r) => !r.bookmarkIds.includes("ghost"))).toBe(
+      true,
+    );
   });
 
   it("never touches the network", async () => {

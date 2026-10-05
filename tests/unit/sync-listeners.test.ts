@@ -21,6 +21,12 @@ import {
   registerBookmarkListeners,
 } from "../../src/sync/listeners";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
+import { Decision } from "../../src/schemas/decision";
+import {
+  claimDecision,
+  deleteReviewableByBookmarkIds,
+  releaseDecisionClaim,
+} from "../../src/decisions/store";
 import type {
   FakeBookmarksApi,
   FakeBookmarksOptions,
@@ -56,6 +62,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.bookmarkMeta.clear();
+  await db.decisions.clear();
 });
 
 afterEach(() => {
@@ -123,6 +130,104 @@ describe("onRemoved cascade delete", () => {
     await vi.waitFor(async () => {
       expect(await getMeta("solo")).toBeUndefined();
     });
+  });
+
+  it("deletes reviewable decisions for removed ids and keeps decided rows (J14)", async () => {
+    installChrome({
+      bookmarksBar: [
+        {
+          id: "doomed",
+          title: "Folder",
+          children: [
+            { id: "leaf", title: "Leaf", url: "https://leaf.example/" },
+          ],
+        },
+        { id: "keeper", title: "Keeper", url: "https://k.example/" },
+      ],
+    });
+    registerBookmarkListeners();
+    const row = (status: Decision["status"], bookmarkIds: string[]): Decision =>
+      Decision.parse({
+        id: crypto.randomUUID(),
+        bookmarkIds,
+        confidence: 0.9,
+        status,
+        source: {
+          engine: "jev",
+          providerId: "typesafe",
+          model: "jev-1",
+          questionSetVersion: "v1",
+        },
+        createdAt: "2026-10-05T00:00:00.000Z",
+        kind: "set_category",
+        category: "article",
+      });
+    await db.decisions.bulkAdd([
+      row("pending", ["leaf"]),
+      row("unsure", ["doomed"]),
+      // One member removed is enough: the suggestion's premise is gone.
+      row("approved", ["leaf", "keeper"]),
+      // Decided rows are history — they stay for undo and the audit trail.
+      row("applied", ["leaf"]),
+      row("reverted", ["doomed"]),
+      row("pending", ["keeper"]),
+    ]);
+
+    await fake.removeTree("doomed");
+
+    await vi.waitFor(async () => {
+      expect(
+        (await db.decisions.toArray()).map((r) => r.status).sort(),
+      ).toEqual(["applied", "pending", "reverted"]);
+    });
+    const survivors = await db.decisions.toArray();
+    expect(survivors).toHaveLength(3);
+    expect(
+      survivors.filter((r) => r.status === "pending")[0]?.bookmarkIds,
+    ).toEqual(["keeper"]);
+  });
+
+  it("skips a decision under a live claim — the merge-apply race (J14)", async () => {
+    installChrome({
+      bookmarksBar: [
+        { id: "loser", title: "L", url: "https://l.example/" },
+        { id: "winner", title: "W", url: "https://w.example/" },
+      ],
+    });
+    registerBookmarkListeners();
+    // A merge decision spans winner+loser; approveDecision's applyAction
+    // removes the loser while the row is still reviewable but claimed.
+    const merged = Decision.parse({
+      id: crypto.randomUUID(),
+      bookmarkIds: ["winner", "loser"],
+      confidence: 0.9,
+      status: "pending",
+      source: {
+        engine: "jev",
+        providerId: "typesafe",
+        model: "jev-1",
+        questionSetVersion: "v1",
+      },
+      createdAt: "2026-10-05T00:00:00.000Z",
+      kind: "merge_duplicates",
+      keepId: "winner",
+    });
+    await db.decisions.add(merged);
+    await putMeta("loser", { notes: "x" });
+    const { token } = await claimDecision(merged.id, "applied");
+
+    await fake.remove("loser");
+    // The cascade ran (meta gone) but the claimed row must survive —
+    // deleting it here would race transitionStatus into a compensate.
+    await vi.waitFor(async () => {
+      expect(await getMeta("loser")).toBeUndefined();
+    });
+    expect(await db.decisions.get(merged.id)).not.toBeUndefined();
+
+    // Claim released (transition finished or failed): the sweep takes it.
+    await releaseDecisionClaim(merged.id, token);
+    await deleteReviewableByBookmarkIds(["loser"]);
+    expect(await db.decisions.get(merged.id)).toBeUndefined();
   });
 
   it("keeps metadata when a different subtree is removed", async () => {

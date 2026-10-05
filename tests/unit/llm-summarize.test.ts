@@ -1072,4 +1072,36 @@ describe("summarizePage payload defense", () => {
     expect(await db.llmUsage.count()).toBe(0);
     }
   });
+
+  it("re-admits the bookmark before persisting — a delete or retarget after verification saves nothing (J14)", async () => {
+    for (const mode of ["delete", "retarget"] as const) {
+      await resetEnv();
+      await seedProvider();
+      // Mutate the bookmark while the verify hop is in flight — the
+      // persist-time re-admission is the only check left to catch it.
+      const supported = jevTransportFor("supported");
+      const mutating = vi.fn<JevTransport>(async (...args) => {
+        const response = await supported(...args);
+        if (mode === "delete") {
+          await bookmarksApi.remove(BOOKMARK_ID);
+        } else {
+          await bookmarksApi.update(BOOKMARK_ID, {
+            url: "https://other-site.com/article",
+          });
+        }
+        return response;
+      });
+      const outcome = await summarizeExtracted(
+        { tabId: TAB_ID, bookmarkId: BOOKMARK_ID, jevTransport: mutating },
+        PAGE_EXTRACT,
+      );
+      expect(outcome, mode).toMatchObject({
+        ok: false,
+        stage: "persist",
+        code: mode === "delete" ? "no_bookmark" : "mismatch",
+      });
+      expect(await getMeta(BOOKMARK_ID), mode).toBeUndefined();
+      expect(await db.bookmarkMeta.count(), mode).toBe(0);
+    }
+  });
 });

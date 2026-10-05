@@ -1,5 +1,6 @@
 import { db } from "../db/database";
 import { deleteMetaByIds } from "../db/meta";
+import { deleteReviewableAbsentIds } from "../decisions/store";
 import type { BookmarksTreeNode } from "./chrome-bookmarks";
 import { getTree } from "./chrome-bookmarks";
 
@@ -11,7 +12,10 @@ import { getTree } from "./chrome-bookmarks";
  * alive, but an MV3 service worker is suspended most of the time: deletions
  * made in another window, by sync, or while the worker was asleep never
  * produced an event this worker observed. Reconcile closes that gap — any
- * meta row whose Chrome bookmark id is not in the live tree is deleted.
+ * meta row whose Chrome bookmark id is not in the live tree is deleted,
+ * and every still-reviewable decision whose bookmark set contains a dead
+ * real id dies with it (J14): a suggestion cannot outlive the bookmark it
+ * proposes to change.
  */
 
 /** Depth-first id walk over a `getTree()`/`getSubTree()`-shaped node. */
@@ -41,11 +45,14 @@ function collectLiveIds(node: BookmarksTreeNode, into: Set<string>): void {
  * case is left for the next worker start.
  *
  * Errors propagate to the caller; the worker swallows them at the call
- * site. Returns the number of rows deleted.
+ * site. Returns the total rows deleted (meta + reviewable decisions).
  */
 export async function reconcileMetadata(): Promise<number> {
   const storedIds = await db.bookmarkMeta.toCollection().primaryKeys();
-  if (storedIds.length === 0) return 0;
+  // Decisions can outlive a meta-less bookmark too — their liveness check
+  // cannot be gated on meta orphans.
+  const hasDecisions = (await db.decisions.count()) > 0;
+  if (storedIds.length === 0 && !hasDecisions) return 0;
   const tree = await getTree();
   const liveIds = new Set<string>();
   for (const top of tree) {
@@ -55,7 +62,7 @@ export async function reconcileMetadata(): Promise<number> {
     return 0;
   }
   const orphanedIds = storedIds.filter((id) => !liveIds.has(id));
-  if (orphanedIds.length === 0) return 0;
+  if (orphanedIds.length === 0 && !hasDecisions) return 0;
 
   // Chrome never reuses IDs. Rows created after the initial key snapshot
   // cannot be candidates; a second read protects live IDs missing from a
@@ -69,5 +76,12 @@ export async function reconcileMetadata(): Promise<number> {
     return 0;
   }
   if (confirmedIds.size === 0) return 0;
-  return deleteMetaByIds(orphanedIds.filter((id) => !confirmedIds.has(id)));
+  // Reviewable decisions die when ANY member id is dead — the tree read
+  // that confirmed the meta orphans also confirms theirs (J14). Claimed
+  // rows and popup ids are skipped by the sweep itself.
+  const reapedDecisions = await deleteReviewableAbsentIds(confirmedIds);
+  const reapedMeta = await deleteMetaByIds(
+    orphanedIds.filter((id) => !confirmedIds.has(id)),
+  );
+  return reapedMeta + reapedDecisions;
 }

@@ -348,7 +348,11 @@ export async function summarizeExtracted(
   }
 
   // Persist — only the summary crosses storage; the excerpt dies here.
+  // J14: re-admit the bookmark first — a delete or retarget between the
+  // verify hop and this write must not receive the summary (or orphan a
+  // `bookmarkMeta` row). The admission codes surface as the persist code.
   try {
+    await admitSummary(input.bookmarkId, extract, input.tabId);
     await setBookmarkSummary(input.bookmarkId, summarized.summary);
   } catch (cause) {
     return { ok: false, stage: "persist", code: codeOf(cause), message: messageOf(cause) };

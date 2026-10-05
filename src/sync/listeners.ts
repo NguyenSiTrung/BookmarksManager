@@ -1,4 +1,6 @@
+import { db } from "../db/database";
 import { deleteMetaByIds } from "../db/meta";
+import { deleteReviewableByBookmarkIds } from "../decisions/store";
 import { z } from "../schemas/z";
 import type {
   BookmarksTreeNode,
@@ -29,7 +31,11 @@ import {
  *    and hands the removed node back with its full descendant `children`
  *    snapshot. The listener walks that snapshot and deletes the
  *    `bookmarkMeta` rows for the node AND every descendant — extension
- *    metadata must not outlive the bookmark it describes.
+ *    metadata must not outlive the bookmark it describes — plus every
+ *    still-reviewable decision (`pending`/`unsure`/`approved`) whose
+ *    bookmark set intersects the removed ids (J14): a suggestion cannot
+ *    outlive the bookmark it proposes to change. Decided rows are history
+ *    and stay for undo and the audit trail.
  *  - **Change broadcast.** Every one of the five bookmark events also
  *    broadcasts a typed {@link BookmarksChangedMessage} over
  *    `chrome.runtime.sendMessage` so open extension pages (the side panel,
@@ -123,19 +129,25 @@ function collectSubtreeIds(node: BookmarksTreeNode, into: string[] = []): string
 }
 
 /**
- * Delete the meta rows for a removed subtree, then broadcast. The broadcast
- * waits on the delete so a page that reacts by re-reading metadata never
- * observes rows for bookmarks that are already gone. The delete is wrapped:
- * a storage failure must not surface as an unhandled rejection in the
- * worker, and the broadcast still goes out — listeners missed this round
- * are repaired by the next startup reconcile.
+ * Delete the meta rows and reviewable decisions for a removed subtree, then
+ * broadcast. The broadcast waits on the delete so a page that reacts by
+ * re-reading state never observes rows for bookmarks that are already gone.
+ * The delete is wrapped: a storage failure must not surface as an unhandled
+ * rejection in the worker, and the broadcast still goes out — listeners
+ * missed this round are repaired by the next startup reconcile.
  */
 async function cascadeDelete(
   removedId: string,
   node: BookmarksTreeNode,
 ): Promise<void> {
   try {
-    await deleteMetaByIds(collectSubtreeIds(node));
+    const ids = collectSubtreeIds(node);
+    // One transaction: a bookmark's meta rows and its pending decisions
+    // die together (J14).
+    await db.transaction("rw", db.bookmarkMeta, db.decisions, async () => {
+      await deleteMetaByIds(ids);
+      await deleteReviewableByBookmarkIds(ids);
+    });
   } catch {
     // Cleanup failure: the row set converges at the next reconcileMetadata().
   }
