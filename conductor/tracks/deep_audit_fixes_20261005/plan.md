@@ -359,7 +359,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     export omits notes when unchecked; object URL revoked after delay.
   - Fix: busy-guarded `onOpenChange`, run-id ref, re-entrancy guard, Resume
     UI, notes checkbox.
-- [ ] Task: Conductor - Automated Verification 'Phase 5: Import and export' (automated gates; no manual wait)
+- [x] Task: Conductor - Automated Verification 'Phase 5: Import and export' (automated gates; no manual wait)
   - Full local gate + e2e (import/export specs).
 
 ## Phase 6: UI correctness and safety

@@ -1219,3 +1219,10 @@ claim that any audit finding has been fixed or reproduced.
 - **Radix test trick**: fireEvent/act flushes between synthetic events —
   to exercise a same-tick ref guard, capture the element and fire two
   raw `dispatchEvent(new MouseEvent("click",{bubbles:true}))`.
+
+## Phase 5 checkpoint — verification only (gate run at task-4 head)
+
+Lint, tsc, 3165 unit, build, manifest, bundle, 43+1 e2e all green on the
+task-4 commit (bc54631) — including the import/export e2e specs
+(core-manager JSON import round-trip, audit-data-safety export/import).
+Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
