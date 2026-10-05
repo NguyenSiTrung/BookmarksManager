@@ -1,4 +1,4 @@
-import { listMeta, listTags } from "../db/meta";
+import { listMeta, listTags, META_CHANGED_CHANNEL } from "../db/meta";
 import { getTree } from "../sync/chrome-bookmarks";
 import { flattenTree } from "../sync/tree";
 import { openBookmarkUrl } from "../sync/tabs";
@@ -9,11 +9,11 @@ import type { SearchIndexHandle } from "./run";
 
 /**
  * The `bm` omnibox keyword (PROJECT_PLAN §5.1 Phase 3). Zero egress and
- * zero persistence: a session-scoped {@link SearchIndexHandle} is built
- * when Chrome fires `onInputStarted` (or lazily on the first
- * `onInputChanged` — an MV3 worker can wake mid-session and miss the start
- * event) and dropped on `onInputEntered`/`onInputCancelled`, so the typed
- * query lives only for the interaction.
+ * zero persistence: queries resolve against {@link sharedSearchIndex}, a
+ * worker-lifetime index built lazily on first demand and invalidated on
+ * bookmark/meta change events (D14). Session state (`session`,
+ * `contents`) still drops on `onInputEntered`/`onInputCancelled` — the
+ * typed query lives only for the interaction.
  *
  * Suggestions (`chrome.omnibox.SuggestResult`) are capped at
  * {@link OMNIBOX_LIMIT} and parse as a small XML dialect supporting
@@ -33,6 +33,14 @@ import type { SearchIndexHandle } from "./run";
  */
 
 export const OMNIBOX_LIMIT = 8;
+
+/**
+ * The omnibox index never indexes `notes` (D14): notes are long-form text
+ * whose tokens dominate the index for little suggestion value — title,
+ * tags, domain, and url carry every useful hit. The panel's live index
+ * keeps the full field set; this session-scoped view does not.
+ */
+const OMNIBOX_INDEXED_FIELDS = ["title", "tags", "domain", "url"];
 
 /** `chrome.omnibox.SuggestResult`, redeclared so this module is chrome-free. */
 export interface SuggestResult {
@@ -115,9 +123,10 @@ export function toSuggestions(
 }
 
 /**
- * Build the session index from the live tree + meta rows. Total: any
- * failure (dead bookmarks surface, closed DB) yields `null`, which the
- * listeners translate to "no suggestions".
+ * Build the session index from the live tree + meta rows (notes are
+ * excluded from the index, D14). Total: any failure (dead bookmarks
+ * surface, closed DB) yields `null`, which the listeners translate to
+ * "no suggestions".
  */
 export async function loadSessionIndex(): Promise<SearchIndexHandle | null> {
   try {
@@ -126,7 +135,12 @@ export async function loadSessionIndex(): Promise<SearchIndexHandle | null> {
       listMeta(),
       listTags(),
     ]);
-    return buildSearchHandle(flattenTree(rawTree), metas, tagDefs);
+    return buildSearchHandle(
+      flattenTree(rawTree),
+      metas,
+      tagDefs,
+      OMNIBOX_INDEXED_FIELDS,
+    );
   } catch {
     return null;
   }
@@ -151,6 +165,73 @@ function topOpenableUrl(
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shared worker-lifetime index (D14)
+// ---------------------------------------------------------------------------
+
+/**
+ * One cached index build for the worker's lifetime. Omnibox sessions used
+ * to rebuild the tree+meta index per interaction; the shared handle is
+ * built lazily on first demand and REUSED across sessions until an event
+ * bumps {@link indexGeneration} — bookmark changes land via
+ * {@link invalidateSearchIndex} (called by the sync listeners) and meta
+ * changes via the {@link META_CHANGED_CHANNEL} BroadcastChannel (posted
+ * by the meta repository, reachable from any extension context).
+ */
+let indexGeneration = 0;
+let sharedIndex: {
+  generation: number;
+  promise: Promise<SearchIndexHandle | null>;
+} | null = null;
+let metaChangedListener: BroadcastChannel | null | undefined;
+
+/**
+ * Mark the shared index stale. The next {@link sharedSearchIndex} call
+ * rebuilds lazily — a handle issued before the bump is never served by a
+ * later call (generation checked on access, not eagerly dropped).
+ */
+export function invalidateSearchIndex(): void {
+  indexGeneration += 1;
+}
+
+/**
+ * Subscribe once to the meta-changed channel. Constructed lazily (the
+ * first shared build) so importing this module in a context without
+ * BroadcastChannel stays a no-op.
+ */
+function ensureMetaChangedListener(): void {
+  if (metaChangedListener !== undefined) return;
+  try {
+    metaChangedListener = new BroadcastChannel(META_CHANGED_CHANNEL);
+    metaChangedListener.onmessage = invalidateSearchIndex;
+  } catch {
+    metaChangedListener = null;
+  }
+}
+
+/**
+ * The worker-lifetime session index. Build is lazy: the first caller
+ * after a generation bump pays for `loadSessionIndex`, everyone else
+ * awaits the same promise. `ensure` inside {@link registerOmnibox} uses
+ * this as the default `deps.load`.
+ */
+export function sharedSearchIndex(): Promise<SearchIndexHandle | null> {
+  ensureMetaChangedListener();
+  if (sharedIndex === null || sharedIndex.generation !== indexGeneration) {
+    const generation = indexGeneration;
+    const promise = loadSessionIndex().catch((): null => null);
+    sharedIndex = { generation, promise };
+    // A failed build resolves `null` — drop it so the next call retries
+    // instead of serving dead suggestions for the whole generation.
+    void promise.then((handle) => {
+      if (handle === null && sharedIndex?.promise === promise) {
+        sharedIndex = null;
+      }
+    });
+  }
+  return sharedIndex.promise;
 }
 
 /** Lazy `chrome.omnibox` lookup — absent on Firefox and in tests. */
@@ -182,7 +263,7 @@ export function registerOmnibox(
   deps: Partial<OmniboxDeps> = {},
 ): void {
   if (omnibox === undefined) return;
-  const load = deps.load ?? loadSessionIndex;
+  const load = deps.load ?? sharedSearchIndex;
   const open =
     deps.open ??
     ((url: string, disposition: OpenUrlDisposition): void => {

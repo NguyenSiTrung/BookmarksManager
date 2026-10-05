@@ -105,10 +105,11 @@ export function buildSearchHandle(
   tree: FlattenedTree,
   metas: readonly BookmarkMeta[],
   tagDefs: readonly TagDef[],
+  indexedFields?: readonly string[],
 ): SearchIndexHandle {
   const tagNames = buildTagNameMap(tagDefs);
   const metaById = new Map(metas.map((meta) => [meta.id, meta]));
-  const index = createSearchIndex();
+  const index = createSearchIndex(indexedFields);
   index.addAll(
     [...tree.bookmarks.values()].map((item) =>
       toSearchDocument(toSourceBookmark(tree, item, metaById.get(item.id)), tagNames)

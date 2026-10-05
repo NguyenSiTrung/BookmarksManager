@@ -1,9 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import "fake-indexeddb/auto";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import { db } from "../../src/db/database";
+import { putMeta } from "../../src/db/meta";
 import {
   escapeXml,
+  invalidateSearchIndex,
   registerOmnibox,
+  sharedSearchIndex,
   toSuggestions,
 } from "../../src/search/omnibox";
+import { runQuery } from "../../src/search/run";
+import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import type {
   OmniboxDeps,
   OmniboxSurface,
@@ -366,5 +382,89 @@ describe("registerOmnibox", () => {
         expect(String(call.join(" "))).not.toContain("secret");
       }
     }
+  });
+});
+
+describe("shared worker-lifetime index (D14)", () => {
+  beforeAll(async () => {
+    await db.open();
+  });
+  beforeEach(async () => {
+    await db.bookmarkMeta.clear();
+    await db.tags.clear();
+    await db.metaTombstones.clear();
+    await db.corruptMeta.clear();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+  afterAll(() => {
+    db.close();
+  });
+
+  function install(
+    options: Parameters<typeof createFakeBookmarks>[0] = {},
+  ): void {
+    vi.stubGlobal("chrome", { bookmarks: createFakeBookmarks(options) });
+  }
+
+  it("builds lazily once and serves the same handle to later queries", async () => {
+    install({
+      bookmarksBar: [
+        { id: "a", title: "Alpha", url: "https://a.example/" },
+      ],
+    });
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+    expect(first).not.toBeNull();
+    expect(await sharedSearchIndex()).toBe(first);
+    expect(await sharedSearchIndex()).toBe(first);
+  });
+
+  it("rebuilds after invalidateSearchIndex — a new handle with new data", async () => {
+    install({
+      bookmarksBar: [
+        { id: "a", title: "Alpha", url: "https://a.example/" },
+      ],
+    });
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+    invalidateSearchIndex();
+    const second = await sharedSearchIndex();
+    expect(second).not.toBe(first);
+    expect(second).not.toBeNull();
+  });
+
+  it("never indexes notes — a notes-only term returns no hits", async () => {
+    install({
+      bookmarksBar: [
+        { id: "a", title: "Alpha", url: "https://a.example/" },
+      ],
+    });
+    await putMeta("a", { notes: "zebra-unicorn-secret" });
+    invalidateSearchIndex();
+    const handle = await sharedSearchIndex();
+    expect(handle).not.toBeNull();
+    expect(
+      runQuery(handle!.index, "zebra-unicorn-secret", handle!.ctx).hits,
+    ).toEqual([]);
+    // Control: a title term still hits.
+    expect(
+      runQuery(handle!.index, "alpha", handle!.ctx).hits.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("a meta write posts to the meta-changed channel and invalidates", async () => {
+    install({
+      bookmarksBar: [
+        { id: "a", title: "Alpha", url: "https://a.example/" },
+      ],
+    });
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+    await putMeta("a", { notes: "x" });
+    await vi.waitFor(async () => {
+      expect(await sharedSearchIndex()).not.toBe(first);
+    });
   });
 });

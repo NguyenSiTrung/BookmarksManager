@@ -213,3 +213,24 @@ describe("groupDuplicates — singletons and ordering", () => {
     expect(groupDuplicates(input)).toEqual(groupDuplicates(input));
   });
 });
+
+describe("groupDuplicates — scale bound (D14)", () => {
+  it("groups 5k exact-duplicate pairs inside a bounded time", () => {
+    // 10k items → 5k exact groups, each normalized bucket member-identical
+    // to its exact group (the O(n²) dedupe scan the fingerprint index
+    // replaces). The bound is generous — the indexed path is ~10ms, the
+    // old nested scan was multiple seconds.
+    const items = [];
+    for (let i = 0; i < 5000; i++) {
+      items.push(bm(`e${i}a`, `https://e${i}.example/page`));
+      items.push(bm(`e${i}b`, `https://e${i}.example/page`));
+    }
+    const start = performance.now();
+    const groups = groupDuplicates(items);
+    const elapsed = performance.now() - start;
+
+    expect(groups).toHaveLength(5000);
+    expect(groups.every((g) => g.kind === "exact")).toBe(true);
+    expect(elapsed).toBeLessThan(2000);
+  });
+});

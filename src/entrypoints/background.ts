@@ -81,8 +81,8 @@ import { seedStarterTags } from "../db/starter-tags";
 
 /**
  * At startup the worker subscribes the five bookmark events (which
- * cascade-delete extension metadata for removed subtrees and broadcast
- * `bookmarks-changed` to open pages), rebuilds the right-click "Save page"/
+ * cascade-delete extension metadata for removed subtrees and invalidate
+ * the shared search index, D14), rebuilds the right-click "Save page"/
  * "Save link" context-menu items (`src/sync/context-menu.ts`), runs one
  * metadata reconcile for deletions missed while the service worker was
  * suspended, and pauses interrupted `running`/`pending` jobs in Dexie until an

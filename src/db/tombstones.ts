@@ -1,6 +1,6 @@
 import { db } from "./database";
 import { BookmarkMeta, type MetaTombstone } from "../schemas/meta";
-import { putMeta, retainCorruptMeta } from "./meta";
+import { emitMetaChanged, putMeta, retainCorruptMeta } from "./meta";
 
 /**
  * URL-keyed tombstones for removed bookmark metadata (D12).
@@ -128,11 +128,12 @@ export async function tombstoneMetaByIds(
         tombstoned += 1;
       }
       // Every candidate row dies — tombstoned, corrupt-retained, or plain.
-      await db.bookmarkMeta
+      const died = await db.bookmarkMeta
         .where("id")
         .anyOf(candidates.map((candidate) => candidate.id))
         .delete();
       await pruneTombstones();
+      if (died > 0) emitMetaChanged();
       return tombstoned;
     },
   );

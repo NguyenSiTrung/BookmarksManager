@@ -68,8 +68,12 @@ export function groupDuplicates<T extends DuplicateCandidate>(
     }
   }
 
-  const exactIdSets = exactGroups.map(
-    (group) => new Set(group.items.map((item) => item.id)),
+  // Index exact groups by member-set fingerprint (D14): the members-
+  // identical check below is one Map lookup per normalized bucket instead
+  // of an O(exactGroups × members) scan — quadratic at thousands of
+  // groups.
+  const exactFingerprints = new Set(
+    exactGroups.map((group) => fingerprintMembers(group.items)),
   );
 
   const normalizedGroups: DuplicateGroup<T>[] = [];
@@ -77,17 +81,24 @@ export function groupDuplicates<T extends DuplicateCandidate>(
     if (items.length < 2) {
       continue;
     }
-    const alreadyExact = exactIdSets.some(
-      (ids) =>
-        ids.size === items.length &&
-        items.every((item) => ids.has(item.id)),
-    );
-    if (!alreadyExact) {
+    if (!exactFingerprints.has(fingerprintMembers(items))) {
       normalizedGroups.push({ key, kind: "normalized", items });
     }
   }
 
   return [...exactGroups, ...normalizedGroups];
+}
+
+/**
+ * Canonical member-set identity of a candidate bucket: the sorted ids
+ * joined on NUL (Chrome bookmark ids can't contain NUL). Two buckets with
+ * identical members produce the same fingerprint regardless of order.
+ */
+function fingerprintMembers(items: readonly DuplicateCandidate[]): string {
+  return items
+    .map((item) => item.id)
+    .sort()
+    .join("\u0000");
 }
 
 function addToBucket<T>(buckets: Map<string, T[]>, key: string, item: T): void {

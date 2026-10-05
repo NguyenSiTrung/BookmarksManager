@@ -139,7 +139,7 @@ export interface SearchDocDiff {
  */
 const FIELD_BOOSTS = { title: 5, tags: 4, domain: 2, url: 1, notes: 0.5 };
 
-const INDEXED_FIELDS = ["title", "tags", "domain", "url", "notes"];
+export const INDEXED_FIELDS = ["title", "tags", "domain", "url", "notes"];
 const STORED_FIELDS = [
   "title",
   "url",
@@ -262,11 +262,15 @@ export function toSearchDocument(
 /**
  * An empty index with the shared configuration: AND-combined free-text
  * terms, prefix matching, fuzzy typo tolerance, and the field boosts.
+ * `fields` narrows the indexed field set — the omnibox session index
+ * excludes `notes` (D14) while the panel's live index keeps every field.
  */
-export function createSearchIndex(): SearchIndex {
+export function createSearchIndex(
+  fields: readonly string[] = INDEXED_FIELDS,
+): SearchIndex {
   return new MiniSearch<SearchDocument>({
     idField: "id",
-    fields: INDEXED_FIELDS,
+    fields: fields as string[],
     storeFields: STORED_FIELDS,
     searchOptions: {
       combineWith: "AND",

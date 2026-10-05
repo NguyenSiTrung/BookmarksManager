@@ -15,11 +15,11 @@ import {
   BOOKMARKS_BAR_ID,
   OTHER_BOOKMARKS_ID,
 } from "../../src/sync/chrome-bookmarks";
+import { registerBookmarkListeners } from "../../src/sync/listeners";
 import {
-  BOOKMARKS_CHANGED_TYPE,
-  BookmarksChangedMessage,
-  registerBookmarkListeners,
-} from "../../src/sync/listeners";
+  invalidateSearchIndex,
+  sharedSearchIndex,
+} from "../../src/search/omnibox";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import { Decision } from "../../src/schemas/decision";
 import {
@@ -270,124 +270,124 @@ describe("onRemoved cascade delete", () => {
   });
 });
 
-describe("bookmarks-changed broadcast", () => {
-  it("sends a schema-valid message for each of the five events", async () => {
+describe("search index invalidation (D14)", () => {
+  it("invalidates the shared index on every bookmark event", async () => {
     installChrome({
-      bookmarksBar: [
-        { id: "a", title: "a", url: "https://a.example/" },
-        { id: "b", title: "b", url: "https://b.example/" },
-      ],
+      bookmarksBar: [{ id: "a", title: "a", url: "https://a.example/" }],
+    });
+    registerBookmarkListeners();
+
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+    expect(first).not.toBeNull();
+    expect(await sharedSearchIndex()).toBe(first);
+
+    const created = await fake.create({
+      parentId: BOOKMARKS_BAR_ID,
+      title: "x",
+      url: "https://x.example/",
+    });
+    const afterCreate = await sharedSearchIndex();
+    expect(afterCreate).not.toBe(first);
+
+    await fake.update("a", { title: "renamed" });
+    const afterChange = await sharedSearchIndex();
+    expect(afterChange).not.toBe(afterCreate);
+
+    fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, ["a", created.id]);
+    const afterReorder = await sharedSearchIndex();
+    expect(afterReorder).not.toBe(afterChange);
+
+    await fake.move("a", { parentId: OTHER_BOOKMARKS_ID });
+    expect(await sharedSearchIndex()).not.toBe(afterReorder);
+
+    const beforeRemove = await sharedSearchIndex();
+    await fake.remove("a");
+    await vi.waitFor(async () => {
+      expect(await sharedSearchIndex()).not.toBe(beforeRemove);
+    });
+  });
+
+  it("rebuilds into new content after invalidation", async () => {
+    installChrome({
+      bookmarksBar: [{ id: "a", title: "Alpha", url: "https://a.example/" }],
+    });
+    registerBookmarkListeners();
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+
+    await fake.create({ title: "Zeta", url: "https://z.example/" });
+    const rebuilt = await sharedSearchIndex();
+    expect(rebuilt).not.toBe(first);
+    // The rebuilt index serves the new bookmark.
+    const { runQuery } = await import("../../src/search/run");
+    expect(
+      runQuery(rebuilt!.index, "zeta", rebuilt!.ctx).hits.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("invalidates on a meta write from another context (BroadcastChannel)", async () => {
+    installChrome({
+      bookmarksBar: [{ id: "a", title: "a", url: "https://a.example/" }],
+    });
+    registerBookmarkListeners();
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+
+    await putMeta("a", { notes: "edited elsewhere" });
+    await vi.waitFor(async () => {
+      expect(await sharedSearchIndex()).not.toBe(first);
+    });
+  });
+
+  it("never broadcasts bookmarks-changed over runtime.sendMessage", async () => {
+    installChrome({
+      bookmarksBar: [{ id: "a", title: "a", url: "https://a.example/" }],
     });
     registerBookmarkListeners();
 
     const created = await fake.create({
       parentId: BOOKMARKS_BAR_ID,
-      title: "New",
-      url: "https://new.example/",
+      title: "x",
+      url: "https://x.example/",
     });
-    // created/changed/moved/reordered broadcast synchronously inside emit.
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      type: BOOKMARKS_CHANGED_TYPE,
-      event: "created",
-      id: created.id,
-    });
-
     await fake.update("a", { title: "renamed" });
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      type: BOOKMARKS_CHANGED_TYPE,
-      event: "changed",
-      id: "a",
-    });
-
-    await fake.move("b", { parentId: OTHER_BOOKMARKS_ID });
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      type: BOOKMARKS_CHANGED_TYPE,
-      event: "moved",
-      id: "b",
-    });
-
-    fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, [created.id, "a"]);
-    expect(sendMessage).toHaveBeenLastCalledWith({
-      type: BOOKMARKS_CHANGED_TYPE,
-      event: "reordered",
-      id: BOOKMARKS_BAR_ID,
-    });
-
+    fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, ["a", created.id]);
+    await fake.move("a", { parentId: OTHER_BOOKMARKS_ID });
     await fake.remove("a");
-    // "removed" is broadcast only after the cascade delete resolves.
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenLastCalledWith({
-        type: BOOKMARKS_CHANGED_TYPE,
-        event: "removed",
-        id: "a",
-      });
-    });
-
-    expect(sendMessage).toHaveBeenCalledTimes(5);
-    for (const call of sendMessage.mock.calls) {
-      expect(BookmarksChangedMessage.safeParse(call[0]).success).toBe(true);
-    }
-  });
-
-  it("swallows a sendMessage rejection (no receiver is open)", async () => {
-    installChrome();
-    sendMessage.mockRejectedValue(
-      new Error("Could not establish connection. Receiving end does not exist."),
-    );
-    registerBookmarkListeners();
-
-    // The handler must not throw into the fake's synchronous dispatch, and
-    // the rejection must be handled (no unhandled rejection).
-    await expect(
-      fake.create({ title: "x", url: "https://x.example/" }),
-    ).resolves.toMatchObject({ title: "x" });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("tolerates a chrome stub without a runtime surface", async () => {
-    fake = createFakeBookmarks({
-      bookmarksBar: [
-        { id: "doomed", title: "d", url: "https://d.example/" },
-      ],
-    });
-    // No `runtime` at all: broadcasting becomes a no-op, the cascade still runs.
-    vi.stubGlobal("chrome", { bookmarks: fake });
-    registerBookmarkListeners();
-    await putMeta("doomed", { notes: "x" });
-
-    await expect(fake.remove("doomed")).resolves.toBeUndefined();
     await vi.waitFor(async () => {
-      expect(await getMeta("doomed")).toBeUndefined();
+      expect(await getMeta("a")).toBeUndefined();
     });
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });
 
 describe("registration lifecycle", () => {
-  it("is idempotent for the same chrome.bookmarks instance", async () => {
+  it("is idempotent for the same chrome.bookmarks instance", () => {
     installChrome();
+    const addCreated = vi.spyOn(fake.onCreated, "addListener");
     registerBookmarkListeners();
     registerBookmarkListeners();
 
-    await fake.create({ title: "x", url: "https://x.example/" });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(addCreated).toHaveBeenCalledTimes(1);
   });
 
-  it("registers fresh on a new chrome.bookmarks instance", async () => {
+  it("registers fresh on a new chrome.bookmarks instance", () => {
     installChrome();
-    registerBookmarkListeners();
-    const firstSendMessage = sendMessage;
-
-    installChrome();
+    const firstAdd = vi.spyOn(fake.onCreated, "addListener");
     registerBookmarkListeners();
 
-    await fake.create({ title: "y", url: "https://y.example/" });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(firstSendMessage).not.toHaveBeenCalled();
+    installChrome();
+    const secondAdd = vi.spyOn(fake.onCreated, "addListener");
+    registerBookmarkListeners();
+
+    expect(firstAdd).toHaveBeenCalledTimes(1);
+    expect(secondAdd).toHaveBeenCalledTimes(1);
   });
 
   it("is a no-op when the chrome namespace has no bookmarks slice", () => {
-    sendMessage = vi.fn(() => Promise.resolve(undefined));
-    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    vi.stubGlobal("chrome", {});
 
     // Must not throw: background.ts calls this BEFORE the provider
     // onMessage registration, so a throw would take the handler down.
@@ -440,10 +440,12 @@ describe("registration lifecycle", () => {
       addChanged.mock.calls[0]?.[0],
     );
 
-    // End state: no live subscription — firing the shared events broadcasts
-    // nothing (all-or-nothing registration, no leaked partials).
+    // End state: no live subscription — the detached listener is gone
+    // (all-or-nothing registration, no leaked partials).
+    expect(
+      fake.onCreated.hasListener(addCreated.mock.calls[0]![0]),
+    ).toBe(false);
     await fake.create({ title: "x", url: "https://x.example/" });
-    expect(sendMessage).not.toHaveBeenCalled();
 
     // The failed registration returns an inert unsubscribe and is not
     // recorded in the WeakMap, so a repaired surface may register later —
@@ -452,16 +454,25 @@ describe("registration lifecycle", () => {
     expect(() => registerBookmarkListeners()).not.toThrow();
     expect(addCreated).toHaveBeenCalledTimes(2);
     expect(removeCreated).toHaveBeenCalledTimes(2);
-    await fake.create({ title: "y", url: "https://y.example/" });
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(
+      fake.onCreated.hasListener(addCreated.mock.calls[1]![0]),
+    ).toBe(false);
   });
 
   it("the returned unsubscribe detaches all five listeners", async () => {
     installChrome({
       bookmarksBar: [{ id: "n", title: "n", url: "https://n.example/" }],
     });
+    await putMeta("n", { notes: "kept" });
+    const addCreated = vi.spyOn(fake.onCreated, "addListener");
+    const addRemoved = vi.spyOn(fake.onRemoved, "addListener");
     const unregister = registerBookmarkListeners();
+    const createdFn = addCreated.mock.calls[0]![0];
+    const removedFn = addRemoved.mock.calls[0]![0];
     unregister();
+
+    expect(fake.onCreated.hasListener(createdFn)).toBe(false);
+    expect(fake.onRemoved.hasListener(removedFn)).toBe(false);
 
     const node = await fake.create({
       title: "x",
@@ -472,7 +483,10 @@ describe("registration lifecycle", () => {
     fake.simulateChildrenReordered(BOOKMARKS_BAR_ID, ["n", node.id]);
     await fake.remove("n");
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    // Post-unregister events reach no listener — the cascade can't fire,
+    // so the meta row survives the removal.
+    await fake.create({ title: "y", url: "https://y.example/" });
+    expect((await getMeta("n"))?.notes).toBe("kept");
   });
 });
 
@@ -504,7 +518,9 @@ describe("egress", () => {
       expect(await getMeta("n1")).toBeUndefined();
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(5);
+    // No `bookmarks-changed` broadcast exists anymore (D14) — runtime
+    // messaging is never touched either.
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

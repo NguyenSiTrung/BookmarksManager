@@ -5,7 +5,7 @@ import {
   type TombstoneCandidate,
 } from "../db/tombstones";
 import { deleteReviewableByBookmarkIds } from "../decisions/store";
-import { z } from "../schemas/z";
+import { invalidateSearchIndex } from "../search/omnibox";
 import type {
   BookmarksTreeNode,
   ChromeBookmarksApi,
@@ -45,88 +45,28 @@ import {
  *  - **Tombstone re-attach.** `onCreated` checks the new node's URL against
  *    `metaTombstones`; a live tombstone within retention re-attaches its
  *    fields to the new id (D12).
- *  - **Change broadcast.** Every one of the five bookmark events also
- *    broadcasts a typed {@link BookmarksChangedMessage} over
- *    `chrome.runtime.sendMessage` so open extension pages (the side panel,
- *    an options tab) can invalidate their read models. Fire-and-forget: the
- *    promise rejects when no page is listening, which is the common case.
+ *  - **Index invalidation.** Every one of the five bookmark events bumps
+ *    the shared search index's generation (D14) so the worker-lifetime
+ *    cache the omnibox queries against rebuilds on its next read. The
+ *    event object is never inspected — any tree change is a reason to
+ *    rebuild.
  *
  * Totality rules:
  *  - Event callbacks never throw into Chrome's synchronous dispatch: the
- *    cascade runs detached (`void`), a `deleteMetaByIds` rejection is
- *    swallowed (a failed cleanup is retried by the startup reconcile), and
- *    `broadcastChanged` absorbs both synchronous and asynchronous
- *    `sendMessage` failures. Nothing sensitive is logged — event payloads
- *    carry user bookmark data.
- *  - No network: this module never fetches. `chrome.runtime.sendMessage` is
- *    in-process extension messaging, not egress.
+ *    cascade runs detached (`void`), a meta/tombstone write rejection is
+ *    swallowed (a failed cleanup is retried by the startup reconcile).
+ *    Nothing sensitive is logged — event payloads carry user bookmark
+ *    data.
+ *  - No network: this module never fetches.
  *
- * `chrome` follows the house lazy-slice pattern (see
- * `src/sync/chrome-bookmarks.ts`): only `runtime.sendMessage` is declared
- * here and it is resolved at call time, so `vi.stubGlobal` composes in
- * tests.
+ * `chrome.bookmarks` follows the house lazy-slice pattern (see
+ * `src/sync/chrome-bookmarks.ts`): the surface is resolved at call time,
+ * so `vi.stubGlobal` composes in tests.
  */
-declare const chrome: {
-  runtime: {
-    sendMessage(message: unknown): Promise<unknown>;
-  };
-};
 
 // ---------------------------------------------------------------------------
-// Broadcast payload
+// Cascade internals
 // ---------------------------------------------------------------------------
-
-/** `type` discriminator of the tree-change broadcast message. */
-export const BOOKMARKS_CHANGED_TYPE = "bookmarks-changed";
-
-/** The bookmark event that triggered the broadcast. */
-export const BookmarksChangedEvent = z.enum([
-  "created",
-  "changed",
-  "moved",
-  "reordered",
-  "removed",
-]);
-export type BookmarksChangedEvent = z.infer<typeof BookmarksChangedEvent>;
-
-/**
- * The message fanned out to extension pages after any bookmark event. `id`
- * is the id Chrome handed the event listener: the affected node for
- * created/changed/moved/removed, the reordered folder for reordered.
- * Receivers should treat it as a hint and re-read the tree rather than
- * patch local state.
- */
-export const BookmarksChangedMessage = z.strictObject({
-  type: z.literal(BOOKMARKS_CHANGED_TYPE),
-  event: BookmarksChangedEvent,
-  id: z.string(),
-});
-export type BookmarksChangedMessage = z.infer<typeof BookmarksChangedMessage>;
-
-// ---------------------------------------------------------------------------
-// Broadcast + cascade internals
-// ---------------------------------------------------------------------------
-
-/**
- * Fire-and-forget `runtime.sendMessage`. Total by contract: a missing
- * `runtime` surface (partial stubs, odd contexts) throws synchronously and
- * is caught, and a broadcast with no listening page rejects the promise and
- * is swallowed. `id` is always present — every bookmark event carries one.
- */
-function broadcastChanged(event: BookmarksChangedEvent, id: string): void {
-  const payload: BookmarksChangedMessage = {
-    type: BOOKMARKS_CHANGED_TYPE,
-    event,
-    id,
-  };
-  try {
-    void chrome.runtime.sendMessage(payload).catch(() => {
-      // No extension page is listening — the broadcast is best-effort.
-    });
-  } catch {
-    // `chrome.runtime` itself is unavailable; drop the broadcast.
-  }
-}
 
 /** The removed node's id plus every descendant id (depth-first). */
 function collectSubtreeIds(node: BookmarksTreeNode, into: string[] = []): string[] {
@@ -155,12 +95,12 @@ function collectTombstoneCandidates(
 
 /**
  * Tombstone the meta rows and delete the reviewable decisions for a
- * removed subtree, then broadcast (D12). The broadcast waits on the
- * writes so a page that reacts by re-reading state never observes rows
- * for bookmarks that are already gone. The write block is wrapped: a
- * storage failure must not surface as an unhandled rejection in the
- * worker, and the broadcast still goes out — listeners missed this round
- * are repaired by the next startup reconcile.
+ * removed subtree, then invalidate the search index (D12, D14). The
+ * invalidation waits on the writes so a rebuild triggered by it never
+ * observes rows for bookmarks that are already gone. The write block is
+ * wrapped: a storage failure must not surface as an unhandled rejection
+ * in the worker — rows missed this round are repaired by the next
+ * startup reconcile.
  */
 async function cascadeDelete(
   removedId: string,
@@ -185,7 +125,7 @@ async function cascadeDelete(
   } catch {
     // Cleanup failure: the row set converges at the next reconcileMetadata().
   }
-  broadcastChanged("removed", removedId);
+  invalidateSearchIndex();
 }
 
 // ---------------------------------------------------------------------------
@@ -194,28 +134,28 @@ async function cascadeDelete(
 
 const handleCreated: OnCreatedListener = (id, node) => {
   // D12: a removed bookmark's URL reappearing re-attaches its tombstoned
-  // metadata to the new id. Best-effort and detached — the broadcast is
-  // the same whether or not a tombstone landed (the row set is visible
-  // either way once the page re-reads).
+  // metadata to the new id. Best-effort and detached — the index
+  // invalidates the same whether or not a tombstone landed (its emit
+  // covers the re-attach write anyway).
   if (node.url !== undefined) {
     void reattachTombstone(id, node.url).catch(() => {
       // Re-attach is best-effort; a failure leaves the tombstone for the
       // next create or the retention prune.
     });
   }
-  broadcastChanged("created", id);
+  invalidateSearchIndex();
 };
 
-const handleChanged: OnChangedListener = (id) => {
-  broadcastChanged("changed", id);
+const handleChanged: OnChangedListener = () => {
+  invalidateSearchIndex();
 };
 
-const handleMoved: OnMovedListener = (id) => {
-  broadcastChanged("moved", id);
+const handleMoved: OnMovedListener = () => {
+  invalidateSearchIndex();
 };
 
-const handleChildrenReordered: OnChildrenReorderedListener = (id) => {
-  broadcastChanged("reordered", id);
+const handleChildrenReordered: OnChildrenReorderedListener = () => {
+  invalidateSearchIndex();
 };
 
 const handleRemoved: OnRemovedListener = (id, removeInfo) => {

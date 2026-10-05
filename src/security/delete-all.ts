@@ -1,4 +1,5 @@
 import { db } from "../db/database";
+import { emitMetaChanged } from "../db/meta";
 import { PRESETS } from "../net/presets";
 
 /**
@@ -361,6 +362,10 @@ export async function deleteAllExtensionData(
   //    page reloaded) before any further DB work.
   await requestDbRelease(releaseGraceMs);
   const databaseDeleted = await dropDatabase(databaseTimeoutMs);
+  // The drop bypasses every repository write path — notify read models
+  // (the worker's shared search index, D14) directly. Harmless when the
+  // drop was blocked: the rebuild re-reads the still-live database.
+  emitMetaChanged();
 
   // 2. Clear extension-local storage: settings rows and the provider-key
   //    ciphertext envelopes. `session` is cleared best-effort when present.

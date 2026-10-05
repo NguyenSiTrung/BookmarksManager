@@ -54,6 +54,37 @@ import { db } from "./database";
  *   (`new Date().toISOString()`); callers never supply timestamps.
  */
 
+// ---------------------------------------------------------------------------
+// Meta-changed notification (D14) — a same-origin BroadcastChannel so an
+// index built in ANOTHER extension context (the worker's shared search
+// index) invalidates on writes made here (a side-panel edit, an import).
+// ---------------------------------------------------------------------------
+
+/** BroadcastChannel name meta writes post a bump on. */
+export const META_CHANGED_CHANNEL = "bookmarks-manager-meta-changed";
+
+let metaChangedChannel: BroadcastChannel | null | undefined;
+
+/**
+ * Post one bump on {@link META_CHANGED_CHANNEL}. Total: a missing
+ * BroadcastChannel (non-web runtimes) or a dead channel is swallowed —
+ * the worst outcome is a stale read-model, never a failed write.
+ */
+export function emitMetaChanged(): void {
+  if (metaChangedChannel === undefined) {
+    try {
+      metaChangedChannel = new BroadcastChannel(META_CHANGED_CHANNEL);
+    } catch {
+      metaChangedChannel = null;
+    }
+  }
+  try {
+    metaChangedChannel?.postMessage(0);
+  } catch {
+    // A channel that throws on post is as good as absent.
+  }
+}
+
 export type MetaRepoErrorCode =
   /** A different tag already owns the case-insensitive nameKey. */
   | "tag_exists"
@@ -242,11 +273,13 @@ async function commitMeta(
   await retainCorruptMeta(id, "overwrite");
   if (isEmptyMeta(parsed.data)) {
     await db.bookmarkMeta.delete(id);
+    emitMetaChanged();
     return undefined;
   }
   // Fresh copy for the write — the parsed object goes back to the caller
   // and must stay decoupled from whatever Dexie does with the stored one.
   await db.bookmarkMeta.put({ ...parsed.data, tags: [...parsed.data.tags] });
+  emitMetaChanged();
   return parsed.data;
 }
 
@@ -297,6 +330,7 @@ async function rewriteTagRows(
   }
   if (puts.length > 0) await db.bookmarkMeta.bulkPut(puts);
   if (deletes.length > 0) await db.bookmarkMeta.bulkDelete(deletes);
+  if (metas.length > 0) emitMetaChanged();
   return metas.length;
 }
 
@@ -457,10 +491,12 @@ export async function deleteMetaByIds(
   ids: readonly string[],
 ): Promise<number> {
   if (ids.length === 0) return 0;
-  return db.bookmarkMeta
+  const deleted = await db.bookmarkMeta
     .where("id")
     .anyOf([...new Set(ids)])
     .delete();
+  if (deleted > 0) emitMetaChanged();
+  return deleted;
 }
 
 // ---------------------------------------------------------------------------
