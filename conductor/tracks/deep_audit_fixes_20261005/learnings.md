@@ -1428,3 +1428,24 @@ Phase 5 closed: I05/I06, I03/I04, I01, I02/I07 all landed and reviewed.
   associations are document-global, so per-container by-label queries
   fail when the same component mounts twice — scope by a unique
   attribute (e.g. placeholder) instead.
+
+### U10 — error boundaries
+- **`unhandledrejection` is only half the uncaught surface**: synchronous
+  throws in event handlers fire a window `error` event instead — install
+  both listeners or that class stays console-only. (Reviewer info note;
+  closed it in-place.)
+- **React 19 reports boundary-caught errors too**: `componentDidCatch` is
+  the report hook; the fallback is only the display — do not rely on the
+  default `onCaughtError` reaching a diagnostics sink.
+- **Never persist `error.stack` in the diagnostics ring**: stacks embed
+  file paths/URLs; name + truncated message is the inspectable shape.
+- **Listeners installed on `window` outlive the test that added them**:
+  later dispatched events hit every registered listener — assert on the
+  row filtered by its `surface`, not `records.at(-1)`.
+- **jsdom `window.location.reload` is non-configurable**: pin the Reload
+  control's presence and click-safety instead of spying on the call.
+- **TS `override` rules**: `componentDidCatch`/`render`/`state` require
+  `override`; `static getDerivedStateFromError` must not carry it (not
+  declared on the base class).
+- **Fail-soft reporting**: a diagnostics-ring write failure must be
+  swallowed — reporting a failure must never throw into a degraded page.

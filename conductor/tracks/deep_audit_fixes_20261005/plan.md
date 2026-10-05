@@ -414,7 +414,7 @@ MiniSearch 7, Vitest 5/Testing Library, Playwright Chromium.
     permission granted after a preset switch is removed or completes the
     enable; budget card refreshes, clears stale error, rejects `0x10`/`1e3`.
   - Fix: field-level patch messages; permission cleanup; live budget.
-- [ ] Task 9: U10 — error boundaries
+- [x] Task 9: U10 — error boundaries (f281422)
   <!-- files: src/ui/components/ErrorBoundary.tsx, src/entrypoints/sidepanel/main.tsx, src/entrypoints/popup/main.tsx, src/entrypoints/options/main.tsx -->
   - Tests: a throwing child renders the fallback with Reload; an
     `unhandledrejection` is reported, not silent.
