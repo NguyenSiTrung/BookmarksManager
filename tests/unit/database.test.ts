@@ -25,8 +25,10 @@ describe("BookmarksManager database", () => {
     // llmUsage/llmReservations for the Phase 5 LLM layer; version(5) added
     // the A08 rollup tables and `month`/compound indexes; version(6) added
     // the J13 `restructureAssignments` table and the jobs `[kind+createdAt]`
-    // index without touching the earlier stores.
-    expect(db.verno).toBe(8);
+    // index; version(8) added the I01 import-resume tables; version(9) added
+    // the U06 decisions `*bookmarkIds` multiEntry index without touching
+    // the earlier stores.
+    expect(db.verno).toBe(9);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",

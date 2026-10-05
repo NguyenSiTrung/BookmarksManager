@@ -1,3 +1,6 @@
+import { SaveMessageResult } from "../../messages/save";
+import type { SaveMessage } from "../../messages/save";
+
 /**
  * Narrow, lazily-resolved `chrome` slices for the quick-save popup plus the
  * popup → side-panel "edit this bookmark" handoff.
@@ -68,7 +71,10 @@ export interface ChromeStorageChangedEvent {
 }
 
 declare const chrome: {
-  runtime?: { openOptionsPage?: () => Promise<void> | void } | null;
+  runtime?: {
+    openOptionsPage?: () => Promise<void> | void;
+    sendMessage?(message: unknown): Promise<unknown>;
+  } | null;
   tabs?: ChromeTabsApi;
   sidePanel?: ChromeSidePanelApi;
   storage?: {
@@ -98,20 +104,58 @@ export async function queryActiveTab(): Promise<ChromeTab | null> {
  * `sidePanel.open()` must run inside a user gesture, so callers invoke this
  * SYNCHRONOUSLY from a click handler: the inner `chrome.sidePanel.open(...)`
  * call is dispatched on the same tick (an async function runs synchronously
- * until its first `await`, and `open()` is called before that), and the
- * returned promise is intentionally not awaited. Failures are swallowed —
- * the panel simply does not open on browsers without `sidePanel`.
+ * until its first `await`, and `open()` is called before that).
+ *
+ * Resolves `false` when the surface is missing or the call rejects — the
+ * caller decides how to surface it (a one-line error under the form); the
+ * promise is intentionally not awaited for the gesture window, which is why
+ * the result arrives asynchronously.
  */
-export function openSidePanel(windowId?: number): void {
-  void (async () => {
-    try {
-      await chrome.sidePanel?.open(
-        windowId === undefined ? {} : { windowId },
-      );
-    } catch {
-      // No user gesture / API unavailable — nothing to recover here.
-    }
-  })();
+export async function openSidePanel(windowId?: number): Promise<boolean> {
+  try {
+    const api = chrome.sidePanel;
+    if (api === undefined || typeof api.open !== "function") return false;
+    await api.open(windowId === undefined ? {} : { windowId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send one `SAVE` intent to the worker and validate the reply. The whole
+ * save (tag defs → create → meta → remember-folder) runs worker-side so a
+ * popup destroyed after the send still completes it (U06). Throws when the
+ * `runtime.sendMessage` surface is missing or the call rejects — the caller
+ * renders `describeError`; a reply that does not match the protocol becomes
+ * an `internal_error` result rather than a silent swallow.
+ */
+export async function sendSaveMessage(
+  message: SaveMessage,
+): Promise<SaveMessageResult> {
+  let runtime;
+  try {
+    runtime = chrome.runtime;
+  } catch {
+    runtime = undefined;
+  }
+  if (runtime?.sendMessage === undefined) {
+    return {
+      ok: false,
+      code: "unavailable",
+      message: "The save could not reach the extension worker.",
+    };
+  }
+  const reply: unknown = await runtime.sendMessage(message);
+  const parsed = SaveMessageResult.safeParse(reply);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: "internal_error",
+      message: "The save did not return a usable answer.",
+    };
+  }
+  return parsed.data;
 }
 
 /**

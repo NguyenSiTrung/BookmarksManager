@@ -27,6 +27,7 @@ import { App as PopupApp } from "../../src/entrypoints/popup/App";
 import { Decision } from "../../src/schemas/decision";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
+import { handleSaveMessage } from "../../src/messages/save";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 
 /**
@@ -77,11 +78,20 @@ beforeEach(async () => {
   });
 
   tabsQuery = vi.fn(async () => [ACTIVE_TAB]);
-  sendMessage = vi.fn(async () => ({
-    ok: true,
-    code: "analyze_ok",
-    result: { sent: true, decisionCount: 0 },
-  }));
+  sendMessage = vi.fn(async (message: unknown) => {
+    // SAVE intents route to the REAL worker handler (U06); everything else
+    // keeps the canned decisions-protocol reply.
+    if ((message as { type?: unknown }).type === "SAVE") {
+      return handleSaveMessage(message, {
+        url: "chrome-extension://test/popup.html",
+      });
+    }
+    return {
+      ok: true,
+      code: "analyze_ok",
+      result: { sent: true, decisionCount: 0 },
+    };
+  });
   vi.stubGlobal("chrome", {
     bookmarks: fake,
     tabs: { query: tabsQuery },
@@ -234,6 +244,16 @@ async function seedPopupBacklog(count: number): Promise<void> {
 }
 
 describe("PopupApp — save suggestions", () => {
+  it("reads suggestion rows through the bookmarkIds index (U06)", async () => {
+    const whereSpy = vi.spyOn(db.decisions, "where");
+    await renderPopup();
+    // Suggestions mounts with the form; the live query keys on the popup's
+    // synthetic id through the multiEntry index, not a table scan.
+    await waitFor(() =>
+      expect(whereSpy).toHaveBeenCalledWith("bookmarkIds"),
+    );
+  });
+
   it("sends nothing on open even with current decisions consent", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     await renderPopup();
@@ -277,8 +297,15 @@ describe("PopupApp — save suggestions", () => {
 
   it("keeps the save form fully interactive while the suggestion request is in flight", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
-    // The worker never answers — the form must still work end to end.
-    sendMessage.mockImplementation(() => new Promise(() => {}));
+    // The suggestion channel never answers — SAVE still routes to the real
+    // worker handler and completes.
+    sendMessage.mockImplementation((message: unknown) =>
+      (message as { type?: unknown }).type === "SAVE"
+        ? handleSaveMessage(message, {
+            url: "chrome-extension://test/popup.html",
+          })
+        : new Promise(() => {}),
+    );
     await renderPopup();
     fireEvent.focus(screen.getByLabelText("New tag name"));
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());

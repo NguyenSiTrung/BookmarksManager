@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CONSENT_VERSION } from "../../consent/records";
 import { db } from "../../db/database";
-import {
-  createTag,
-  getTag,
-  listMeta,
-  listTags,
-  MetaRepoError,
-  patchMeta,
-} from "../../db/meta";
+import { listMeta, listTags } from "../../db/meta";
 import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { normalizeUrl } from "../../duplicates/normalize";
 import { isBlockedScheme } from "../../io/netscape";
@@ -17,7 +10,7 @@ import {
   DecisionMessageResult,
 } from "../../messages/decisions";
 import type { Category } from "../../schemas/bookmark";
-import { tagNameKey } from "../../schemas/meta";
+import { NOTES_MAX_LENGTH, tagNameKey } from "../../schemas/meta";
 import { DECISIONS_CONSENT_SCOPE } from "../../schemas/provider";
 import { getTree, ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../../sync/chrome-bookmarks";
@@ -25,9 +18,7 @@ import {
   DEFAULT_SAVE_FOLDER_ID,
   getLastFolderId,
   resolveSaveFolder,
-  setLastFolderId,
 } from "../../sync/last-folder";
-import { createBookmark, removeTree } from "../../sync/mutations";
 import { flattenTree } from "../../sync/tree";
 import type { BookmarkItem, FlattenedTree } from "../../sync/tree";
 import { registerDbReleaseListener } from "../../security/delete-all";
@@ -51,6 +42,7 @@ import {
   openOptionsPage,
   openSidePanel,
   queryActiveTab,
+  sendSaveMessage,
   setPendingEditId,
 } from "./chrome";
 import { DuplicateNotice, ErrorAlert, SaveSuccess } from "./Notices";
@@ -71,14 +63,16 @@ import { TagField } from "./TagField";
  * root "0" and is preselected to the last-used folder (Other bookmarks when
  * there is none, or when the stored folder no longer exists).
  *
- * Save writes through the guarded mutation service. The URL is checked
- * against the shared `isBlockedScheme` write boundary first (the same
- * blocklist the import writer and the context menu enforce). Tag
- * definitions resolve-or-create per staged chip BEFORE `createBookmark`
- * runs, then one `patchMeta` commits the exact tag list plus
- * category/notes; a failed meta write unwinds the just-created bookmark so
- * a save is all-or-nothing. The chosen folder is then remembered as the
- * last-used default. Zero network.
+ * Save is ONE `SAVE` worker message (U06): the popup's context can be
+ * destroyed on close, so the whole sequence — URL scheme boundary, tag-def
+ * resolve-or-create per staged chip, `createBookmark`, the `patchMeta`
+ * commit of the exact tag list plus category/notes with a bookmark unwind
+ * on failure, and the last-folder preference — runs in the service worker
+ * (`src/messages/save.ts`), which outlives the popup. The URL is still
+ * checked against the shared `isBlockedScheme` write boundary before the
+ * send (same blocklist the worker re-checks at the trust line). A failed
+ * save surfaces the worker's redacted message; a missing/rejecting
+ * `sendMessage` surfaces through `describeError`. Zero network.
  *
  * Duplicate detection is local and deterministic: when the typed URL
  * normalizes (see `src/duplicates/normalize.ts`) to an existing bookmark's
@@ -480,43 +474,24 @@ export function App() {
       if (isBlockedScheme(trimmedUrl)) {
         throw new Error("This URL scheme cannot be saved as a bookmark.");
       }
-      // Resolve-or-create every staged chip's def BEFORE the bookmark
-      // exists: defs are the only step that can fail without the tree, so
-      // ordering them first keeps the save atomic. A tag_exists race just
-      // means the def is already stored.
-      for (const chip of chips) {
-        if ((await getTag(chip.key)) !== undefined) continue;
-        try {
-          await createTag(chip.label);
-        } catch (cause) {
-          if (
-            !(cause instanceof MetaRepoError && cause.code === "tag_exists")
-          ) {
-            throw cause;
-          }
-        }
-      }
-      const created = await createBookmark({
+      // One SAVE message to the worker (U06): the whole sequence — tag def
+      // resolve-or-create, createBookmark, patchMeta with an unwind on
+      // failure, last-folder — runs in the service worker, which outlives
+      // this context. A popup closed mid-save still yields bookmark + meta.
+      const reply = await sendSaveMessage({
+        type: "SAVE",
         parentId: folderId,
-        title: trimmedTitle === "" ? trimmedUrl : trimmedTitle,
+        title: trimmedTitle,
         url: trimmedUrl,
+        tags: chips,
+        category,
+        notes,
       });
-      try {
-        // The exact staged key list (removed chips are dropped) plus
-        // category/notes in one meta write.
-        await patchMeta(created.id, {
-          tags: chips.map((chip) => chip.key),
-          category: category === "" ? null : category,
-          notes: notes === "" ? null : notes,
-          url: trimmedUrl,
-        });
-      } catch (metaCause) {
-        // Nothing should reference a half-saved bookmark — unwind it so the
-        // failed save leaves only the (harmless) tag defs behind.
-        await removeTree(created.id).catch(() => undefined);
-        throw metaCause;
+      if (!reply.ok) {
+        // The worker's message is already redacted-safe.
+        setError(reply.message);
+        return;
       }
-      await setLastFolderId(folderId);
       setSavedFolder(folderLabel(tree, folderId));
       // Keeps the saved state inside Chrome's popup height cap; the Details
       // summary line still lists what was set.
@@ -537,14 +512,24 @@ export function App() {
    * only reads the key after its tree load settles, so the write always lands
    * first in practice.
    */
+  /**
+   * An open failure (no `sidePanel` surface, a rejected `open()`) is
+   * surfaced as a one-line error instead of silently doing nothing (U06).
+   */
+  const reportOpenFailure = (opened: boolean): void => {
+    if (!opened) {
+      setError("Could not open the manager panel in this window.");
+    }
+  };
+
   const handleEditExisting = (): void => {
     if (duplicate === null) return;
     void setPendingEditId(duplicate.id);
-    openSidePanel(windowIdRef.current);
+    void openSidePanel(windowIdRef.current).then(reportOpenFailure);
   };
 
   const handleOpenManager = (): void => {
-    openSidePanel(windowIdRef.current);
+    void openSidePanel(windowIdRef.current).then(reportOpenFailure);
   };
 
   const searchIconButtonRef = useRef<HTMLButtonElement>(null);
@@ -564,7 +549,9 @@ export function App() {
     resultUrl: string,
     disposition: OpenUrlDisposition,
   ): void => {
-    void openBookmarkUrl(resultUrl, disposition);
+    void openBookmarkUrl(resultUrl, disposition).then((result) => {
+      if (!result.ok) setError(result.message);
+    });
   };
 
   const saved = savedFolder !== null;
@@ -814,6 +801,10 @@ export function App() {
                     <textarea
                       id="popup-notes"
                       value={notes}
+                      // BookmarkMeta.notes is capped at NOTES_MAX_LENGTH —
+                      // bound typing so a long paste reaches Save as valid
+                      // input instead of a malformed message.
+                      maxLength={NOTES_MAX_LENGTH}
                       onChange={(event) => setNotes(event.target.value)}
                       rows={2}
                       className={cn(fieldClass, "resize-none py-2")}

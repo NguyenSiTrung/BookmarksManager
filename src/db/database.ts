@@ -212,6 +212,11 @@ export class BookmarksManagerDB extends Dexie {
       importStates: "id,status,updatedAt",
       importQueues: "id",
     });
+    this.version(9).stores({
+      // U06: `*bookmarkIds` multiEntry so the popup's suggestion rows read
+      // via an index lookup instead of scanning the reviewable set.
+      decisions: "id,status,createdAt,*bookmarkIds",
+    });
   }
 }
 

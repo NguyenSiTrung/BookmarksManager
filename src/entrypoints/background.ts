@@ -63,6 +63,7 @@ import { handleLlmProviderMessage } from "../messages/llm-provider";
 import { handleLlmFeatureMessage } from "../messages/llm-features";
 import { handleSummarizeMessage } from "../messages/summaries";
 import { handleRestructureMessage } from "../messages/restructure";
+import { handleSaveMessage } from "../messages/save";
 import { createRestructureAssigner } from "../restructure/assign";
 import { handleProviderMessage } from "../messages/provider";
 import {
@@ -698,8 +699,16 @@ export default defineBackground(() => {
                       sendResponse(restructureResponse);
                       return;
                     }
-                    void handleProviderMessage(message, sender).then(
-                      sendResponse,
+                    void handleSaveMessage(message, sender).then(
+                      (saveResponse) => {
+                        if (saveResponse !== undefined) {
+                          sendResponse(saveResponse);
+                          return;
+                        }
+                        void handleProviderMessage(message, sender).then(
+                          sendResponse,
+                        );
+                      },
                     );
                   });
                 },

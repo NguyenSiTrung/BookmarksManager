@@ -57,6 +57,9 @@ export function TagField({
       <input
         ref={inputRef}
         aria-label="New tag name"
+        // TagDef.name is capped at 64 chars — bound typing at the source so a
+        // long paste never reaches the worker as a malformed message.
+        maxLength={64}
         placeholder={chips.length === 0 ? "Add tags…" : ""}
         value={input}
         disabled={disabled}

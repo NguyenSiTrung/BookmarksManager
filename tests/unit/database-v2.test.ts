@@ -78,11 +78,11 @@ describe("BookmarksManagerDB v1 → v3 migration", () => {
     db.close();
   });
 
-  it("opens at version 8 with all twenty tables declared", () => {
-    expect(db.verno).toBe(8);
-    // Dexie stores version × 10 natively; 70 proves the class upgraded the
+  it("opens at version 9 with all twenty tables declared", () => {
+    expect(db.verno).toBe(9);
+    // Dexie stores version × 10 natively; 90 proves the class upgraded the
     // existing v1 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(80);
+    expect(db.backendDB()?.version).toBe(90);
     expect(db.tables.map((table) => table.name).sort()).toEqual([
       "audit",
       "bookmarkMeta",

@@ -26,6 +26,7 @@ import {
   setPendingEditId,
 } from "../../src/entrypoints/popup/chrome";
 import { App as SidePanelApp } from "../../src/entrypoints/sidepanel/App";
+import { handleSaveMessage } from "../../src/messages/save";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 
@@ -81,6 +82,12 @@ let storageListeners: ((
 let tabsQuery: ReturnType<typeof vi.fn>;
 let sidePanelOpen: ReturnType<typeof vi.fn>;
 let openOptionsPage: ReturnType<typeof vi.fn>;
+/**
+ * The popup's `SAVE` send is routed to the REAL `handleSaveMessage` — the
+ * same Dexie/bookmarks surfaces the worker would use — with a trusted
+ * extension sender url (matches the `chrome.runtime.getURL` stub's prefix).
+ */
+let sendMessage: ReturnType<typeof vi.fn>;
 
 /** Emit one `chrome.storage.onChanged` event, as Chrome does after a write. */
 function emitStorageChange(
@@ -158,6 +165,11 @@ beforeEach(async () => {
   tabsQuery = vi.fn(async () => [ACTIVE_TAB]);
   sidePanelOpen = vi.fn(async () => undefined);
   openOptionsPage = vi.fn();
+  sendMessage = vi.fn(async (message: unknown) =>
+    handleSaveMessage(message, {
+      url: "chrome-extension://test/popup.html",
+    }),
+  );
   vi.stubGlobal("chrome", {
     bookmarks: fake,
     tabs: { query: tabsQuery },
@@ -187,6 +199,7 @@ beforeEach(async () => {
     runtime: {
       getURL: (path: string) => `chrome-extension://test/${path}`,
       openOptionsPage,
+      sendMessage,
     },
   });
   stubElementRects();
@@ -357,7 +370,9 @@ describe("PopupApp — save", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain("storage gone");
+    // The worker redacts a code-less throw — the alert carries the safe
+    // protocol message, not the raw error string.
+    expect(alert.textContent).toContain("nothing was written");
     const children = await fake.getChildren("2");
     expect(
       children.filter((node) => node.url === FRESH_TAB.url),
@@ -366,6 +381,82 @@ describe("PopupApp — save", () => {
     // The resolved tag def stays — it is not tree state and costs nothing.
     expect(await getTag("urgent")).toBeDefined();
     putSpy.mockRestore();
+  });
+});
+
+describe("PopupApp — worker-side save (U06)", () => {
+  it("completes the save even when the popup is destroyed right after send", async () => {
+    await renderPopupForFreshTab();
+    // Stage a tag so the meta write is observable (an all-empty patch is
+    // legitimately absent under the lazy-row rule).
+    fireEvent.change(screen.getByLabelText("New tag name"), {
+      target: { value: "Urgent" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add tag" }));
+    // Slow the create so the bookmark+meta writes are observably in flight
+    // when the popup unmounts — the whole sequence now lives worker-side.
+    const origCreate = fake.create.bind(fake);
+    vi.spyOn(fake, "create").mockImplementation(async (node) => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return origCreate(node);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    // The popup context is destroyed (popup closed) mid-flight.
+    cleanup();
+
+    await waitFor(async () => {
+      const children = await fake.getChildren("2");
+      const created = children.find((node) => node.url === FRESH_TAB.url);
+      expect(created).toBeDefined();
+      if (created === undefined) return;
+      // Meta landed too — no half-saved bookmark behind a dead context.
+      await expect(getMeta(created.id)).resolves.toMatchObject({
+        tags: ["urgent"],
+        url: FRESH_TAB.url,
+      });
+    });
+    expect((await db.metadata.get("prefs:lastFolderId"))?.value).toBe("2");
+  });
+
+  it("surfaces a worker failure reply as the form error", async () => {
+    await renderPopupForFreshTab();
+    sendMessage.mockResolvedValueOnce({
+      ok: false,
+      code: "blocked_scheme",
+      message: "worker refused the scheme",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("worker refused the scheme");
+    expect(screen.queryByTestId("save-confirmation")).toBeNull();
+  });
+
+  it("surfaces a rejected sendMessage and a malformed reply", async () => {
+    await renderPopupForFreshTab();
+    sendMessage.mockRejectedValueOnce(new Error("channel gone"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "channel gone",
+    );
+
+    sendMessage.mockResolvedValueOnce({ ok: "maybe" });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "did not return a usable answer",
+      ),
+    );
+  });
+
+  it("surfaces an openSidePanel failure on Open manager", async () => {
+    await renderPopup();
+    sidePanelOpen.mockRejectedValueOnce(new Error("no gesture"));
+    fireEvent.click(screen.getByRole("button", { name: "Open manager" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Could not open the manager panel");
   });
 });
 
