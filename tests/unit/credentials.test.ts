@@ -295,7 +295,9 @@ interface MutableLocalStub {
 
 function chromeLocal(): MutableLocalStub {
   return (
-    globalThis as { chrome: { storage: { local: MutableLocalStub } } }
+    globalThis as unknown as {
+      chrome: { storage: { local: MutableLocalStub } };
+    }
   ).chrome.storage.local;
 }
 

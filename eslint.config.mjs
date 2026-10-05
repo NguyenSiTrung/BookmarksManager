@@ -4,8 +4,22 @@ import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
-const fetchRestrictionMessage =
-  "All outbound requests must go through src/net/; fetch is restricted in app code.";
+const egressRestrictionMessage =
+  "All outbound requests must go through src/net/; direct egress APIs are restricted in app code.";
+
+/**
+ * Egress-capable web APIs banned outside `src/net/` (H03). Bare globals are
+ * covered by `no-restricted-globals`; the same names are re-banned as
+ * properties of `globalThis`/`self`/`window` because member access sidesteps
+ * the globals rule. `navigator.sendBeacon` only exists as a property.
+ */
+const restrictedEgressGlobals = [
+  "fetch",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
+  "importScripts",
+];
 
 export default tseslint.config(
   {
@@ -51,24 +65,35 @@ export default tseslint.config(
     rules: {
       "no-restricted-globals": [
         "error",
-        { name: "fetch", message: fetchRestrictionMessage },
+        ...restrictedEgressGlobals.map((name) => ({
+          name,
+          message: egressRestrictionMessage,
+        })),
       ],
       "no-restricted-properties": [
         "error",
+        ...restrictedEgressGlobals.flatMap((property) =>
+          ["globalThis", "self", "window"].map((object) => ({
+            object,
+            property,
+            message: egressRestrictionMessage,
+          })),
+        ),
         {
-          object: "globalThis",
-          property: "fetch",
-          message: fetchRestrictionMessage,
+          object: "navigator",
+          property: "sendBeacon",
+          message: egressRestrictionMessage,
         },
+      ],
+      // `no-restricted-properties` needs a bare-identifier object, so
+      // `window.navigator.sendBeacon(...)` would slip through. A syntax
+      // selector bans sendBeacon calls on any `*.navigator` member chain.
+      "no-restricted-syntax": [
+        "error",
         {
-          object: "self",
-          property: "fetch",
-          message: fetchRestrictionMessage,
-        },
-        {
-          object: "window",
-          property: "fetch",
-          message: fetchRestrictionMessage,
+          selector:
+            "CallExpression[callee.type='MemberExpression'][callee.property.name='sendBeacon'][callee.object.type='MemberExpression'][callee.object.property.name='navigator']",
+          message: egressRestrictionMessage,
         },
       ],
     },
@@ -78,6 +103,7 @@ export default tseslint.config(
     rules: {
       "no-restricted-globals": "off",
       "no-restricted-properties": "off",
+      "no-restricted-syntax": "off",
     },
   },
 );
