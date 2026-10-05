@@ -15,6 +15,7 @@ import {
   approveDecision,
   bulkApprove,
   rejectDecision,
+  revertBatch,
   revertDecision,
 } from "../../src/decisions/apply";
 import { persistDecision } from "../../src/decisions/store";
@@ -608,6 +609,44 @@ describe("apply rollback and compensation", () => {
 // ---------------------------------------------------------------------------
 // bulk approve
 // ---------------------------------------------------------------------------
+
+describe("revertBatch", () => {
+  it("reverts each row independently, in reverse order, one failure does not block the rest", async () => {
+    const first = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["one"] }),
+    );
+    const second = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-b"], tags: ["two"] }),
+    );
+    const pending = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-c"], tags: ["three"] }),
+    );
+    const applied = await bulkApprove([first.id, second.id]);
+    expect(applied.applied).toHaveLength(2);
+
+    const result = await revertBatch([first.id, pending.id, second.id]);
+    expect(result.ok).toBe(true);
+    // Reverse order: second's row reverts first, then first; the pending
+    // row reports illegal_transition without blocking either.
+    expect(result.reverted).toEqual([second.id, first.id]);
+    expect(result.failed).toEqual([
+      expect.objectContaining({ id: pending.id, code: "illegal_transition" }),
+    ]);
+    expect((await getMeta("bm-a"))?.tags ?? []).toEqual([]);
+    expect((await getMeta("bm-b"))?.tags ?? []).toEqual([]);
+    expect((await db.decisions.get(pending.id))?.status).toBe("pending");
+  });
+
+  it("collapses duplicate ids and reports an empty result for no input", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["x"] }),
+    );
+    await approveDecision(d.id);
+    const result = await revertBatch([d.id, d.id]);
+    expect(result.reverted).toHaveLength(1);
+    expect((await revertBatch([])).reverted).toEqual([]);
+  });
+});
 
 describe("bulkApprove", () => {
   it("applies each row independently — one stale row does not corrupt the rest", async () => {

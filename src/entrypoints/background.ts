@@ -5,6 +5,7 @@ import {
   approveDecision,
   bulkApprove,
   rejectDecision,
+  revertBatch,
   revertDecision,
 } from "../decisions/apply";
 import { normalizeBlocklistEntry } from "../decisions/minimize";
@@ -486,6 +487,7 @@ export function productionHandlers(
     reject: (id) => rejectDecision(id),
     revert: (id) => revertDecision(id),
     bulkApprove: (ids) => bulkApprove([...ids]),
+    revertBatch: (ids) => revertBatch([...ids]),
     async startJob(kind, bookmarkIds) {
       // Refuse BEFORE enqueueing: `runPersistedJob` returns silently when
       // no provider is active — right for a restart resume, wrong for an

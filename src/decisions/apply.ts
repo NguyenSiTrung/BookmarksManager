@@ -656,3 +656,50 @@ export async function bulkApprove(
   }
   return { ok: true, applied, failed };
 }
+
+
+/** Bulk-revert outcome: the rows reverted and the rows that failed. */
+export interface RevertBatchResult {
+  ok: true;
+  /** Ids of rows whose changes were reverted (replay ran). */
+  reverted: string[];
+  failed: BulkApproveFailure[];
+}
+
+/**
+ * Revert each id in turn, per-row atomic like {@link bulkApprove}: one
+ * row's failure (illegal transition, a snapshot already consumed, a
+ * mutation error) is captured in `failed` and never blocks the others.
+ * Ids are processed in REVERSE order — a batch's last-applied change
+ * reverts first, the same order a human walks the list back.
+ *
+ * A `state_unrecorded` row counts as reverted here, not failed: its undo
+ * replay ALREADY ran (the tree change is undone) and only the status
+ * write failed — reporting it as failed would arm an Undo retry the
+ * store must refuse on a consumed snapshot. This mirrors the single-row
+ * toast's treatment of the same code.
+ */
+export async function revertBatch(
+  ids: readonly string[],
+  actor: AuditActor = "user",
+): Promise<RevertBatchResult> {
+  const reverted: string[] = [];
+  const failed: BulkApproveFailure[] = [];
+  for (const id of [...new Set(ids)].reverse()) {
+    try {
+      reverted.push((await revertDecision(id, actor)).id);
+    } catch (cause) {
+      const error = toApplyError(cause);
+      if (error.code === "state_unrecorded") {
+        // The replay ran; only the row's status write failed. Count it as
+        // reverted so a batch Undo never re-arms a consumed snapshot —
+        // even if the row then vanished mid-batch, the tree state is
+        // still reverted.
+        reverted.push(id);
+        continue;
+      }
+      failed.push({ id, code: error.code, message: error.message });
+    }
+  }
+  return { ok: true, reverted, failed };
+}

@@ -19,6 +19,14 @@ import {
   LlmFeatureMessageResult,
 } from "../../messages/llm-features";
 import { CostConfirmationDialog } from "../../ui/components/CostConfirmationDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../ui/components/dialog";
 import { FeatureConsentDialog } from "../../ui/components/FeatureConsentDialog";
 import type { FeatureConsentApproval, FeatureConsentDisclosure } from "../../schemas/feature-consent";
 import type { Decision } from "../../schemas/decision";
@@ -62,8 +70,13 @@ import { useToast } from "./UndoToast";
  *   toast and then arms it through `onApplied`: the toast's Undo sends
  *   `REVERT_DECISION` for that decision (the worker replays the snapshot it
  *   recorded on the row) instead of popping the generic snapshot stack. A
- *   bulk approve applies many rows at once, so its report is a count with
- *   no Undo — reverting one row of a bulk apply would mislead.
+ *   bulk approve goes through the same door with `REVERT_BATCH` over the
+ *   applied ids — every row replays its own snapshot, so the batch undoes
+ *   whole without an aggregate snapshot kind.
+ * - **Bulk approve is confirmed first (U01).** "Approve all/selected"
+ *   opens a count + per-kind dialog; only its Apply dispatches
+ *   `BULK_APPROVE`. Esc/overlay/X/Cancel all close it as a cancel —
+ *   nothing applies.
  * - **Stale rows are marked, not hidden.** A decision whose bookmark id no
  *   longer resolves in the live tree shows a "Stale" affordance; the
  *   worker's own staleness guard stays the authority, so Approve remains
@@ -339,6 +352,19 @@ const secondaryButtonClass =
   "focus-visible:ring-2 focus-visible:ring-ring " +
   "disabled:cursor-not-allowed disabled:opacity-50";
 
+/** Dialog confirm — same weight/shape as CostConfirmationDialog's. */
+const primaryButtonClass =
+  "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
+  "text-primary-foreground hover:bg-primary/90 " +
+  "focus-visible:ring-2 focus-visible:ring-ring " +
+  "focus-visible:outline-hidden disabled:opacity-50";
+
+/** Dialog cancel — mirrors CostConfirmationDialog's bordered button. */
+const dialogSecondaryClass =
+  "rounded-md border border-input px-4 py-2 text-sm font-medium " +
+  "hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring " +
+  "focus-visible:outline-hidden disabled:opacity-50";
+
 function displayTitle(title: string, url: string): string {
   return title === "" ? url : title;
 }
@@ -421,12 +447,13 @@ export interface ReviewViewProps {
   /** Live flattened tree — bookmark titles and folder names resolve here. */
   tree: FlattenedTree;
   /**
-   * Called after a decision successfully applied: arms the shell's undo
-   * toast so its Undo sends `REVERT_DECISION` for this id. Optional —
-   * standalone renders still get the undoable toast, and the ambient Undo
-   * handler decides what runs.
+   * Called after decisions successfully applied: arms the shell's undo
+   * toast so its Undo sends `REVERT_DECISION` (one id) or `REVERT_BATCH`
+   * (a bulk approve's applied ids). Optional — standalone renders still
+   * get the undoable toast, and the ambient Undo handler decides what
+   * runs.
    */
-  onApplied?: (decisionId: string) => void;
+  onApplied?: (decisionIds: readonly string[]) => void;
   /**
    * Shown when the queue is empty. Defaults to the plain "No pending
    * suggestions" line.
@@ -596,7 +623,7 @@ export function ReviewView({
       // Show first, then arm: the shell disarms any stale revert target on
       // every new toast, so `onApplied` must run after the toast is up.
       toast.showToast({ message: "Applied the suggestion.", undoable: true });
-      onApplied?.(row.id);
+      onApplied?.([row.id]);
     } else {
       toast.showToast({ message: `Suggestion moved to “${status}”.` });
     }
@@ -678,15 +705,50 @@ export function ReviewView({
     void explain(row.id, false);
   };
 
-  const handleBulkApprove = async (): Promise<void> => {
+  /**
+   * U01: Approve all/selected never sends directly — it opens the batch
+   * confirm (count + per-kind breakdown) first. `bulkConfirm` holds the
+   * frozen id list + label rows; Confirm dispatches the single
+   * BULK_APPROVE, Cancel (or Esc/overlay close) applies nothing.
+   */
+  const [bulkConfirm, setBulkConfirm] = useState<{
+    ids: string[];
+    kinds: [string, number][];
+  } | null>(null);
+  /** Synchronous re-entrancy guard for the confirm's dispatch. */
+  const bulkBusyRef = useRef(false);
+
+  const handleBulkApprove = (): void => {
     const ids =
       selectedIds.size > 0 ? [...selectedIds] : rows.map((row) => row.id);
     if (ids.length === 0) return;
+    const wanted = new Set(ids);
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      if (!wanted.has(row.id)) continue;
+      counts.set(row.kind, (counts.get(row.kind) ?? 0) + 1);
+    }
+    setBulkConfirm({ ids, kinds: [...counts.entries()] });
+  };
+
+  const handleBulkConfirm = async (): Promise<void> => {
+    if (bulkConfirm === null || bulkBusyRef.current) return;
+    bulkBusyRef.current = true;
+    const ids = bulkConfirm.ids;
+    setBulkConfirm(null);
     setBulkBusy(true);
+    try {
+      await dispatchBulkApprove(ids);
+    } finally {
+      bulkBusyRef.current = false;
+      setBulkBusy(false);
+    }
+  };
+
+  const dispatchBulkApprove = async (ids: readonly string[]): Promise<void> => {
     const result = await sendDecisionMessage(
-      DecisionMessage.parse({ type: "BULK_APPROVE", decisionIds: ids }),
+      DecisionMessage.parse({ type: "BULK_APPROVE", decisionIds: [...ids] }),
     );
-    setBulkBusy(false);
     if (!result.ok) {
       toast.showToast({ message: result.message, error: true });
       return;
@@ -705,13 +767,19 @@ export function ReviewView({
         return next;
       });
     }
+    // U01: the batch gets an Undo too — the shell reverts every applied
+    // row through REVERT_BATCH (each row replays its own recorded
+    // snapshot). Partial failure still arms the applied subset: Undo
+    // reverts what was applied, not what failed.
     toast.showToast({
       message:
         failed.length === 0
           ? `Applied ${applied} suggestion${applied === 1 ? "" : "s"}.`
           : `Applied ${applied} of ${ids.length} — ${failed.length} failed.`,
       error: failed.length > 0,
+      undoable: applied > 0,
     });
+    if (applied > 0) onApplied?.(result.applied);
   };
 
   const handleListKeyDown = (
@@ -777,7 +845,7 @@ export function ReviewView({
         <button
           type="button"
           disabled={bulkBusy || count === 0}
-          onClick={() => void handleBulkApprove()}
+          onClick={handleBulkApprove}
           className={secondaryButtonClass}
         >
           {approveLabel}
@@ -847,9 +915,63 @@ export function ReviewView({
           }}
         />
       )}
+      <Dialog
+        open={bulkConfirm !== null}
+        onOpenChange={(next) => {
+          // Any close path (Esc, overlay, X) is a cancel — nothing applies.
+          if (!next) setBulkConfirm(null);
+        }}
+      >
+        <DialogContent showCloseButton={false} data-testid="bulk-approve-confirm">
+          <DialogHeader>
+            <DialogTitle>
+              Apply {bulkConfirm?.ids.length ?? 0} suggestion
+              {(bulkConfirm?.ids.length ?? 0) === 1 ? "" : "s"}?
+            </DialogTitle>
+            <DialogDescription>
+              Every suggestion below applies at once. You can undo the whole
+              batch afterwards.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1 text-sm text-muted-foreground">
+            {bulkConfirm?.kinds.map(([kind, count]) => (
+              <li key={kind}>
+                {count} × {KIND_LABELS[kind] ?? kind}
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <button
+              type="button"
+              className={dialogSecondaryClass}
+              onClick={() => setBulkConfirm(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={primaryButtonClass}
+              onClick={() => void handleBulkConfirm()}
+            >
+              Apply all
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+/** Display labels for the batch confirm's per-kind breakdown (U01). */
+const KIND_LABELS: Record<string, string> = {
+  add_tags: "add tags",
+  set_category: "set category",
+  move: "move",
+  mark_dead: "mark dead",
+  merge_duplicates: "merge duplicates",
+  rename: "rename",
+  create_folder: "create folder",
+};
 
 // ---------------------------------------------------------------------------
 // One decision row

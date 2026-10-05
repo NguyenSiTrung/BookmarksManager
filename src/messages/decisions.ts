@@ -1,4 +1,4 @@
-import type { BulkApproveResult } from "../decisions/apply";
+import type { BulkApproveResult, RevertBatchResult } from "../decisions/apply";
 import type {
   AnalysisBookmark,
   AnalyzeBookmarkResult,
@@ -54,6 +54,7 @@ export const DECISION_MESSAGE_TYPES = [
   "APPROVE_DECISION",
   "REJECT_DECISION",
   "REVERT_DECISION",
+  "REVERT_BATCH",
   "BULK_APPROVE",
   "GET_SETTINGS",
   "SET_SETTINGS",
@@ -98,6 +99,10 @@ export const DecisionMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("APPROVE_DECISION"), decisionId: z.string().min(1) }),
   z.object({ type: z.literal("REJECT_DECISION"), decisionId: z.string().min(1) }),
   z.object({ type: z.literal("REVERT_DECISION"), decisionId: z.string().min(1) }),
+  z.object({
+    type: z.literal("REVERT_BATCH"),
+    decisionIds: z.array(z.string().min(1)).min(1),
+  }),
   z.object({
     type: z.literal("BULK_APPROVE"),
     decisionIds: z.array(z.string().min(1)).min(1),
@@ -198,6 +203,12 @@ export const DecisionMessageResult = z.union([
   }),
   z.object({
     ok: z.literal(true),
+    code: z.literal("bulk_reverted"),
+    reverted: z.array(z.string()),
+    failed: z.array(BulkApproveFailureSummary),
+  }),
+  z.object({
+    ok: z.literal(true),
     code: z.literal("settings_ok"),
     settings: DecisionSettings,
     blocklist: z.array(z.string()),
@@ -239,6 +250,7 @@ export interface DecisionsHandlers {
   reject(id: string): Promise<DecisionRow>;
   revert(id: string): Promise<DecisionRow>;
   bulkApprove(ids: readonly string[]): Promise<BulkApproveResult>;
+  revertBatch(ids: readonly string[]): Promise<RevertBatchResult>;
   /** Enqueue a job and start it running in the background. */
   startJob(
     kind: JobDocument["kind"],
@@ -412,6 +424,19 @@ async function dispatch(
         ok: true,
         code: "bulk_ok",
         applied: result.applied.map((row) => row.id),
+        failed: result.failed.map((entry) => ({
+          id: entry.id,
+          code: entry.code,
+          message: entry.message,
+        })),
+      };
+    }
+    case "REVERT_BATCH": {
+      const result = await handlers.revertBatch(message.decisionIds);
+      return {
+        ok: true,
+        code: "bulk_reverted",
+        reverted: result.reverted,
         failed: result.failed.map((entry) => ({
           id: entry.id,
           code: entry.code,

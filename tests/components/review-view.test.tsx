@@ -183,6 +183,23 @@ async function defaultWorker(raw: unknown): Promise<DecisionMessageResult> {
       }
       return { ok: true, code: "bulk_ok", applied, failed };
     }
+    case "REVERT_BATCH": {
+      const reverted: string[] = [];
+      const failed: { id: string; code: string; message: string }[] = [];
+      for (const id of [...(message.decisionIds ?? [])].reverse()) {
+        try {
+          await transitionStatus(id, "reverted", "user");
+          reverted.push(id);
+        } catch (cause) {
+          failed.push({
+            id,
+            code: "api",
+            message: cause instanceof Error ? cause.message : String(cause),
+          });
+        }
+      }
+      return { ok: true, code: "bulk_reverted", reverted, failed };
+    }
     default:
       return {
         ok: false,
@@ -522,6 +539,8 @@ describe("Review view wiring", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /Approve selected/ }),
     );
+    expect(await screen.findByTestId("bulk-approve-confirm")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Apply all$/ }));
 
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
@@ -543,6 +562,8 @@ describe("Review view wiring", () => {
     await openReviewView();
 
     fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
+    expect(await screen.findByTestId("bulk-approve-confirm")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Apply all$/ }));
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
         type: "BULK_APPROVE",
@@ -586,6 +607,8 @@ describe("Review view wiring", () => {
     fireEvent.click(
       screen.getByRole("button", { name: /Approve selected/ }),
     );
+    expect(await screen.findByTestId("bulk-approve-confirm")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Apply all$/ }));
 
     await waitFor(() =>
       expect(toast().textContent).toMatch(/1 failed/i),
@@ -686,6 +709,8 @@ describe("Non-actionable pending decisions", () => {
 
     await openReviewView();
     fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
+    expect(await screen.findByTestId("bulk-approve-confirm")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Apply all$/ }));
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
         type: "BULK_APPROVE",
@@ -694,6 +719,107 @@ describe("Non-actionable pending decisions", () => {
     });
     // The placeholder row is never touched.
     expect((await db.decisions.get(D_UNSAVED))?.status).toBe("pending");
+  });
+});
+
+describe("U01 — confirmed, undoable Approve all", () => {
+  it("Approve all opens a confirm showing count and kinds; cancel applies nothing", async () => {
+    await seedDecisions();
+    await renderApp();
+    await openReviewView();
+
+    fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
+    const dialog = await screen.findByTestId("bulk-approve-confirm");
+    // Count in the title, per-kind breakdown in the body.
+    expect(dialog.textContent).toMatch(/Apply 4 suggestions/);
+    expect(dialog.textContent).toContain("add tags");
+    expect(dialog.textContent).toContain("set category");
+    expect(dialog.textContent).toContain("move");
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "BULK_APPROVE" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/ }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("bulk-approve-confirm")).toBeNull(),
+    );
+    expect(sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "BULK_APPROVE" }),
+    );
+    // Nothing applied.
+    for (const id of [D_TAGS, D_CATEGORY, D_MOVE, D_STALE]) {
+      expect((await db.decisions.get(id))?.status).toBe("pending");
+    }
+  });
+
+  it("confirming applies under one undoable toast; Undo sends REVERT_BATCH for the batch", async () => {
+    await seedDecisions();
+    await renderApp();
+    await openReviewView();
+
+    fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Apply all$/ }),
+    );
+    await waitFor(() =>
+      expect(toast().textContent).toMatch(/applied 4/i),
+    );
+    // The batch toast carries an Undo affordance.
+    const undoButton = await screen.findByRole("button", {
+      name: /^undo$/i,
+    });
+    fireEvent.click(undoButton);
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "REVERT_BATCH",
+        decisionIds: [D_TAGS, D_CATEGORY, D_MOVE, D_STALE],
+      });
+    });
+    await waitFor(() =>
+      expect(toast().textContent).toMatch(/reverted 4/i),
+    );
+    for (const id of [D_TAGS, D_CATEGORY, D_MOVE, D_STALE]) {
+      expect((await db.decisions.get(id))?.status).toBe("reverted");
+    }
+  });
+
+  it("a partial batch revert re-arms Undo for the still-applied rows", async () => {
+    await seedDecisions();
+    await renderApp();
+    await openReviewView();
+
+    fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^Apply all$/ }),
+    );
+    await waitFor(() =>
+      expect(toast().textContent).toMatch(/applied 4/i),
+    );
+
+    // Revert one row of the batch first — its status leaves `applied`,
+    // so the batch Undo must fail on it while the other three revert.
+    await sendMessage({ type: "REVERT_DECISION", decisionId: D_STALE });
+    const undoButton = await screen.findByRole("button", {
+      name: /^undo$/i,
+    });
+    fireEvent.click(undoButton);
+    await waitFor(() =>
+      expect(toast().textContent).toMatch(/Reverted 3 of 4 — 1 failed/i),
+    );
+    // The still-applied rows are re-armed: a second Undo retries just
+    // them — the already-reverted rows are not re-sent. One id left, so
+    // the retry goes through the single-decision REVERT_DECISION path.
+    const calls = sendMessage.mock.calls.filter(
+      ([raw]) =>
+        (raw as { type?: string }).type === "REVERT_BATCH",
+    );
+    expect(calls.length).toBe(1);
+    fireEvent.click(await screen.findByRole("button", { name: /^undo$/i }));
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "REVERT_DECISION",
+        decisionId: D_STALE,
+      });
+    });
   });
 });
 

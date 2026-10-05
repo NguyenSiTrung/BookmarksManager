@@ -356,15 +356,17 @@ export function App(props?: {
   // against, a newer toast).
   /**
    * When the visible toast is an applied-decision toast, this ref holds the
-   * decision id its Undo button reverts via REVERT_DECISION; `null` means
-   * the toast belongs to a snapshot-stack action (delete/move/tag ops) and
-   * Undo goes through the controller's `undoLatest`. `reportToast` disarms
-   * it on every new toast — ReviewView arms it via `armDecisionRevert`
-   * AFTER its own toast is up (the arming must follow the disarm) — and it
-   * is PRESERVED until the revert settles, so a second activation resolves
-   * to the same decision instead of the snapshot stack.
+   * decision ids its Undo button reverts — one id sends REVERT_DECISION,
+   * a bulk approve's applied ids send REVERT_BATCH (each row replays its
+   * own recorded snapshot). `null` means the toast belongs to a
+   * snapshot-stack action (delete/move/tag ops) and Undo goes through the
+   * controller's `undoLatest`. `reportToast` disarms it on every new
+   * toast — ReviewView arms it via `armDecisionRevert` AFTER its own
+   * toast is up (the arming must follow the disarm) — and it is
+   * PRESERVED until the revert settles, so a second activation resolves
+   * to the same target instead of the snapshot stack.
    */
-  const decisionRevertRef = useRef<string | null>(null);
+  const decisionRevertRef = useRef<readonly string[] | null>(null);
   const decisionUndoBusyRef = useRef(false);
   const toastTokenRef = useRef(0);
   /** Mirrors the ref for the Undo control's disabled/busy state. */
@@ -392,8 +394,8 @@ export function App(props?: {
     },
     [retireCurrentToast, toastCtl],
   );
-  const armDecisionRevert = useCallback((decisionId: string): void => {
-    decisionRevertRef.current = decisionId;
+  const armDecisionRevert = useCallback((decisionIds: readonly string[]): void => {
+    decisionRevertRef.current = decisionIds;
   }, []);
   /**
    * The toast's Undo button, dispatched: a decision toast sends
@@ -418,8 +420,8 @@ export function App(props?: {
    */
   const handleToastUndo = useCallback(async (): Promise<void> => {
     if (decisionUndoBusyRef.current) return;
-    const decisionId = decisionRevertRef.current;
-    if (decisionId === null) {
+    const armed = decisionRevertRef.current;
+    if (armed === null) {
       await toastCtl.undo();
       return;
     }
@@ -427,6 +429,49 @@ export function App(props?: {
     setDecisionUndoBusy(true);
     const token = toastTokenRef.current;
     try {
+      if (armed.length > 1) {
+        // U01: a bulk approve's Undo reverts every applied row — each
+        // replays its own recorded snapshot, so the batch undoes whole
+        // even though the rows carry heterogeneous kinds.
+        const result = await sendDecisionMessage(
+          DecisionMessage.parse({
+            type: "REVERT_BATCH",
+            decisionIds: [...armed],
+          }),
+        );
+        if (toastTokenRef.current !== token) return;
+        if (result.ok && result.code === "bulk_reverted") {
+          const revertedCount = result.reverted.length;
+          const failedCount = result.failed.length;
+          if (failedCount === 0) {
+            reportToast({
+              message: `Reverted ${revertedCount} suggestion${revertedCount === 1 ? "" : "s"}.`,
+            });
+            return;
+          }
+          // Partial: the still-applied rows stay undoable — Undo retries
+          // just them (a `state_unrecorded` row was counted as reverted
+          // worker-side, so a retry never re-arms a consumed snapshot).
+          const retryIds = result.failed.map((entry) => entry.id);
+          reportToast({
+            message:
+              revertedCount === 0
+                ? `Undo failed — ${result.failed[0]?.message ?? "unknown error"}.`
+                : `Reverted ${revertedCount} of ${armed.length} — ${failedCount} failed.`,
+            error: true,
+            undoable: true,
+          });
+          armDecisionRevert(retryIds);
+          return;
+        }
+        const message = result.ok
+          ? "The worker returned an unexpected reply."
+          : result.message;
+        reportToast({ message, error: true, undoable: true });
+        armDecisionRevert(armed);
+        return;
+      }
+      const decisionId = armed[0] ?? "";
       const result = await sendDecisionMessage(
         DecisionMessage.parse({ type: "REVERT_DECISION", decisionId }),
       );
@@ -457,7 +502,7 @@ export function App(props?: {
         error: true,
         undoable: true,
       });
-      armDecisionRevert(decisionId);
+      armDecisionRevert([decisionId]);
     } finally {
       decisionUndoBusyRef.current = false;
       setDecisionUndoBusy(false);

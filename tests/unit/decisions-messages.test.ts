@@ -6,7 +6,7 @@ import { enqueueJob, pauseJob, setJobStatus } from "../../src/jobs/queue";
 import type { AnalysisBookmark, AnalyzeBookmarkResult } from "../../src/decisions/pipeline";
 import { DecisionSettings } from "../../src/decisions/policy";
 import type { RerankSearchResult } from "../../src/decisions/rerank";
-import type { BulkApproveResult } from "../../src/decisions/apply";
+import type { BulkApproveResult, RevertBatchResult } from "../../src/decisions/apply";
 import type { DecisionRow } from "../../src/decisions/store";
 import {
   DECISION_MESSAGE_TYPES,
@@ -98,6 +98,7 @@ interface Recorded {
   reject: string[];
   revert: string[];
   bulkApprove: (readonly string[])[];
+  revertBatch: (readonly string[])[];
   startJob: { kind: string; ids: readonly string[] }[];
   pause: string[];
   resume: string[];
@@ -119,6 +120,7 @@ function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
     reject: [],
     revert: [],
     bulkApprove: [],
+    revertBatch: [],
     startJob: [],
     pause: [],
     resume: [],
@@ -175,6 +177,14 @@ function makeHandlers(over: Partial<DecisionsHandlers> = {}): {
         ok: true,
         applied: [decisionRow("d-1"), decisionRow("d-2")],
         failed: [{ id: "d-3", code: "stale", message: "stale decision" }],
+      };
+    },
+    async revertBatch(ids): Promise<RevertBatchResult> {
+      calls.revertBatch.push(ids);
+      return {
+        ok: true,
+        reverted: ["d-1", "d-2"],
+        failed: [{ id: "d-3", code: "undo_conflict", message: "snapshot gone" }],
       };
     },
     async startJob(kind, bookmarkIds) {
@@ -389,6 +399,7 @@ describe("intent dispatch", () => {
       "APPROVE_DECISION",
       "REJECT_DECISION",
       "REVERT_DECISION",
+      "REVERT_BATCH",
       "BULK_APPROVE",
       "GET_SETTINGS",
       "SET_SETTINGS",
@@ -521,6 +532,19 @@ describe("intent dispatch", () => {
       code: "bulk_ok",
       applied: ["d-1", "d-2"],
       failed: [{ id: "d-3", code: "stale" }],
+    });
+
+    const batchRevert = await handleDecisionsMessage(
+      { type: "REVERT_BATCH", decisionIds: ["d-1", "d-2", "d-3"] },
+      sender,
+      handlers,
+    );
+    expect(calls.revertBatch).toEqual([["d-1", "d-2", "d-3"]]);
+    expect(batchRevert).toMatchObject({
+      ok: true,
+      code: "bulk_reverted",
+      reverted: ["d-1", "d-2"],
+      failed: [{ id: "d-3", code: "undo_conflict" }],
     });
   });
 
