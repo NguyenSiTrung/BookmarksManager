@@ -9,6 +9,11 @@ export default defineConfig({
   }),
   manifest: {
     name: "Bookmarks Manager",
+    // The Chrome Web Store derives the listing summary from this manifest
+    // field, so it must stay ≤132 chars (Chrome's cap) and equal to the short
+    // description in store/listing.md.
+    description:
+      "Fast, offline bookmarks manager in the side panel: search, save, tag, organize, import, de-duplicate. No account, no tracking.",
     version: "1.0.0",
     permissions: [
       "activeTab",

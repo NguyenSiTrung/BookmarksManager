@@ -9,13 +9,16 @@
 
 Bookmarks Manager
 
-## Short description (draft)
+## Short description
 
-A fast, offline bookmarks manager in the side panel: search, save, tag,
-organize, import, and de-duplicate your bookmarks. No account, no sign-in,
-no tracking.
+Fast, offline bookmarks manager in the side panel: search, save, tag,
+organize, import, de-duplicate. No account, no tracking.
 
-## Full description (draft)
+> This text is the manifest `description` in `wxt.config.ts` (126 chars). The
+> Chrome Web Store derives the listing summary from the package, so the two
+> must stay identical; Chrome caps the field at 132 characters.
+
+## Full description
 
 Bookmarks Manager puts a faster, more organized manager for your bookmarks in
 the browser's side panel, plus a quick-save popup and an options page.
