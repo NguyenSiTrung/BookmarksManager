@@ -28,10 +28,15 @@
 > and the separate, off-by-default bookmark-data consent sends bookmark
 > metadata only — never notes or page text — on a user-started action.
 > A second, fully optional OpenAI-compatible LLM provider you configure
-> (preset or custom HTTPS origin, loopback HTTP allowed) can explain
-> decisions, give budget-capped second opinions, propose folder structures,
-> and summarize pages — each behind its own consent scope and an
+> can explain decisions, give budget-capped second opinions, propose folder
+> structures, and summarize pages — each behind its own consent scope and an
 > explicit user action.
+
+> **Dashboard note (1.0.0):** the dashboard caps this field at 1,000
+> characters and the text above plus the parenthetical "(preset or custom
+> HTTPS origin, loopback HTTP allowed)" was 1,018 — that parenthetical is
+> dropped in the dashboard entry (963 characters). Everything else is
+> verbatim.
 
 ## Permission justifications
 

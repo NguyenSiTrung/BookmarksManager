@@ -144,7 +144,9 @@ Version 1.0 — first public release.
 
 ## Category
 
-Productivity
+Tools — the dashboard groups options under a PRODUCTIVITY header
+(Communication, Developer Tools, Education, Tools, Workflow & Planning);
+the header itself is not selectable, so 1.0.0 ships as **Tools**.
 
 ## Language
 

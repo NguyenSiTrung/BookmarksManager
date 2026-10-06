@@ -1,28 +1,28 @@
 {
   "version": "1.0.0",
-  "commit": "f64668e539c0ff3cbe846e451d6219a17e3ba2b7",
-  "generatedAt": "2026-10-06T08:51:38Z",
+  "commit": "edfa314278f8d04b842767f7b4fc26a8c325fd74",
+  "generatedAt": "2026-10-06T11:05:00Z",
   "channel": "public",
   "zip": {
     "file": "bookmarks-manager-1.0.0-chrome.zip",
-    "bytes": 590038,
-    "sha256": "fd9f722d28ddb677081eb8d932a218370478ad82982bbdf05d55ff622a8ccdf9"
+    "bytes": 590115,
+    "sha256": "951719437b44e07e0c8b9589d2bac1784a367ceb5b5c6c5f448aee8237e07a64"
   },
   "gate": {
     "worktree": "clean worktree at the recorded commit",
     "npmCi": "pass",
-    "lint": "pass (eslint . clean)",
-    "typecheck": "pass",
-    "unit": "3260 passed (180 files) at --maxWorkers=1; parallel runs flake on this host — the 5s vitest budget is close for db-retention/jobs-terminal-cap (3.0s alone) and search-perf (500ms budget)",
-    "build": "pass",
-    "checkManifest": "pass",
-    "checkBundle": "pass",
-    "checkSite": "pass",
-    "checkStore": "pass (public channel, 0 violations)",
-    "e2e": "48 passed, 1 skipped (store-assets screenshot, gated by UPDATE_STORE_ASSETS)",
+    "lint": "pass — eslint clean (edfa314 tree)",
+    "typecheck": "pass — tsc --noEmit clean (edfa314 tree)",
+    "unit": "3260/3260 in a full single-worker run at f64668e. At edfa314 the same suite returned 3259/3260: options-llm-settings.test.tsx > escalation section > 'lets an enabled switch to be turned off even when a prerequisite broke' is intermittently flaky under suite load (12/12 in its file run alone, 5/5 across five isolated runs). Re-run the suite before submission; this is the known flake, not a regression.",
+    "build": "pass (rebuilt after the manifest description change)",
+    "checkManifest": "pass (edfa314 tree)",
+    "checkBundle": "pass (f64668e tree; the only later source change is the manifest description string)",
+    "checkSite": "pass (f64668e tree)",
+    "checkStore": "pass — public channel, 0 violations (edfa314 tree)",
+    "e2e": "48 passed, 1 skipped (store-assets screenshot, gated by UPDATE_STORE_ASSETS) — full run at edfa314",
     "live": "6 skipped — no provider keys on this host",
     "eval": "9 passed, 588 skipped — Jev 1.13 sweeps deferred to first keyed run",
     "auditRelease": "pass — name/bytes/sha256 recorded above"
   },
-  "notes": "Built with `npm ci && npm run zip` from the recorded commit; byte-identical across installs (sha256 reproduced). Public-channel cut: the promo-video requirement was dropped — 1.0.0 ships without a promotional video (user decision). Public pages verified live (pages.yml run 37436333540; root and /privacy/ HTTP 200). Supersedes the trusted-tester 1.0.0 record (commit 52a15bb, 412893 bytes), which remains in git history."
+  "notes": "Built with `npm ci && npm run zip` from the recorded commit; byte-identical across two independent builds (sha256 95171943… reproduced). Public-channel cut: no promotional video (user decision). 1.0.0 adds a manifest `description` (126 chars) so the store listing summary is populated from the package — the earlier cut shipped none, and the draft listing showed an empty summary until the package was re-uploaded. Dashboard: item palolgpngcjjaohfmjcnhnkacpmoejll (Draft) fully filled except submission, which the publisher performs manually (see store/releases/1.0.0-public-checklist.md). Supersedes the trusted-tester 1.0.0 record (commit 52a15bb, 412893 bytes) and the pre-description public cut (f64668e, 590038 bytes), both preserved in git history."
 }
