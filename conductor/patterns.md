@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-04 (full refresh after second-opinion soft-block fix) -->
+<!-- Last refreshed: 2026-10-06 (full refresh; deep_audit_fixes_20261005 patterns already elevated, no new cross-track patterns) -->
 
 # Codebase Patterns
 
@@ -31,7 +31,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-10-04 (full refresh after second-opinion soft-block fix)
+Last refreshed: 2026-10-06 (full refresh; deep_audit_fixes_20261005 patterns already elevated, no new cross-track patterns)
 
 ---
 

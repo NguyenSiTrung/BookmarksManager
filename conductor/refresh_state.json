@@ -1,33 +1,33 @@
 {
-  "lastRefresh": "2026-10-04T00:00:00Z",
+  "lastRefresh": "2026-10-06T00:00:00Z",
   "scope": "all",
   "changes": [
-    "product.md: added BookmarksManager-ky2 (ea43c01, soft-blocked second-opinion switch with per-prerequisite reveal/jump; OFF never blocked) to 'Post-audit fixes'; refresh marker updated",
-    "patterns.md: added 'Prerequisite-gated controls soft-block, not hard-disable' under 'Elevated from follow-up fixes'; refresh markers updated",
-    "tech-stack.md: no drift (package.json, lockfile, wxt.config.ts, workflows unchanged since 231f30d); marker bump only",
-    "workflow.md: no drift - 0fde5f6 already removed the >80% coverage rule; left unchanged",
-    "tracks.md: unchanged - no active track"
+    "product.md: added 'Deep audit fixes delivered' (deep_audit_fixes_20261005, gate b4043fc: 3256 unit/180 files, 48 e2e +1 skip); rewrote 'Not yet built' backlog with current bd issue ids (removed closed -2v9/-7k4/-bih/-eov, added deferred -od9/-rwy/-tax/-xxo); marker updated",
+    "patterns.md: no new patterns - deep_audit_fixes_20261005 already elevated 2026-10-05; refresh markers bumped only",
+    "tech-stack.md: no drift (package.json, lockfile versions, wxt.config.ts, Dexie v9, workflows unchanged; alarms keepalive 9a64736 already documented); marker bump only",
+    "workflow.md: no drift - unchanged",
+    "tracks.md: unchanged - deep_audit_fixes archive marker already present, no active track"
   ],
   "learnings": {
-    "tracksScanned": 10,
-    "newLearningsFiles": 0,
-    "newPatterns": 1,
-    "note": "No new track learnings since 2026-10-01; one follow-up-fix pattern (ky2) elevated."
+    "tracksScanned": 11,
+    "newLearningsFiles": 1,
+    "newPatterns": 0,
+    "note": "deep_audit_fixes_20261005 learnings were elevated at archive (deda8a9); no cross-track duplicates needing merge."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "closedTotal": 287,
-    "totalIssues": 299,
+    "totalIssues": 367,
     "syncDirection": "none (no active plan.md to compare)",
     "completedThisCycle": [
-      "BookmarksManager-ky2 (Options second-opinion switch soft-block)"
+      "BookmarksManager-3op (Deep Audit Fixes epic)",
+      "BookmarksManager-2v9", "BookmarksManager-7k4", "BookmarksManager-bih", "BookmarksManager-eov"
     ],
     "remainingOpenFollowups": [
-      "BookmarksManager-4fb", "BookmarksManager-2v9", "BookmarksManager-42k", "BookmarksManager-4hw.7",
-      "BookmarksManager-7k4", "BookmarksManager-bih", "BookmarksManager-dfr", "BookmarksManager-eov",
-      "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-ope", "BookmarksManager-sb9"
+      "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
+      "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-od9", "BookmarksManager-ope",
+      "BookmarksManager-rwy", "BookmarksManager-sb9", "BookmarksManager-tax", "BookmarksManager-xxo"
     ],
     "cosmetic": [
       "beads.role not configured (GH#2950)"
@@ -35,7 +35,6 @@
   },
   "verification": {
     "scope": "Documentation-only refresh. No build or test suite rerun.",
-    "testSuiteNote": "0fde5f6 consolidated the suite from 3089 to 2385 tests; historical gate counts in product.md describe original deliveries and are intentionally unchanged.",
-    "sourceCommits": "ea43c01, 0fde5f6 (plus beads export syncs bced7d7, 27f7e5d); all local, unpushed."
+    "sourceCommits": "deda8a9 (HEAD at refresh); all local, unpushed."
   }
 }

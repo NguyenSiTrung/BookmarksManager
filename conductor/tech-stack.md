@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-05 (deep-audit fixes track; no dependency drift) -->
+<!-- Last refreshed: 2026-10-06 (full refresh; package.json, lockfile, wxt.config.ts, Dexie v9, workflows unchanged — no dependency drift) -->
 
 # Technology Stack
 
