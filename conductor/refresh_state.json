@@ -1,28 +1,28 @@
 {
-  "lastRefresh": "2026-10-06T00:00:00Z",
+  "lastRefresh": "2026-10-06T12:00:00Z",
   "scope": "all",
   "changes": [
-    "product.md: added 'Deep audit fixes delivered' (deep_audit_fixes_20261005, gate b4043fc: 3256 unit/180 files, 48 e2e +1 skip); rewrote 'Not yet built' backlog with current bd issue ids (removed closed -2v9/-7k4/-bih/-eov, added deferred -od9/-rwy/-tax/-xxo); marker updated",
-    "patterns.md: no new patterns - deep_audit_fixes_20261005 already elevated 2026-10-05; refresh markers bumped only",
-    "tech-stack.md: no drift (package.json, lockfile versions, wxt.config.ts, Dexie v9, workflows unchanged; alarms keepalive 9a64736 already documented); marker bump only",
-    "workflow.md: no drift - unchanged",
-    "tracks.md: unchanged - deep_audit_fixes archive marker already present, no active track"
+    "product.md: Phase 6 'Public store submission remains out of scope' de-staled (prep landed later); new Delivery Status bullet 'Public CWS submission prep delivered' (1fa8360/72965c7: 5 listing screenshots 1280x800 + marquee 1400x560 + promo tile, genai-disclosure.md, video-script.md, 1.0.0-public-checklist.md, check-store channel=public bar); 'Not yet built' backlog unchanged and accurate (same 12 open ids)",
+    "tech-stack.md: compliance scripts gain npm run check:store:public (--channel=public bar: 5 screenshots, marquee, YouTube promo URL); Playwright bullet documents tests/e2e/store-assets.spec.ts + scripts/generate-store-assets.mjs bounded runner actionTimeout capture; no dependency drift",
+    "patterns.md: one new Gotcha — bound scripted Playwright capture actions (runner actionTimeout) so store-asset capture cannot hang (from: store-prep 1fa8360, 2026-10-06)",
+    "workflow.md: no drift — local gate unchanged (check:store:public is a manual public-channel bar, not part of the local gate); marker bumped",
+    "tracks.md: unchanged — store prep landed outside a Conductor track (local-commit precedent), recorded in product.md"
   ],
   "learnings": {
     "tracksScanned": 11,
-    "newLearningsFiles": 1,
-    "newPatterns": 0,
-    "note": "deep_audit_fixes_20261005 learnings were elevated at archive (deda8a9); no cross-track duplicates needing merge."
+    "newLearningsFiles": 0,
+    "newPatterns": 1,
+    "note": "No new track learnings.md (store prep was not a track). Single-occurrence capture gotcha added to patterns.md on request; no 2+ cross-track candidates, no duplicates to merge."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "totalIssues": 367,
+    "totalIssues": 369,
     "syncDirection": "none (no active plan.md to compare)",
     "completedThisCycle": [
-      "BookmarksManager-3op (Deep Audit Fixes epic)",
-      "BookmarksManager-2v9", "BookmarksManager-7k4", "BookmarksManager-bih", "BookmarksManager-eov"
+      "BookmarksManager-0or (Public CWS submission prep: media assets)",
+      "BookmarksManager-vv6 (Public CWS submission prep: disclosures + checklist)"
     ],
     "remainingOpenFollowups": [
       "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
@@ -35,6 +35,6 @@
   },
   "verification": {
     "scope": "Documentation-only refresh. No build or test suite rerun.",
-    "sourceCommits": "deda8a9 (HEAD at refresh); all local, unpushed."
+    "sourceCommits": "72965c7 (HEAD at refresh); all local, unpushed. check:store:public script existence verified in package.json."
   }
 }

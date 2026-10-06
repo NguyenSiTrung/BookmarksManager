@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-06 (full refresh; package.json, lockfile, wxt.config.ts, Dexie v9, workflows unchanged — no dependency drift) -->
+<!-- Last refreshed: 2026-10-06 (refresh — check:store:public + bounded store-asset capture documented; no dependency drift) -->
 
 # Technology Stack
 
@@ -203,7 +203,10 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   Linux CI wraps the headed launch in `xvfb-run -a`. `chrome.permissions.request`
   prompts cannot be driven under Playwright, so provider specs install a
   temporary manifest copy that holds the optional host pattern as a regular
-  permission; the native prompt itself is not automated. `tests/e2e/helpers/decisions.ts`
+  permission; the native prompt itself is not automated. `tests/e2e/store-assets.spec.ts`
+  (with `scripts/generate-store-assets.mjs`) captures the five listing
+  screenshots and the marquee from the real UI under a bounded runner
+  `actionTimeout` so the capture cannot hang. `tests/e2e/helpers/decisions.ts`
   fakes the provider at the WIRE level (a scriptable route with a request
   valve: first N fulfill, the rest held until `release()`) and can relaunch the
   same extension id over a persistent profile to emulate browser restarts
@@ -219,8 +222,10 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `store/permissions.md`), `npm run check:bundle` (whole-file scan for
   `eval(`, `new Function`, remote `<script src>`), `npm run check:store`
   (release-strict store-readiness gate over `store/` docs, assets, and the
-  release record), `npm run check:site` (static-site gate for `site/`), and
-  `npm run zip` (reproducible `wxt zip` release archive).
+  release record), `npm run check:store:public` (adds the public-submission
+  channel bar — five 1280x800 listing screenshots, the 1400x560 marquee, and
+  the YouTube promo URL), `npm run check:site` (static-site gate for `site/`),
+  and `npm run zip` (reproducible `wxt zip` release archive).
 - GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on every pull
   request and on published releases, but not on routine pushes to `main`, with
   workflow-level `permissions: contents: read` and no secrets. The `quality`

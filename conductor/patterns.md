@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-06 (full refresh; deep_audit_fixes_20261005 patterns already elevated, no new cross-track patterns) -->
+<!-- Last refreshed: 2026-10-06 (refresh — capture-bounding gotcha added from store-prep; no cross-track patterns) -->
 
 # Codebase Patterns
 
@@ -22,6 +22,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 - The repository has an existing Beads workspace. Do not reinitialize it or automatically sync it to the remote.
 - `bd` warns `beads.role not configured (GH#2950)` until `git config beads.role maintainer|contributor` is set — cosmetic, not blocking.
 - `src/security/credentials.ts` owns encrypted envelope IO in `chrome.storage.local`; `src/security/keys.ts` delegates Jev key access while preserving storage IDs. UI prefs, settings, consent, sentLog, and non-extractable CryptoKeys live in IndexedDB. Delete-all clears storage through `src/security/delete-all.ts`; keep permission justifications aligned with those call sites. (from: phase1_core_manager_20260926, phase5_llm_layer_20260928, 2026-09-30)
+- **Bound scripted Playwright capture actions** — the store-asset capture runs under a bounded runner `actionTimeout` so an unresponsive page action cannot hang the capture run indefinitely. (from: store-prep `1fa8360`, 2026-10-06)
 
 ## Testing
 

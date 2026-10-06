@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-09-30 -->
+<!-- Last refreshed: 2026-10-06 (refresh — no workflow drift; local gate unchanged) -->
 
 # Development Workflow
 
