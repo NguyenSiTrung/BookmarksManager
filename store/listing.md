@@ -176,10 +176,7 @@ English
      sent)
 - Small promo tile: `store/assets/promo-440x280.png` at 440×280 px
 - Marquee promo tile: `store/assets/marquee-1400x560.png` at 1400×560 px
-  (optional featuring slot)
-- Promotional video: YouTube link, recorded per `store/video-script.md`;
-  the final URL is pasted here and into the dashboard's Promotional video
-  field (tracked in `store/releases/1.0.0-public-checklist.md`)
+  (optional featuring slot; no promotional video — out of scope for 1.0.0)
 
 ## Content notes for reviewers of this copy
 

@@ -146,7 +146,8 @@ function publicViolationsAt(root: string, release = RELEASE) {
 
 /**
  * Public-channel extras on top of the good fixture: the full five-screenshot
- * set, the marquee tile, and a YouTube promo video URL in the listing.
+ * set and the marquee tile. No promo video — the public listing does not
+ * require one.
  */
 function makePublicReady(root: string): void {
   const assets = join(root, "store", "assets");
@@ -157,12 +158,6 @@ function makePublicReady(root: string): void {
     );
   }
   writeFileSync(join(assets, "marquee-1400x560.png"), pngWithSize(1400, 560));
-  const listingPath = join(root, "store", "listing.md");
-  writeFileSync(
-    listingPath,
-    readFileSync(listingPath, "utf8") +
-      "\n- Promotional video: https://www.youtube.com/watch?v=storepromo01\n",
-  );
 }
 
 function checks(violations: { check: string }[]): Set<string> {
@@ -296,7 +291,6 @@ describe("checkStore", () => {
     const v = checks(violationsAt(root));
     expect(v).not.toContain("public-screenshots");
     expect(v).not.toContain("public-marquee");
-    expect(v).not.toContain("promo-video");
   });
 
   it("flags missing public listing media on the public channel", () => {
@@ -304,7 +298,6 @@ describe("checkStore", () => {
     const v = checks(publicViolationsAt(root));
     expect(v).toContain("public-screenshots");
     expect(v).toContain("public-marquee");
-    expect(v).toContain("promo-video");
   });
 
   it("passes the public channel with full listing media", () => {

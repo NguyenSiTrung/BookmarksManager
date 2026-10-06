@@ -25,7 +25,6 @@
  * `channel: "public"` adds the public-listing bar on top of the above:
  *   public-screenshots  fewer than 5 screenshots at 1280×800 / 640×400
  *   public-marquee      marquee promo tile missing or not 1400×560
- *   promo-video         listing carries no YouTube promo video URL
  *
  * CLI: `node scripts/check-store.mjs [--release=<v>] [--channel=public]`
  */
@@ -353,16 +352,6 @@ export function checkStore({ root, release, channel = "trusted-tester" }) {
         "public-marquee",
         `store/assets/marquee-1400x560.png must be a 1400×560 PNG (got ${marquee ? `${marquee.w}×${marquee.h}` : "missing"})`,
         "store/assets/marquee-1400x560.png",
-      );
-    }
-    if (
-      listing &&
-      !/https?:\/\/(www\.)?(youtube\.com\/watch|youtu\.be\/)/.test(listing)
-    ) {
-      bad(
-        "promo-video",
-        "store/listing.md carries no YouTube promo video URL",
-        "store/listing.md",
       );
     }
   }
