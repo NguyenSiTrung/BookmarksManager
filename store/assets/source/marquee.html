@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 1400px; height: 560px; overflow: hidden; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #16305e 0%, #1d4076 55%, #265099 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    padding: 0 96px;
+    gap: 64px;
+  }
+  .mark {
+    width: 280px; height: 280px; flex: none;
+    background: rgba(255,255,255,0.07);
+    border: 3px solid rgba(255,255,255,0.18);
+    border-radius: 60px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mark svg { width: 224px; height: 224px; }
+  h1 { font-size: 72px; line-height: 1.1; letter-spacing: -0.01em; }
+  .tag {
+    margin-top: 22px; font-size: 30px; line-height: 1.4; color: #cbd8ef;
+    max-width: 780px;
+  }
+  .chips { margin-top: 30px; display: flex; gap: 14px; }
+  .chip {
+    padding: 9px 22px;
+    font-size: 21px; font-weight: 600; letter-spacing: 0.04em;
+    border: 1px solid rgba(255,255,255,0.35); border-radius: 999px;
+    color: #f6c344;
+  }
+</style>
+</head>
+<body>
+  <div class="mark">
+    <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+      <rect width="128" height="128" rx="26" fill="#16305e"/>
+      <rect x="6" y="6" width="116" height="116" rx="22" fill="none" stroke="#2d4d8f" stroke-width="3"/>
+      <path d="M44 30 h40 a6 6 0 0 1 6 6 v66 l-26-19 l-26 19 v-66 a6 6 0 0 1 6-6 z" fill="#f6c344"/>
+      <circle cx="64" cy="52" r="9" fill="#16305e"/>
+    </svg>
+  </div>
+  <div>
+    <h1>Bookmarks Manager</h1>
+    <p class="tag">Local-first bookmark organization — search, tags, notes, and an optional AI copilot you control.</p>
+    <div class="chips">
+      <span class="chip">OFFLINE FIRST</span>
+      <span class="chip">NO ACCOUNT</span>
+      <span class="chip">PRIVATE BY DEFAULT</span>
+    </div>
+  </div>
+</body>
+</html>

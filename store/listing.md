@@ -159,11 +159,27 @@ English
 
 - Icon: `store/assets/icon-128.png` at 128×128 px (the package embeds 16,
   32, and 48 px variants)
-- Screenshot of the real manager UI at 1280×800:
-  `store/assets/screenshot-manager-1280x800.png` (synthetic demo library —
+- Five screenshots of the real UI at 1280×800 (synthetic demo library —
   regenerate with
-  `UPDATE_STORE_ASSETS=1 xvfb-run -a npx playwright test tests/e2e/store-assets.spec.ts`)
+  `UPDATE_STORE_ASSETS=1 xvfb-run -a npx playwright test tests/e2e/store-assets.spec.ts`),
+  in listing order:
+  1. `store/assets/screenshot-manager-1280x800.png` — side panel manager
+     (folder tree, virtualized list, views)
+  2. `store/assets/screenshot-search-1280x800.png` — command palette with
+     live search results
+  3. `store/assets/screenshot-duplicates-1280x800.png` — duplicates view
+     with exact and normalized groups
+  4. `store/assets/screenshot-popup-save-1280x800.png` — quick-save popup
+     mid-save (tag, category, notes)
+  5. `store/assets/screenshot-options-ai-1280x800.png` — options: the
+     optional LLM provider disclosure (recipients, fields sent, fields never
+     sent)
 - Small promo tile: `store/assets/promo-440x280.png` at 440×280 px
+- Marquee promo tile: `store/assets/marquee-1400x560.png` at 1400×560 px
+  (optional featuring slot)
+- Promotional video: YouTube link, recorded per `store/video-script.md`;
+  the final URL is pasted here and into the dashboard's Promotional video
+  field (tracked in `store/releases/1.0.0-public-checklist.md`)
 
 ## Content notes for reviewers of this copy
 

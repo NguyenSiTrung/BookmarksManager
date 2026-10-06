@@ -21,6 +21,13 @@
  *   release-models      release defaults resolve to a moving alias or drift
  *   eval-evidence       the Jev 1.13 baseline doc is missing/incomplete
  *   release-record      store/releases/<release>.json missing or malformed
+ *
+ * `channel: "public"` adds the public-listing bar on top of the above:
+ *   public-screenshots  fewer than 5 screenshots at 1280×800 / 640×400
+ *   public-marquee      marquee promo tile missing or not 1400×560
+ *   promo-video         listing carries no YouTube promo video URL
+ *
+ * CLI: `node scripts/check-store.mjs [--release=<v>] [--channel=public]`
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -51,6 +58,7 @@ const STORE_DOCS = [
   "store/permissions.md",
   "store/privacy-policy.md",
   "store/privacy-practices.md",
+  "store/genai-disclosure.md",
   "store/listing.md",
   "store/reviewer-notes.md",
 ];
@@ -59,6 +67,9 @@ const SCREENSHOT_SIZES = [
   [1280, 800],
   [640, 400],
 ];
+
+/** Public listings want the full five-screenshot set. */
+const PUBLIC_SCREENSHOT_COUNT = 5;
 
 function pngSize(path) {
   try {
@@ -74,10 +85,10 @@ function pngSize(path) {
 
 /**
  * Run every release check against `root`.
- * @param {{root: string, release: string}} options
+ * @param {{root: string, release: string, channel?: "trusted-tester" | "public"}} options
  * @returns {{ok: boolean, violations: {check: string, file?: string, message: string}[]}}
  */
-export function checkStore({ root, release }) {
+export function checkStore({ root, release, channel = "trusted-tester" }) {
   const violations = [];
   const bad = (check, message, file) =>
     violations.push({ check, file, message });
@@ -304,7 +315,7 @@ export function checkStore({ root, release }) {
       "store/assets/promo-440x280.png",
     );
   }
-  let hasShot = false;
+  let validShots = 0;
   try {
     for (const name of readdirSync(assetsDir)) {
       if (!/^screenshot-.*\.png$/.test(name)) continue;
@@ -313,18 +324,47 @@ export function checkStore({ root, release }) {
         size &&
         SCREENSHOT_SIZES.some(([w, h]) => size.w === w && size.h === h)
       ) {
-        hasShot = true;
+        validShots += 1;
       }
     }
   } catch {
     /* missing dir → no shots */
   }
-  if (!hasShot) {
+  if (validShots === 0) {
     bad(
       "assets",
       "no store/assets/screenshot-*.png at 1280×800 or 640×400",
       "store/assets/",
     );
+  }
+
+  // --- public channel: listing media the public bar requires ---------------
+  if (channel === "public") {
+    if (validShots < PUBLIC_SCREENSHOT_COUNT) {
+      bad(
+        "public-screenshots",
+        `public listing wants ${PUBLIC_SCREENSHOT_COUNT} screenshots at 1280×800 or 640×400 (got ${validShots})`,
+        "store/assets/",
+      );
+    }
+    const marquee = pngSize(join(assetsDir, "marquee-1400x560.png"));
+    if (!marquee || marquee.w !== 1400 || marquee.h !== 560) {
+      bad(
+        "public-marquee",
+        `store/assets/marquee-1400x560.png must be a 1400×560 PNG (got ${marquee ? `${marquee.w}×${marquee.h}` : "missing"})`,
+        "store/assets/marquee-1400x560.png",
+      );
+    }
+    if (
+      listing &&
+      !/https?:\/\/(www\.)?(youtube\.com\/watch|youtu\.be\/)/.test(listing)
+    ) {
+      bad(
+        "promo-video",
+        "store/listing.md carries no YouTube promo video URL",
+        "store/listing.md",
+      );
+    }
   }
 
   // --- release model pins ---------------------------------------------------
@@ -477,10 +517,18 @@ const isMain = (() => {
 if (isMain) {
   const releaseArg = process.argv.find((a) => a.startsWith("--release="));
   const release = releaseArg?.split("=")[1] ?? "1.0.0";
+  const channelArg = process.argv.find((a) => a.startsWith("--channel="));
+  const channel = channelArg?.split("=")[1] ?? "trusted-tester";
+  if (channel !== "trusted-tester" && channel !== "public") {
+    console.error(`unknown --channel=${channel} (trusted-tester | public)`);
+    process.exit(1);
+  }
   const root = process.cwd();
-  const { ok, violations } = checkStore({ root, release });
+  const { ok, violations } = checkStore({ root, release, channel });
   if (ok) {
-    console.log(`OK: release ${release} store-readiness checks pass.`);
+    console.log(
+      `OK: release ${release} store-readiness checks pass (${channel}).`,
+    );
   } else {
     console.error(`FAIL: ${violations.length} store-readiness violation(s):`);
     for (const v of violations) {

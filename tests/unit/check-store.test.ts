@@ -63,6 +63,7 @@ export function buildGoodFixture(root: string): void {
     "permissions.md",
     "privacy-policy.md",
     "privacy-practices.md",
+    "genai-disclosure.md",
     "listing.md",
     "reviewer-notes.md",
   ]) {
@@ -137,6 +138,31 @@ export function buildGoodFixture(root: string): void {
 
 function violationsAt(root: string, release = RELEASE) {
   return checkStore({ root, release }).violations;
+}
+
+function publicViolationsAt(root: string, release = RELEASE) {
+  return checkStore({ root, release, channel: "public" }).violations;
+}
+
+/**
+ * Public-channel extras on top of the good fixture: the full five-screenshot
+ * set, the marquee tile, and a YouTube promo video URL in the listing.
+ */
+function makePublicReady(root: string): void {
+  const assets = join(root, "store", "assets");
+  for (const n of [2, 3, 4, 5]) {
+    writeFileSync(
+      join(assets, `screenshot-extra-${n}.png`),
+      pngWithSize(1280, 800),
+    );
+  }
+  writeFileSync(join(assets, "marquee-1400x560.png"), pngWithSize(1400, 560));
+  const listingPath = join(root, "store", "listing.md");
+  writeFileSync(
+    listingPath,
+    readFileSync(listingPath, "utf8") +
+      "\n- Promotional video: https://www.youtube.com/watch?v=storepromo01\n",
+  );
 }
 
 function checks(violations: { check: string }[]): Set<string> {
@@ -263,6 +289,38 @@ describe("checkStore", () => {
       pngWithSize(900, 600),
     );
     expect(checks(violationsAt(root))).toContain("assets");
+  });
+
+  it("keeps public-media checks out of the trusted-tester channel", () => {
+    const root = freshRoot("trusted-no-public-media");
+    const v = checks(violationsAt(root));
+    expect(v).not.toContain("public-screenshots");
+    expect(v).not.toContain("public-marquee");
+    expect(v).not.toContain("promo-video");
+  });
+
+  it("flags missing public listing media on the public channel", () => {
+    const root = freshRoot("public-media-missing");
+    const v = checks(publicViolationsAt(root));
+    expect(v).toContain("public-screenshots");
+    expect(v).toContain("public-marquee");
+    expect(v).toContain("promo-video");
+  });
+
+  it("passes the public channel with full listing media", () => {
+    const root = freshRoot("public-complete");
+    makePublicReady(root);
+    expect(publicViolationsAt(root)).toEqual([]);
+  });
+
+  it("flags a wrong-size marquee tile on the public channel", () => {
+    const root = freshRoot("public-marquee-bad");
+    makePublicReady(root);
+    writeFileSync(
+      join(root, "store", "assets", "marquee-1400x560.png"),
+      pngWithSize(1400, 561),
+    );
+    expect(checks(publicViolationsAt(root))).toContain("public-marquee");
   });
 
   it("flags moving release model defaults", () => {

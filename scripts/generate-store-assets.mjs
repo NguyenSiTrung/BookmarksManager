@@ -10,6 +10,7 @@
  *   public/icon/{16,32,48,128}.png   — manifest icons
  *   store/assets/icon-128.png        — store listing icon
  *   store/assets/promo-440x280.png   — small promo tile
+ *   store/assets/marquee-1400x560.png — marquee promo tile (optional slot)
  */
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -55,6 +56,13 @@ async function main() {
     const promoOut = join(ROOT, "store", "assets", "promo-440x280.png");
     writeFileSync(promoOut, promo);
     console.log(`wrote store/assets/promo-440x280.png (${promo.length} bytes)`);
+
+    await page.setViewportSize({ width: 1400, height: 560 });
+    await page.goto(pathToFileURL(join(SRC, "marquee.html")).href);
+    const marquee = await page.screenshot({ omitBackground: false });
+    const marqueeOut = join(ROOT, "store", "assets", "marquee-1400x560.png");
+    writeFileSync(marqueeOut, marquee);
+    console.log(`wrote store/assets/marquee-1400x560.png (${marquee.length} bytes)`);
   } finally {
     await browser.close();
   }

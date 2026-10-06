@@ -15,7 +15,10 @@ export const RELEASE_URLS: Readonly<{
   support: string;
 }>;
 
+export type CheckStoreChannel = "trusted-tester" | "public";
+
 export function checkStore(options: {
   root: string;
   release: string;
+  channel?: CheckStoreChannel;
 }): CheckStoreResult;
