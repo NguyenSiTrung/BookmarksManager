@@ -1,28 +1,28 @@
 {
   "version": "1.0.0",
-  "commit": "52a15bb6784cca508885f4272bf36ba669eebd0f",
-  "generatedAt": "2026-09-28T13:26:19Z",
-  "channel": "trusted-tester",
+  "commit": "f64668e539c0ff3cbe846e451d6219a17e3ba2b7",
+  "generatedAt": "2026-10-06T08:51:38Z",
+  "channel": "public",
   "zip": {
     "file": "bookmarks-manager-1.0.0-chrome.zip",
-    "bytes": 412893,
-    "sha256": "b86638775429f435dd6f991bb87b5246ab0153a576fccb2ad6344f2e047e3e1a"
+    "bytes": 590038,
+    "sha256": "fd9f722d28ddb677081eb8d932a218370478ad82982bbdf05d55ff622a8ccdf9"
   },
   "gate": {
     "worktree": "clean worktree at the recorded commit",
     "npmCi": "pass",
-    "lint": "pass (1 pre-existing warning: react-hooks/incompatible-library on tanstack-virtual in BookmarkList.tsx)",
+    "lint": "pass (eslint . clean)",
     "typecheck": "pass",
-    "unit": "2989 passed",
+    "unit": "3260 passed (180 files) at --maxWorkers=1; parallel runs flake on this host — the 5s vitest budget is close for db-retention/jobs-terminal-cap (3.0s alone) and search-perf (500ms budget)",
     "build": "pass",
     "checkManifest": "pass",
     "checkBundle": "pass",
     "checkSite": "pass",
-    "checkStore": "pass (this record is the final item)",
-    "e2e": "28 passed, 1 skipped (store-assets screenshot, gated by UPDATE_STORE_ASSETS)",
-    "live": "9 passed, 588 skipped — provider-keyed smoke deferred to first keyed run",
+    "checkStore": "pass (public channel, 0 violations)",
+    "e2e": "48 passed, 1 skipped (store-assets screenshot, gated by UPDATE_STORE_ASSETS)",
+    "live": "6 skipped — no provider keys on this host",
     "eval": "9 passed, 588 skipped — Jev 1.13 sweeps deferred to first keyed run",
     "auditRelease": "pass — name/bytes/sha256 recorded above"
   },
-  "notes": "Built with `npm ci && npm run zip` from the recorded commit. Live provider smoke and eval baselines are recorded in store/evals/jev-1.13-baseline.md after the first keyed run. Public submission is out of scope."
+  "notes": "Built with `npm ci && npm run zip` from the recorded commit; byte-identical across installs (sha256 reproduced). Public-channel cut: the promo-video requirement was dropped — 1.0.0 ships without a promotional video (user decision). Public pages verified live (pages.yml run 37436333540; root and /privacy/ HTTP 200). Supersedes the trusted-tester 1.0.0 record (commit 52a15bb, 412893 bytes), which remains in git history."
 }
