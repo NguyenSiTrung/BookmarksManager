@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-06 (refresh — capture-bounding gotcha added from store-prep; no cross-track patterns) -->
+<!-- Last refreshed: 2026-10-07 (refresh — public-cut handoff patterns added; no new track learnings) -->
 
 # Codebase Patterns
 
@@ -32,7 +32,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-10-06 (full refresh; deep_audit_fixes_20261005 patterns already elevated, no new cross-track patterns)
+Last refreshed: 2026-10-07 (full refresh; deep_audit_fixes_20261005 patterns already elevated; public-cut patterns appended)
 
 ---
 
@@ -305,3 +305,10 @@ _Last refreshed: 2026-09-27_
 - **Settings writes are patches merged worker-side under a serialized write chain.** Two stale tabs can't clobber each other; patch schemas need explicit optional fields (a `.partial()`-with-defaults schema re-injects fields into the patch). A host grant arriving after the user switched presets must be *removed* before the stale reply drops.
 - **Fail-closed privacy, warn-don't-block UX.** `isNonPublicUrl` marks localhost/RFC1918/link-local/intranet/hostless as non-public — a custom provider URL matching it warns visibly but still saves. Sanitizers applied at output AND re-applied idempotently at the persist boundary; never silently truncate — re-parse so existing limits fail honestly.
 - **A wire-level regression sweep needs three independent egress channels.** Playwright routing may not rebind to an already-running service worker on a persisted-profile relaunch — pair routed capture + `context.on("request")` journal + in-realm `self.fetch` counter that both records AND fail-closed rejects, plus `--host-resolver-rules` MAP→127.0.0.1 so an unobserved escape still dies locally. An unfulfilled route makes the ~30s runtime itself the timeout proof.
+
+## Elevated at refresh — public store cut + handoff (2026-10-07)
+
+- **A store listing summary comes from the package manifest, not the dashboard.** The Chrome Web Store derives the summary from the manifest `description`; a package that ships none shows an *empty* summary in the draft listing until the package is re-uploaded. Keep one source of truth (`store/listing.md` short description) mirrored into `wxt.config.ts` (126 chars observed against Chrome's 132 cap) and re-cut the release record after changing it — a manifest edit invalidates the recorded ZIP. **Not yet enforced**: neither `check-manifest.mjs` nor `check-store.mjs` reads `description`, and no test covers the parity, so it can silently drift.
+- **Retiring a gate requirement is a RED→GREEN change with a doc sweep.** Dropping the promo-video check meant editing `scripts/check-store.mjs` and its unit test *first*, then chasing every downstream claim: the deleted `store/video-script.md`, the listing bullet, the public checklist row, and the `tech-stack.md`/`product.md` descriptions of what the gate covers. A stale "the gate passes except X" sentence outlives the gate itself.
+- **Superseding a release record orphans its old pointers.** `store/releases/<v>.json` is a single mutable file, so re-cutting 1.0.0 (trusted-tester 412,893 → public 590,038 → description-carrying 590,115 bytes) left `product.md` and `1.0.0-checklist.md` citing a sha256 that no longer existed anywhere but git history. When a record is superseded, either annotate the citing docs with the commit that holds the old value or state plainly that it lives only in history.
+- **A private repo on the free plan cannot serve GitHub Pages.** Enabling Pages required flipping the repository to PUBLIC first; the Pages API returns `build_type: workflow` with `source.branch` even before a successful deploy, so verify by fetching the live URL (HTTP 200 on root *and* `/privacy/`) rather than trusting the config read.

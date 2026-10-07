@@ -1,40 +1,55 @@
 {
-  "lastRefresh": "2026-10-06T12:00:00Z",
+  "lastRefresh": "2026-10-07T03:45:00Z",
+  "previousRefresh": "2026-10-06T12:00:00Z",
   "scope": "all",
+  "baseCommit": "397f7e2",
+  "headCommit": "1b0aebf",
+  "commitsSinceLastRefresh": [
+    "f64668e store(prep): drop promo-video requirement, make repo public, enable Pages",
+    "73b8105 store(release): record 1.0.0 public-channel cut",
+    "ca474bf tracking: sync issue export after closing BookmarksManager-bb7",
+    "ea80f8c chore(beads): sync issue export",
+    "edfa314 store(prep): carry the store summary in the manifest description",
+    "1b0aebf store(prep): record the completed 1.0.0 dashboard draft"
+  ],
   "changes": [
-    "product.md: Phase 6 'Public store submission remains out of scope' de-staled (prep landed later); new Delivery Status bullet 'Public CWS submission prep delivered' (1fa8360/72965c7: 5 listing screenshots 1280x800 + marquee 1400x560 + promo tile, genai-disclosure.md, video-script.md, 1.0.0-public-checklist.md, check-store channel=public bar); 'Not yet built' backlog unchanged and accurate (same 12 open ids)",
-    "tech-stack.md: compliance scripts gain npm run check:store:public (--channel=public bar: 5 screenshots, marquee, YouTube promo URL); Playwright bullet documents tests/e2e/store-assets.spec.ts + scripts/generate-store-assets.mjs bounded runner actionTimeout capture; no dependency drift",
-    "patterns.md: one new Gotcha — bound scripted Playwright capture actions (runner actionTimeout) so store-asset capture cannot hang (from: store-prep 1fa8360, 2026-10-06)",
-    "workflow.md: no drift — local gate unchanged (check:store:public is a manual public-channel bar, not part of the local gate); marker bumped",
-    "tracks.md: unchanged — store prep landed outside a Conductor track (local-commit precedent), recorded in product.md"
+    "tech-stack.md: CORRECTED a stale claim — check:store:public no longer covers a YouTube promo URL (that check was removed in f64668e by user decision); the public bar is now five 1280x800 screenshots + the 1400x560 marquee. ADDED the manifest description contract (126 chars, Chrome's 132 cap, store/listing.md as single source of truth) plus the explicit note that check:manifest does not read description",
+    "product.md: delivery-status bullet for the 2026-10-06 public-submission prep de-staled (video-script.md deleted, 'gate passes except the promo-video URL' no longer true) and a new bullet added covering f64668e->1b0aebf: video requirement dropped, repo made PUBLIC, Pages enabled (deploy 37436333540, root//privacy 200/200), 1.0.0 re-cut twice (fd9f722d 590038 -> 95171943 590115 at edfa314) with the suite-load flake recorded honestly, dashboard draft palolgpngcjjaohfmjcnhnkacpmoejll fully filled, submission still manual. Phase 6 bullet's sha256 pointer annotated (b8663877 412893 at 52a15bb now lives only in git history)",
+    "patterns.md: four new Gotchas elevated from the public-cut handoff — manifest-sourced listing summary + unenforced parity, retiring a gate requirement as a RED->GREEN + doc sweep, superseded release records orphaning sha pointers, and the private-repo/Pages constraint",
+    "workflow.md: no content drift — local gate list unchanged; marker bumped only",
+    "tracks.md: unchanged — no new Conductor tracks; the 2026-10-06 store work landed outside a track (established local-commit precedent), recorded in product.md"
   ],
   "learnings": {
     "tracksScanned": 11,
     "newLearningsFiles": 0,
-    "newPatterns": 1,
-    "note": "No new track learnings.md (store prep was not a track). Single-occurrence capture gotcha added to patterns.md on request; no 2+ cross-track candidates, no duplicates to merge."
+    "newPatterns": 4,
+    "note": "No new or modified track learnings.md since 2026-10-06T03:10Z (deep_audit_fixes_20261005 is the newest). The public-submission work was not a Conductor track, so there were no 2+ cross-track candidates and no duplicates to merge. The four patterns added are single-occurrence captures from the post-refresh commits, added on explicit user approval."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "totalIssues": 369,
+    "totalIssues": 370,
+    "closed": 358,
     "syncDirection": "none (no active plan.md to compare)",
     "completedThisCycle": [
-      "BookmarksManager-0or (Public CWS submission prep: media assets)",
-      "BookmarksManager-vv6 (Public CWS submission prep: disclosures + checklist)"
+      "BookmarksManager-bb7 (drop promo-video requirement, enable Pages, re-cut 1.0.0 release record)"
     ],
     "remainingOpenFollowups": [
       "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
       "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-od9", "BookmarksManager-ope",
       "BookmarksManager-rwy", "BookmarksManager-sb9", "BookmarksManager-tax", "BookmarksManager-xxo"
     ],
+    "drift": "none — no plan.md open tasks to reconcile against; backlog unchanged at the same 12 ids",
     "cosmetic": [
       "beads.role not configured (GH#2950)"
     ]
   },
   "verification": {
-    "scope": "Documentation-only refresh. No build or test suite rerun.",
-    "sourceCommits": "72965c7 (HEAD at refresh); all local, unpushed. check:store:public script existence verified in package.json."
+    "scope": "Documentation-only refresh. No build, unit, or e2e suite rerun.",
+    "gatesRun": "check:store:public PASS (0 violations), check:manifest PASS, check:bundle PASS, check:site PASS",
+    "factsVerified": "manifest description 126 chars (cap 132); store/listing.md short description matches it; store/video-script.md absent; check-store.mjs public block contains only public-screenshots + public-marquee; no dependency drift (wxt 0.21.4, typescript 6.0.3, react 19.3.0, dexie 4.4.6, minisearch 7.2.0, zod 4.6.5, vitest 5.0.1, @playwright/test 1.63.0); gh repo visibility PUBLIC; Pages html_url live with build_type workflow and https_enforced",
+    "knownGap": "Manifest description <-> store/listing.md parity is documented but unenforced: neither check-manifest.mjs nor check-store.mjs reads description, and no test covers it. Reported to the user; no Beads issue filed (user selected the patterns-only option).",
+    "sourceCommits": "1b0aebf (HEAD at refresh); all local, unpushed"
   }
 }

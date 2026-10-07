@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-06 (refresh — no workflow drift; local gate unchanged) -->
+<!-- Last refreshed: 2026-10-07 (refresh — no workflow drift; local gate list unchanged, check:store:public bar narrowed) -->
 
 # Development Workflow
 

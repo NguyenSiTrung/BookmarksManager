@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-06 (refresh — check:store:public + bounded store-asset capture documented; no dependency drift) -->
+<!-- Last refreshed: 2026-10-07 (refresh — public gate bar corrected: promo-video check dropped; manifest description ↔ listing.md parity documented; no dependency drift) -->
 
 # Technology Stack
 
@@ -25,8 +25,12 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   presets, the broad `https://*/*` custom Jev/LLM capability, and loopback
   patterns (`localhost`/`127.0.0.1`/`[::1]`); the `_execute_action` quick-save
   command (`Ctrl+Shift+Y`); and `omnibox.keyword = "bm"` for address-bar
-  search (no permission needed). `npm run check:manifest` keeps
-  `store/permissions.md` justifications in sync.
+  search (no permission needed). The manifest also carries a 126-char
+  `description` (Chrome caps the field at 132): the Chrome Web Store derives
+  the listing summary from the package, so it must stay byte-identical to the
+  short description in `store/listing.md`, which is the single source of
+  truth. `npm run check:manifest` keeps `store/permissions.md` justifications
+  in sync (it does not yet read `description`).
 
 ## Interface and State
 
@@ -223,8 +227,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `eval(`, `new Function`, remote `<script src>`), `npm run check:store`
   (release-strict store-readiness gate over `store/` docs, assets, and the
   release record), `npm run check:store:public` (adds the public-submission
-  channel bar — five 1280x800 listing screenshots, the 1400x560 marquee, and
-  the YouTube promo URL), `npm run check:site` (static-site gate for `site/`),
+  channel bar — five 1280x800 listing screenshots and the 1400x560 marquee;
+  the promotional-video requirement was dropped on 2026-10-06 by user
+  decision), `npm run check:site` (static-site gate for `site/`),
   and `npm run zip` (reproducible `wxt zip` release archive).
 - GitHub Actions CI (`.github/workflows/ci.yml`, Node 22) runs on every pull
   request and on published releases, but not on routine pushes to `main`, with
