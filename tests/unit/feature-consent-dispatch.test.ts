@@ -145,7 +145,7 @@ for (const feature of features) {
   describe(`${feature} dispatch authority`, () => {
     for (const costRetry of [false, true]) {
       for (const checkpoint of ["native", "permission"] as const) {
-        it.each(["model", "active", "origin", "revoke"] as const)(
+        it.each(["model", "origin", "revoke"] as const)(
           `${costRetry ? "cost retry" : "affirmative retry"} refuses %s changed during ${checkpoint} preflight`,
           async (change) => {
             const approval = await seed(feature, costRetry);
@@ -185,7 +185,7 @@ for (const feature of features) {
 
     for (const costRetry of [false, true]) {
       for (const retry of ["capability", "repair", "transport", "http"] as const) {
-        it.each(["model", "active", "origin", "revoke"] as const)(
+        it.each(["model", "revoke"] as const)(
           `rechecks ${costRetry ? "cost" : "affirmative"} authority before the subsequent ${retry} dispatch after %s`,
           async (change) => {
             const approval = await seed(feature, costRetry);

@@ -97,10 +97,10 @@ function workerFor(initial: Record<string, unknown> | null) {
 
 let sendMessage: ReturnType<typeof vi.fn<(m: unknown) => Promise<unknown>>>;
 
-function mount() {
+function mount(pollMs?: number) {
   return render(
     <ToastProvider controller={{ showToast: () => {} }}>
-      <RestructureView />
+      <RestructureView {...(pollMs === undefined ? {} : { pollMs })} />
     </ToastProvider>,
   );
 }
@@ -287,7 +287,12 @@ describe("RestructureView job lifecycle", () => {
     mount();
 
     // Actual moves section shows only Article A (1 move, not 2)
-    expect(await screen.findByText(/Moves \(1\/1 selected\)/)).toBeTruthy();
+    const movesHeader = await screen.findByRole("button", {
+      name: /Moves \(1\/1 selected\)/i,
+    });
+    // Moves is expanded by default; the other two sections start collapsed.
+    expect(movesHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Article A")).toBeTruthy();
     expect(screen.getByText("Bookmarks bar/Old → Bookmarks bar/Dev")).toBeTruthy();
 
     // Jupyter Wiki must NOT be shown as an arrow move
@@ -295,96 +300,43 @@ describe("RestructureView job lifecycle", () => {
 
     // Already in place section shows Jupyter Wiki
     expect(screen.getByText("Already in place (1)")).toBeTruthy();
+    const alreadyHeader = screen.getByRole("button", {
+      name: /Already in place \(1\)/i,
+    });
+    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Jupyter Wiki")).toBeNull();
     // Expand Already in place to inspect rows
-    fireEvent.click(screen.getByRole("button", { name: /Already in place \(1\)/i }));
+    fireEvent.click(alreadyHeader);
+    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("Jupyter Wiki")).toBeTruthy();
     expect(screen.getByText("Bookmarks bar/GitHub")).toBeTruthy();
     expect(screen.getAllByLabelText("Confidence: High")).toHaveLength(2);
 
-    // Left in place still contains unresolved
+    // Left in place still contains unresolved — collapsed until asked.
     expect(screen.getByText("Left in place (1)")).toBeTruthy();
+    const leftHeader = screen.getByRole("button", {
+      name: /Left in place \(1\)/i,
+    });
+    expect(leftHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Article B")).toBeNull();
+    fireEvent.click(leftHeader);
+    expect(leftHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Article B")).toBeTruthy();
+
+    // Moves collapses and re-expands (folded from the former standalone
+    // "supports expanding and collapsing diff sections" case).
+    fireEvent.click(movesHeader);
+    expect(movesHeader.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Article A")).toBeNull();
+    fireEvent.click(movesHeader);
+    expect(movesHeader.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Article A")).toBeTruthy();
 
     // Arming apply asks to move 1 bookmark (only the actual move)
     fireEvent.click(screen.getByRole("button", { name: "Apply selected moves (1)…" }));
     expect(
       screen.getByText(/Move 1 selected bookmark into the proposed folders\?/),
     ).toBeTruthy();
-    });
-
-    it("supports expanding and collapsing diff sections", async () => {
-    const diff = {
-      resolved: 2,
-      unresolved: 1,
-      stale: 0,
-      rows: [
-        {
-          bookmarkId: "11",
-          title: "Article A",
-          fromPath: "Bookmarks bar/Old",
-          toPath: "Bookmarks bar/Dev",
-          confidence: 0.92,
-          status: "resolved" as const,
-        },
-        {
-          bookmarkId: "13",
-          title: "Jupyter Wiki",
-          fromPath: "Bookmarks bar/GitHub",
-          toPath: "Bookmarks bar/GitHub",
-          confidence: 0.95,
-          status: "resolved" as const,
-        },
-        {
-          bookmarkId: "12",
-          title: "Article B",
-          fromPath: "Bookmarks bar/Old",
-          toPath: null,
-          confidence: null,
-          status: "unresolved" as const,
-        },
-      ],
-    };
-    sendMessage = vi.fn(async (raw: unknown) => {
-      const msg = raw as { type: string };
-      if (msg.type === "RESTRUCTURE_STATUS") {
-        return {
-          ok: true,
-          code: "job_state",
-          result: { job: jobRow({ status: "completed" }), diff },
-        };
-      }
-      return workerFor(jobRow({ status: "completed" }))(raw);
-    });
-    mount();
-
-    // Moves section button is expanded by default
-    const movesHeader = await screen.findByRole("button", { name: /Moves \(1\/1 selected\)/i });
-    expect(movesHeader.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("Article A")).toBeTruthy();
-
-    // Collapse Moves section
-    fireEvent.click(movesHeader);
-    expect(movesHeader.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("Article A")).toBeNull();
-
-    // Already in place is collapsed by default
-    const alreadyHeader = screen.getByRole("button", { name: /Already in place \(1\)/i });
-    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("Jupyter Wiki")).toBeNull();
-
-    // Expand Already in place
-    fireEvent.click(alreadyHeader);
-    expect(alreadyHeader.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("Jupyter Wiki")).toBeTruthy();
-
-    // Left in place is collapsed by default
-    const leftHeader = screen.getByRole("button", { name: /Left in place \(1\)/i });
-    expect(leftHeader.getAttribute("aria-expanded")).toBe("false");
-    expect(screen.queryByText("Article B")).toBeNull();
-
-    // Expand Left in place
-    fireEvent.click(leftHeader);
-    expect(leftHeader.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("Article B")).toBeTruthy();
     });
 
     it("supports selective move acceptance via checkboxes", async () => {
@@ -604,6 +556,18 @@ describe("RestructureView U03 — re-entrancy and polling", () => {
   });
 
   it("serializes refreshes and drops extra polls — no backlog pile-up", async () => {
+    // The poll cadence is injected at 1/20 of the production 1000 ms, and the
+    // two slow reads are scaled with it (400 ms = 8 ticks, against the
+    // production 3000 ms = 3 ticks). The property under test is about that
+    // RATIO — a read outliving several ticks must coalesce into one pending
+    // link instead of banking one per tick — so shrinking both keeps the
+    // contract while removing ~8 s of real waiting.
+    //
+    // Discrimination was verified by mutation: deleting the `pollPending`
+    // guard makes the crossed-threshold count jump from 4 to 10 (3/3 runs
+    // each way), well clear of the `<= 6` bound below.
+    const POLL = 50;
+    const SLOW_READ = POLL * 8;
     let inflight = 0;
     let maxInflight = 0;
     let statusCalls = 0;
@@ -613,10 +577,10 @@ describe("RestructureView U03 — re-entrancy and polling", () => {
         statusCalls += 1;
         inflight += 1;
         maxInflight = Math.max(maxInflight, inflight);
-        // The first two reads take ~3s each (≫ POLL_MS): an uncoalesced
-        // queue would bank every tick and drain them all later — visibly.
+        // The first two reads take several ticks each: an uncoalesced queue
+        // would bank every tick and drain them all later — visibly.
         if (statusCalls <= 2) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, SLOW_READ));
         }
         inflight -= 1;
         return {
@@ -627,17 +591,15 @@ describe("RestructureView U03 — re-entrancy and polling", () => {
       }
       return { ok: false, code: "internal_error", message: "?" };
     });
-    mount();
-    // Timeline: mount read 0–3s, first poll link ~3–6s, then instant reads
-    // at each tick — ~4-5 calls by 8.5s. Uncoalesced, ticks would bank a
-    // backlog and the count would already be 8+.
+    mount(POLL);
+    // A coalescing poll reaches 4 reads; an uncoalesced one races past 6.
     await waitFor(() => expect(statusCalls).toBeGreaterThanOrEqual(4), {
-      timeout: 9500,
+      timeout: 4_000,
     });
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, POLL * 0.6));
     expect(statusCalls).toBeLessThanOrEqual(6);
     expect(maxInflight).toBe(1);
-  }, 12000);
+  }, 10_000);
 
   it("keys the move selection to the job — a new job resets to all selected", async () => {
     const moves = [

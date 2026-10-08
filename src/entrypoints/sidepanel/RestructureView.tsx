@@ -84,6 +84,14 @@ type Phase =
   | { kind: "applied"; moved: number }
   | { kind: "error"; message: string };
 
+/**
+ * Default status-poll cadence. Overridable per instance for tests: the
+ * re-entrancy suite needs a poll far shorter than the multi-second reads it
+ * simulates, and driving that through a module constant made one test cost
+ * ~8.6 s of real waiting. `App` already exposes the same kind of seam for the
+ * undo toast (`undoToastAutoHideMs`), so this matches the existing pattern.
+ * Production always uses the default.
+ */
 const POLL_MS = 1_000;
 
 function confidenceLabel(row: DiffRow): string {
@@ -302,7 +310,12 @@ function DiffList(props: DiffListProps) {
   );
 }
 
-export function RestructureView(props: { className?: string }) {
+export function RestructureView(props: {
+  className?: string;
+  /** Status-poll cadence in ms. Test seam; production omits it. */
+  pollMs?: number;
+}) {
+  const pollMs = props.pollMs ?? POLL_MS;
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
@@ -374,12 +387,12 @@ export function RestructureView(props: { className?: string }) {
             pollPending.current = false;
           });
       }
-    }, POLL_MS);
+    }, pollMs);
     return () => {
       mounted.current = false;
       clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, pollMs]);
 
   const start = async (unknownCostConfirmed?: boolean, approval?: FeatureConsentApproval) => {
     if (starting.current) return;

@@ -632,12 +632,16 @@ describe("PopupApp — render budget", () => {
     // committed the filled form. `waitFor` polls at 1 ms so the number tracks
     // the component's own work rather than the poll granularity.
     //
-    // One unmounted warm-up render runs first: the FIRST render in a vitest
-    // process pays a one-time module/JIT cost (observed ~150 ms cold vs. a few
-    // ms warm) that has nothing to do with the popup's work and would make the
-    // assertion environment-dependent. Excluding it keeps the budget honest
-    // and non-flaky; the steady-state value observed here is 20–30 ms, so the
-    // 150 ms budget keeps >4x headroom.
+    // The FIRST render in a vitest process pays a one-time module/JIT cost
+    // (observed ~150 ms cold vs. a few ms warm) that has nothing to do with
+    // the popup's work. The warm-up below excludes it.
+    //
+    // The budget takes the BEST of several measured renders. This suite runs
+    // under ~17 worker processes, and a single sample can be descheduled
+    // mid-render — one-shot timings were observed at 160 ms on a loaded box
+    // for work that costs 20–30 ms warm. The minimum is the standard estimator
+    // for a "how fast can this go" budget: it discards scheduler noise rather
+    // than averaging it in, while a genuine regression still moves it.
     const warmup = render(<PopupApp />);
     await waitFor(
       () =>
@@ -648,17 +652,25 @@ describe("PopupApp — render budget", () => {
     );
     warmup.unmount();
 
-    const start = performance.now();
-    render(<PopupApp />);
-    await waitFor(
-      () =>
-        expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
-          ACTIVE_TAB.title,
-        ),
-      { interval: 1 },
-    );
-    const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(150);
+    const measure = async (): Promise<number> => {
+      const start = performance.now();
+      render(<PopupApp />);
+      await waitFor(
+        () =>
+          expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe(
+            ACTIVE_TAB.title,
+          ),
+        { interval: 1 },
+      );
+      return performance.now() - start;
+    };
+
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      best = Math.min(best, await measure());
+      cleanup();
+    }
+    expect(best).toBeLessThan(150);
   });
 });
 

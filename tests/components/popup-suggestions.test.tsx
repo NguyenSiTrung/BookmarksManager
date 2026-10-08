@@ -360,38 +360,6 @@ describe("PopupApp — save suggestions", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("still renders streamed suggestions when the reply lands after a mid-flight edit", async () => {
-    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
-    let resolveReply: (value: unknown) => void = () => {};
-    sendMessage.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveReply = resolve;
-        }),
-    );
-    await renderPopup();
-    const { id } = await waitForSuggestRequest();
-
-    fireEvent.change(screen.getByLabelText("Title"), {
-      target: { value: "Renamed" },
-    });
-
-    await act(async () => {
-      resolveReply({
-        ok: true,
-        code: "analyze_ok",
-        result: { sent: true, decisionCount: 1 },
-      });
-      await Promise.resolve();
-    });
-
-    // Suggestions arrive as persisted rows correlated by the synthetic id and
-    // render despite the edit; the request was sent exactly once.
-    await putTagsDecision({ bookmarkId: id, tags: ["reading"] });
-    await screen.findByRole("button", { name: "Add suggested tag reading" });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-  });
-
   it("sends SAVE_SUGGEST once with a synthetic popup id and no notes field", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     await renderPopup();

@@ -556,8 +556,12 @@ describe("escalation section", () => {
     await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
     // The grant is missing, so the feature cannot run — but OFF stays honest.
     expect(toggle.getAttribute("aria-disabled")).toBeNull();
+    // The prerequisite line renders from the same status read as the switch, so
+    // it must be awaited rather than read synchronously: under parallel worker
+    // load the status reply can land between the two, and a bare getByText
+    // fails on a component that is merely still settling.
     expect(
-      screen.getByText(/grant second-opinion consent above/i),
+      await screen.findByText(/grant second-opinion consent above/i),
     ).toBeTruthy();
     fireEvent.click(toggle);
     await waitFor(() =>

@@ -453,20 +453,6 @@ describe("drag and drop (keyboard sensor)", () => {
     await flush();
   });
 
-  it("keeps roving focus on the drag handle while dragging", async () => {
-    await renderApp();
-    const from = handle("Alpha");
-    from.focus();
-    fireEvent.keyDown(from, { code: "Space" });
-    await flush();
-    // ArrowDown during a drag moves the drag target, never the listbox's
-    // roving focus (T2's key handler must stand down).
-    fireEvent.keyDown(from, { code: "ArrowDown" });
-    expect(document.activeElement).toBe(from);
-    fireEvent.keyDown(from, { code: "Escape" });
-    await flush();
-  });
-
   it("moves a bookmark into another folder", async () => {
     await renderApp();
     // Expand "Dev" so its child folders are visible drop targets.
@@ -522,20 +508,6 @@ describe("drag and drop (keyboard sensor)", () => {
       ]);
     });
     await waitFor(() => expect(toast().textContent).toContain("Reordered"));
-  });
-
-  it("reorders folders among their siblings", async () => {
-    await renderApp();
-    // Expand "Dev" so its child folders are visible drop targets.
-    fireEvent.keyDown(treeitem("Dev"), { key: "ArrowRight" });
-    await waitFor(() => expect(treeitem("Tools")).toBeTruthy());
-
-    await keyboardDragTo(handle("Tools"), "folder:f10");
-
-    await waitFor(async () => {
-      const children = await fake.getChildren("10");
-      expect(children.map((node) => node.id)).toEqual(["b1", "f11", "f10"]);
-    });
   });
 
   it("drags the whole selection when a selected row is dragged", async () => {

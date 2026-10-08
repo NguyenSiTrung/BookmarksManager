@@ -140,12 +140,14 @@ afterEach(() => {
 });
 afterAll(() => db.close());
 
+// Two rows per surface: the DB-rejection path and the schema-validation path.
+// readBlocklist() has a single throw site (zod safeParse failure is inside the
+// same try), so every malformed row yields the identical BlocklistReadError and
+// an identical assertion body; the wider malformed taxonomy is covered by
+// tests/unit/blocklist.test.ts.
 const badRows = [
   { label: "throwing metadata.get", throws: true },
-  { label: "non-array row", value: { host: "sensitive-row-detail.dev" } },
-  { label: "mixed entry types", value: ["sensitive-row-detail.dev", 42] },
   { label: "empty host", value: [""] },
-  { label: "malformed host", value: ["sensitive row detail"] },
 ];
 async function installBadRow(row: typeof badRows[number]) {
   if (row.throws) {

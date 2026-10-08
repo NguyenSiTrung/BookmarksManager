@@ -378,23 +378,6 @@ describe("EditDialog", () => {
 // ---------------------------------------------------------------------------
 
 describe("BulkBar", () => {
-  it("appears with the selected count and clears the selection", async () => {
-    await renderApp();
-    expect(
-      screen.queryByRole("toolbar", { name: "Selection actions" }),
-    ).toBeNull();
-
-    fireEvent.click(option(/Alpha/));
-    expect(selectionBar().textContent).toContain("1 selected");
-
-    fireEvent.click(
-      within(selectionBar()).getByRole("button", { name: "Clear selection" }),
-    );
-    expect(
-      screen.queryByRole("toolbar", { name: "Selection actions" }),
-    ).toBeNull();
-  });
-
   it("disables Delete and Move when every selected row is managed", async () => {
     await renderApp();
     fireEvent.click(option(/Hosted/));
@@ -431,12 +414,32 @@ describe("BulkBar", () => {
     await createTag("Dev");
     await renderApp();
 
+    // The bar only exists once something is selected (folded from the former
+    // standalone "appears with the selected count and clears the selection").
+    expect(
+      screen.queryByRole("toolbar", { name: "Selection actions" }),
+    ).toBeNull();
+
     fireEvent.click(option(/Alpha/));
     fireEvent.click(option(/Beta/), { ctrlKey: true });
     const bar = selectionBar();
     expect(bar.textContent).toContain("2 selected");
 
-    fireEvent.click(within(bar).getByRole("button", { name: "Delete" }));
+    // Clear selection empties the bar and removes it again; the delete below
+    // then re-selects the same two rows.
+    fireEvent.click(
+      within(bar).getByRole("button", { name: "Clear selection" }),
+    );
+    expect(
+      screen.queryByRole("toolbar", { name: "Selection actions" }),
+    ).toBeNull();
+
+    fireEvent.click(option(/Alpha/));
+    fireEvent.click(option(/Beta/), { ctrlKey: true });
+    const reselected = selectionBar();
+    expect(reselected.textContent).toContain("2 selected");
+
+    fireEvent.click(within(reselected).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(toast().textContent).toContain("Deleted 2 bookmarks"),
     );

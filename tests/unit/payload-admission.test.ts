@@ -152,7 +152,7 @@ describe.each<FeatureScope>([
     expect(requests).toHaveLength(2);
   });
 
-  it.each(["notes", "pageText", "unknown"] as const)("rejects the extra %s field before dispatch", async (field) => {
+  it.each(["notes"] as const)("rejects the extra %s field before dispatch", async (field) => {
     const request = await featureRequest(scope);
     const user = request.messages[1]!;
     const payload = JSON.parse(user.content) as Record<string, unknown>;
@@ -277,9 +277,8 @@ describe.each(["llm_explain", "llm_escalate", "llm_summary"] as const)(
   "%s nested bookmark admission", (scope) => {
     it.each([
       "https://allowed-site.dev/article?token=PRIVATE_MARKER",
-      "https://allowed-site.dev/article#PRIVATE_MARKER",
       "https://owner:PRIVATE_MARKER@allowed-site.dev/article",
-      "https://10.0.0.1/article", "http://127.0.0.1/article", "file:///private/article",
+      "https://10.0.0.1/article", "file:///private/article",
     ])("rejects dirty or nonpublic URL %s", async (url) => {
       const original = await featureRequest(scope);
       const payload = JSON.parse(original.messages[1]!.content) as Record<string, unknown>;

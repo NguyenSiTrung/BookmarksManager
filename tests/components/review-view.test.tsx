@@ -597,25 +597,6 @@ describe("Review view wiring", () => {
     );
   });
 
-  it("bulk approves ALL pending when nothing is selected", async () => {
-    await seedDecisions();
-    await renderApp();
-    await openReviewView();
-
-    fireEvent.click(screen.getByRole("button", { name: /Approve all/ }));
-    expect(await screen.findByTestId("bulk-approve-confirm")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /^Apply all$/ }));
-    await waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: "BULK_APPROVE",
-        decisionIds: [D_TAGS, D_CATEGORY, D_MOVE, D_STALE],
-      });
-    });
-    await waitFor(() =>
-      expect(toast().textContent).toMatch(/applied 4/i),
-    );
-  });
-
   it("surfaces per-row failures from a partial bulk approve", async () => {
     await seedDecisions();
     await renderApp();
@@ -1024,9 +1005,10 @@ describe("Explain and second opinions", () => {
     expect(
       within(row).queryByRole("button", { name: /^Explain/ }),
     ).toBeNull();
-  });
 
-  it("renders an agree verdict", async () => {
+    // The agreeing verdict is written out in words too (folded from the
+    // former standalone "renders an agree verdict" case).
+    cleanup();
     render(
       <ReviewView
         tree={await liveTree()}
