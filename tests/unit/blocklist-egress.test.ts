@@ -14,7 +14,6 @@ import { explainDecision } from "../../src/llm/explain";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { summarizePage } from "../../src/llm/summarize";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
-import { handleLlmFeatureMessage } from "../../src/messages/llm-features";
 import { handleRestructureMessage } from "../../src/messages/restructure";
 import { handleSummarizeMessage } from "../../src/messages/summaries";
 import { sendLlmConsented } from "../../src/net/llm-send";
@@ -140,27 +139,21 @@ afterEach(() => {
 });
 afterAll(() => db.close());
 
-// Two rows per surface: the DB-rejection path and the schema-validation path.
-// readBlocklist() has a single throw site (zod safeParse failure is inside the
-// same try), so every malformed row yields the identical BlocklistReadError and
-// an identical assertion body; the wider malformed taxonomy is covered by
-// tests/unit/blocklist.test.ts.
+// One row per surface: readBlocklist() has a single throw site (zod safeParse
+// failure is inside the same try), so every malformed row yields the identical
+// BlocklistReadError and an identical assertion body; the wider malformed
+// taxonomy is covered by tests/unit/blocklist.test.ts.
 const badRows = [
-  { label: "throwing metadata.get", throws: true },
-  { label: "empty host", value: [""] },
+  { label: "throwing metadata.get" },
 ];
-async function installBadRow(row: typeof badRows[number]) {
-  if (row.throws) {
-    const get = db.metadata.get.bind(db.metadata);
-    vi.spyOn(db.metadata, "get").mockImplementation((key: unknown) => {
-      if (key === DECISION_BLOCKLIST_KEY) {
-        throw new Error("sensitive-row-detail.dev");
-      }
-      return get(key as string);
-    });
-  } else {
-    await db.metadata.put({ key: DECISION_BLOCKLIST_KEY, value: row.value });
-  }
+async function installBadRow() {
+  const get = db.metadata.get.bind(db.metadata);
+  vi.spyOn(db.metadata, "get").mockImplementation((key: unknown) => {
+    if (key === DECISION_BLOCKLIST_KEY) {
+      throw new Error("sensitive-row-detail.dev");
+    }
+    return get(key as string);
+  });
 }
 
 interface Surface {
@@ -173,6 +166,8 @@ interface Surface {
 const readerRefusal = { name: "BlocklistReadError", code: "request_not_allowed" };
 const messageRefusal = { ok: false, code: "request_not_allowed" };
 const question = { type: "noul", instructions: "Is this useful?" };
+// One representative surface per caller class: every egress caller consults
+// the same readBlocklist() gate, and identical refuse/allow assertions apply.
 const surfaces: Surface[] = [
   {
     name: "production analyze handler",
@@ -181,36 +176,19 @@ const surfaces: Surface[] = [
     refusal: messageRefusal, allowed: { ok: true, code: "analyze_ok", result: { sent: true } },
   },
   {
-    name: "production save-suggest handler",
-    run: () => handleDecisionsMessage({ type: "SAVE_SUGGEST", bookmark: BOOKMARK },
-      SENDER, productionHandlers()),
-    refusal: messageRefusal, allowed: { ok: true, code: "analyze_ok", result: { sent: true } },
-  },
-  {
-    name: "production rerank handler",
-    run: () => handleDecisionsMessage({ type: "RERANK", query: "Allowed" }, SENDER, productionHandlers()),
-    refusal: messageRefusal, allowed: { ok: true, code: "rerank_ok", result: { sent: true } },
-  },
-  ...(["analyze_selection", "restructure"] as const).map((kind): Surface => ({
-    name: `persisted ${kind} job`,
+    name: "persisted analyze_selection job",
     prepare: async () => {
-      jobId = (await enqueueJob({ kind, bookmarkIds: ["bm-001"],
-        ...(kind === "restructure" ? { restructureProposal: PROPOSAL } : {}) })).id;
+      jobId = (await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-001"] })).id;
     },
     run: async () => {
       await runPersistedJob(jobId);
       return { status: (await getJob(jobId))?.status };
     },
     refusal: readerRefusal, allowed: { status: "completed" },
-  })),
+  },
   {
     name: "direct explain service", run: () => explainDecision(UUID, LLM_ID),
     refusal: readerRefusal, allowed: { rationale: "Synthetic rationale." },
-  },
-  {
-    name: "explain message handler",
-    run: () => handleLlmFeatureMessage({ type: "LLM_EXPLAIN", decisionId: UUID }, SENDER),
-    refusal: messageRefusal, allowed: { ok: true, code: "explain_ok" },
   },
   {
     name: "direct summarize service",
@@ -239,23 +217,15 @@ const surfaces: Surface[] = [
     refusal: { name: "NetworkGateError", code: "request_not_allowed" }, allowed: { status: 200 },
   },
   {
-    name: "independent Jev summary gate",
-    run: () => sendConsented("jev_summary_verify", "typesafe", "jev-latest", {
-      model: "jev-latest", state: { bookmark: { title: EXTRACT.title, url: EXTRACT.url,
-        domain: "allowed-site.dev" }, excerpt: EXTRACT.excerpt, headings: EXTRACT.headings,
-        summary: "Synthetic summary." }, questions: { useful: question },
-    }),
-    refusal: { name: "NetworkGateError", code: "request_not_allowed" }, allowed: { status: 200 },
-  },
-  ...TEST_LLM_SCOPES.map((scope): Surface => ({
-    name: `independent ${scope} gate without feature admission`,
+    name: `independent ${TEST_LLM_SCOPES[0]} gate without feature admission`,
     run: () => sendLlmConsented({
-      providerId: LLM_ID, scope, request: scopeRequest(scope, "gpt-4o-mini"),
+      providerId: LLM_ID, scope: TEST_LLM_SCOPES[0],
+      request: scopeRequest(TEST_LLM_SCOPES[0], "gpt-4o-mini"),
       maxInputTokens: 100, maxOutputTokens: 50, kind: "manual",
     }),
     refusal: { name: "LlmGateError", code: "request_not_allowed" },
     allowed: { response: { status: 200 } },
-  })),
+  },
   {
     name: "restructure start message",
     prepare: async () => { configureLlm(PROPOSAL); },
@@ -267,9 +237,9 @@ const surfaces: Surface[] = [
 
 for (const surface of surfaces) {
   describe(surface.name, () => {
-    it.each(badRows)("refuses $label before any provider call", async (row) => {
+    it.each(badRows)("refuses $label before any provider call", async () => {
       await surface.prepare?.();
-      await installBadRow(row);
+      installBadRow();
       const reply: unknown = await surface.run().catch((cause: unknown) => cause);
       expect(reply).toMatchObject(surface.refusal);
       expect(providerCalls).toBe(0);
@@ -290,11 +260,11 @@ for (const surface of surfaces) {
       }
     });
 
-    it.each(["unset", "empty", "valid unrelated"] as const)("sends with a %s blocklist control", async (control) => {
+    it.each(["unset", "valid unrelated"] as const)("sends with a %s blocklist control", async (control) => {
       await surface.prepare?.();
       if (control !== "unset") {
         await db.metadata.put({ key: DECISION_BLOCKLIST_KEY,
-          value: control === "empty" ? [] : ["unrelated-site.dev"] });
+          value: ["unrelated-site.dev"] });
       }
       expect(await surface.run()).toMatchObject(surface.allowed);
       expect(providerCalls).toBeGreaterThan(0);

@@ -231,7 +231,7 @@ Implement track: $ARGUMENTS
             ## Instructions
             1. Follow workflow.md TDD process (Red → Green → Refactor)
             2. ONLY create/modify files in your owned list above
-            3. Run tests and ensure >80% coverage
+            3. Run tests
             4. Commit with message: <type>(<scope>): <description>
             5. NEVER run `git push` - all commits stay local
             6. After commit, update parallel_state.json:
@@ -251,7 +251,6 @@ Implement track: $ARGUMENTS
             
             ## Success Criteria
             - All tests pass
-            - Code coverage >80%
             - Only owned files modified
             - Commit created with proper message
             - parallel_state.json updated

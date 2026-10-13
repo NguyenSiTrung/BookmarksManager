@@ -212,18 +212,15 @@ Present to user:
 
 2. **Ask:**
    > "Use default workflow or customize?"
-   > Default includes: 80% test coverage, commit after each task, Git Notes for summaries
+   > Default includes: commit after each task, Git Notes for summaries
    > A) Default
    > B) Customize
 
 3. **If Customize:**
-   - **Q1:** "Default coverage is >80%. Change it?"
-     - A) No (Keep 80%)
-     - B) Yes (Enter new percentage)
-   - **Q2:** "Commit after each task or each phase?"
+   - **Q1:** "Commit after each task or each phase?"
      - A) After each task (Recommended)
      - B) After each phase
-   - **Q3:** "Use git notes or commit message for task summary?"
+   - **Q2:** "Use git notes or commit message for task summary?"
      - A) Git Notes (Recommended)
      - B) Commit Message
    - Update `conductor/workflow.md` based on responses

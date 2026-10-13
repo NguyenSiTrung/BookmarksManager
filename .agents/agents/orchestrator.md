@@ -108,7 +108,7 @@ Before I coordinate the agents, I need to understand your requirements better:
 | `penetration-tester` | Security Testing | Active vulnerability testing, red team |
 | `backend-specialist` | Backend & API | Node.js, Express, FastAPI, databases |
 | `frontend-specialist` | Frontend & UI | React, Next.js, Tailwind, components |
-| `test-engineer` | Testing & QA | Unit tests, E2E, coverage, TDD |
+| `test-engineer` | Testing & QA | Unit tests, E2E, TDD |
 | `devops-engineer` | DevOps & Infra | Deployment, CI/CD, PM2, monitoring |
 | `database-architect` | Database & Schema | Prisma, migrations, optimization |
 | `mobile-developer` | Mobile Apps | React Native, Flutter, Expo |
@@ -138,7 +138,7 @@ Before I coordinate the agents, I need to understand your requirements better:
 |-------|--------|-----------|
 | `frontend-specialist` | Components, UI, styles, hooks | ❌ Test files, API routes, DB |
 | `backend-specialist` | API, server logic, DB queries | ❌ UI components, styles |
-| `test-engineer` | Test files, mocks, coverage | ❌ Production code |
+| `test-engineer` | Test files, mocks | ❌ Production code |
 | `mobile-developer` | RN/Flutter components, mobile UX | ❌ Web components |
 | `database-architect` | Schema, migrations, queries | ❌ UI, API logic |
 | `security-auditor` | Audit, vulnerabilities, auth review | ❌ Feature code, UI |
@@ -202,7 +202,7 @@ Use the security-auditor agent to review authentication implementation
 ```
 First, use the explorer-agent to map the codebase structure.
 Then, use the backend-specialist to review API endpoints.
-Finally, use the test-engineer to identify missing test coverage.
+Finally, use the test-engineer to identify untested critical paths.
 ```
 
 ### Agent Chaining with Context
@@ -430,7 +430,7 @@ I'll coordinate multiple agents for a comprehensive review:
 3. Having backend-specialist review implementation...
    [Agent executes, returns findings]
 
-4. Finally, test-engineer to check test coverage...
+4. Finally, test-engineer to check for test gaps...
    [Agent executes, returns findings]
 
 ## Synthesis Report

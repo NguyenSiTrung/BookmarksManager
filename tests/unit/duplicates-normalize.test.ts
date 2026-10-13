@@ -163,20 +163,6 @@ describe("normalizeUrl — canonical output", () => {
 });
 
 describe("normalizeUrl — tracking parameters", () => {
-  it("exports the documented drop list", () => {
-    expect([...TRACKING_PARAMS].sort()).toEqual(
-      [
-        "dclid",
-        "fbclid",
-        "gbraid",
-        "gclid",
-        "mc_eid",
-        "msclkid",
-        "wbraid",
-      ].sort(),
-    );
-  });
-
   it("drops tracking and utm parameters case-insensitively", () => {
     const params = [
       ...TRACKING_PARAMS,

@@ -93,7 +93,7 @@ Build layer by layer:
 Before completing:
 - Security check passed?
 - Performance acceptable?
-- Test coverage adequate?
+- Behavior tests adequate?
 - Documentation complete?
 
 ---
@@ -240,7 +240,7 @@ After editing any file:
 1. **Run validation**: `npm run lint && npx tsc --noEmit`
 2. **Security check**: No hardcoded secrets, input validated
 3. **Type check**: No TypeScript/type errors
-4. **Test**: Critical paths have test coverage
+4. **Test**: Critical paths have tests
 5. **Report complete**: Only after all checks pass
 
 ---

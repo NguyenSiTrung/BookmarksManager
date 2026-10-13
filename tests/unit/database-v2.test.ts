@@ -78,59 +78,6 @@ describe("BookmarksManagerDB v1 → v3 migration", () => {
     db.close();
   });
 
-  it("opens at version 9 with all twenty tables declared", () => {
-    expect(db.verno).toBe(9);
-    // Dexie stores version × 10 natively; 90 proves the class upgraded the
-    // existing v1 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(90);
-    expect(db.tables.map((table) => table.name).sort()).toEqual([
-      "audit",
-      "bookmarkMeta",
-      "consents",
-      "corruptMeta",
-      "decisions",
-      "importQueues",
-      "importStates",
-      "jobs",
-      "keyMaterials",
-      "llmReservations",
-      "llmUsage",
-      "llmUsageMonths",
-      "metaTombstones",
-      "metadata",
-      "restructureAssignments",
-      "sentLog",
-      "tags",
-      "undo",
-      "usage",
-      "usageMonths",
-    ]);
-  });
-
-  it("declares bookmarkMeta as id,*tags,category,updatedAt", () => {
-    expect(db.bookmarkMeta.schema.primKey.keyPath).toBe("id");
-    const indexes = db.bookmarkMeta.schema.indexes;
-    expect(indexes.map((index) => index.name).sort()).toEqual([
-      "category",
-      "tags",
-      "updatedAt",
-    ]);
-    // *tags is a multiEntry index over tag nameKeys.
-    expect(indexes.find((index) => index.name === "tags")?.multi).toBe(true);
-  });
-
-  it("declares tags keyed by nameKey", () => {
-    expect(db.tags.schema.primKey.keyPath).toBe("nameKey");
-    expect(db.tags.schema.indexes).toHaveLength(0);
-  });
-
-  it("declares undo as ++id,createdAt", () => {
-    expect(db.undo.schema.primKey.keyPath).toBe("id");
-    expect(db.undo.schema.primKey.auto).toBe(true);
-    expect(db.undo.schema.indexes.map((index) => index.name)).toEqual([
-      "createdAt",
-    ]);
-  });
 
   it("preserves the seeded v1 rows in every Phase 0 table", async () => {
     const settings = await db.metadata.get("typesafe");

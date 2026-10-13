@@ -330,12 +330,6 @@ describe("DuplicatesView rendering", () => {
     expect(screen.getByText(/No duplicates/)).toBeTruthy();
   });
 
-  it("shows when each member was added", async () => {
-    const groups = await groupsFromFake();
-    render(<DuplicatesView groups={groups} />);
-    expect(memberRow("x1").textContent).toMatch(/Added [A-Z][a-z]{2} \d{1,2}, \d{4}/);
-  });
-
   it("uses an icon-only Open button that keeps its accessible name", async () => {
     const groups = await groupsFromFake();
     render(<DuplicatesView groups={groups} onActivateItem={() => {}} />);
@@ -344,12 +338,6 @@ describe("DuplicatesView rendering", () => {
     });
     expect(open.textContent).toBe("");
     expect(open.querySelector("svg")).not.toBeNull();
-  });
-
-  it("renders a custom empty node when there are no groups", () => {
-    render(<DuplicatesView groups={[]} empty={<p>Custom empty</p>} />);
-    expect(screen.getByText("Custom empty")).toBeTruthy();
-    expect(screen.queryByText(/No duplicates/)).toBeNull();
   });
 
   it("shows a loading affordance while the tree loads", async () => {

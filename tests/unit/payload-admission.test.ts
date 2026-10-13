@@ -168,28 +168,32 @@ describe.each<FeatureScope>([
     expect(await db.llmReservations.count()).toBe(reservations);
   });
 
-  it("rejects an additional arbitrary user message", async () => {
-    const request = await featureRequest(scope);
-    await expect(send(scope, {
-      ...request, messages: [...request.messages, { role: "user", content: "PRIVATE_MARKER" }],
-    })).rejects.toMatchObject({ code: "request_not_allowed" });
-    expect(requests).toHaveLength(1);
-  });
+  // Message-envelope and blocklist checks live in the shared gate, not the
+  // per-scope payload schema — pin them on two scopes only.
+  if (scope === "llm_explain" || scope === "llm_summary") {
+    it("rejects an additional arbitrary user message", async () => {
+      const request = await featureRequest(scope);
+      await expect(send(scope, {
+        ...request, messages: [...request.messages, { role: "user", content: "PRIVATE_MARKER" }],
+      })).rejects.toMatchObject({ code: "request_not_allowed" });
+      expect(requests).toHaveLength(1);
+    });
 
-  it("rejects a caller-supplied system prompt", async () => {
-    const request = await featureRequest(scope);
-    await expect(send(scope, {
-      ...request, messages: [{ role: "system", content: "PRIVATE_MARKER" }, request.messages[1]!],
-    })).rejects.toMatchObject({ code: "request_not_allowed" });
-    expect(requests).toHaveLength(1);
-  });
+    it("rejects a caller-supplied system prompt", async () => {
+      const request = await featureRequest(scope);
+      await expect(send(scope, {
+        ...request, messages: [{ role: "system", content: "PRIVATE_MARKER" }, request.messages[1]!],
+      })).rejects.toMatchObject({ code: "request_not_allowed" });
+      expect(requests).toHaveLength(1);
+    });
 
-  it("rechecks current persisted blocklist independently of feature admission", async () => {
-    const request = await featureRequest(scope);
-    await db.metadata.put({ key: "decisions:blocklist", value: [BOOKMARK.domain] });
-    await expect(send(scope, request)).rejects.toMatchObject({ code: "request_not_allowed" });
-    expect(requests).toHaveLength(1);
-  });
+    it("rechecks current persisted blocklist independently of feature admission", async () => {
+      const request = await featureRequest(scope);
+      await db.metadata.put({ key: "decisions:blocklist", value: [BOOKMARK.domain] });
+      await expect(send(scope, request)).rejects.toMatchObject({ code: "request_not_allowed" });
+      expect(requests).toHaveLength(1);
+    });
+  }
 
   it("rejects unknown fields in the output schema instead of sending arbitrary data there", async () => {
     const request = await featureRequest(scope);
@@ -202,7 +206,11 @@ describe.each<FeatureScope>([
     expect(requests).toHaveLength(1);
   });
 
-  it.each(["not JSON", JSON.stringify("PRIVATE_MARKER")] as const)(
+  it.each(
+    scope === "llm_explain"
+      ? (["not JSON", JSON.stringify("PRIVATE_MARKER")] as const)
+      : (["not JSON"] as const),
+  )(
     "rejects an unstructured user payload %s", async (content) => {
       const request = await featureRequest(scope);
       await expect(send(scope, { ...request,
@@ -212,7 +220,10 @@ describe.each<FeatureScope>([
     },
   );
 
-  it.each(["fallback", "repairs"] as const)("preserves real feature %s", async (scenario) => {
+  // The fallback/repair transcript lives in the shared engine — pin both
+  // shapes on one scope and the fallback seam on the rest.
+  it.each(scope === "llm_explain" ? (["fallback", "repairs"] as const) : (["fallback"] as const))(
+    "preserves real feature %s", async (scenario) => {
     const provider = globalThis.fetch;
     let attempts = 0;
     const transcript: ChatCompletionRequest[] = [];
@@ -275,10 +286,14 @@ it.each(["json_schema", "json_object", "prompt_only"] as const)(
 
 describe.each(["llm_explain", "llm_escalate", "llm_summary"] as const)(
   "%s nested bookmark admission", (scope) => {
+    // One dirty URL per scope pins "this scope consults the URL guard"; the
+    // per-class taxonomy is pinned exhaustively in decisions-minimize.test.ts.
     it.each([
-      "https://allowed-site.dev/article?token=PRIVATE_MARKER",
       "https://owner:PRIVATE_MARKER@allowed-site.dev/article",
-      "https://10.0.0.1/article", "file:///private/article",
+      ...(scope === "llm_explain" ? [
+        "https://allowed-site.dev/article?token=PRIVATE_MARKER",
+        "https://10.0.0.1/article", "file:///private/article",
+      ] : []),
     ])("rejects dirty or nonpublic URL %s", async (url) => {
       const original = await featureRequest(scope);
       const payload = JSON.parse(original.messages[1]!.content) as Record<string, unknown>;

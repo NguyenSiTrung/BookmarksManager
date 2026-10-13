@@ -93,56 +93,6 @@ describe("BookmarksManagerDB v4 → v5 migration", () => {
     db.close();
   });
 
-  it("opens at version 9 with the rollup tables declared", () => {
-    expect(db.verno).toBe(9);
-    // Dexie stores version × 10 natively; 90 proves the class upgraded the
-    // existing v4 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(90);
-    expect(db.tables.map((table) => table.name).sort()).toEqual([
-      "audit",
-      "bookmarkMeta",
-      "consents",
-      "corruptMeta",
-      "decisions",
-      "importQueues",
-      "importStates",
-      "jobs",
-      "keyMaterials",
-      "llmReservations",
-      "llmUsage",
-      "llmUsageMonths",
-      "metaTombstones",
-      "metadata",
-      "restructureAssignments",
-      "sentLog",
-      "tags",
-      "undo",
-      "usage",
-      "usageMonths",
-    ]);
-  });
-
-  it("declares the new indexes", () => {
-    expect(db.usage.schema.indexes.map((i) => i.name).sort()).toEqual([
-      "jobId",
-      "month",
-      "recordedAt",
-    ]);
-    expect(db.usageMonths.schema.primKey.keyPath).toBe("key");
-    expect(db.usageMonths.schema.indexes.map((i) => i.name).sort()).toEqual([
-      "jobId",
-      "month",
-    ]);
-    expect(db.llmUsage.schema.indexes.map((i) => i.name).sort()).toEqual(
-      expect.arrayContaining(["month", "recordedAt", "providerId"]),
-    );
-    expect(
-      db.llmUsage.schema.indexes.some((i) => i.compound),
-    ).toBe(true);
-    expect(db.llmReservations.schema.indexes.map((i) => i.name).sort()).toEqual(
-      expect.arrayContaining(["month", "providerId", "status"]),
-    );
-  });
 
   it("backfills `month` on pre-v5 rows and keeps them readable", async () => {
     const usage = await db.usage.toArray();

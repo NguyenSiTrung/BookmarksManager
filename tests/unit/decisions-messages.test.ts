@@ -12,7 +12,6 @@ import type { RerankSearchResult } from "../../src/decisions/rerank";
 import type { BulkApproveResult, RevertBatchResult } from "../../src/decisions/apply";
 import type { DecisionRow } from "../../src/decisions/store";
 import {
-  DECISION_MESSAGE_TYPES,
   DecisionMessageResult,
   handleDecisionsMessage,
   type DecisionsHandlers,
@@ -404,26 +403,6 @@ describe("trusted sender", () => {
 });
 
 describe("intent dispatch", () => {
-  it("covers every declared discriminator", () => {
-    expect(DECISION_MESSAGE_TYPES).toEqual([
-      "ANALYZE_BOOKMARK",
-      "SAVE_SUGGEST",
-      "RERANK",
-      "JOB_START",
-      "JOB_PAUSE",
-      "JOB_RESUME",
-      "JOB_CANCEL",
-      "APPROVE_DECISION",
-      "REJECT_DECISION",
-      "REVERT_DECISION",
-      "REVERT_BATCH",
-      "BULK_APPROVE",
-      "GET_SETTINGS",
-      "PATCH_SETTINGS",
-      "PATCH_BLOCKLIST",
-    ]);
-  });
-
   it("analyzes a bookmark by id and returns a redacted summary", async () => {
     const { handlers, calls } = makeHandlers();
     const result = await handleDecisionsMessage(

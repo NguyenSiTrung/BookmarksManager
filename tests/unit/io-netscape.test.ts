@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  BLOCKED_URL_SCHEMES,
   MAX_FILE_BYTES,
   exportNetscape,
   parseNetscape,
@@ -445,14 +444,6 @@ describe("parseNetscape input rejection", () => {
 });
 
 describe("parseNetscape safety surface", () => {
-  it("exports the documented blocked-scheme list", () => {
-    expect([...BLOCKED_URL_SCHEMES].sort()).toEqual([
-      "data",
-      "javascript",
-      "vbscript",
-    ]);
-  });
-
   it("never uses innerHTML — the module source is DOMParser-only", () => {
     const src = readFileSync(
       path.resolve(process.cwd(), "src/io/netscape.ts"),

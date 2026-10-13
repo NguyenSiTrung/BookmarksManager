@@ -62,13 +62,6 @@ describe("Favicon src", () => {
     );
   });
 
-  it("honours an explicit size", () => {
-    const img = renderFavicon({ size: 16 });
-    const [, query] = img.src.split("?");
-    expect(new URLSearchParams(query).get("size")).toBe("16");
-    expect(img.width).toBe(16);
-    expect(img.height).toBe(16);
-  });
 });
 
 describe("Favicon fallback", () => {

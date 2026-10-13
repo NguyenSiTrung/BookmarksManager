@@ -97,62 +97,6 @@ describe("BookmarksManagerDB v2 → v3 migration", () => {
     db.close();
   });
 
-  it("opens at version 9 with all twenty tables declared", () => {
-    expect(db.verno).toBe(9);
-    // Dexie stores version × 10 natively; 90 proves the class upgraded the
-    // existing v2 database rather than creating a new one.
-    expect(db.backendDB()?.version).toBe(90);
-    expect(db.tables.map((table) => table.name).sort()).toEqual([
-      "audit",
-      "bookmarkMeta",
-      "consents",
-      "corruptMeta",
-      "decisions",
-      "importQueues",
-      "importStates",
-      "jobs",
-      "keyMaterials",
-      "llmReservations",
-      "llmUsage",
-      "llmUsageMonths",
-      "metaTombstones",
-      "metadata",
-      "restructureAssignments",
-      "sentLog",
-      "tags",
-      "undo",
-      "usage",
-      "usageMonths",
-    ]);
-  });
-
-  it("declares jobs as id,status,createdAt", () => {
-    expect(db.jobs.schema.primKey.keyPath).toBe("id");
-    expect(db.jobs.schema.indexes.map((index) => index.name).sort()).toEqual([
-      "[kind+createdAt]",
-      "createdAt",
-      "status",
-    ]);
-  });
-
-  it("declares audit as ++id,decisionId,changedAt", () => {
-    expect(db.audit.schema.primKey.keyPath).toBe("id");
-    expect(db.audit.schema.primKey.auto).toBe(true);
-    expect(db.audit.schema.indexes.map((index) => index.name).sort()).toEqual([
-      "changedAt",
-      "decisionId",
-    ]);
-  });
-
-  it("declares usage as ++id,jobId,recordedAt,month", () => {
-    expect(db.usage.schema.primKey.keyPath).toBe("id");
-    expect(db.usage.schema.primKey.auto).toBe(true);
-    expect(db.usage.schema.indexes.map((index) => index.name).sort()).toEqual([
-      "jobId",
-      "month",
-      "recordedAt",
-    ]);
-  });
 
   it("preserves the seeded v2 rows in every Phase 0/1 table", async () => {
     expect((await db.metadata.get("typesafe"))?.value).toEqual(

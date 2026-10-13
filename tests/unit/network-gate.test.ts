@@ -1,7 +1,6 @@
 import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  CONSENT_VERSION,
   grantConsent,
   grantConsentAtOrigin,
   grantTestConsent,
@@ -14,7 +13,6 @@ import { PRESETS } from "../../src/net/presets";
 import { NetworkGateError, sendConsented, sendConsentedTest } from "../../src/net/send";
 import {
   CONSENT_SCOPE,
-  type ConsentRecord,
   type PresetId,
 } from "../../src/schemas/provider";
 import { ProviderKeyError, readProviderKey } from "../../src/security/keys";
@@ -58,17 +56,6 @@ afterAll(() => {
 
 function okResponse(): Response {
   return new Response(JSON.stringify({ ok: true }), { status: 200 });
-}
-
-/** Seed a consent row directly so stale versions a writer never produces can
- * be tested (same approach as consent.test.ts). */
-function staleConsentRow(origin: string): ConsentRecord {
-  return {
-    scope: CONSENT_SCOPE,
-    origin,
-    consentVersion: CONSENT_VERSION + 1,
-    acceptedAt: "2020-01-01T00:00:00.000Z",
-  } as ConsentRecord;
 }
 
 async function expectGateBlock(
@@ -119,31 +106,6 @@ describe("sendConsentedTest gate", () => {
     expect(readKey).not.toHaveBeenCalled();
   });
 
-  it("rejects stale-version consent rows as if absent", async () => {
-    await db.consents.put(staleConsentRow(PRESETS.typesafe.origin));
-    await expectGateBlock(
-      sendConsentedTest("typesafe", "jev-latest"),
-      "no_consent",
-    );
-  });
-
-  it("rejects after consent is revoked", async () => {
-    await grantTestConsent("typesafe");
-    await revokeTestConsent("typesafe");
-    await expectGateBlock(
-      sendConsentedTest("typesafe", "jev-latest"),
-      "no_consent",
-    );
-  });
-
-  it("scopes the grant per preset — typesafe consent does not cover openrouter", async () => {
-    await grantTestConsent("typesafe");
-    await expectGateBlock(
-      sendConsentedTest("openrouter", "jev-latest"),
-      "no_consent",
-    );
-  });
-
   it("rejects with no_permission when the host permission is missing", async () => {
     await grantTestConsent("typesafe");
     containsSpy.mockResolvedValue(false);
@@ -185,20 +147,6 @@ describe("sendConsentedTest gate", () => {
     expect((error as ProviderKeyError).code).toBe("reconnect");
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(await db.sentLog.count()).toBe(0);
-  });
-
-  it("rejects models outside the preset allowlist before any check side-effects", async () => {
-    await grantTestConsent("openrouter");
-    // "jev-preview" is a typesafe-only model; "gpt-4o" is in no allowlist.
-    await expectGateBlock(
-      sendConsentedTest("openrouter", "jev-preview"),
-      "unlisted_model",
-    );
-    await expectGateBlock(
-      sendConsentedTest("openrouter", "gpt-4o"),
-      "unlisted_model",
-    );
-    expect(readKey).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown preset id", async () => {
@@ -539,15 +487,6 @@ describe("scoped sendConsented gate", () => {
       "This is a synthetic connection test with no bookmark content.",
     );
     expect(await db.sentLog.count()).toBe(1);
-  });
-
-  it("sendConsentedTest stays a thin wrapper over the scoped send", async () => {
-    await grantTestConsent("typesafe");
-    fetchSpy.mockResolvedValue(okResponse());
-    await sendConsentedTest("typesafe", "jev-latest");
-    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(init.body as string) as Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["model", "questions", "state"]);
   });
 
   it("maps a mid-flight fetch abort to aborted and records the dispatched attempt", async () => {

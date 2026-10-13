@@ -145,7 +145,9 @@ for (const feature of features) {
   describe(`${feature} dispatch authority`, () => {
     for (const costRetry of [false, true]) {
       for (const checkpoint of ["native", "permission"] as const) {
-        it.each(["model", "origin", "revoke"] as const)(
+        // Under a cost retry only `revoke` adds signal: model/origin mutations
+        // run the identical recheck already crossed by the affirmative cells.
+        it.each(costRetry ? ["revoke"] as const : ["model", "origin", "revoke"] as const)(
           `${costRetry ? "cost retry" : "affirmative retry"} refuses %s changed during ${checkpoint} preflight`,
           async (change) => {
             const approval = await seed(feature, costRetry);
@@ -183,42 +185,34 @@ for (const feature of features) {
       }
     }
 
-    for (const costRetry of [false, true]) {
-      for (const retry of ["capability", "repair", "transport", "http"] as const) {
-        it.each(["model", "revoke"] as const)(
-          `rechecks ${costRetry ? "cost" : "affirmative"} authority before the subsequent ${retry} dispatch after %s`,
-          async (change) => {
-            const approval = await seed(feature, costRetry);
-            if (costRetry) {
-              expect(await invoke(feature, approval)).toMatchObject({ ok: false,
-                code: "confirmation_required", consentApproval: approval });
-              expect(server.requests).toHaveLength(0);
+    for (const retry of ["capability", "repair", "transport", "http"] as const) {
+      it.each(["model", "revoke"] as const)(
+        `rechecks affirmative authority before the subsequent ${retry} dispatch after %s`,
+        async (change) => {
+          const approval = await seed(feature);
+          const original = makeOpenAiServer({
+            completion: completion(feature, retry === "repair"),
+            ...(retry === "capability" ? { failures: [{ status: 400, body: {
+              error: { message: "unsupported response_format json_schema", param: "response_format" },
+            } }] } : retry === "transport" ? { failures: [{ throw: new TypeError("Synthetic transport failure") }] }
+              : retry === "http" ? { failures: [{ status: 503 }] } : {}),
+          });
+          server = original;
+          vi.stubGlobal("fetch", (async (input: RequestInfo | URL, init?: RequestInit) => {
+            try {
+              return await original.fetch(input, init);
+            } finally {
+              if (original.requests.length === 1) await changeRecipient(feature, change);
             }
-            const original = makeOpenAiServer({
-              completion: completion(feature, retry === "repair"),
-              ...(retry === "capability" ? { failures: [{ status: 400, body: {
-                error: { message: "unsupported response_format json_schema", param: "response_format" },
-              } }] } : retry === "transport" ? { failures: [{ throw: new TypeError("Synthetic transport failure") }] }
-                : retry === "http" ? { failures: [{ status: 503 }] } : {}),
-            });
-            server = original;
-            vi.stubGlobal("fetch", (async (input: RequestInfo | URL, init?: RequestInit) => {
-              try {
-                return await original.fetch(input, init);
-              } finally {
-                if (original.requests.length === 1) await changeRecipient(feature, change);
-              }
-            }) as typeof fetch);
-            const reply = await invoke(feature, approval, costRetry);
-            expect(reply).toMatchObject({ ok: false, code: "consent_required" });
-            expect(server.requests).toHaveLength(1);
-            expect((await db.llmReservations.toArray()).filter((row) => row.status === "active")).toHaveLength(0);
-            expect(await db.jobs.count()).toBe(0);
-            expect((await getDecision(decisionBase.id))?.rationale).toBeUndefined();
-          },
-        );
-      }
-
+          }) as typeof fetch);
+          const reply = await invoke(feature, approval);
+          expect(reply).toMatchObject({ ok: false, code: "consent_required" });
+          expect(server.requests).toHaveLength(1);
+          expect((await db.llmReservations.toArray()).filter((row) => row.status === "active")).toHaveLength(0);
+          expect(await db.jobs.count()).toBe(0);
+          expect((await getDecision(decisionBase.id))?.rationale).toBeUndefined();
+        },
+      );
     }
 
     it("succeeds through the real service/client/gate with unchanged authority", async () => {

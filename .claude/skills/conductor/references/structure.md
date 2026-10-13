@@ -7,7 +7,7 @@ conductor/
 ├── product.md              # Product vision, users, goals
 ├── product-guidelines.md   # Brand/style guidelines (optional)
 ├── tech-stack.md           # Technology choices
-├── workflow.md             # Development standards (TDD, commits, coverage)
+├── workflow.md             # Development standards (TDD, commits, verify loop)
 ├── tracks.md               # Master track list with status markers
 ├── patterns.md             # Consolidated learnings from all tracks (Ralph-style)
 ├── setup_state.json        # Setup progress tracking

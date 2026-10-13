@@ -112,25 +112,6 @@ describe("TagChip", () => {
     ).toBeNull();
   });
 
-  it("supports the small size variant used inside bookmark rows", () => {
-    render(<TagChip name="sm" size="sm" />);
-    const chip = screen.getByRole("group", { name: "sm" });
-    expect(chip.dataset.size).toBe("sm");
-  });
-
-  it("renders multiple chips inside a dense list row", () => {
-    render(
-      <div role="option" aria-selected="false">
-        <TagChip size="sm" name="one" color="#ef4444" />
-        <TagChip size="sm" name="two" />
-      </div>,
-    );
-    const option = screen.getByRole("option");
-    expect(within(option).getByRole("group", { name: "one" })).toBeTruthy();
-    expect(within(option).getByRole("group", { name: "two" })).toBeTruthy();
-    expect(option.textContent).toContain("one");
-    expect(option.textContent).toContain("two");
-  });
 });
 
 // ---------------------------------------------------------------------------

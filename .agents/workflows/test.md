@@ -10,7 +10,7 @@ $ARGUMENTS
 
 ## Purpose
 
-This command generates tests, runs existing tests, or checks test coverage.
+This command generates tests or runs existing tests.
 
 ---
 
@@ -19,7 +19,6 @@ This command generates tests, runs existing tests, or checks test coverage.
 ```
 /test                - Run all tests
 /test [file/feature] - Generate tests for specific target
-/test coverage       - Show test coverage report
 /test watch          - Run tests in watch mode
 ```
 
@@ -57,8 +56,8 @@ When asked to test a file or feature:
 ## 🧪 Tests: [Target]
 
 ### Test Plan
-| Test Case | Type | Coverage |
-|-----------|------|----------|
+| Test Case | Type | Focus |
+|-----------|------|-------|
 | Should create user | Unit | Happy path |
 | Should reject invalid email | Unit | Validation |
 | Should handle db error | Unit | Error case |
@@ -98,7 +97,6 @@ Total: 15 tests (14 passed, 1 failed)
 ```
 /test src/services/auth.service.ts
 /test user registration flow
-/test coverage
 /test fix failed tests
 ```
 

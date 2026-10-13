@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   addBlocklistEntry,
-  BUILTIN_SENSITIVE_SITES,
   cleanUrl,
   domainOf,
   isSensitiveUrl,
@@ -445,17 +444,6 @@ describe("isSensitiveUrl — opaque-scheme hosts are case-folded", () => {
     expect(entries).toEqual(["mycorp.io"]);
     expect(isSensitiveUrl("foo://mycorp.io/", entries)).toBe(true);
     expect(isSensitiveUrl("https://mycorp.io/", entries)).toBe(true);
-  });
-});
-
-describe("BUILTIN_SENSITIVE_SITES", () => {
-  it("is a frozen, non-empty list of lowercase host suffixes", () => {
-    expect(Object.isFrozen(BUILTIN_SENSITIVE_SITES)).toBe(true);
-    expect(BUILTIN_SENSITIVE_SITES.length).toBeGreaterThan(0);
-    for (const entry of BUILTIN_SENSITIVE_SITES) {
-      expect(entry).toBe(entry.toLowerCase());
-      expect(entry).not.toMatch(/[\s/?#@]/);
-    }
   });
 });
 

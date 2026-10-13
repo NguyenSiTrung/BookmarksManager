@@ -93,7 +93,7 @@ Do you approve? (Y/N)
 | `database-architect` | Data | SQL, NoSQL, Schema |
 | `security-auditor` | Security | Vulnerabilities, Auth |
 | `penetration-tester` | Security | Active testing |
-| `test-engineer` | Testing | Unit, E2E, Coverage |
+| `test-engineer` | Testing | Unit, E2E |
 | `devops-engineer` | Ops | CI/CD, Docker, Deploy |
 | `mobile-developer` | Mobile | React Native, Flutter |
 | `performance-optimizer` | Speed | Lighthouse, Profiling |

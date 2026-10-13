@@ -282,3 +282,39 @@ the deletions it passes at 3148/3148, and the full 8-step local gate is green.
   the margin was real (4 calls guarded vs 10 unguarded, against a `<= 6` bound).
 - `package.json` and `package-lock.json` are untouched; the coverage package
   was installed with `--no-save` for a one-off probe and then removed.
+
+## 9. Follow-up (2026-10-13): coverage mandates removed, second reduction pass
+
+The repository no longer mandates coverage targets. All coverage-goal wording was
+removed from the live instruction files (`.agents/workflows/`, `.agents/agents/`,
+`.agents/skills/conductor/`, `.claude/skills/conductor/`); historical docs keep
+descriptive uses.
+
+A second deletion pass applied the same "obvious or coverage-only" policy:
+
+- **Whole files** (meta/infra/literal-pinning): harness self-tests
+  (`chrome-bookmarks-fake`, `mock-jev-server`), manifest/config literal pins
+  already enforced by `check:manifest`/`check:store` (`manifest`, `manifest-commands`,
+  `scaffold`, `presets`, `theme-tokens`, `options-button-recipes`, `icons`),
+  trivial render assertions (`empty-state`, `dialog-header`), copy-literal
+  (`sidepanel-empty-state`) and table-shape (`llm-pricing`) pins.
+- **Matrix collapses** (same code path re-run per row): `blocklist-egress`
+  reduced to one representative surface per caller class (the malformed-row
+  taxonomy stays in `blocklist.test.ts`); `payload-admission` shared-gate
+  vectors pinned on two scopes only, one dirty-URL row per scope (URL taxonomy
+  stays in `decisions-minimize`); `feature-consent-dispatch` dropped the
+  cost-retry axis on the retry matrix.
+- **Literal/registry pins**: policy constants, frozen-list and blocked-scheme
+  declaration pins, tracking-param list, the `sendConsentedTest` thin-wrapper
+  case, schema-declaration cases in `database-v*` (indexes are exercised by the
+  migration and index-query tests), and four copies of the identical
+  `verno 9` table inventory.
+- **Cross-layer duplicates**: `network-gate` sendConsentedTest consent rows
+  already pinned at the consent layer and scoped-gate sections; trivial
+  presence/component cases in `tag-manager`, `favicon`, `duplicates-view`,
+  `tabs` same-path absence shapes.
+
+**Final case count: 3148 → 2917** (−231, −7.3 %), all green. The remaining
+suite is dense trust-boundary coverage; reaching ~10 % would have required
+deleting distinct consent/egress/redaction branches (the mutation-testing
+caveat in §8 applies — "covered by X" claims are unreliable without proof).

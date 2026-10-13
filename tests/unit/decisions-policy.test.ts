@@ -34,15 +34,6 @@ const ON = DecisionSettings.parse({
   autoApply: { add_tags: true, set_category: true },
 });
 
-describe("named band constants", () => {
-  it("exports the §10.2 boundaries verbatim", () => {
-    expect(REVIEW_FLOOR).toBe(0.5);
-    expect(MOVE_PRESELECT_THRESHOLD).toBe(0.7);
-    expect(AUTO_APPLY_THRESHOLD).toBe(0.85);
-    expect(RERANK_NO_MATCH_BAR).toBe(0.5);
-  });
-});
-
 describe("add_tags / set_category bands", () => {
   it("add_tags/set_category auto-applies at ≥ 0.85 only when its toggle is on", () => {
     for (const kind of ["add_tags", "set_category"] as const) {

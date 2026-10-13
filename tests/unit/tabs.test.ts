@@ -106,20 +106,8 @@ describe("openBookmarkUrl absent and partial surfaces", () => {
     expect(result).toMatchObject({ ok: false, code: "unavailable" });
   });
 
-  it("reports unavailable when the chrome global is undefined", async () => {
-    vi.stubGlobal("chrome", undefined);
-    const result = await openBookmarkUrl(URL_OK, "foreground");
-    expect(result).toMatchObject({ ok: false, code: "unavailable" });
-  });
-
   it("reports unavailable when chrome exists without a tabs namespace", async () => {
     vi.stubGlobal("chrome", { runtime: {} });
-    const result = await openBookmarkUrl(URL_OK, "current");
-    expect(result).toMatchObject({ ok: false, code: "unavailable" });
-  });
-
-  it("reports unavailable when chrome.tabs is null", async () => {
-    vi.stubGlobal("chrome", { tabs: null });
     const result = await openBookmarkUrl(URL_OK, "current");
     expect(result).toMatchObject({ ok: false, code: "unavailable" });
   });

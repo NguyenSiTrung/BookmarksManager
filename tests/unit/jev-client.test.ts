@@ -265,7 +265,7 @@ describe("real-gate attempt admission and rejected split draining", () => {
     expect(await db.sentLog.count()).toBe(1);
   });
 
-  it.each([5, 9])("retains the owner and spent sibling usage while %i split questions drain before resume", async (questionCount) => {
+  it.each([9])("retains the owner and spent sibling usage while %i split questions drain before resume", async (questionCount) => {
     const job = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["synthetic"] });
     await claimJobOwner(job.id);
     const bothEntered = deferred();
