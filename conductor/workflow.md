@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-07 (refresh — no workflow drift; local gate list unchanged, check:store:public bar narrowed) -->
+<!-- Last refreshed: 2026-10-13 (refresh — content already current; rung table + parallel-test rules landed in 9339da6; marker bump only) -->
 
 # Development Workflow
 

@@ -1,55 +1,59 @@
 {
-  "lastRefresh": "2026-10-07T03:45:00Z",
-  "previousRefresh": "2026-10-06T12:00:00Z",
+  "lastRefresh": "2026-10-13T00:00:00Z",
+  "previousRefresh": "2026-10-07T03:45:00Z",
   "scope": "all",
-  "baseCommit": "397f7e2",
-  "headCommit": "1b0aebf",
+  "baseCommit": "1b0aebf",
+  "headCommit": "ba6c5b3",
   "commitsSinceLastRefresh": [
-    "f64668e store(prep): drop promo-video requirement, make repo public, enable Pages",
-    "73b8105 store(release): record 1.0.0 public-channel cut",
-    "ca474bf tracking: sync issue export after closing BookmarksManager-bb7",
-    "ea80f8c chore(beads): sync issue export",
-    "edfa314 store(prep): carry the store summary in the manifest description",
-    "1b0aebf store(prep): record the completed 1.0.0 dashboard draft"
+    "9339da6 test: stabilize parallel suite and timings",
+    "11dbe34 chore(skills): replace superpowers skills with shared skill set",
+    "ba6c5b3 test: remove coverage mandates and trim redundant test cases"
   ],
   "changes": [
-    "tech-stack.md: CORRECTED a stale claim — check:store:public no longer covers a YouTube promo URL (that check was removed in f64668e by user decision); the public bar is now five 1280x800 screenshots + the 1400x560 marquee. ADDED the manifest description contract (126 chars, Chrome's 132 cap, store/listing.md as single source of truth) plus the explicit note that check:manifest does not read description",
-    "product.md: delivery-status bullet for the 2026-10-06 public-submission prep de-staled (video-script.md deleted, 'gate passes except the promo-video URL' no longer true) and a new bullet added covering f64668e->1b0aebf: video requirement dropped, repo made PUBLIC, Pages enabled (deploy 37436333540, root//privacy 200/200), 1.0.0 re-cut twice (fd9f722d 590038 -> 95171943 590115 at edfa314) with the suite-load flake recorded honestly, dashboard draft palolgpngcjjaohfmjcnhnkacpmoejll fully filled, submission still manual. Phase 6 bullet's sha256 pointer annotated (b8663877 412893 at 52a15bb now lives only in git history)",
-    "patterns.md: four new Gotchas elevated from the public-cut handoff — manifest-sourced listing summary + unenforced parity, retiring a gate requirement as a RED->GREEN + doc sweep, superseded release records orphaning sha pointers, and the private-repo/Pages constraint",
-    "workflow.md: no content drift — local gate list unchanged; marker bumped only",
-    "tracks.md: unchanged — no new Conductor tracks; the 2026-10-06 store work landed outside a track (established local-commit precedent), recorded in product.md"
+    "tech-stack.md: Vitest bullet now records the parallel-load budgets (testTimeout 20_000 global, tests/setup-components.ts asyncUtilTimeout 5s, best-of-N perf estimators) and the no-coverage-mandates convention with the 3148->2917 trim pointer to docs/test-suite-analysis.md; Playwright bullet records workers:4 default via PLAYWRIGHT_WORKERS, isolation-by-construction (throwaway profiles, port-0 mock servers), fullyParallel off + llm.spec.ts serial, 283s->~95s",
+    "product.md: new delivery bullet covering both test-hardening rounds (BookmarksManager-6iz closed; BookmarksManager-3fg closed during this refresh) and the superpowers->shared skill-bundle swap (11dbe34); backlog bullet unchanged (same 12 open ids)",
+    "patterns.md: four patterns elevated from the non-track test work — mutation-verify before deleting 'redundant' tests, parallel-surviving timing assertions, e2e parallel-safety by construction, behavior-over-coverage testing convention",
+    "workflow.md: no content drift — the rung table and parallel-test rules were added by 9339da6 itself; marker bumped only",
+    "tracks.md: unchanged — no active tracks; all work this cycle landed outside Conductor tracks (established precedent)",
+    "AGENTS.md (outside conductor/): removed stale 'Superpowers plans' and subagent-driven-development/executing-plans references — those skills were deleted in 11dbe34"
   ],
   "learnings": {
     "tracksScanned": 11,
     "newLearningsFiles": 0,
     "newPatterns": 4,
-    "note": "No new or modified track learnings.md since 2026-10-06T03:10Z (deep_audit_fixes_20261005 is the newest). The public-submission work was not a Conductor track, so there were no 2+ cross-track candidates and no duplicates to merge. The four patterns added are single-occurrence captures from the post-refresh commits, added on explicit user approval."
+    "note": "No new or modified track learnings.md since 2026-10-06 (deep_audit_fixes_20261005 remains newest). The test-suite work ran outside Conductor tracks, so no 2+ cross-track candidates; the four added patterns are single-occurrence captures from the post-refresh commits, added on explicit user approval."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "totalIssues": 370,
-    "closed": 358,
-    "syncDirection": "none (no active plan.md to compare)",
+    "totalIssues": 372,
+    "closed": 360,
+    "syncDirection": "beads->conductor (closed stale in-progress issue)",
     "completedThisCycle": [
-      "BookmarksManager-bb7 (drop promo-video requirement, enable Pages, re-cut 1.0.0 release record)"
+      "BookmarksManager-6iz (test-suite stabilization round 1: e2e workers=4, load-aware vitest budgets; closed 2026-10-07)",
+      "BookmarksManager-3fg (coverage mandates removed + suite trim 3148->2917; closed during this refresh — work was committed at ba6c5b3 with an expired lease)"
+    ],
+    "newSinceLastRefresh": [
+      "BookmarksManager-6iz (closed)",
+      "BookmarksManager-3fg (closed during refresh)",
+      "BookmarksManager-3op.2 / 3op.2.1 (deep-audit epic children, closed)"
     ],
     "remainingOpenFollowups": [
       "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
       "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-od9", "BookmarksManager-ope",
       "BookmarksManager-rwy", "BookmarksManager-sb9", "BookmarksManager-tax", "BookmarksManager-xxo"
     ],
-    "drift": "none — no plan.md open tasks to reconcile against; backlog unchanged at the same 12 ids",
+    "drift": "resolved — 3fg was in_progress with expired lease though its work was committed and gates green; closed with user approval. The 12 open backlog ids are unchanged.",
     "cosmetic": [
       "beads.role not configured (GH#2950)"
     ]
   },
   "verification": {
     "scope": "Documentation-only refresh. No build, unit, or e2e suite rerun.",
-    "gatesRun": "check:store:public PASS (0 violations), check:manifest PASS, check:bundle PASS, check:site PASS",
-    "factsVerified": "manifest description 126 chars (cap 132); store/listing.md short description matches it; store/video-script.md absent; check-store.mjs public block contains only public-screenshots + public-marquee; no dependency drift (wxt 0.21.4, typescript 6.0.3, react 19.3.0, dexie 4.4.6, minisearch 7.2.0, zod 4.6.5, vitest 5.0.1, @playwright/test 1.63.0); gh repo visibility PUBLIC; Pages html_url live with build_type workflow and https_enforced",
-    "knownGap": "Manifest description <-> store/listing.md parity is documented but unenforced: neither check-manifest.mjs nor check-store.mjs reads description, and no test covers it. Reported to the user; no Beads issue filed (user selected the patterns-only option).",
-    "sourceCommits": "1b0aebf (HEAD at refresh); all local, unpushed"
+    "gatesRun": "none this cycle — relying on the gate evidence recorded in BookmarksManager-6iz/-3fg notes (2917 vitest cases green, lint/typecheck/build/4 checks pass) and the committed PROJECT_PLAN.md gate log",
+    "factsVerified": "playwright.config.ts workers=4 via PLAYWRIGHT_WORKERS with isolation comment; vitest.config.ts testTimeout 20_000 + setup-components.ts in components project; tests/setup-components.ts asyncUtilTimeout 5s (per 6iz notes); docs/test-suite-analysis.md present with §8 mutation correction; no coverage-mandate strings remain in conductor/ docs; .beads export reflects 3fg close",
+    "knownGap": "Suite counts (2917 cases / ~167 files) cited from PROJECT_PLAN.md and issue notes rather than a fresh run; e2e ~95-125s figure from 6iz measurements.",
+    "sourceCommits": "ba6c5b3 (HEAD at refresh); all local, unpushed"
   }
 }

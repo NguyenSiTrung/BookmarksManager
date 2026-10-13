@@ -15,16 +15,15 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 ## Git Policy (takes precedence over the managed blocks below)
 
-This project runs Conductor tracks and Superpowers plans. Both commit per task.
+This project runs Conductor tracks, which commit per task.
 `conductor/workflow.md` §Commits is an explicit repository instruction, and the
 managed Beads blocks state they do not override repository, user, or
 orchestrator instructions — so the rules below win wherever they conflict.
 
 - Commit per task: ALLOWED, no approval needed. `conductor/workflow.md`
   mandates a commit after each task completes and its tests pass (with a
-  `git notes add -m "..."` task summary). Superpowers
-  subagent-driven-development and executing-plans implementers commit per
-  task too. Do not defer these commits to session end.
+  `git notes add -m "..."` task summary). Implementer sub-agents follow the
+  same per-task convention. Do not defer these commits to session end.
 - `git push`: NEVER unless the user explicitly asks. Conductor commits
   locally and never pushes; the user decides when to push.
 - `git pull` / `git fetch`: NEVER automatically. No auto-rebase, no

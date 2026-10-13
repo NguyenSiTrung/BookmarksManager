@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-07 (refresh — public-cut handoff patterns added; no new track learnings) -->
+<!-- Last refreshed: 2026-10-13 (refresh — test-suite hardening patterns added; no new track learnings) -->
 
 # Codebase Patterns
 
@@ -32,7 +32,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-10-07 (full refresh; deep_audit_fixes_20261005 patterns already elevated; public-cut patterns appended)
+Last refreshed: 2026-10-13 (full refresh; no new track learnings; test-hardening patterns appended)
 
 ---
 
@@ -312,3 +312,10 @@ _Last refreshed: 2026-09-27_
 - **Retiring a gate requirement is a RED→GREEN change with a doc sweep.** Dropping the promo-video check meant editing `scripts/check-store.mjs` and its unit test *first*, then chasing every downstream claim: the deleted `store/video-script.md`, the listing bullet, the public checklist row, and the `tech-stack.md`/`product.md` descriptions of what the gate covers. A stale "the gate passes except X" sentence outlives the gate itself.
 - **Superseding a release record orphans its old pointers.** `store/releases/<v>.json` is a single mutable file, so re-cutting 1.0.0 (trusted-tester 412,893 → public 590,038 → description-carrying 590,115 bytes) left `product.md` and `1.0.0-checklist.md` citing a sha256 that no longer existed anywhere but git history. When a record is superseded, either annotate the citing docs with the commit that holds the old value or state plainly that it lives only in history.
 - **A private repo on the free plan cannot serve GitHub Pages.** Enabling Pages required flipping the repository to PUBLIC first; the Pages API returns `build_type: workflow` with `source.branch` even before a successful deploy, so verify by fetching the live URL (HTTP 200 on root *and* `/privacy/`) rather than trusting the config read.
+
+## Elevated at refresh — test-suite hardening (2026-10-13)
+
+- **Prove a test redundant by mutation, not by reading.** Six of thirteen "this case is covered by X" citations derived by reading the covering test were false — each deleted test was a sole pin for a distinct half-behavior (absent-vs-present overlay, Explain-vs-Undo double-click, a wiring path the cited spec never calls). Before deleting a case as redundant, disable the production guard in a throwaway copy and confirm the retained suite still catches the mutant. (from: docs/test-suite-analysis.md §8, BookmarksManager-6iz, 2026-10-07)
+- **Timing assertions must survive ~17 parallel workers.** Never assert a single wall-clock sample — best-of-N with the minimum as the estimator; inject cadences (`RestructureView`'s `pollMs`, `App`'s `undoToastAutoHideMs`) rather than assert absolute durations; raise wait budgets globally (`testTimeout` 20 s, `asyncUtilTimeout` 5 s) instead of tightening them to fail fast — raising a *wait* budget never weakens an assertion. See `conductor/workflow.md` "Writing Tests That Survive a Parallel Run". (from: 9339da6, 2026-10-08)
+- **e2e specs are parallel-safe by construction, not by lock.** Every spec launches its own persistent context on a throwaway profile and binds mock servers to port 0, so `workers: 4` is the default (`PLAYWRIGHT_WORKERS` to override; 283 s → ~112 s measured). `fullyParallel` stays off because specs within a file share seeded state; `llm.spec.ts` pins `mode: "serial"`. (from: 9339da6, 2026-10-08)
+- **Tests justify themselves by behavior, not coverage targets.** Coverage mandates were removed from all agent/workflow instruction files (2026-10-13); a test earns its place by guarding a trust boundary, a consent/egress/undo/redaction tripwire, or an error path — never by padding a number. The surviving suite is dense boundary coverage: further bulk trims cut distinct branches, so review deletions one-by-one with mutation evidence. (from: ba6c5b3, BookmarksManager-3fg, 2026-10-13)

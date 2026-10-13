@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-07 (refresh — public gate bar corrected: promo-video check dropped; manifest description ↔ listing.md parity documented; no dependency drift) -->
+<!-- Last refreshed: 2026-10-13 (refresh — e2e workers=4 + vitest parallel-load budgets recorded; test-analysis doc linked; no dependency drift) -->
 
 # Technology Stack
 
@@ -200,11 +200,24 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `npm run test:live` (separate `vitest.live.config.ts`, excluded from the
   default run and CI; every test skips when its env key is absent);
   `npm run test:eval` (`vitest.eval.config.ts`) runs the separate key-gated
-  evaluation suite.
+  evaluation suite. The suite runs ~17 parallel workers, so budgets are
+  load-aware: `testTimeout: 20_000` globally (the 5 s default was a load
+  artifact, not a hang detector) and `tests/setup-components.ts` raises
+  Testing Library's `asyncUtilTimeout` to 5 s for the components project;
+  wall-clock perf specs use best-of-N minimum estimators, not single
+  samples (`tests/unit/search-perf.test.ts`). Coverage is not mandated —
+  tests justify themselves by the behavior they guard (2026-10-13 trim:
+  3148 → 2917 cases; see `docs/test-suite-analysis.md`).
 - **Playwright 1.63** persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
   The suite runs headed by default; `E2E_HEADLESS=1` opts into headless, and
-  Linux CI wraps the headed launch in `xvfb-run -a`. `chrome.permissions.request`
+  Linux CI wraps the headed launch in `xvfb-run -a`. Specs are independent
+  by construction — each launches its own persistent context on a throwaway
+  profile and binds mock servers to port 0 — so the default is
+  `workers: 4` (override via `PLAYWRIGHT_WORKERS`; measured 283 s at 1
+  worker → ~112 s at 4 on an 18-CPU box). `fullyParallel` stays off: specs within a
+  file share seeded state, and `llm.spec.ts` pins `mode: "serial"`.
+  `chrome.permissions.request`
   prompts cannot be driven under Playwright, so provider specs install a
   temporary manifest copy that holds the optional host pattern as a regular
   permission; the native prompt itself is not automated. `tests/e2e/store-assets.spec.ts`
