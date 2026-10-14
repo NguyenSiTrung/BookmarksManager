@@ -8,6 +8,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import {
   BookmarkList,
@@ -260,6 +261,93 @@ describe("list row", () => {
     expect(
       (docsRow.querySelector("[data-dnd-drag]") as HTMLElement).tabIndex,
     ).toBe(-1);
+  });
+
+  it("renders a one-click Open button for openable URLs in list and grid views without altering selection (UX-04)", () => {
+    const onActivateItem = vi.fn();
+    render(
+      <BookmarkList
+        items={[
+          item("a", "Alpha", "https://a.example/"),
+          item("b", "Scripted", "javascript:alert(1)"),
+        ]}
+        onActivateItem={onActivateItem}
+      />,
+    );
+
+    const options = screen.getAllByRole("option");
+    const rowA = options[0]!;
+    const rowB = options[1]!;
+
+    const openAlpha = within(rowA).getByRole("button", { name: "Open Alpha" });
+    expect(openAlpha.tabIndex).toBe(0);
+    expect(
+      within(rowB).queryByRole("button", { name: "Open Scripted" }),
+    ).toBeNull();
+
+    fireEvent.click(openAlpha);
+    expect(onActivateItem).toHaveBeenCalledTimes(1);
+    expect(onActivateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "a", title: "Alpha" }),
+    );
+    expect(rowA.getAttribute("aria-selected")).toBe("false");
+
+    // Also works in Grid view
+    fireEvent.click(screen.getByRole("button", { name: /Grid view/i }));
+    const gridRowA = screen.getAllByRole("option")[0]!;
+    const openGridAlpha = within(gridRowA).getByRole("button", {
+      name: "Open Alpha",
+    });
+    fireEvent.click(openGridAlpha);
+    expect(onActivateItem).toHaveBeenCalledTimes(2);
+    expect(gridRowA.getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("renders colored tag dots, note/summary indicators, and parent folder context when showFolderPath is true (UX-05)", () => {
+    const metaById = new Map<string, BookmarkMeta>([
+      [
+        "a",
+        {
+          id: "a",
+          tags: ["frontend"],
+          notes: "My personal note",
+          summary: "AI verified summary",
+          updatedAt: ISO,
+        },
+      ],
+    ]);
+    render(
+      <BookmarkList
+        items={[
+          item("a", "Alpha", "https://a.example/", {
+            path: ["Bookmarks bar", "Engineering"],
+          }),
+        ]}
+        metaById={metaById}
+        tagNameByKey={new Map([["frontend", "Frontend"]])}
+        tagColorByKey={new Map([["frontend", "#3b82f6"]])}
+        showFolderPath
+      />,
+    );
+
+    const row = screen.getByRole("option");
+    // Folder path context shown alongside domain
+    expect(row.textContent).toContain("a.example");
+    expect(row.textContent).toContain("Engineering");
+
+    // Tag chip carries colored dot
+    const tagChip = row.querySelector("[data-tag='frontend']");
+    const dot = tagChip?.querySelector("[data-tag-dot]") as HTMLElement | null;
+    expect(dot).not.toBeNull();
+    expect(dot?.style.backgroundColor).toBe("rgb(59, 130, 246)");
+
+    // Notes and summary indicators
+    expect(row.querySelector("[data-has-notes='true']")?.getAttribute("title")).toBe(
+      "Has notes",
+    );
+    expect(
+      row.querySelector("[data-has-summary='true']")?.getAttribute("title"),
+    ).toBe("Has saved summary");
   });
 });
 

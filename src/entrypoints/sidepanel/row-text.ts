@@ -28,6 +28,15 @@ export function folderLabel(path: readonly string[]): string {
   return path.length > 2 ? `… / ${tail}` : tail;
 }
 
+/** Immediate parent folder segment from `path`, or `undefined` when empty. */
+export function immediateFolder(path: readonly string[]): string | undefined {
+  for (let i = path.length - 1; i >= 0; i--) {
+    const segment = path[i]?.trim();
+    if (segment !== undefined && segment !== "") return segment;
+  }
+  return undefined;
+}
+
 /** `Mar 12, 2026`-style date for a `dateAdded` value, or `undefined`. */
 export function formatAdded(
   ms: number | undefined,

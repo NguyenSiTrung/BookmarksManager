@@ -47,12 +47,12 @@
 ## Phase 2: Side Panel Bookmark List Ergonomics & Scope Sidebar Richness
 <!-- execution: parallel -->
 
-- [~] Task 1: `BookmarkList` one-click open button, colored tag dots, note/summary indicators & folder path context (`UX-04`, `UX-05`)
+- [x] Task 1: `BookmarkList` one-click open button, colored tag dots, note/summary indicators & folder path context (`UX-04`, `UX-05`)
   <!-- files: src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/row-text.ts, tests/components/sidepanel-rows.test.tsx -->
-  - [ ] Write failing component tests in `tests/components/sidepanel-rows.test.tsx` verifying: (1) list rows and grid cards render a one-click `Open <title>` button inside `[data-row-controls]` for openable URLs that triggers `onActivateItem` without altering selection, with roving `tabIndex={active ? 0 : -1}`; (2) `[data-tag]` chips render tag color dots when `tagColorByKey` / `tagDefs` provides a color; (3) rows/cards with `meta.notes` or `meta.summary` render `[data-has-notes="true"]` / `[data-has-summary="true"]` indicators; and (4) when `showFolderPath` is true, rows display the immediate parent folder title alongside the domain.
-  - [ ] Implement the row/card enhancements in `src/entrypoints/sidepanel/BookmarkList.tsx` and `src/entrypoints/sidepanel/row-text.ts`.
+  - [x] Write failing component tests in `tests/components/sidepanel-rows.test.tsx` verifying: (1) list rows and grid cards render a one-click `Open <title>` button inside `[data-row-controls]` for openable URLs that triggers `onActivateItem` without altering selection, with roving `tabIndex={active ? 0 : -1}`; (2) `[data-tag]` chips render tag color dots when `tagColorByKey` / `tagDefs` provides a color; (3) rows/cards with `meta.notes` or `meta.summary` render `[data-has-notes="true"]` / `[data-has-summary="true"]` indicators; and (4) when `showFolderPath` is true, rows display the immediate parent folder title alongside the domain.
+  - [x] Implement the row/card enhancements in `src/entrypoints/sidepanel/BookmarkList.tsx` and `src/entrypoints/sidepanel/row-text.ts`.
 
-- [ ] Task 2: `ScopePane` tag color dots & bookmark counts (`UX-06`)
+- [~] Task 2: `ScopePane` tag color dots & bookmark counts (`UX-06`)
   <!-- files: src/entrypoints/sidepanel/ScopePane.tsx, src/entrypoints/sidepanel/scope.ts, tests/components/sidepanel-scope-pane.test.tsx -->
   - [ ] Write failing component tests in `tests/components/sidepanel-scope-pane.test.tsx` verifying: (1) `tagCounts(metas, tree)` computes live bookmark counts per tag `nameKey` (ignoring orphaned meta rows); and (2) `ScopePane` renders a color dot (`tag.color`) and the bookmark count badge on each tag row while preserving `aria-label={tag.name}` so `getByRole("button", { name: tag.name })` stays exact.
   - [ ] Implement `tagCounts` in `src/entrypoints/sidepanel/scope.ts` and update `src/entrypoints/sidepanel/ScopePane.tsx`.

@@ -14,12 +14,14 @@ import type {
 } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ContextMenu } from "radix-ui";
-import type { BookmarkMeta } from "../../schemas/meta";
+import type { BookmarkMeta, TagDef } from "../../schemas/meta";
+import { isOpenableUrl } from "../../search/openable";
 import type { BookmarkItem } from "../../sync/tree";
 import { Favicon } from "../../ui/components/favicon";
+import { ExternalLinkIcon } from "../../ui/components/icons";
 import { cn } from "../../ui/lib/cn";
 import { DragHandle, useDndState, useDropZone } from "./dnd";
-import { displayDomain, visibleTags } from "./row-text";
+import { displayDomain, immediateFolder, visibleTags } from "./row-text";
 
 /**
  * Virtualized bookmark list/grid for the right pane, plus the selection
@@ -272,6 +274,8 @@ interface OptionProps {
   reorderable: boolean;
   meta?: BookmarkMeta;
   tagNameByKey?: ReadonlyMap<string, string>;
+  tagColorByKey?: ReadonlyMap<string, string>;
+  showFolderPath?: boolean;
   registerRef: (id: string, el: HTMLElement | null) => void;
   onSelect: (
     event: ReactMouseEvent<HTMLElement>,
@@ -296,6 +300,8 @@ function Option({
   reorderable,
   meta,
   tagNameByKey,
+  tagColorByKey,
+  showFolderPath = false,
   registerRef,
   onSelect,
   onActivate,
@@ -304,6 +310,12 @@ function Option({
 }: OptionProps) {
   const title = item.title === "" ? item.url : item.title;
   const domain = displayDomain(item.url);
+  const parentFolder = showFolderPath ? immediateFolder(item.path) : undefined;
+  const subline =
+    parentFolder !== undefined ? `${domain} · ${parentFolder}` : domain;
+  const openable = isOpenableUrl(item.url);
+  const hasNotes = meta?.notes !== undefined && meta.notes.trim() !== "";
+  const hasSummary = meta?.summary !== undefined && meta.summary.trim() !== "";
   const actions = renderItemActions?.(item, active);
   const menuContent = renderItemContextMenu?.(item);
   // P4.T4: the row doubles as a reorder drop slot ("insert before this row").
@@ -361,6 +373,43 @@ function Option({
             />
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {hasNotes && (
+              <span
+                data-has-notes="true"
+                title="Has notes"
+                className="inline-flex size-4 items-center justify-center rounded-xs bg-muted text-muted-foreground"
+              >
+                <svg
+                  aria-hidden="true"
+                  className="size-2.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                </svg>
+              </span>
+            )}
+            {hasSummary && (
+              <span
+                data-has-summary="true"
+                title="Has saved summary"
+                className="inline-flex size-4 items-center justify-center rounded-xs bg-primary/10 text-primary"
+              >
+                <svg
+                  aria-hidden="true"
+                  className="size-2.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+                </svg>
+              </span>
+            )}
             {meta?.category !== undefined && (
               <span
                 data-category={meta.category}
@@ -369,7 +418,7 @@ function Option({
                 {meta.category}
               </span>
             )}
-            {actions !== undefined && (
+            {(openable || actions !== undefined) && (
               <span
                 data-row-controls
                 ref={(el) => {
@@ -378,11 +427,23 @@ function Option({
                     btn.tabIndex = active ? 0 : -1;
                   }
                 }}
-                className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
+                className={cn("flex shrink-0 items-center gap-0.5", REVEAL_CLASS)}
                 onClick={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
               >
+                {openable && (
+                  <button
+                    type="button"
+                    aria-label={`Open ${title}`}
+                    title={`Open ${title}`}
+                    tabIndex={active ? 0 : -1}
+                    onClick={() => onActivate(item)}
+                    className="shrink-0 rounded-sm p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <ExternalLinkIcon className="size-3.5" />
+                  </button>
+                )}
                 {actions}
               </span>
             )}
@@ -411,22 +472,33 @@ function Option({
 
         {/* Card Footer: Domain + Tags */}
         <div className="flex items-center justify-between gap-1.5 w-full min-w-0 pt-0.5 text-[11px] text-muted-foreground">
-          <span className="truncate flex-1 font-normal" title={domain}>
-            {domain}
+          <span className="truncate flex-1 font-normal" title={subline}>
+            {subline}
           </span>
           {meta?.tags && meta.tags.length > 0 && (() => {
             const { shown, hidden } = visibleTags(meta.tags, 1);
             return (
               <span className="flex items-center gap-1 shrink-0">
-                {shown.map((nameKey) => (
-                  <span
-                    key={nameKey}
-                    data-tag={nameKey}
-                    className="rounded-xs bg-muted/80 px-1 py-0.5 text-[10px] text-muted-foreground truncate max-w-[70px]"
-                  >
-                    #{tagNameByKey?.get(nameKey) ?? nameKey}
-                  </span>
-                ))}
+                {shown.map((nameKey) => {
+                  const tagColor = tagColorByKey?.get(nameKey);
+                  return (
+                    <span
+                      key={nameKey}
+                      data-tag={nameKey}
+                      className="inline-flex items-center gap-1 rounded-xs bg-muted/80 px-1 py-0.5 text-[10px] text-muted-foreground truncate max-w-[70px]"
+                    >
+                      {tagColor !== undefined && (
+                        <span
+                          aria-hidden="true"
+                          data-tag-dot=""
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: tagColor }}
+                        />
+                      )}
+                      #{tagNameByKey?.get(nameKey) ?? nameKey}
+                    </span>
+                  );
+                })}
                 {hidden.length > 0 && (
                   <span
                     data-tag-more
@@ -493,23 +565,71 @@ function Option({
       />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm">{title}</div>
-        <div className="truncate text-xs text-muted-foreground">{domain}</div>
+        <div className="truncate text-xs text-muted-foreground">{subline}</div>
       </div>
       {meta !== undefined && (
         <span className="flex shrink-0 items-center gap-1">
+          {hasNotes && (
+            <span
+              data-has-notes="true"
+              title="Has notes"
+              className="inline-flex size-4 items-center justify-center rounded-sm bg-muted text-muted-foreground"
+            >
+              <svg
+                aria-hidden="true"
+                className="size-2.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+              </svg>
+            </span>
+          )}
+          {hasSummary && (
+            <span
+              data-has-summary="true"
+              title="Has saved summary"
+              className="inline-flex size-4 items-center justify-center rounded-sm bg-primary/10 text-primary"
+            >
+              <svg
+                aria-hidden="true"
+                className="size-2.5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+              </svg>
+            </span>
+          )}
           {(() => {
             const { shown, hidden } = visibleTags(meta.tags, MAX_ROW_TAGS);
             return (
               <>
-                {shown.map((nameKey) => (
-                  <span
-                    key={nameKey}
-                    data-tag={nameKey}
-                    className="max-w-[80px] truncate rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
-                  >
-                    {tagNameByKey?.get(nameKey) ?? nameKey}
-                  </span>
-                ))}
+                {shown.map((nameKey) => {
+                  const tagColor = tagColorByKey?.get(nameKey);
+                  return (
+                    <span
+                      key={nameKey}
+                      data-tag={nameKey}
+                      className="inline-flex max-w-[80px] items-center gap-1 truncate rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
+                    >
+                      {tagColor !== undefined && (
+                        <span
+                          aria-hidden="true"
+                          data-tag-dot=""
+                          className="size-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: tagColor }}
+                        />
+                      )}
+                      {tagNameByKey?.get(nameKey) ?? nameKey}
+                    </span>
+                  );
+                })}
                 {hidden.length > 0 && (
                   <span
                     data-tag-more
@@ -534,7 +654,7 @@ function Option({
           )}
         </span>
       )}
-      {actions !== undefined && (
+      {(openable || actions !== undefined) && (
         // Row-action control: its clicks/keys must never select or activate
         // the row underneath, so every event stops at this wrapper.
         <span
@@ -545,11 +665,23 @@ function Option({
               btn.tabIndex = active ? 0 : -1;
             }
           }}
-          className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
+          className={cn("flex shrink-0 items-center gap-0.5", REVEAL_CLASS)}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
+          {openable && (
+            <button
+              type="button"
+              aria-label={`Open ${title}`}
+              title={`Open ${title}`}
+              tabIndex={active ? 0 : -1}
+              onClick={() => onActivate(item)}
+              className="shrink-0 rounded-sm p-1 text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <ExternalLinkIcon className="size-3.5" />
+            </button>
+          )}
           {actions}
         </span>
       )}
@@ -589,6 +721,12 @@ export interface BookmarkListProps {
   metaById?: ReadonlyMap<string, BookmarkMeta>;
   /** Tag display names keyed by nameKey; falls back to the key. */
   tagNameByKey?: ReadonlyMap<string, string>;
+  /** Tag colors keyed by nameKey. */
+  tagColorByKey?: ReadonlyMap<string, string>;
+  /** Defined tags — used to derive tag colors when `tagColorByKey` is omitted. */
+  tagDefs?: readonly TagDef[];
+  /** Whether to show each bookmark's immediate parent folder alongside its domain. */
+  showFolderPath?: boolean;
   /** Overrides the SelectionContext value (tests, embedded usage). */
   selection?: BookmarkSelection;
   /** Fired on Enter/double-click — the "open" affordance. */
@@ -637,6 +775,9 @@ export function BookmarkList({
   items,
   metaById,
   tagNameByKey,
+  tagColorByKey,
+  tagDefs,
+  showFolderPath = false,
   selection: selectionProp,
   onActivateItem,
   onDeleteSelection,
@@ -662,6 +803,17 @@ export function BookmarkList({
   // One bulk delete in flight at a time — cleared when the handler's
   // promise settles (or the microtask after a synchronous handler).
   const deletingRef = useRef(false);
+
+  const resolvedTagColorByKey = useMemo(() => {
+    if (tagDefs === undefined || tagDefs.length === 0) return tagColorByKey;
+    const map = new Map<string, string>(tagColorByKey);
+    for (const tag of tagDefs) {
+      if (tag.color !== undefined && !map.has(tag.nameKey)) {
+        map.set(tag.nameKey, tag.color);
+      }
+    }
+    return map;
+  }, [tagColorByKey, tagDefs]);
 
   const columns = layout === "grid" ? GRID_COLUMNS : 1;
   const rows = useMemo(() => chunkRows(items, columns), [items, columns]);
@@ -888,6 +1040,7 @@ export function BookmarkList({
         <div className="inline-flex items-center rounded-md border border-border/60 bg-muted/30 p-0.5">
           <button
             type="button"
+            aria-label="List view"
             aria-pressed={layout === "list"}
             onClick={() => setLayout("list")}
             className={toggleClass(layout === "list")}
@@ -909,10 +1062,11 @@ export function BookmarkList({
               <line x1="3" y1="12" x2="3.01" y2="12" />
               <line x1="3" y1="18" x2="3.01" y2="18" />
             </svg>
-            List view
+            <span className="hidden sm:inline">List view</span>
           </button>
           <button
             type="button"
+            aria-label="Grid view"
             aria-pressed={layout === "grid"}
             onClick={() => setLayout("grid")}
             className={toggleClass(layout === "grid")}
@@ -932,7 +1086,7 @@ export function BookmarkList({
               <rect x="14" y="14" width="7" height="7" rx="1" />
               <rect x="3" y="14" width="7" height="7" rx="1" />
             </svg>
-            Grid view
+            <span className="hidden sm:inline">Grid view</span>
           </button>
         </div>
       </div>
@@ -982,6 +1136,8 @@ export function BookmarkList({
                           reorderable={reorderable}
                           meta={metaById?.get(item.id)}
                           tagNameByKey={tagNameByKey}
+                          tagColorByKey={resolvedTagColorByKey}
+                          showFolderPath={showFolderPath}
                           registerRef={registerOption}
                           onSelect={handleRowClick}
                           onActivate={handleActivate}
@@ -1006,6 +1162,8 @@ export function BookmarkList({
                       reorderable={reorderable}
                       meta={metaById?.get(first.id)}
                       tagNameByKey={tagNameByKey}
+                      tagColorByKey={resolvedTagColorByKey}
+                      showFolderPath={showFolderPath}
                       registerRef={registerOption}
                       onSelect={handleRowClick}
                       onActivate={handleActivate}

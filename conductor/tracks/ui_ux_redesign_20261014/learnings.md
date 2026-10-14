@@ -41,5 +41,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: `createTag(name, options)` takes `{ color }` in an options object rather than a positional color string.
 ---
 
+## [2026-10-14 08:19] - Phase 2 Task 1: `BookmarkList` one-click open button, colored tag dots, note/summary indicators & folder path context (`UX-04`, `UX-05`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added one-click `Open <title>` button inside `[data-row-controls]` for openable URLs (`isOpenableUrl`), `[data-tag-dot]` colored dots on row/card tag chips, `[data-has-notes]` and `[data-has-summary]` SVG indicators, `immediateFolder` context (`domain · Folder` when `showFolderPath` is true), and responsive List/Grid toggle labels (`aria-label="List view"` / `"Grid view"`).
+- **Files changed:** `src/entrypoints/sidepanel/BookmarkList.tsx`, `src/entrypoints/sidepanel/row-text.ts`, `tests/components/sidepanel-rows.test.tsx`
+- **Learnings:**
+  - Patterns: Rendering `[data-row-controls]` whenever `openable || actions !== undefined` ensures standalone `<BookmarkList>` instances still render the one-click `Open <title>` button and stop click/keydown propagation from selecting the row.
+  - Gotchas: Using SVG icons inside `[data-has-notes]` / `[data-has-summary]` and empty `<span data-tag-dot>` elements preserves existing `row.textContent` assertions.
+---
+
+
 
 
