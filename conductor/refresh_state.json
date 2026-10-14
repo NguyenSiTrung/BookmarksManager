@@ -1,59 +1,73 @@
 {
-  "lastRefresh": "2026-10-13T00:00:00Z",
-  "previousRefresh": "2026-10-07T03:45:00Z",
+  "lastRefresh": "2026-10-14T12:00:00Z",
+  "previousRefresh": "2026-10-13T00:00:00Z",
   "scope": "all",
-  "baseCommit": "1b0aebf",
-  "headCommit": "ba6c5b3",
+  "baseCommit": "e4a4823",
+  "headCommit": "3426c7c",
   "commitsSinceLastRefresh": [
-    "9339da6 test: stabilize parallel suite and timings",
-    "11dbe34 chore(skills): replace superpowers skills with shared skill set",
-    "ba6c5b3 test: remove coverage mandates and trim redundant test cases"
+    "8929059 chore(beads): sync issue export",
+    "26c233f conductor(newtrack): add perf_ux_hardening_20261014 track and Beads epic",
+    "02c67fe chore(beads): sync issue export",
+    "3d2b29a fix(db): coordinate MV3 DB release and batch tombstone/corrupt-meta ops (B-04, P-09)",
+    "b63f9ec fix(sync): keep verify cache coherent, maintain meta.url, and batch sync/tag ops (B-09, B-10, P-05, P-06)",
+    "abea0b8 fix(undo): add field-scoped metaDelta, recursive UNDO_NODE_BUDGET, protected restructure snapshots, and batched restore (B-08, B-10, P-08b)",
+    "ccec374 fix(io): transactional resumable import claim/cancel, batched import metadata, and parser fast-paths (B-03, B-16b, P-07)",
+    "1c3faa6 fix(decisions): index bookmarkIds lookups, support near-duplicate merge approval, and serialize revertDecision (B-01, B-08, P-02)",
+    "e6f9fb3 perf(decisions): add PrecomputedAnalysisIndex, single-pass URL parse, pair failure isolation, and post-network authority checks (B-11, P-01a, P-03a)",
+    "a8451a2 fix(llm,consent,summaries): propagate record.tier, harden explainDecision, scope consent/permission revocation, and record summary verify usage (B-05, B-06a, B-12, B-14)",
+    "00ba0c9 fix(jobs): slice bookmark batches positionally, cache AnalysisContext, serialize keepalive RMW, and handle worker DB release (B-02, B-04a, B-07b, B-11, B-15, P-01b, P-04)",
+    "7832cc6 fix(restructure): preflight Jev/size bounds, lock/cache applyRestructurePlan, discard snapshot on clean rollback, and bound synopsis paths (B-07a, B-13, B-16a, P-08a)",
+    "9453369 perf(search): precompute treeOrderRank, filter docs before hit allocation, incremental duplicate buckets, bulk-diff rebuild, and omnibox live-cache (P-12)",
+    "0b48937 fix(search): remove unimplemented is:dead suggestion, prefix-match filter keys, and harden QueryInput Escape/scroll ergonomics (U-06a-c)",
+    "d356401 fix(sidepanel): clear search on view selection, add Ctrl+Z undo, pause/offset UndoToast, keep BulkBar job card visible, and harden CommandPalette (P-03b, P-13b, U-01, U-03b, U-05, U-09b, U-10d)",
+    "e171e50 fix(sidepanel): virtualize DuplicatesView, memoize selection, add DnD indicators & grid DragHandle, and apply roving tabIndex (P-11, P-13a, U-07, U-08a-c, U-09c, U-10a-c)",
+    "480f911 fix(sidepanel): display/clear saved summaries, request runtime origin permissions on click, gate folder fields, and commit pending tag input (B-06b, U-02, U-04b, U-08d)",
+    "cda4bb1 fix(popup): defer search index until searchOpen, use O(1) duplicate lookup, commit pending tag input, and add filter autocomplete & Suggest feedback (P-10, U-04a, U-06d, U-09d)",
+    "2a90417 fix(options): add per-feature consent management, control built-in blocklist Disclosure, add inline card feedback, and handle Enter on #blocklist-entry (U-03a, U-09a)",
+    "d7cbfc2 test(audit): add 10k scaling benchmarks, e2e regression suite, and sync docs",
+    "a650b10 chore(conductor): mark perf_ux_hardening_20261014 track complete",
+    "3426c7c chore(conductor): archive perf_ux_hardening_20261014 track"
   ],
   "changes": [
-    "tech-stack.md: Vitest bullet now records the parallel-load budgets (testTimeout 20_000 global, tests/setup-components.ts asyncUtilTimeout 5s, best-of-N perf estimators) and the no-coverage-mandates convention with the 3148->2917 trim pointer to docs/test-suite-analysis.md; Playwright bullet records workers:4 default via PLAYWRIGHT_WORKERS, isolation-by-construction (throwaway profiles, port-0 mock servers), fullyParallel off + llm.spec.ts serial, 283s->~95s",
-    "product.md: new delivery bullet covering both test-hardening rounds (BookmarksManager-6iz closed; BookmarksManager-3fg closed during this refresh) and the superpowers->shared skill-bundle swap (11dbe34); backlog bullet unchanged (same 12 open ids)",
-    "patterns.md: four patterns elevated from the non-track test work — mutation-verify before deleting 'redundant' tests, parallel-surviving timing assertions, e2e parallel-safety by construction, behavior-over-coverage testing convention",
-    "workflow.md: no content drift — the rung table and parallel-test rules were added by 9339da6 itself; marker bumped only",
-    "tracks.md: unchanged — no active tracks; all work this cycle landed outside Conductor tracks (established precedent)",
-    "AGENTS.md (outside conductor/): removed stale 'Superpowers plans' and subagent-driven-development/executing-plans references — those skills were deleted in 11dbe34"
+    "tech-stack.md: recorded DuplicatesView virtualization (@tanstack/react-virtual), MutationVerifyCache + field-scoped UndoMetaDelta + recursive UNDO_NODE_BUDGET + distinct-URL near-duplicate merges, search live-cache.ts + filter-before-hit runQuery + prefix-only suggest.ts, jev_summary_verify v3 + hasOtherProviderAtOrigin shared permission guard, PrecomputedAnalysisIndex + *bookmarkIds indexed store + positional JobRunner batch slicing + serialized keepalive RMW, 10k scaling benchmarks in decisions-perf/search-perf, updated suite counts (3037 unit/component cases across 167 files, 49 e2e specs incl. audit-deep-fixes.spec.ts), and .claude/** in eslint.config.mjs ignores",
+    "product.md: marked perf_ux_hardening_20261014 delivery bullet as archived (2026-10-14) with final checkpoint d7cbfc2 gate evidence (167 files/3037 unit/component tests, 49 e2e specs) and Beads epic BookmarksManager-3n9 closure",
+    "patterns.md: updated mid-file refresh marker and consolidated 4 additional learnings from perf_ux_hardening_20261014 (nested Dexie transaction store-scope guard + useLiveQuery catch on DB release, PrecomputedAnalysisIndex + WeakMap dual caching, restructure Jev preflight + locked diff/apply, and keeping unsupported query-syntax warnings in query.ts while excluding them from suggest.ts)",
+    "workflow.md: bumped refresh marker to 2026-10-14 (no methodology or CI drift)",
+    "tracks.md: unchanged — perf_ux_hardening_20261014 already archived at 3426c7c; 0 active tracks"
   ],
   "learnings": {
-    "tracksScanned": 11,
-    "newLearningsFiles": 0,
+    "tracksScanned": 12,
+    "newLearningsFiles": 1,
     "newPatterns": 4,
-    "note": "No new or modified track learnings.md since 2026-10-06 (deep_audit_fixes_20261005 remains newest). The test-suite work ran outside Conductor tracks, so no 2+ cross-track candidates; the four added patterns are single-occurrence captures from the post-refresh commits, added on explicit user approval."
+    "note": "Scanned all 12 archived tracks in conductor/archive/*/. Elevated the 4 remaining patterns/gotchas from conductor/archive/perf_ux_hardening_20261014/learnings.md (complementing the 8 elevated at d7cbfc2) and linked cross-track provenance with phase0, phase1, audit_hardening, and deep_audit_fixes."
   },
   "beads": {
     "openFollowups": 12,
     "inProgressIssues": 0,
     "blocked": 0,
-    "totalIssues": 372,
-    "closed": 360,
-    "syncDirection": "beads->conductor (closed stale in-progress issue)",
+    "totalIssues": 400,
+    "closed": 388,
+    "syncDirection": "none needed (0 drift)",
     "completedThisCycle": [
-      "BookmarksManager-6iz (test-suite stabilization round 1: e2e workers=4, load-aware vitest budgets; closed 2026-10-07)",
-      "BookmarksManager-3fg (coverage mandates removed + suite trim 3148->2917; closed during this refresh — work was committed at ba6c5b3 with an expired lease)"
+      "BookmarksManager-3n9 (epic perf_ux_hardening_20261014 + 27 child phase/task/checkpoint issues; all 28 closed 2026-10-14)"
     ],
     "newSinceLastRefresh": [
-      "BookmarksManager-6iz (closed)",
-      "BookmarksManager-3fg (closed during refresh)",
-      "BookmarksManager-3op.2 / 3op.2.1 (deep-audit epic children, closed)"
+      "BookmarksManager-3n9 and children .1/.1.1-.1.5, .2/.2.1-.2.6, .3/.3.1-.3.3, .4/.4.1-.4.6, .5/.5.1-.5.2 (all 28 closed)"
     ],
     "remainingOpenFollowups": [
       "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
       "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-od9", "BookmarksManager-ope",
       "BookmarksManager-rwy", "BookmarksManager-sb9", "BookmarksManager-tax", "BookmarksManager-xxo"
     ],
-    "drift": "resolved — 3fg was in_progress with expired lease though its work was committed and gates green; closed with user approval. The 12 open backlog ids are unchanged.",
+    "drift": "none — all 22 plan tasks in archived perf_ux_hardening_20261014 are [x] and all 28 mapped Beads issues under BookmarksManager-3n9 are closed; the 12 open P2/P3 backlog items match product.md.",
     "cosmetic": [
       "beads.role not configured (GH#2950)"
     ]
   },
   "verification": {
-    "scope": "Documentation-only refresh. No build, unit, or e2e suite rerun.",
-    "gatesRun": "none this cycle — relying on the gate evidence recorded in BookmarksManager-6iz/-3fg notes (2917 vitest cases green, lint/typecheck/build/4 checks pass) and the committed PROJECT_PLAN.md gate log",
-    "factsVerified": "playwright.config.ts workers=4 via PLAYWRIGHT_WORKERS with isolation comment; vitest.config.ts testTimeout 20_000 + setup-components.ts in components project; tests/setup-components.ts asyncUtilTimeout 5s (per 6iz notes); docs/test-suite-analysis.md present with §8 mutation correction; no coverage-mandate strings remain in conductor/ docs; .beads export reflects 3fg close",
-    "knownGap": "Suite counts (2917 cases / ~167 files) cited from PROJECT_PLAN.md and issue notes rather than a fresh run; e2e ~95-125s figure from 6iz measurements.",
-    "sourceCommits": "ba6c5b3 (HEAD at refresh); all local, unpushed"
+    "scope": "Documentation-only refresh following full gate verification at d7cbfc2.",
+    "gatesRun": "relied on Phase 5 checkpoint d7cbfc2 (lint, typecheck, 167 unit/component files / 3037 tests, build, check:manifest, check:bundle, check:store, check:site, 49 Playwright e2e specs)",
+    "factsVerified": "package.json dependencies unchanged; eslint.config.mjs ignores includes .claude/**; Dexie v9 with *bookmarkIds index; SUMMARY_VERIFY_CONSENT_VERSION = 3; bd stats 400 total / 388 closed / 12 open / 0 in_progress",
+    "sourceCommits": "3426c7c (HEAD prior to refresh commit); all local, unpushed"
   }
 }

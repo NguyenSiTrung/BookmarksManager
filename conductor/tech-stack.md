@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-14 (perf_ux_hardening_20261014 delivered; no dependency drift) -->
+<!-- Last refreshed: 2026-10-14 (refresh — perf_ux_hardening_20261014 architecture, search/decisions/undo optimizations, consent v3, and 3037/49 suite counts recorded; no dependency drift) -->
 
 # Technology Stack
 
@@ -46,8 +46,8 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   precedent — no icon dependency).
 - **`@dnd-kit/core` 6.3.1 + `@dnd-kit/sortable` 10.0** drive tree/list drag and
   drop (pointer + keyboard sensors); **`@tanstack/react-virtual` 3.14**
-  virtualizes the bookmark list/grid; **`dexie-react-hooks` 4.4** backs live
-  IndexedDB queries under `src/ui/hooks/`.
+  virtualizes the bookmark list/grid and `DuplicatesView` groups;
+  **`dexie-react-hooks` 4.4** backs live IndexedDB queries under `src/ui/hooks/`.
 - **[planned]** Zustand, TanStack Query — not yet installed; verify versions
   when first introduced.
 
@@ -79,10 +79,13 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `chrome.storage.session` carries the one-shot popup→side-panel pending-edit
   key; UI prefs live in the `metadata` table under `prefs:*` keys.
 - Offline-core modules added in Phase 1: `src/sync/` (typed `chrome.bookmarks`
-  slice, listeners, reconcile, `flattenTree` read model), `src/undo/` (LIFO
-  snapshots and replay), `src/duplicates/` (URL normalize + grouping),
-  `src/io/` (JSON/Netscape/CSV import/export planner + writers), and
-  `src/ui/{components,hooks,lib}` (side-panel tree, list/grid, dialogs, toasts).
+  slice, listeners, reconcile, `flattenTree` read model, `MutationVerifyCache`),
+  `src/undo/` (LIFO snapshots, field-scoped `UndoMetaDelta`, recursive
+  `UNDO_NODE_BUDGET`, restructure snapshot protection, and batched replay),
+  `src/duplicates/` (URL normalize + grouping + distinct-URL near-duplicate
+  merges), `src/io/` (JSON/Netscape/CSV import/export planner + transactional
+  resumable writers), and `src/ui/{components,hooks,lib}` (side-panel tree,
+  list/grid, dialogs, toasts).
 - `src/db/starter-tags.ts` (2026-09-30): one-shot starter tech tag pack
   (`STARTER_TAGS`, 18 name/description pairs). Seeds only when
   `prefs:starterTagsSeeded` has never been written **and** `listTags()` is
@@ -99,13 +102,16 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
 - **MiniSearch 7.2.0** powers fully local search (added in Phase 2). The pure
   layer in `src/search/` — `query.ts` (parser + warnings), `index.ts`
   (documents, boosts title>tags>domain>url>notes, `toSourceBookmark`/
-  `ancestorsOf`, `buildIndex`, `applyDocDiff`), `run.ts` (`runQuery` executor,
+  `ancestorsOf`, `buildIndex`, bulk-aware `applyDocDiff`), `run.ts` (`runQuery`
+  executor with precomputed `treeOrderRank` and filter-before-hit execution,
   `SearchIndexHandle`, `buildSearchHandle`, `collectDuplicateIds`),
-  `suggest.ts` (autocomplete), `openable.ts` (URL denylist), `omnibox.ts`
-  (session-scoped index, XML-escaped ≤8 suggestions, disposition routing) —
-  has no React/Chrome imports; surfaces consume it via
-  `src/ui/hooks/useSearchIndex.ts` (live diff-updating handle), the shared
-  `src/ui/components/query-input.tsx` combobox, `src/sync/tabs.ts`
+  `live-cache.ts` (`createLiveSearchCache` — incremental duplicate-bucket
+  tracking and document-signature diffing), `suggest.ts` (prefix-only filter
+  autocomplete), `openable.ts` (URL denylist), `omnibox.ts` (session-scoped
+  live-cached index, XML-escaped ≤8 suggestions, disposition routing) — has no
+  React/Chrome imports; surfaces consume it via `src/ui/hooks/useSearchIndex.ts`
+  (live diff-updating handle, lazily deferred in popup until search opens), the
+  shared `src/ui/components/query-input.tsx` combobox, `src/sync/tabs.ts`
   (`openBookmarkUrl` typed open slice), and `registerOmnibox()` in
   `src/entrypoints/background.ts`.
 - `@mozilla/readability` 0.6 — opt-in page excerpt extraction, used by
@@ -143,7 +149,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   scope request guard, wire schema, origin-scoped consent, host permission,
   and provider key before sending. The frozen scope registry keeps
   `jev_test` synthetic-only. Consent records and disclosures live in
-  `src/consent/`.
+  `src/consent/` (`jev_summary_verify` v3; provider revocation checks
+  `hasOtherProviderAtOrigin` across Jev and LLM providers before removing shared
+  host permissions).
 - LLM gate `src/net/llm-send.ts`: `sendLlmConsented` independently
   re-resolves the configured destination and checks the registered scope,
   wire schema/model pin, exact-origin consent, host permission, credential,
@@ -156,14 +164,18 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   (`categorize`/`tags`/`placement`/`misfiled`/`near-duplicate`/`rerank`), each
   exporting a `questionSetVersion`; `src/decisions/` — `minimize.ts`
   (title/cleaned-URL/domain only; notes and page text never sent, intranet
-  suffixes blocklisted), `candidates.ts` (in-code shortlists for tags/folders),
-  `pipeline.ts` (`analyzeBookmark` — one request, many questions; answer-ID
-  cross-check; §10.2 policy; persist + usage), `policy.ts` (confidence bands,
-  auto-apply limited to `add_tags`/`set_category`), `apply.ts` (guarded apply
-  with compensating undo), `store.ts` (persist + lifecycle), `rerank.ts` (Ask
-  reordering with the 0.5 no-match bar), `blocklist.ts`, `duplicates.ts`;
-  `src/jobs/` — `queue.ts`/`runner.ts` (persisted, resumable, strictly
-  sequential per bookmark, batch-commit progress) + `estimate.ts`; and
+  suffixes blocklisted), `candidates.ts` (in-code shortlists for tags/folders
+  with `PrecomputedAnalysisIndex` and `WeakMap` caches), `pipeline.ts`
+  (`analyzeBookmark` — one request, many questions; answer-ID cross-check; §10.2
+  policy; persist + usage), `policy.ts` (confidence bands, auto-apply limited to
+  `add_tags`/`set_category`), `apply.ts` (guarded apply with field-scoped
+  compensating undo and near-duplicate merge support), `store.ts` (`*bookmarkIds`
+  indexed persist + lifecycle), `rerank.ts` (Ask reordering with the 0.5
+  no-match bar), `blocklist.ts`, `duplicates.ts`; `src/jobs/` —
+  `queue.ts`/`runner.ts` (persisted, resumable, positional batch slicing,
+  strictly sequential per bookmark, batch-commit progress, cached
+  `AnalysisContext`) + `keepalive.ts` (serialized session RMW) + `estimate.ts`;
+  and
   `src/messages/decisions.ts` (total handlers: analyze, save-suggest, rerank,
   approve/reject, scan lifecycle). UI: Options consent + auto-apply +
   blocklist + "Data sent" log; sidepanel review queue, scan dialog, and Ask
@@ -195,7 +207,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `tests/mock-servers/jev.ts` is a scripted HTTP fake of the System One
   endpoint (its default answers are schema-valid and pass the pipeline's
   cross-check); `tests/unit/decisions-perf.test.ts` gates analyze-on-save
-  (worst-of-10 < 1.5 s at a 10k-bookmark corpus); `tests/live/` is a
+  (worst-of-10 < 1.5 s at a 10k-bookmark corpus) plus 10k scaling benchmarks for
+  `PrecomputedAnalysisIndex`, `*bookmarkIds` indexed `persistDecision`, and
+  startup `reconcileMetadata`; `tests/live/` is a
   key-gated smoke suite (synthetic probe + live categorize) run only via
   `npm run test:live` (separate `vitest.live.config.ts`, excluded from the
   default run and CI; every test skips when its env key is absent);
@@ -205,9 +219,11 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   artifact, not a hang detector) and `tests/setup-components.ts` raises
   Testing Library's `asyncUtilTimeout` to 5 s for the components project;
   wall-clock perf specs use best-of-N minimum estimators, not single
-  samples (`tests/unit/search-perf.test.ts`). Coverage is not mandated —
-  tests justify themselves by the behavior they guard (2026-10-13 trim:
-  3148 → 2917 cases; see `docs/test-suite-analysis.md`).
+  samples (`tests/unit/search-perf.test.ts`, including 10k benchmarks for
+  filter-before-hit `runQuery` and incremental `createLiveSearchCache.update`).
+  Coverage is not mandated — tests justify themselves by the behavior they guard
+  (2026-10-13 trim: 3148 → 2917 cases; 2026-10-14 hardening: 3037 cases across
+  167 files; see `docs/test-suite-analysis.md`).
 - **Playwright 1.63** persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
   The suite runs headed by default; `E2E_HEADLESS=1` opts into headless, and
@@ -228,9 +244,12 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   valve: first N fulfill, the rest held until `release()`) and can relaunch the
   same extension id over a persistent profile to emulate browser restarts
   mid-job. The cross-feature audit regressions live in
-  `tests/e2e/audit-data-safety.spec.ts` (+ `helpers/audit-data.ts`) and
-  `tests/e2e/audit-provider-workflows.spec.ts` (+ `helpers/audit-provider.ts`).
-- **ESLint 9 flat config** (`eslint.config.mjs`) with typescript-eslint and
+  `tests/e2e/audit-data-safety.spec.ts` (+ `helpers/audit-data.ts`),
+  `tests/e2e/audit-provider-workflows.spec.ts` (+ `helpers/audit-provider.ts`),
+  and `tests/e2e/audit-deep-fixes.spec.ts` (49 e2e specs total; 48 run by
+  default, 1 `store-assets` skipped).
+- **ESLint 9 flat config** (`eslint.config.mjs`, ignoring `.output`, `.wxt`,
+  `.worktrees/**`, and `.claude/**`) with typescript-eslint and
   react/react-hooks plugins; egress restriction rules ban `fetch`,
   `XMLHttpRequest`, `WebSocket`, `EventSource`, `navigator.sendBeacon`, and
   `importScripts` outside `src/net/**` (plus a syntax selector for
