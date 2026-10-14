@@ -80,8 +80,8 @@ export function CommandPalette({
   const [active, setActive] = useState(0);
 
   const sections = useMemo(
-    () => buildPaletteSections({ query, search, tree, tagDefs }),
-    [query, search, tree, tagDefs],
+    () => (open ? buildPaletteSections({ query, search, tree, tagDefs }) : []),
+    [open, query, search, tree, tagDefs],
   );
   const flat = useMemo(() => flattenPaletteSections(sections), [sections]);
 
@@ -100,6 +100,12 @@ export function CommandPalette({
     ? 0
     : Math.min(active, flat.length - 1);
 
+
+  useEffect(() => {
+    if (!open || flat.length === 0) return;
+    const el = document.getElementById(`${listId}-opt-${clampedActive}`);
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [open, listId, clampedActive, flat.length]);
   // Focus: remember the pre-open element and put focus back on close —
   // Radix's own restore doesn't reach elements that were focused outside a
   // trigger button (e.g. the search input focused via `/`). Refs/DOM only —
@@ -187,7 +193,11 @@ export function CommandPalette({
             aria-label="Command palette"
             aria-expanded={flat.length > 0}
             aria-controls={listId}
-            aria-activedescendant={`${listId}-opt-${clampedActive}`}
+            aria-activedescendant={
+              flat.length > 0 && flat[clampedActive] !== undefined
+                ? `${listId}-opt-${clampedActive}`
+                : undefined
+            }
             placeholder="Search bookmarks or jump to…"
             value={query}
             onChange={(e) => {
@@ -246,9 +256,10 @@ export function CommandPalette({
                         role="option"
                         aria-selected={index === clampedActive}
                         onMouseDown={(e) => e.preventDefault()}
+                        onMouseMove={() => setActive(index)}
                         onClick={() => run(item)}
                         className={cn(
-                          "flex cursor-default items-baseline gap-2 rounded-sm px-2 py-1.5 text-sm",
+                          "flex cursor-default items-baseline gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent/50",
                           index === clampedActive &&
                             "bg-accent text-accent-foreground",
                         )}

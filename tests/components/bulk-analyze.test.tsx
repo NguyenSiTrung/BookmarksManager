@@ -389,6 +389,44 @@ describe("BulkBar Analyze (U02)", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
+  it("keeps the Selection analysis status card visible when selection is cleared (U-09b)", async () => {
+    const tree = makeTree(["b1", "b2"]);
+    let selRef: BookmarkSelection | null = null;
+    render(
+      <Harness
+        tree={tree}
+        select={(selection) => {
+          selRef = selection;
+          selection.setSelected(new Set(["b1", "b2"]));
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("select"));
+    const analyze = (await screen.findByRole("button", {
+      name: "Analyze",
+    })) as HTMLButtonElement;
+    await waitFor(() => expect(analyze.disabled).toBe(false));
+    fireEvent.click(analyze);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      within(dialog as HTMLElement).getByRole("button", { name: "Analyze" }),
+    );
+    const card = await screen.findByRole("status", {
+      name: "Selection analysis",
+    });
+    await waitFor(() =>
+      expect(card.textContent).toContain("Analysis: Running"),
+    );
+
+    // Clear the selection: the "N selected" buttons disappear, but the job card stays visible!
+    fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect(
+      screen.getByRole("status", { name: "Selection analysis" }).textContent,
+    ).toContain("Analysis: Running");
+    expect(selRef).not.toBeNull();
+  });
+
   it("rejects a selection over the protocol cap before any send", async () => {
     // No tree: every selected id counts toward the cap — 50,001 is one over.
     const ids = Array.from(

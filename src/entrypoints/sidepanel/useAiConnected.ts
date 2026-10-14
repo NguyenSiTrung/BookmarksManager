@@ -1,7 +1,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { CONSENT_VERSION } from "../../consent/records";
 import { db } from "../../db/database";
-import { CONSENT_SCOPE } from "../../schemas/provider";
+import { CONSENT_SCOPE, LLM_TEST_SCOPE } from "../../schemas/provider";
 
 /**
  * True when any consent row at the current {@link CONSENT_VERSION} exists for
@@ -18,7 +18,8 @@ export function readAiConnected(): Promise<boolean> {
       rows.some(
         (row) =>
           row.consentVersion === CONSENT_VERSION &&
-          row.scope !== CONSENT_SCOPE,
+          row.scope !== CONSENT_SCOPE &&
+          row.scope !== LLM_TEST_SCOPE,
       ),
     )
     .catch((): boolean => false);

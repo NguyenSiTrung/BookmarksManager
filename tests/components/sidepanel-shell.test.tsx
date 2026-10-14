@@ -185,6 +185,48 @@ describe("wide shell", () => {
     const heading = screen.getByRole("heading", { name: "All bookmarks" });
     expect(heading.querySelector("button")).toBeNull();
   });
+
+  it("clears active search and updates active chip/folder state on view selection (U-01)", async () => {
+    stubViewport(true);
+    await renderApp();
+    const views = screen.getByRole("navigation", { name: "Views" });
+    const allChip = within(views).getByRole("button", { name: "All" });
+    expect(allChip.getAttribute("aria-pressed")).toBe("true");
+
+    const searchbox = screen.getByRole("combobox", {
+      name: "Search bookmarks",
+    }) as HTMLInputElement;
+    fireEvent.change(searchbox, { target: { value: "alpha" } });
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /Results for/ })).toBeTruthy(),
+    );
+    // While searching, All chip must not appear active.
+    expect(allChip.getAttribute("aria-pressed")).toBe("false");
+
+    // Selecting a folder while search is active clears search and switches to folder.
+    const devItem = await screen.findByRole("treeitem", { name: "Dev" });
+    fireEvent.click(devItem);
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Dev" })).toBeTruthy(),
+    );
+    expect(searchbox.value).toBe("");
+    expect(devItem.getAttribute("aria-selected")).toBe("true");
+
+    // Typing search again unhighlights the folder; clicking All chip clears search.
+    fireEvent.change(searchbox, { target: { value: "gamma" } });
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /Results for/ })).toBeTruthy(),
+    );
+    expect(devItem.getAttribute("aria-selected")).toBe("false");
+    fireEvent.click(allChip);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "All bookmarks" }),
+      ).toBeTruthy(),
+    );
+    expect(searchbox.value).toBe("");
+    expect(allChip.getAttribute("aria-pressed")).toBe("true");
+  });
 });
 
 describe("Tools and More menus", () => {
@@ -236,5 +278,15 @@ describe("Tools and More menus", () => {
     await openMenu("Tools");
     await chooseMenuItem("Manage tags…");
     expect(await screen.findByRole("heading", { name: "Manage tags" })).toBeTruthy();
+  });
+
+  it("opens the Command palette from Tools (U-10d)", async () => {
+    stubViewport(false);
+    await renderApp();
+    await openMenu("Tools");
+    await chooseMenuItem("Command palette…");
+    expect(
+      await screen.findByRole("combobox", { name: "Command palette" }),
+    ).toBeTruthy();
   });
 });

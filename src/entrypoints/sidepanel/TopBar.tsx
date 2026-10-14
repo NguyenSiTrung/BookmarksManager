@@ -18,6 +18,7 @@ export type ToolsAction =
   | "import"
   | "export"
   | "manage-tags"
+  | "command-palette"
   | "scan"
   | "set-up-ai";
 
@@ -64,6 +65,9 @@ export function TopBar({
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onTools("manage-tags")}>
               Manage tags…
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onTools("command-palette")}>
+              Command palette…
             </DropdownMenuItem>
             {visibility.showScan && (
               <DropdownMenuItem onSelect={() => onTools("scan")}>

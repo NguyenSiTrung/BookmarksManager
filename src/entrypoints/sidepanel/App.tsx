@@ -135,6 +135,7 @@ function openOptionsPage(): void {
 const EMPTY_METAS: readonly BookmarkMeta[] = [];
 const EMPTY_TAG_DEFS: readonly TagDef[] = [];
 const EMPTY_DECISIONS: readonly DecisionRow[] = [];
+const EMPTY_SCAN_BOOKMARKS: readonly ScanBookmark[] = [];
 
 /** Per-row action control (kebab) on bookmark rows. */
 const ITEM_KEBAB_CLASS =
@@ -311,12 +312,14 @@ export function App(props?: {
    */
   const scanBookmarks = useMemo<readonly ScanBookmark[]>(
     () =>
-      [...tree.bookmarks.values()].map(({ id, title, url }) => ({
-        id,
-        title,
-        url,
-      })),
-    [tree],
+      scanOpen
+        ? [...tree.bookmarks.values()].map(({ id, title, url }) => ({
+            id,
+            title,
+            url,
+          }))
+        : EMPTY_SCAN_BOOKMARKS,
+    [scanOpen, tree],
   );
   const orderedIds = useMemo(() => items.map((item) => item.id), [items]);
   const selection = useBookmarkSelection(orderedIds);
@@ -638,7 +641,6 @@ export function App(props?: {
         setPaletteOpen((open) => !open);
         return;
       }
-      if (event.key !== "/") return;
       const target = event.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
@@ -651,12 +653,23 @@ export function App(props?: {
           return;
         }
       }
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === "z" || event.key === "Z")
+      ) {
+        event.preventDefault();
+        void handleToastUndo();
+        return;
+      }
+      if (event.key !== "/") return;
       event.preventDefault();
       searchInputRef.current?.focus();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [handleToastUndo]);
 
   /**
    * All opens go through the typed tabs slice (`openBookmarkUrl`) — it
@@ -716,7 +729,7 @@ export function App(props?: {
    * drawer closes once something is chosen.
    */
   const selectView = (next: SidePanelView): void => {
-    if (next.kind === "review") setSearchQuery("");
+    setSearchQuery("");
     setView(next);
     setDrawerOpen(false);
   };
@@ -725,6 +738,7 @@ export function App(props?: {
     if (action === "import") setImportOpen(true);
     else if (action === "export") setExportOpen(true);
     else if (action === "manage-tags") setTagManagerOpen(true);
+    else if (action === "command-palette") setPaletteOpen(true);
     else if (action === "scan") setScanOpen(true);
     else openOptionsPage();
   };
@@ -779,6 +793,10 @@ export function App(props?: {
             });
       const tabId = tabs[0]?.id;
       if (tabId === undefined) {
+        if (metaById.get(item.id)?.summary !== undefined) {
+          setSummarizeTarget({ tabId: 0, item });
+          return;
+        }
         reportToast({
           message: "No active tab to summarize — open the page first.",
           error: true,
@@ -867,11 +885,12 @@ export function App(props?: {
     item.title === "" ? item.url : item.title;
 
   /** Kebab dropdown appended to every bookmark row. */
-  const renderItemActions = (item: BookmarkItem) => (
+  const renderItemActions = (item: BookmarkItem, active = true) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          tabIndex={active ? 0 : -1}
           aria-label={`Actions for ${itemLabel(item)}`}
           className={ITEM_KEBAB_CLASS}
           onClick={(event) => event.stopPropagation()}
@@ -915,7 +934,7 @@ export function App(props?: {
   const scopePane = (
     <ScopePane
       tree={tree}
-      view={view}
+      view={activeView}
       tagDefs={tagDefs}
       categories={categories}
       onSelect={selectView}
@@ -983,7 +1002,7 @@ export function App(props?: {
                 className="flex min-w-0 flex-1 flex-col"
               >
                 <ViewChips
-                  activeKind={view.kind}
+                  activeKind={activeView.kind}
                   pendingCount={pendingCount}
                   visibility={visibility}
                   onSelect={(kind) => selectView(makeView(kind))}
@@ -1127,14 +1146,16 @@ export function App(props?: {
                 running scan — reopen it to check progress.
               </DialogDescription>
             </DialogHeader>
-            <ScanPanel
-              bookmarks={scanBookmarks}
-              onOpenReview={() => {
-                setScanOpen(false);
-                setSearchQuery("");
-                setView({ kind: "review" });
-              }}
-            />
+            {scanOpen && (
+              <ScanPanel
+                bookmarks={scanBookmarks}
+                onOpenReview={() => {
+                  setScanOpen(false);
+                  setSearchQuery("");
+                  setView({ kind: "review" });
+                }}
+              />
+            )}
           </DialogContent>
         </Dialog>
         <ImportDialog
@@ -1201,7 +1222,11 @@ export function App(props?: {
             if (command === "import") setImportOpen(true);
             else if (command === "export") setExportOpen(true);
             else if (command === "tag-manager") setTagManagerOpen(true);
-            else if (command === "new-folder") {
+            else if (command === "scan") setScanOpen(true);
+            else if (command === "review") selectView({ kind: "review" });
+            else if (command === "restructure") {
+              selectView({ kind: "restructure" });
+            } else if (command === "new-folder") {
               // Create under the folder in view, else the bookmarks bar.
               const parent =
                 view.kind === "folder"
@@ -1223,6 +1248,9 @@ export function App(props?: {
           busy={decisionUndoBusy}
           onUndo={() => void handleToastUndo()}
           onDismiss={dismissToast}
+          onPause={toastCtl.pause}
+          onResume={toastCtl.resume}
+          offsetForBulkBar={selection.selectedIds.size > 0}
         />
       </ToastProvider>
     </SelectionContext.Provider>

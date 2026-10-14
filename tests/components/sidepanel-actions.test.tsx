@@ -22,6 +22,11 @@ import { db } from "../../src/db/database";
 import { createTag, getMeta, getTag, patchMeta, putMeta } from "../../src/db/meta";
 import { flattenTree } from "../../src/sync/tree";
 import { App } from "../../src/entrypoints/sidepanel/App";
+import {
+  SelectionContext,
+  useBookmarkSelection,
+} from "../../src/entrypoints/sidepanel/BookmarkList";
+import { BulkBar } from "../../src/entrypoints/sidepanel/BulkBar";
 import { EditDialog } from "../../src/entrypoints/sidepanel/EditDialog";
 import {
   UndoToast,
@@ -330,7 +335,7 @@ describe("EditDialog", () => {
     });
   });
 
-  it("edits a folder: rename, move and meta, denying its own subtree", async () => {
+  it("edits a folder: rename and move, denying its own subtree and hiding bookmark-only meta fields", async () => {
     const tree = flattenTree(await fake.getTree());
     const node = tree.folders.get("10");
     expect(node).toBeDefined();
@@ -341,6 +346,8 @@ describe("EditDialog", () => {
     );
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).queryByLabelText("URL")).toBeNull();
+    expect(within(dialog).queryByLabelText("Category")).toBeNull();
+    expect(within(dialog).queryByLabelText("Notes")).toBeNull();
 
     const folder = within(dialog).getByLabelText("Folder") as HTMLSelectElement;
     expect(
@@ -360,16 +367,12 @@ describe("EditDialog", () => {
       target: { value: "Dev 2" },
     });
     fireEvent.change(folder, { target: { value: "2" } });
-    fireEvent.change(within(dialog).getByLabelText("Notes"), {
-      target: { value: "folder notes" },
-    });
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
 
     await waitFor(async () => {
       expect((await fake.get("10"))[0]?.title).toBe("Dev 2");
     });
     expect((await fake.get("10"))[0]?.parentId).toBe("2");
-    expect((await getMeta("10"))?.notes).toBe("folder notes");
   });
 });
 
@@ -459,6 +462,38 @@ describe("BulkBar", () => {
     // Meta rows were remapped onto the fresh Chrome ids.
     const metas = await db.bookmarkMeta.toArray();
     expect(metas.some((m) => m.notes === "keep me")).toBe(true);
+  });
+
+  it("requires confirmation before deleting multiple bookmarks or any folder when confirmBeforeDelete is enabled (U-05a)", async () => {
+    const tree = flattenTree(await fake.getTree());
+    function ConfirmBarHarness() {
+      const selection = useBookmarkSelection(["b1", "b2", "10"]);
+      const selectTwo = (): void => {
+        selection.setSelected(new Set(["b1", "b2"]));
+      };
+      return (
+        <SelectionContext.Provider value={selection}>
+          <button type="button" onClick={selectTwo}>
+            select two
+          </button>
+          <BulkBar tree={tree} confirmBeforeDelete />
+        </SelectionContext.Provider>
+      );
+    }
+    render(<ConfirmBarHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "select two" }));
+    const bar = selectionBar();
+    fireEvent.click(within(bar).getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: /Delete 2 bookmarks\?/,
+    });
+    expect(dialog).toBeTruthy();
+    // Not deleted until confirmed
+    await expect(fake.get("b1")).resolves.toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(async () => {
+      await expect(fake.get("b1")).rejects.toThrow();
+    });
   });
 
   it("bulk moves the selection via Move to… and undoes the move", async () => {
@@ -750,6 +785,37 @@ describe("item actions", () => {
     await expect(fake.get("b3")).rejects.toThrow();
   });
 
+  it("opens SummaryDialog even without an active tab when the bookmark already has a saved summary (U-01)", async () => {
+    await putMeta("b3", { summary: "Saved summary text" });
+    await renderApp();
+    await openItemMenu("Gamma");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Summarize…" }));
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+  });
+
+  it("undoes the last delete on Ctrl+Z outside text inputs, and ignores Ctrl+Z inside inputs (U-05b)", async () => {
+    await renderApp();
+    fireEvent.click(option(/Gamma/));
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Delete" });
+    await waitFor(() =>
+      expect(toast().textContent).toContain("Deleted 1 bookmark"),
+    );
+    await expect(fake.get("b3")).rejects.toThrow();
+
+    // Inside search input, Ctrl+Z does NOT trigger app undo.
+    const searchInput = screen.getByRole("combobox", {
+      name: "Search bookmarks",
+    });
+    fireEvent.keyDown(searchInput, { key: "z", ctrlKey: true });
+    await expect(fake.get("b3")).rejects.toThrow();
+
+    // On document.body / listbox, Ctrl+Z triggers undo.
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    await waitFor(() => expect(toast().textContent).toContain("Undone"));
+    const barChildren = await fake.getChildren("1");
+    expect(barChildren.some((n) => n.title === "Gamma")).toBe(true);
+  });
+
   it("never lets keys inside the row context menu reach the list", async () => {
     await renderApp();
 
@@ -926,6 +992,9 @@ describe("UndoToast", () => {
           toast={controller.toast}
           onUndo={() => void controller.undo()}
           onDismiss={controller.dismiss}
+          onPause={controller.pause}
+          onResume={controller.resume}
+          offsetForBulkBar
         />
       </>
     );
@@ -945,6 +1014,32 @@ describe("UndoToast", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "show" }));
       fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+      expect(screen.queryByTestId("undo-toast")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauses auto-hide on hover/focus and offsets above BulkBar when selection is non-empty (U-05c)", () => {
+    vi.useFakeTimers();
+    try {
+      render(<Harness />);
+      fireEvent.click(screen.getByRole("button", { name: "show" }));
+      const el = toast();
+      expect(el.className).toContain("bottom-14");
+
+      // Hover pauses the timer past 8.5s.
+      fireEvent.mouseEnter(el);
+      act(() => {
+        vi.advanceTimersByTime(8_500);
+      });
+      expect(screen.queryByTestId("undo-toast")).not.toBeNull();
+
+      // Mouse leave resumes the timer.
+      fireEvent.mouseLeave(el);
+      act(() => {
+        vi.advanceTimersByTime(8_500);
+      });
       expect(screen.queryByTestId("undo-toast")).toBeNull();
     } finally {
       vi.useRealTimers();

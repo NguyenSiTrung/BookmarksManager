@@ -377,7 +377,8 @@ export interface ExportDialogProps {
   /** Scope label override; falls back to the tree's own title. */
   currentFolderTitle?: string;
 }
-
+const EMPTY_META_MAP: ReadonlyMap<string, BookmarkMeta> = new Map();
+const EMPTY_TAG_MAP: ReadonlyMap<string, string> = new Map();
 const FORMATS: { value: ExportFormat; label: string }[] = [
   { value: "json", label: "JSON (.json)" },
   { value: "netscape", label: "Netscape HTML (.html)" },
@@ -410,12 +411,18 @@ export function ExportDialog({
   const [includeNotes, setIncludeNotes] = useState(true);
 
   const metaById = useMemo(
-    () => new Map(meta.map((row) => [row.id, row])),
-    [meta],
+    () =>
+      open
+        ? new Map(meta.map((row) => [row.id, row]))
+        : EMPTY_META_MAP,
+    [open, meta],
   );
   const tagNameByKey = useMemo(
-    () => new Map(tagDefs.map((def) => [def.nameKey, def.name])),
-    [tagDefs],
+    () =>
+      open
+        ? new Map(tagDefs.map((def) => [def.nameKey, def.name]))
+        : EMPTY_TAG_MAP,
+    [open, tagDefs],
   );
 
   const scopeFolder =

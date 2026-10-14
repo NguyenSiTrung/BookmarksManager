@@ -284,4 +284,27 @@ describe("command palette", () => {
       }) as HTMLInputElement).value,
     ).toBe("");
   });
+
+  it("clears aria-activedescendant when no options match and highlights on hover (U-10d)", async () => {
+    await renderApp();
+    pressPaletteShortcut();
+    await screen.findByRole("dialog");
+
+    const el = paletteInput();
+    const list = paletteList();
+    const options = within(list).getAllByRole("option");
+    expect(options.length).toBeGreaterThan(1);
+
+    // Hovering option 1 updates active highlight.
+    fireEvent.mouseMove(options[1]!);
+    expect(options[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(el.getAttribute("aria-activedescendant")).toBe(options[1]!.id);
+
+    // Typing a query with zero matches removes aria-activedescendant.
+    fireEvent.change(el, { target: { value: "zzzznonexistentquery" } });
+    await waitFor(() =>
+      expect(within(list).queryAllByRole("option").length).toBe(0),
+    );
+    expect(el.getAttribute("aria-activedescendant")).toBeNull();
+  });
 });

@@ -181,6 +181,9 @@ describe("palette commands", () => {
       "Export",
       "Manage tags",
       "New folder",
+      "Scan library",
+      "Review suggestions",
+      "Restructure folders",
       "Undo last action",
       "Open options",
     ]) {

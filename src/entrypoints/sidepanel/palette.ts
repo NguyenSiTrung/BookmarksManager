@@ -34,6 +34,9 @@ export type PaletteCommand =
   | "export"
   | "tag-manager"
   | "new-folder"
+  | "scan"
+  | "review"
+  | "restructure"
   | "undo"
   | "options";
 
@@ -92,6 +95,9 @@ const COMMANDS: readonly { label: string; command: PaletteCommand }[] = [
   { label: "Export bookmarks…", command: "export" },
   { label: "Manage tags…", command: "tag-manager" },
   { label: "New folder…", command: "new-folder" },
+  { label: "Scan library…", command: "scan" },
+  { label: "Review suggestions", command: "review" },
+  { label: "Restructure folders", command: "restructure" },
   { label: "Undo last action", command: "undo" },
   { label: "Open options", command: "options" },
 ];

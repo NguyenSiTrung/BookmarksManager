@@ -185,6 +185,11 @@ export interface BulkBarProps {
    * bar stays renderable in isolation; without it the actions stay enabled.
    */
   tree?: FlattenedTree;
+  /**
+   * When true, deleting multiple bookmarks or any folder opens a
+   * confirmation dialog before removing the nodes (U-05a).
+   */
+  confirmBeforeDelete?: boolean;
 }
 
 const barButtonClass =
@@ -193,10 +198,17 @@ const barButtonClass =
   "focus-visible:ring-2 focus-visible:ring-ring " +
   "disabled:pointer-events-none disabled:opacity-50";
 
-export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
+export function BulkBar({
+  onMoveRequest,
+  tree,
+  confirmBeforeDelete = false,
+}: BulkBarProps) {
   const selection = useSelection();
   const toast = useToast();
   const [tagPrompt, setTagPrompt] = useState<"add" | "remove" | null>(null);
+  const [deleteConfirmIds, setDeleteConfirmIds] = useState<
+    readonly string[] | null
+  >(null);
   const [busy, setBusy] = useState(false);
   /**
    * U02: Analyze's confirm payload — the analyzable ids frozen at open plus
@@ -268,8 +280,16 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
 
   const count = selection.selectedIds.size;
   const ids = [...selection.selectedIds];
+  const showReadFailureCard = analyzeReadFailed && !readFailureDismissed;
 
-  if (count === 0) return null;
+  if (
+    count === 0 &&
+    !showAnalyzeCard &&
+    !showReadFailureCard &&
+    deleteConfirmIds === null
+  ) {
+    return null;
+  }
 
   // At least one selected row must be mutable for Delete/Move to do
   // anything — a managed selection is a policy wall (the service rejects it
@@ -282,16 +302,27 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
     });
   const moveDeleteDisabled = busy || !anyMutable;
 
-  const handleDelete = async (): Promise<void> => {
+  const executeDelete = async (targetIds: readonly string[]): Promise<void> => {
     setBusy(true);
-    const result = await deleteNodesWithUndo(ids);
+    const result = await deleteNodesWithUndo(targetIds);
     setBusy(false);
     toast.showToast({
       message: deleteResultMessage(result),
       undoable: result.deleted > 0,
+      snapshotId: result.snapshotId,
       error: result.deleted === 0,
     });
     if (result.deleted > 0) selection.clear();
+  };
+
+  const handleDelete = (): void => {
+    const hasFolder =
+      tree !== undefined && ids.some((id) => tree.folders.has(id));
+    if (confirmBeforeDelete && (ids.length > 1 || hasFolder)) {
+      setDeleteConfirmIds(ids);
+      return;
+    }
+    void executeDelete(ids);
   };
 
   /**
@@ -438,76 +469,80 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
         "px-2 py-1"
       }
     >
-      <span className="mr-auto text-xs font-medium">{count} selected</span>
-      <button
-        type="button"
-        disabled={moveDeleteDisabled}
-        onClick={() => onMoveRequest?.(ids)}
-        className={barButtonClass}
-      >
-        Move to…
-      </button>
-      <button
-        type="button"
-        disabled={moveDeleteDisabled}
-        onClick={() => void handleDelete()}
-        className={barButtonClass}
-      >
-        Delete
-      </button>
-      <button
-        type="button"
-        disabled={analyzeDisabled}
-        onClick={() => handleAnalyze()}
-        className={barButtonClass}
-      >
-        Analyze
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => setTagPrompt("add")}
-        className={barButtonClass}
-      >
-        Add tag
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => setTagPrompt("remove")}
-        className={barButtonClass}
-      >
-        Remove tag
-      </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button type="button" disabled={busy} className={barButtonClass}>
-            Set category
+      {count > 0 && (
+        <>
+          <span className="mr-auto text-xs font-medium">{count} selected</span>
+          <button
+            type="button"
+            disabled={moveDeleteDisabled}
+            onClick={() => onMoveRequest?.(ids)}
+            className={barButtonClass}
+          >
+            Move to…
           </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {Category.options.map((category) => (
-            <DropdownMenuItem
-              key={category}
-              onSelect={() => void handleSetCategory(category)}
-            >
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => void handleSetCategory(null)}>
-            No category
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <button
-        type="button"
-        onClick={() => selection.clear()}
-        className={barButtonClass}
-      >
-        Clear selection
-      </button>
-      {analyzeReadFailed && !readFailureDismissed && (
+          <button
+            type="button"
+            disabled={moveDeleteDisabled}
+            onClick={() => handleDelete()}
+            className={barButtonClass}
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            disabled={analyzeDisabled}
+            onClick={() => handleAnalyze()}
+            className={barButtonClass}
+          >
+            Analyze
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setTagPrompt("add")}
+            className={barButtonClass}
+          >
+            Add tag
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setTagPrompt("remove")}
+            className={barButtonClass}
+          >
+            Remove tag
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" disabled={busy} className={barButtonClass}>
+                Set category
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {Category.options.map((category) => (
+                <DropdownMenuItem
+                  key={category}
+                  onSelect={() => void handleSetCategory(category)}
+                >
+                  {category.charAt(0).toUpperCase() + category.slice(1)}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void handleSetCategory(null)}>
+                No category
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            type="button"
+            onClick={() => selection.clear()}
+            className={barButtonClass}
+          >
+            Clear selection
+          </button>
+        </>
+      )}
+      {showReadFailureCard && (
         <div
           role="status"
           aria-label="Selection analysis"
@@ -602,7 +637,7 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
             if (!open) setAnalyzeConfirm(null);
           }}
         >
-          <DialogContent showCloseButton={false}>
+          <DialogContent showCloseButton={false} className="max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Analyze {analyzeConfirm.ids.length} bookmark{analyzeConfirm.ids.length === 1 ? "" : "s"}?</DialogTitle>
               <DialogDescription>
@@ -625,7 +660,7 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
               <button
                 type="button"
                 onClick={() => setAnalyzeConfirm(null)}
-                className="rounded-md border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+                className="rounded-md border border-input px-4 py-2 text-sm font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Cancel
               </button>
@@ -635,10 +670,54 @@ export function BulkBar({ onMoveRequest, tree }: BulkBarProps) {
                 onClick={() => void handleAnalyzeConfirm()}
                 className={
                   "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
-                  "text-primary-foreground disabled:opacity-50"
+                  "text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 }
               >
                 Analyze
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {deleteConfirmIds !== null && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setDeleteConfirmIds(null);
+          }}
+        >
+          <DialogContent showCloseButton={false} className="max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                Delete {deleteConfirmIds.length}{" "}
+                {deleteConfirmIds.length === 1 ? "item" : "bookmarks"}?
+              </DialogTitle>
+              <DialogDescription>
+                Deleting removes the selected items — you can undo afterwards.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmIds(null)}
+                className="rounded-md border border-input px-4 py-2 text-sm font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const pending = deleteConfirmIds;
+                  setDeleteConfirmIds(null);
+                  void executeDelete(pending);
+                }}
+                className={
+                  "rounded-md bg-destructive px-4 py-2 text-sm font-medium " +
+                  "text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                }
+              >
+                Delete
               </button>
             </DialogFooter>
           </DialogContent>
@@ -754,7 +833,7 @@ function TagPromptDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{heading}</DialogTitle>
           <DialogDescription>
@@ -776,7 +855,7 @@ function TagPromptDialog({
               void submit();
             }
           }}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         />
         {error !== null && (
           <p role="alert" className="text-sm text-destructive">
@@ -787,7 +866,7 @@ function TagPromptDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+            className="rounded-md border border-input px-4 py-2 text-sm font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
@@ -797,7 +876,7 @@ function TagPromptDialog({
             onClick={() => void submit()}
             className={
               "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
-              "text-primary-foreground disabled:opacity-50"
+              "text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             }
           >
             {heading}

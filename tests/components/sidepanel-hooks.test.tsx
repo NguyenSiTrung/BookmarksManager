@@ -15,6 +15,7 @@ import { db } from "../../src/db/database";
 import {
   CONSENT_SCOPE,
   DECISIONS_CONSENT_SCOPE,
+  LLM_TEST_SCOPE,
 } from "../../src/schemas/provider";
 import {
   readAiConnected,
@@ -107,6 +108,11 @@ describe("useAiConnected", () => {
 
   it("ignores the synthetic test-connection scope", async () => {
     await db.consents.put(row(CONSENT_SCOPE));
+    expect(await readAiConnected()).toBe(false);
+  });
+
+  it("ignores the synthetic llm_test scope (U-03b)", async () => {
+    await db.consents.put(row(LLM_TEST_SCOPE));
     expect(await readAiConnected()).toBe(false);
   });
 

@@ -36,7 +36,13 @@ describe("TopBar", () => {
   it("offers Set up AI instead of Scan when no provider is connected", async () => {
     const { onTools } = renderTopBar(false);
     await openMenu("Tools");
-    for (const name of ["Import…", "Export…", "Manage tags…", "Set up AI…"]) {
+    for (const name of [
+      "Import…",
+      "Export…",
+      "Manage tags…",
+      "Command palette…",
+      "Set up AI…",
+    ]) {
       expect(screen.getByRole("menuitem", { name })).toBeTruthy();
     }
     expect(screen.queryByRole("menuitem", { name: "Scan library…" })).toBeNull();
@@ -63,6 +69,9 @@ describe("TopBar", () => {
     await openMenu("Tools");
     await chooseMenuItem("Manage tags…");
     expect(onTools).toHaveBeenLastCalledWith("manage-tags");
+    await openMenu("Tools");
+    await chooseMenuItem("Command palette…");
+    expect(onTools).toHaveBeenLastCalledWith("command-palette");
   });
 
   it("opens settings from the Settings button", () => {

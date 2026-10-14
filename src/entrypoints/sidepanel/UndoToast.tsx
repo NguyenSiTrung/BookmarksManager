@@ -64,6 +64,8 @@ export interface UndoToastController extends ToastApi {
   toast: ToastState | null;
   dismiss(): void;
   undo(): Promise<void>;
+  pause(): void;
+  resume(): void;
 }
 
 /** Auto-hide delay for every toast (~8s per the spec). */
@@ -136,6 +138,19 @@ export function useUndoToastController(
     [autoHideMs, clearTimer, onAutoHide],
   );
 
+  const pause = useCallback(() => {
+    clearTimer();
+  }, [clearTimer]);
+
+  const resume = useCallback(() => {
+    if (toast !== null && timerRef.current === null) {
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setToast(null);
+        onAutoHide?.();
+      }, autoHideMs);
+    }
+  }, [autoHideMs, onAutoHide, toast]);
   const undo = useCallback(async () => {
     if (pendingRef.current) return; // a call is already outstanding
     pendingRef.current = true;
@@ -180,8 +195,8 @@ export function useUndoToastController(
   );
 
   return useMemo(
-    () => ({ toast, showToast, dismiss, undo }),
-    [toast, showToast, dismiss, undo],
+    () => ({ toast, showToast, dismiss, undo, pause, resume }),
+    [toast, showToast, dismiss, undo, pause, resume],
   );
 }
 
@@ -211,18 +226,42 @@ export interface UndoToastProps {
    * undos leave it false — their own controller guard governs re-entry.
    */
   busy?: boolean;
+  /** Pause the auto-hide timer while hovered or focused. */
+  onPause?: () => void;
+  /** Resume the auto-hide timer when hover or focus leaves. */
+  onResume?: () => void;
+  /** Offset upward when the bottom selection BulkBar is visible. */
+  offsetForBulkBar?: boolean;
 }
 
 /** The toast itself — bottom of the panel, message + Undo + dismiss. */
-export function UndoToast({ toast, onUndo, onDismiss, busy }: UndoToastProps) {
+export function UndoToast({
+  toast,
+  onUndo,
+  onDismiss,
+  busy,
+  onPause,
+  onResume,
+  offsetForBulkBar,
+}: UndoToastProps) {
   const undoBusy = busy === true;
   if (toast === null) return null;
   return (
     <div
       data-testid="undo-toast"
       role={toast.error === true ? "alert" : "status"}
+      onMouseEnter={onPause}
+      onMouseLeave={onResume}
+      onFocusCapture={onPause}
+      onBlurCapture={(event) => {
+        if (
+          !event.currentTarget.contains(event.relatedTarget as Node | null)
+        ) {
+          onResume?.();
+        }
+      }}
       className={
-        "fixed bottom-3 left-1/2 z-50 flex w-[min(24rem,calc(100%-1.5rem))] " +
+        `fixed ${offsetForBulkBar === true ? "bottom-14" : "bottom-3"} left-1/2 z-50 flex w-[min(24rem,calc(100%-1.5rem))] ` +
         "-translate-x-1/2 items-center gap-2 rounded-md border border-border " +
         "bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg"
       }
