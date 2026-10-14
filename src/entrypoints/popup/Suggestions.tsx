@@ -20,11 +20,12 @@ import { InfoIcon } from "../../ui/components/icons";
  * handler. This component live-queries those rows and renders them:
  *
  * - `move` at `confidence >= MOVE_PRESELECT_THRESHOLD` (0.7) → asks the parent
- *   to pre-select `targetFolderId` once. The parent suppresses the call when
- *   the user already touched the picker or the folder no longer exists.
- * - `move` below `MOVE_PRESELECT_THRESHOLD` → one clickable chip (`Folder: …`)
- *   applying the folder on click; suppressed when the user already touched the
- *   picker, the folder is already selected, or the folder no longer exists.
+ *   to pre-select `targetFolderId` once. The parent suppresses the auto-select
+ *   when the user already touched the picker or the folder no longer exists.
+ * - `move` not currently selected (below `MOVE_PRESELECT_THRESHOLD`, or when
+ *   the user manually changed the folder picker) → one clickable chip
+ *   (`Folder: …`) applying the folder on click; hidden when the suggested
+ *   folder is already selected or no longer exists.
  * - `add_tags` → one clickable chip per tag nameKey (`+ tag`); clicking stages
  *   the tag through the parent's normal chip merge (deduped by `tagNameKey`).
  *   A tag the user already staged hides its suggestion twin.
@@ -167,10 +168,10 @@ function pickCategorySuggestion(
 }
 
 /**
- * The strongest sub-threshold `move` suggestion — offered as an opt-in chip
- * when confidence is below `MOVE_PRESELECT_THRESHOLD` (0.7), the user has not
- * manually changed the folder picker, and the target folder is valid and not
- * already selected.
+ * The strongest `move` suggestion not already selected in the picker — offered
+ * as an opt-in chip whenever it is not auto-preselected (either confidence is
+ * below `MOVE_PRESELECT_THRESHOLD`, or the user manually changed the folder
+ * picker).
  */
 function pickFolderSuggestion(
   rows: readonly DecisionRow[],
@@ -178,7 +179,7 @@ function pickFolderSuggestion(
   folderId: string | undefined,
   folderTouched: boolean,
 ): FolderSuggestion | null {
-  if (folderTouched || folderLabels === undefined) return null;
+  if (folderLabels === undefined) return null;
   let best: (DecisionRow & { kind: "move" }) | null = null;
   for (const row of rows) {
     if (row.kind !== "move") continue;
@@ -187,7 +188,7 @@ function pickFolderSuggestion(
   }
   if (
     best === null ||
-    best.confidence >= MOVE_PRESELECT_THRESHOLD ||
+    (!folderTouched && best.confidence >= MOVE_PRESELECT_THRESHOLD) ||
     best.targetFolderId === folderId
   ) {
     return null;

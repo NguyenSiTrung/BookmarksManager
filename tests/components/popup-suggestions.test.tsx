@@ -419,6 +419,43 @@ describe("PopupApp — save suggestions", () => {
         name: "Set folder to Bookmarks bar / Dev",
       }),
     ).toBeNull();
+
+    // Switching the picker away to another folder re-surfaces the folder chip
+    // instead of hiding it behind folderTouched.
+    fireEvent.change(folderSelect(), { target: { value: "2" } });
+    expect(folderSelect().value).toBe("2");
+    expect(
+      await screen.findByRole("button", {
+        name: "Set folder to Bookmarks bar / Dev",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("shows the clickable folder chip when the user changes the folder first and then clicks Suggest", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    await renderPopup();
+
+    // User switches the folder picker to another folder before clicking Suggest.
+    fireEvent.change(folderSelect(), { target: { value: "fold" } });
+    expect(folderSelect().value).toBe("fold");
+
+    fireEvent.click(screen.getByRole("button", { name: "Suggest" }));
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    const { id } = sentBookmark();
+
+    await putMoveDecision({
+      bookmarkId: id,
+      targetFolderId: "barfold",
+      confidence: 0.85,
+    });
+
+    // Picker is not silently overridden, and the suggested folder is offered as a chip.
+    const folderChip = await screen.findByRole("button", {
+      name: "Set folder to Bookmarks bar / Dev",
+    });
+    expect(folderSelect().value).toBe("fold");
+    fireEvent.click(folderChip);
+    await waitFor(() => expect(folderSelect().value).toBe("barfold"));
   });
 
   it("offers suggested tags as chips that apply only on click", async () => {
