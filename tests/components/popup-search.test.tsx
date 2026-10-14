@@ -408,4 +408,17 @@ describe("popup search", () => {
       expect(opts).toContain("Rust");
     });
   });
+
+  it("renders quick filter-prefix pills when search opens with an empty query and inserts the clicked prefix (UX-12)", async () => {
+    await renderPopup();
+    await openSearch();
+
+    const hint = screen.getByTestId("popup-search-hint");
+    const tagBtn = Array.from(hint.querySelectorAll("button")).find(
+      (b) => b.textContent === "tag:",
+    );
+    expect(tagBtn).toBeTruthy();
+    fireEvent.click(tagBtn!);
+    expect(searchInput().value).toBe("tag:");
+  });
 });

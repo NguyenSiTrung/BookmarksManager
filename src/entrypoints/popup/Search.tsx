@@ -244,6 +244,31 @@ export function PopupSearch({
         )}
       </div>
 
+      {query === "" && !suggestOpen && (
+        <div
+          data-testid="popup-search-hint"
+          className="mt-1.5 flex flex-wrap items-center gap-1 px-1 text-[11px] text-muted-foreground"
+        >
+          <span>Filter:</span>
+          {(["tag:", "folder:", "in:", "has:"] as const).map((prefix) => (
+            <button
+              key={prefix}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                pendingCaret.current = prefix.length;
+                setCaret(prefix.length);
+                onQueryChange(prefix);
+                inputRef.current?.focus();
+              }}
+              className="rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {prefix}
+            </button>
+          ))}
+        </div>
+      )}
+
       {query !== "" &&
         (search === null ? (
           <p className="mt-3 px-1 text-xs text-muted-foreground">Indexing…</p>

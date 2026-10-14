@@ -98,6 +98,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: Naming the row-level undo button `aria-label="Undo the applied suggestion for <title>"` avoids colliding with toast-level `getByRole("button", { name: /^undo$/i })` queries.
 ---
 
+## [2026-10-14 08:47] - Phase 4 Task 3: Quick-Save Popup search-open transition, `TagField` autocomplete & consent-aware suggest (`UX-02`, `UX-12`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`, `data-testid="popup-search-hint"`) to `PopupSearch` when `query === ""`, and wired lazy `listTags()` loading on `suggestionRequested` (`TagField` focus) or `searchOpen` in `popup/App.tsx` so `TagField` receives `availableTags={tagDefs}` while preserving `P-10` and `DECISIONS_TRIGGERS`.
+- **Files changed:** `src/entrypoints/popup/App.tsx`, `src/entrypoints/popup/Search.tsx`, `tests/components/popup-save.test.tsx`, `tests/components/popup-search.test.tsx`
+- **Learnings:**
+  - Gotchas: `tests/components/popup-search.test.tsx` (`P-10`) pins that `db.tags.toArray` is not called on initial popup mount; loading `listTags()` when `searchOpen || suggestionRequested` (`TagField` focus) satisfies both `P-10` and `TagField` combobox autocomplete.
+---
+
+
 
 
 

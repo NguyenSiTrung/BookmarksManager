@@ -19,7 +19,7 @@ import {
   vi,
 } from "vitest";
 import { db } from "../../src/db/database";
-import { getMeta, getTag } from "../../src/db/meta";
+import { createTag, getMeta, getTag } from "../../src/db/meta";
 import { App as PopupApp } from "../../src/entrypoints/popup/App";
 import {
   PENDING_EDIT_KEY,
@@ -480,6 +480,22 @@ describe("PopupApp — worker-side save (U06)", () => {
   it("includes focus-visible:ring-2 on the popup title input (U-09d)", async () => {
     await renderPopup();
     expect(titleInput().className).toContain("focus-visible:ring-2");
+  });
+
+  it("lazily loads defined tags on TagField focus and offers combobox autocomplete (UX-02, UX-12)", async () => {
+    await createTag("Frontend", { color: "#3b82f6" });
+    await renderPopup();
+
+    const tagInput = screen.getByLabelText("New tag name") as HTMLInputElement;
+    fireEvent.focus(tagInput);
+    fireEvent.change(tagInput, { target: { value: "fr" } });
+
+    const list = await screen.findByTestId("tag-field-suggestions");
+    const opt = within(list).getByRole("option", { name: "Frontend" });
+    fireEvent.mouseDown(opt);
+
+    expect(screen.getByRole("group", { name: "Frontend" })).toBeTruthy();
+    expect(tagInput.value).toBe("");
   });
 });
 

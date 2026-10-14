@@ -277,24 +277,25 @@ export function App() {
 
   // Lazy index inputs: the save form is the popup's hot path, so the meta /
   // tag rows the search index needs are fetched only after the first real
-  // paint (ready === true). `useSearchIndex` then builds off-paint inside an
-  // effect; until the handle lands, the results area reads "Indexing…".
+  // paint (ready === true) and when search opens or Tags is focused (P-10).
   useEffect(() => {
-    if (!ready || !searchOpen) return;
+    if (!ready || (!searchOpen && !suggestionRequested)) return;
     let cancelled = false;
     void (async () => {
       const [metaRows, tagRows] = await Promise.all([
-        listMeta().catch((): BookmarkMeta[] => []),
+        searchOpen
+          ? listMeta().catch((): BookmarkMeta[] => [])
+          : Promise.resolve(null),
         listTags().catch((): TagDef[] => []),
       ]);
       if (cancelled) return;
-      setMetas(metaRows);
+      if (metaRows !== null) setMetas(metaRows);
       setTagDefs(tagRows);
     })();
     return () => {
       cancelled = true;
     };
-  }, [ready, searchOpen]);
+  }, [ready, searchOpen, suggestionRequested]);
 
   // --- Jev save suggestions (FR10): fire-and-forget -------------------------
   // Exactly once after an explicit user action, off the render path. A refusal at any step —
@@ -420,8 +421,8 @@ export function App() {
     return bookmarkByNormalizedUrl.get(key) ?? null;
   }, [url, bookmarkByNormalizedUrl]);
 
-  const addChip = (): void => {
-    const label = tagInput.trim();
+  const addChip = (explicitLabel?: string): void => {
+    const label = (explicitLabel ?? tagInput).trim();
     const key = tagNameKey(label);
     if (key === "" || chips.some((chip) => chip.key === key)) return;
     setChips([...chips, { key, label }]);
@@ -763,6 +764,7 @@ export function App() {
                     chips={chips}
                     input={tagInput}
                     disabled={saved}
+                    availableTags={tagDefs}
                     onInputChange={setTagInput}
                     onCommit={addChip}
                     onRemove={removeChip}

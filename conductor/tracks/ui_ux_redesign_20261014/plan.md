@@ -100,12 +100,12 @@
   - [x] Write failing unit and component tests verifying: (1) `listApplied()` in `src/decisions/store.ts` returns recent `applied` decision rows ordered newest-first; (2) `ReviewView` renders both manually `applied` and `auto_applied` rows inside the applied-history section (`aria-label="Auto-applied suggestions"` / collapsible history) with a working `Undo` (`REVERT_DECISION`) button; and (3) per-row `Approve` buttons carry primary accent classes.
   - [x] Implement `listApplied()` in `src/decisions/store.ts` and update `src/entrypoints/sidepanel/ReviewView.tsx` and `src/entrypoints/sidepanel/App.tsx`.
 
-- [~] Task 3: Quick-Save Popup search-open transition, `TagField` autocomplete & consent-aware suggest (`UX-02`, `UX-12`)
+- [x] Task 3: Quick-Save Popup search-open transition, `TagField` autocomplete & consent-aware suggest (`UX-02`, `UX-12`)
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Search.tsx, tests/components/popup-save.test.tsx, tests/components/popup-search.test.tsx, tests/components/popup-suggestions.test.tsx -->
-  - [ ] Write failing component tests verifying: (1) opening popup search (`searchOpen === true`) displays quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`, `data-testid="popup-search-hint"`) in `PopupSearch` when `query === ""` that insert the filter token on click; and (2) focusing `TagField` in `popup/App.tsx` lazily loads `tagDefs` (preserving `P-10` on mount) and passes them as `availableTags` to `TagField` for combobox autocomplete while preserving zero egress on popup open.
-  - [ ] Update `src/entrypoints/popup/App.tsx` and `src/entrypoints/popup/Search.tsx`.
+  - [x] Write failing component tests verifying: (1) opening popup search (`searchOpen === true`) displays quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`, `data-testid="popup-search-hint"`) in `PopupSearch` when `query === ""` that insert the filter token on click; and (2) focusing `TagField` in `popup/App.tsx` lazily loads `tagDefs` (preserving `P-10` on mount) and passes them as `availableTags` to `TagField` for combobox autocomplete while preserving zero egress on popup open.
+  - [x] Update `src/entrypoints/popup/App.tsx` and `src/entrypoints/popup/Search.tsx`.
 
-- [ ] Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
+- [~] Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
   <!-- files: src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/OptionsApp.tsx, tests/components/provider-setup.test.tsx, tests/components/options-app.test.tsx -->
   - [ ] Write failing component tests verifying: (1) when a Jev provider is enabled in `ProviderSetup`, it displays whether `Bookmark analysis consent` (`jev_decisions`) is granted at that provider's origin; and (2) when not yet granted, it renders a `"Review analysis consent in Permissions"` action button that switches `OptionsApp` to the `Permissions` panel.
   - [ ] Update `src/entrypoints/options/ProviderSetup.tsx` and `src/entrypoints/options/OptionsApp.tsx`.
