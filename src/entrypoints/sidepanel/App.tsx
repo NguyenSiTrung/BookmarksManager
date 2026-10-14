@@ -73,7 +73,7 @@ import { ScopePane } from "./ScopePane";
 import { TopBar } from "./TopBar";
 import type { ToolsAction } from "./TopBar";
 import { ViewChips } from "./ViewChips";
-import { aiVisibility, categoryCounts } from "./scope";
+import { aiVisibility, categoryCounts, tagCounts } from "./scope";
 import { useAiConnected } from "./useAiConnected";
 import { useIsWide } from "./useIsWide";
 import {
@@ -335,6 +335,17 @@ export function App(props?: {
   const tagNameByKey = useMemo(
     () => new Map(tagDefs.map((tag) => [tag.nameKey, tag.name])),
     [tagDefs],
+  );
+  const tagColorByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const tag of tagDefs) {
+      if (tag.color !== undefined) map.set(tag.nameKey, tag.color);
+    }
+    return map;
+  }, [tagDefs]);
+  const countsByTag = useMemo(
+    () => tagCounts(metas, tree),
+    [metas, tree],
   );
   const categories = useMemo(
     () => categoryCounts(metas, tree),
@@ -936,6 +947,7 @@ export function App(props?: {
       tree={tree}
       view={activeView}
       tagDefs={tagDefs}
+      tagCounts={countsByTag}
       categories={categories}
       onSelect={selectView}
       renderFolderActions={(node) => (
@@ -1063,6 +1075,9 @@ export function App(props?: {
                     items={items}
                     metaById={metaById}
                     tagNameByKey={tagNameByKey}
+                    tagColorByKey={tagColorByKey}
+                    tagDefs={tagDefs}
+                    showFolderPath={activeView.kind !== "folder"}
                     onActivateItem={openItem}
                     onDeleteSelection={(ids) => handleDeleteIds(ids)}
                     reorderable={
@@ -1092,6 +1107,7 @@ export function App(props?: {
           tree={tree}
           meta={editTarget === null ? undefined : metaById.get(editTarget.id)}
           tagNameByKey={tagNameByKey}
+          tagDefs={tagDefs}
         />
         <SummaryDialog
           open={summarizeTarget !== null}

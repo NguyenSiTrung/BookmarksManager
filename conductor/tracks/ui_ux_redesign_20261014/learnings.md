@@ -74,6 +74,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: When a side-panel search has 0 results (`resultCount === 0`), the empty state already renders a `"Clear search"` CTA button (`sidepanel-empty.test.tsx`). Passing `hideClearButton={resultCount === 0}` from `SearchBar` to `QueryInput` avoids duplicate buttons with `name: "Clear search"` when 0 results are shown.
 ---
 
+## [2026-10-14 08:33] - Phase 3 Task 3: Wire `App.tsx` props (`tagCounts`, `tagColorByKey`, `showFolderPath`, `tagDefs`) & compact `BulkBar` / `UndoToast` layout (`UX-05`, `UX-06`, `UX-09`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Wired `tagCounts`, `tagColorByKey`, `tagDefs`, and `showFolderPath={activeView.kind !== "folder"}` in `src/entrypoints/sidepanel/App.tsx`, compacted `BulkBar`'s `{count} selected` pill with an inline `Clear selection` (`×`) button, and added `max-sm:bottom-20` offset to `UndoToast` when `offsetForBulkBar` is active.
+- **Files changed:** `src/entrypoints/sidepanel/App.tsx`, `src/entrypoints/sidepanel/BulkBar.tsx`, `src/entrypoints/sidepanel/UndoToast.tsx`, `tests/components/sidepanel-shell.test.tsx`
+- **Learnings:**
+  - Patterns: Embedding `<button aria-label="Clear selection">×</button>` inside the `{count} selected` pill keeps `getByRole("button", { name: "Clear selection" })` working while saving horizontal toolbar width on 320px narrow panels.
+---
+
+
 
 
 

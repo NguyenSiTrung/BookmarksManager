@@ -19,7 +19,7 @@ import {
 } from "vitest";
 import { CONSENT_VERSION } from "../../src/consent/records";
 import { db } from "../../src/db/database";
-import { putMeta } from "../../src/db/meta";
+import { createTag, putMeta } from "../../src/db/meta";
 import { App } from "../../src/entrypoints/sidepanel/App";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
@@ -285,6 +285,49 @@ describe("Tools and More menus", () => {
     await renderApp();
     await openMenu("Tools");
     await chooseMenuItem("Command palette…");
+    expect(
+      await screen.findByRole("combobox", { name: "Command palette" }),
+    ).toBeTruthy();
+  });
+
+  it("wires tagCounts, tagColorByKey, showFolderPath, and direct Command palette button in App (UX-05, UX-06, UX-08, UX-09)", async () => {
+    await createTag("Frontend", { color: "#3b82f6" });
+    await putMeta("b1", { tags: ["frontend"], notes: "Important note" });
+    stubViewport(true);
+    await renderApp();
+
+    // ScopePane shows tag color dot and bookmark count "1"
+    const browse = screen.getByRole("complementary", { name: "Browse" });
+    const frontendTagBtn = await within(browse).findByRole("button", {
+      name: "Frontend",
+    });
+    expect(
+      frontendTagBtn.querySelector("[data-tag-count='frontend']")?.textContent,
+    ).toBe("1");
+    expect(
+      (frontendTagBtn.querySelector("[data-tag-dot]") as HTMLElement | null)
+        ?.style.backgroundColor,
+    ).toBe("rgb(59, 130, 246)");
+
+    // BookmarkList shows folder path ("Dev") in "All" view, colored tag dot, and notes badge
+    const alphaRow = screen.getByRole("option", { name: /Alpha/ });
+    expect(alphaRow.textContent).toContain("Dev");
+    expect(
+      (alphaRow.querySelector("[data-tag-dot]") as HTMLElement | null)?.style
+        .backgroundColor,
+    ).toBe("rgb(59, 130, 246)");
+    expect(alphaRow.querySelector("[data-has-notes='true']")).not.toBeNull();
+
+    // Switching to folder view ("Dev") hides redundant folder path from subline
+    fireEvent.click(screen.getByRole("treeitem", { name: "Dev" }));
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Dev" })).toBeTruthy(),
+    );
+    const alphaInFolder = screen.getByRole("option", { name: /Alpha/ });
+    expect(alphaInFolder.textContent).not.toContain("a.example · Dev");
+
+    // Direct Command palette button in TopBar opens the palette
+    fireEvent.click(screen.getByRole("button", { name: "Command palette" }));
     expect(
       await screen.findByRole("combobox", { name: "Command palette" }),
     ).toBeTruthy();

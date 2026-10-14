@@ -261,7 +261,7 @@ export function UndoToast({
         }
       }}
       className={
-        `fixed ${offsetForBulkBar === true ? "bottom-14" : "bottom-3"} left-1/2 z-50 flex w-[min(24rem,calc(100%-1.5rem))] ` +
+        `fixed ${offsetForBulkBar === true ? "bottom-14 max-sm:bottom-20" : "bottom-3"} left-1/2 z-50 flex w-[min(24rem,calc(100%-1.5rem))] ` +
         "-translate-x-1/2 items-center gap-2 rounded-md border border-border " +
         "bg-popover px-3 py-2 text-sm text-popover-foreground shadow-lg"
       }

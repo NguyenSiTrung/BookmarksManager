@@ -472,7 +472,18 @@ export function BulkBar({
     >
       {count > 0 && (
         <>
-          <span className="mr-auto text-xs font-medium">{count} selected</span>
+          <span className="mr-auto inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/60 py-0.5 pr-1 pl-2 text-xs font-medium">
+            <span>{count} selected</span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              title="Clear selection"
+              onClick={() => selection.clear()}
+              className="inline-flex size-4 items-center justify-center rounded-full text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          </span>
           <button
             type="button"
             disabled={moveDeleteDisabled}
@@ -534,13 +545,6 @@ export function BulkBar({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <button
-            type="button"
-            onClick={() => selection.clear()}
-            className={barButtonClass}
-          >
-            Clear selection
-          </button>
         </>
       )}
       {showReadFailureCard && (

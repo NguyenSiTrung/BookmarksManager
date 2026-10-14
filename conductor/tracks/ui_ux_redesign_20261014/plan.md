@@ -75,13 +75,13 @@
   - [x] Write failing component tests verifying: (1) `QueryInput` renders a leading `SearchIcon` and a `"Clear search"` (`×`) button when `value !== ""` that clears the query and returns focus to the input; (2) `SearchBar` renders quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`) when focused on an empty query that insert the filter token; and (3) `TopBar` renders a direct `"Command palette"` button (`Ctrl+K` / `⌘K`) alongside `Tools` and `Settings`.
   - [x] Implement the upgrades in `src/ui/components/query-input.tsx`, `src/entrypoints/sidepanel/SearchBar.tsx`, `src/entrypoints/sidepanel/TopBar.tsx`, and `src/ui/components/icons.tsx`.
 
-- [~] Task 3: Wire `App.tsx` props (`tagCounts`, `tagColorByKey`, `showFolderPath`, `tagDefs`) & compact `BulkBar` / `UndoToast` layout (`UX-05`, `UX-06`, `UX-09`)
+- [x] Task 3: Wire `App.tsx` props (`tagCounts`, `tagColorByKey`, `showFolderPath`, `tagDefs`) & compact `BulkBar` / `UndoToast` layout (`UX-05`, `UX-06`, `UX-09`)
   <!-- files: src/entrypoints/sidepanel/App.tsx, src/entrypoints/sidepanel/BulkBar.tsx, src/entrypoints/sidepanel/UndoToast.tsx, tests/components/sidepanel-shell.test.tsx -->
   <!-- depends: task1, task2 -->
-  - [ ] Write failing component tests in `tests/components/sidepanel-shell.test.tsx` verifying `App` passes `tagCounts`, `tagColorByKey`, `tagDefs`, and `showFolderPath` (`activeView.kind !== "folder"`) to `ScopePane`, `BookmarkList`, and `EditDialog`, and `TopBar`'s `"Command palette"` button opens the command palette.
-  - [ ] Update `src/entrypoints/sidepanel/App.tsx`, `src/entrypoints/sidepanel/BulkBar.tsx`, and `src/entrypoints/sidepanel/UndoToast.tsx`.
+  - [x] Write failing component tests in `tests/components/sidepanel-shell.test.tsx` verifying `App` passes `tagCounts`, `tagColorByKey`, `tagDefs`, and `showFolderPath` (`activeView.kind !== "folder"`) to `ScopePane`, `BookmarkList`, and `EditDialog`, and `TopBar`'s `"Command palette"` button opens the command palette.
+  - [x] Update `src/entrypoints/sidepanel/App.tsx`, `src/entrypoints/sidepanel/BulkBar.tsx`, and `src/entrypoints/sidepanel/UndoToast.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Side Panel Shell, Search Bar & Bulk Bar Streamlining' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Side Panel Shell, Search Bar & Bulk Bar Streamlining' (Protocol in workflow.md)
   <!-- depends: task1, task2, task3 -->
 
 ---
@@ -89,7 +89,7 @@
 ## Phase 4: AI Workflows, Dialogs, Popup & Options Cohesion
 <!-- execution: parallel -->
 
-- [ ] Task 1: `SummaryDialog` `ConsentFacts` card formatting, model badge & `"Copy summary"` (`UX-10`)
+- [~] Task 1: `SummaryDialog` `ConsentFacts` card formatting, model badge & `"Copy summary"` (`UX-10`)
   <!-- files: src/entrypoints/sidepanel/SummaryDialog.tsx, tests/components/summary-dialog.test.tsx -->
   - [ ] Write failing component tests in `tests/components/summary-dialog.test.tsx` verifying: (1) the `disclosure` phase renders structured `Recipient` / `Sent` / `Never sent` / `Why` / `When` facts for both hops with grant badges; and (2) the `saved` and `done` phases offer a `"Copy summary"` button that writes the summary text to `navigator.clipboard.writeText`.
   - [ ] Update `src/entrypoints/sidepanel/SummaryDialog.tsx`.
