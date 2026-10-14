@@ -65,12 +65,12 @@
 ## Phase 3: Side Panel Shell, Search Bar & Bulk Bar Streamlining
 <!-- execution: parallel -->
 
-- [~] Task 1: Narrow-mode `ScopeHeading` pill trigger & `ViewChips` dynamic `Review` promotion (`UX-07`)
+- [x] Task 1: Narrow-mode `ScopeHeading` pill trigger & `ViewChips` dynamic `Review` promotion (`UX-07`)
   <!-- files: src/entrypoints/sidepanel/ScopeHeading.tsx, src/entrypoints/sidepanel/ViewChips.tsx, tests/components/sidepanel-scope-drawer.test.tsx, tests/components/sidepanel-chips.test.tsx -->
-  - [ ] Write failing component tests verifying: (1) `ScopeHeading` in narrow mode renders an icon-badged pill button (`data-testid="scope-drawer-trigger"`) while keeping `getByRole("button", { name: title })`; and (2) `ViewChips` promotes `Review suggestions` (with its `{pendingCount}` badge) to a top-level chip whenever `pendingCount > 0` (and when `activeKind === "review"`), while keeping `More` functional for all menu items.
-  - [ ] Update `src/entrypoints/sidepanel/ScopeHeading.tsx` and `src/entrypoints/sidepanel/ViewChips.tsx`.
+  - [x] Write failing component tests verifying: (1) `ScopeHeading` in narrow mode renders an icon-badged pill button (`data-testid="scope-drawer-trigger"`) while keeping `getByRole("button", { name: title })`; and (2) `ViewChips` promotes `Review suggestions` (with its `{pendingCount}` badge) to a top-level chip whenever `pendingCount > 0` (and when `activeKind === "review"`), while keeping `More` functional for all menu items.
+  - [x] Update `src/entrypoints/sidepanel/ScopeHeading.tsx` and `src/entrypoints/sidepanel/ViewChips.tsx`.
 
-- [ ] Task 2: `QueryInput` search icon & clear button, `SearchBar` filter chips, and `TopBar` command-palette shortcut button (`UX-08`)
+- [~] Task 2: `QueryInput` search icon & clear button, `SearchBar` filter chips, and `TopBar` command-palette shortcut button (`UX-08`)
   <!-- files: src/ui/components/query-input.tsx, src/entrypoints/sidepanel/SearchBar.tsx, src/entrypoints/sidepanel/TopBar.tsx, src/ui/components/icons.tsx, tests/components/query-input.test.tsx, tests/components/sidepanel-topbar.test.tsx, tests/components/sidepanel-search.test.tsx -->
   - [ ] Write failing component tests verifying: (1) `QueryInput` renders a leading `SearchIcon` and a `"Clear search"` (`×`) button when `value !== ""` that clears the query and returns focus to the input; (2) `SearchBar` renders quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`) when focused on an empty query that insert the filter token; and (3) `TopBar` renders a direct `"Command palette"` button (`Ctrl+K` / `⌘K`) alongside `Tools` and `Settings`.
   - [ ] Implement the upgrades in `src/ui/components/query-input.tsx`, `src/entrypoints/sidepanel/SearchBar.tsx`, `src/entrypoints/sidepanel/TopBar.tsx`, and `src/ui/components/icons.tsx`.

@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
-import { ChevronDownIcon } from "../../ui/components/icons";
+import { ChevronDownIcon, FolderIcon } from "../../ui/components/icons";
 import { useDndState } from "./dnd";
 import { ScopeDrawer } from "./ScopeDrawer";
 
@@ -34,14 +34,16 @@ export function ScopeHeading({
           trigger={
             <button
               type="button"
+              data-testid="scope-drawer-trigger"
               onPointerEnter={() => {
                 if (dragging && !drawer.open) drawer.onOpenChange(true);
               }}
               onDragEnter={() => {
                 if (!drawer.open) drawer.onOpenChange(true);
               }}
-              className="-mx-1 flex w-fit max-w-full items-center gap-1 rounded-sm px-1 py-0.5 outline-hidden hover:bg-row-hover focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex w-fit max-w-full items-center gap-1.5 rounded-md border border-border/80 bg-card px-2 py-1 text-xs font-medium shadow-2xs outline-hidden transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
+              <FolderIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{title}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
             </button>

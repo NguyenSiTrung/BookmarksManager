@@ -58,6 +58,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Patterns: Setting `aria-label={tag.name}` on the `ScopePane` tag button preserves exact `getByRole("button", { name: tag.name })` queries when trailing count badges are added inside the button.
 ---
 
+## [2026-10-14 08:26] - Phase 3 Task 1: Narrow-mode `ScopeHeading` pill trigger & `ViewChips` dynamic `Review` promotion (`UX-07`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Styled `ScopeHeading`'s narrow-mode drawer trigger as an icon-badged pill button (`data-testid="scope-drawer-trigger"`, leading `FolderIcon` + trailing `ChevronDownIcon`), and promoted `Review suggestions` to a top-level chip in `ViewChips` whenever `pendingCount > 0 || activeKind === "review"` while keeping `More` labelled `"More"` when `activeKind === "review"` so `openMoreView` and existing menu flows remain intact.
+- **Files changed:** `src/entrypoints/sidepanel/ScopeHeading.tsx`, `src/entrypoints/sidepanel/ViewChips.tsx`, `tests/components/sidepanel-scope-drawer.test.tsx`, `tests/components/sidepanel-chips.test.tsx`
+- **Learnings:**
+  - Gotchas: When `Review suggestions` is promoted to a top-level chip, excluding `review` from `activeMore` on the `More` trigger prevents duplicate buttons named `"Review suggestions"` when `activeKind === "review"` and keeps `getByRole("button", { name: /^More/ })` stable for E2E `openMoreView` helpers.
+---
+
+
 
 
 

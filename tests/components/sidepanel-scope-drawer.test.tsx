@@ -74,4 +74,13 @@ describe("ScopeHeading", () => {
     fireEvent.dragEnter(trigger);
     expect(await screen.findByRole("dialog", { name: "Browse" })).toBeTruthy();
   });
+
+  it("renders the narrow-mode drawer trigger as an icon-badged pill button (UX-07)", () => {
+    render(<NarrowHarness />);
+    const trigger = screen.getByTestId("scope-drawer-trigger");
+    expect(trigger).toBe(screen.getByRole("button", { name: "All bookmarks" }));
+    expect(trigger.className).toContain("border");
+    expect(trigger.className).toContain("bg-card");
+    expect(trigger.querySelectorAll("svg").length).toBeGreaterThanOrEqual(2);
+  });
 });

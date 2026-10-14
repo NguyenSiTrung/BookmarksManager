@@ -40,7 +40,12 @@ export function ViewChips({
   onSelect,
 }: ViewChipsProps): ReactElement {
   const more = moreViews(visibility, activeKind);
-  const activeMore = more.find((entry) => entry.kind === activeKind);
+  const showReviewChip = pendingCount > 0 || activeKind === "review";
+  const activeMore = more.find(
+    (entry) =>
+      entry.kind === activeKind &&
+      (!showReviewChip || entry.kind !== "review"),
+  );
   return (
     <nav
       aria-label="Views"
@@ -57,6 +62,27 @@ export function ViewChips({
           {label}
         </button>
       ))}
+      {showReviewChip && (
+        <button
+          type="button"
+          aria-pressed={activeKind === "review"}
+          onClick={() => onSelect("review")}
+          className={CHIP_CLASS}
+        >
+          Review suggestions
+          {pendingCount > 0 && (
+            <>
+              <span
+                aria-hidden="true"
+                className="rounded-sm bg-primary px-1.5 text-[10px] font-medium text-primary-foreground"
+              >
+                {pendingCount}
+              </span>
+              <span className="sr-only">, {pendingCount} pending</span>
+            </>
+          )}
+        </button>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button

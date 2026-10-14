@@ -83,4 +83,22 @@ describe("ViewChips", () => {
     const more = screen.getByRole("button", { name: /^Duplicates/ });
     expect(more.getAttribute("data-active")).toBe("true");
   });
+
+  it("promotes Review suggestions to a top-level chip when pendingCount > 0 or activeKind is review (UX-07)", () => {
+    const onSelect = renderChips({ pendingCount: 4 });
+    const reviewChip = screen.getByRole("button", {
+      name: /^Review suggestions/,
+    });
+    expect(reviewChip.getAttribute("aria-pressed")).toBe("false");
+    expect(reviewChip.textContent).toContain("4");
+    fireEvent.click(reviewChip);
+    expect(onSelect).toHaveBeenCalledWith("review");
+
+    cleanup();
+    renderChips({ activeKind: "review", pendingCount: 0 });
+    const activeReviewChip = screen.getByRole("button", {
+      name: /^Review suggestions/,
+    });
+    expect(activeReviewChip.getAttribute("aria-pressed")).toBe("true");
+  });
 });
