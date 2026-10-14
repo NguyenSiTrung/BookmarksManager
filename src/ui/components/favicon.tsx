@@ -52,6 +52,8 @@ function FaviconPlaceholder({
     <span
       role="img"
       aria-label="Favicon placeholder"
+      aria-hidden="true"
+      data-favicon="placeholder"
       className={cn(
         "inline-flex items-center justify-center text-muted-foreground",
         className,

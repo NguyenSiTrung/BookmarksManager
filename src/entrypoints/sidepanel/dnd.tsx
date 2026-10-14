@@ -289,6 +289,8 @@ export async function moveNodesToIndexWithUndo(
 
 /** State shared with every row while a drag is live. */
 export interface DndState {
+  /** Droppable id currently hovered, else null. */
+  overId: string | null;
   /** Droppable id currently hovered with an INVALID target, else null. */
   invalidOverId: string | null;
   /** True while a drag is in flight. */
@@ -296,6 +298,7 @@ export interface DndState {
 }
 
 const DndStateContext = createContext<DndState>({
+  overId: null,
   invalidOverId: null,
   dragging: false,
 });
@@ -356,9 +359,9 @@ export interface DndProviderProps {
 export function DndProvider({ tree, selection, children }: DndProviderProps) {
   const toast = useToast();
   const [active, setActive] = useState<ActiveDrag | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const [invalidOverId, setInvalidOverId] = useState<string | null>(null);
   const payloadRef = useRef<DragPayload | null>(null);
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: snapCoordinateGetter }),
@@ -385,20 +388,24 @@ export function DndProvider({ tree, selection, children }: DndProviderProps) {
   const handleDragOver = (event: DragOverEvent): void => {
     const payload = payloadRef.current;
     if (payload === null || event.over === null) {
+      setOverId(null);
       setInvalidOverId(null);
       return;
     }
+    const nextOverId = String(event.over.id);
+    setOverId(nextOverId);
     const resolution = resolveDrop(
       tree,
       payload,
       event.over.data.current as DropTargetData | undefined,
     );
-    setInvalidOverId(resolution.ok ? null : String(event.over.id));
+    setInvalidOverId(resolution.ok ? null : nextOverId);
   };
 
   const clear = (): void => {
     payloadRef.current = null;
     setActive(null);
+    setOverId(null);
     setInvalidOverId(null);
   };
 
@@ -430,8 +437,8 @@ export function DndProvider({ tree, selection, children }: DndProviderProps) {
   };
 
   const state = useMemo<DndState>(
-    () => ({ invalidOverId, dragging: active !== null }),
-    [invalidOverId, active],
+    () => ({ overId, invalidOverId, dragging: active !== null }),
+    [overId, invalidOverId, active],
   );
 
   return (
@@ -523,6 +530,7 @@ export interface DragHandleProps {
   index?: number;
   /** Managed or fixed-root nodes can't be moved — the handle is inert. */
   disabled?: boolean;
+  tabIndex?: number;
   className?: string;
 }
 
@@ -538,6 +546,7 @@ export function DragHandle({
   parentId,
   index,
   disabled = false,
+  tabIndex,
   className,
 }: DragHandleProps) {
   const data: DragItemData = {
@@ -562,6 +571,7 @@ export function DragHandle({
         setActivatorNodeRef(el);
       }}
       {...attributes}
+      tabIndex={tabIndex ?? (disabled ? -1 : attributes.tabIndex)}
       {...listeners}
       aria-label={`Drag ${label}`}
       aria-disabled={disabled}
@@ -585,6 +595,8 @@ export interface DropZone {
   dropRef: (el: HTMLElement | null) => void;
   /** True when this target is hovered with an invalid drop. */
   invalid: boolean;
+  /** True when this target is hovered with a valid drop. */
+  validOver: boolean;
 }
 
 /**
@@ -597,17 +609,21 @@ export function useDropZone(
   disabled = false,
 ): DropZone {
   const { setNodeRef } = useDroppable({ id: `drop:${id}`, data, disabled });
-  const { invalidOverId } = useDndState();
+  const { overId, invalidOverId } = useDndState();
   const droppableId = `drop:${id}`;
+  const invalid = invalidOverId === droppableId;
+  const validOver = overId === droppableId && !invalid;
   return {
     dropRef: setNodeRef,
-    invalid: invalidOverId === droppableId,
+    invalid,
+    validOver,
   };
 }
 
 /** Props for {@link FolderRowDnd}. */
 export interface FolderRowDndProps {
   node: FolderNode;
+  active?: boolean;
 }
 
 /**
@@ -616,9 +632,9 @@ export interface FolderRowDndProps {
  * carries `relative`), so no row markup is restructured — the handle stays a
  * sibling of the kebab wrapper and the overlay never intercepts clicks.
  */
-export function FolderRowDnd({ node }: FolderRowDndProps) {
+export function FolderRowDnd({ node, active }: FolderRowDndProps) {
   const label = node.title === "" ? "Untitled folder" : node.title;
-  const { dropRef, invalid } = useDropZone(`folder:${node.id}`, {
+  const { dropRef, invalid, validOver } = useDropZone(`folder:${node.id}`, {
     kind: "folder",
     folderId: node.id,
     ...(node.parentId === undefined ? {} : { parentId: node.parentId }),
@@ -633,15 +649,18 @@ export function FolderRowDnd({ node }: FolderRowDndProps) {
         parentId={node.parentId}
         index={node.index}
         disabled={node.isManaged || node.isRoot}
+        {...(active === undefined ? {} : { tabIndex: active ? 0 : -1 })}
       />
       <span
         ref={dropRef}
         aria-hidden="true"
         data-dnd-drop={`folder:${node.id}`}
         data-drop-invalid={invalid ? "true" : undefined}
+        data-drop-over={validOver ? "true" : undefined}
         className={cn(
           "pointer-events-none absolute inset-0 rounded-sm",
           invalid && "ring-2 ring-destructive",
+          validOver && "ring-2 ring-primary bg-primary/10",
         )}
       />
     </>

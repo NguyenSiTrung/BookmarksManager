@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { getMetaByIds } from "../../db/meta";
 import type { DuplicateGroup, DuplicateGroupKind } from "../../duplicates/group";
 import { mergeGroup } from "../../duplicates/merge";
@@ -163,7 +164,8 @@ const primaryButtonClass =
 const chipClass =
   "rounded-sm bg-muted px-1 py-0.5 text-[10px] text-muted-foreground";
 
-// ---------------------------------------------------------------------------
+const EST_GROUP_HEIGHT = 140;
+const VIRTUAL_THRESHOLD = 20;
 // Member row
 // ---------------------------------------------------------------------------
 
@@ -201,7 +203,7 @@ function MemberRow({
       data-testid="duplicate-member"
       data-bookmark-id={item.id}
       className={cn(
-        "flex items-center gap-2 px-3 py-2",
+        "flex flex-wrap items-center gap-2 px-3 py-2",
         keepState === "keeping" && "bg-accent/40",
         (keepState === "removing" || keepState === "removed") && "opacity-60",
       )}
@@ -246,7 +248,7 @@ function MemberRow({
             </span>
           )}
       </span>
-      <span className="flex shrink-0 items-center gap-1">
+      <span className="flex shrink-0 flex-wrap items-center gap-1">
         {keepState === "idle" && (
           <button
             type="button"
@@ -474,8 +476,16 @@ export function DuplicatesView({
   const [outcome, setOutcome] = useState<MergeOutcome | null>(null);
   const mergingRef = useRef(false);
   const undoingRef = useRef(false);
-  /** Token guarding preview fetches — a newer keep/cancel invalidates older reads. */
   const previewRequestRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual's documented API returns non-memoizable functions by design; upstream caveat, not a bug.
+  const virtualizer = useVirtualizer({
+    count: groups.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => EST_GROUP_HEIGHT,
+    overscan: 4,
+  });
 
   const requestKeep = (group: DuplicateGroup<BookmarkItem>, keepId: string) => {
     if (mergingRef.current) return;
@@ -599,9 +609,17 @@ export function DuplicatesView({
     0,
   );
   const removedCount = outcome?.result.removedIds.length ?? 0;
+  const virtualItems = virtualizer.getVirtualItems();
+  const visibleGroups =
+    virtualItems.length > 0
+      ? virtualItems.map((v) => ({ index: v.index, group: groups[v.index]! }))
+      : groups
+          .slice(0, Math.min(groups.length, VIRTUAL_THRESHOLD))
+          .map((group, index) => ({ index, group }));
 
   return (
     <div
+      ref={scrollRef}
       className={cn("flex min-h-0 flex-col overflow-y-auto", className)}
       aria-busy={loading || merging}
     >
@@ -683,7 +701,7 @@ export function DuplicatesView({
             · {memberTotal} bookmarks
           </p>
           <div className="space-y-3 p-3">
-            {groups.map((group) => {
+            {visibleGroups.map(({ group }) => {
               const id = groupIdOf(group);
               const mergedTitle = mergedGroups.get(id);
               const failure = failures.get(id);
@@ -705,7 +723,7 @@ export function DuplicatesView({
                 >
                   <header
                     title={group.key}
-                    className="flex items-center gap-2 border-b border-border px-3 py-2"
+                    className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2"
                   >
                     <span className={badgeClass(group.kind)}>
                       {kindLabel(group.kind)}

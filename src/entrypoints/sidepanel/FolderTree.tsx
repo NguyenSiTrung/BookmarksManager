@@ -46,8 +46,7 @@ export interface FolderTreeProps {
   /** Fired when the user activates a folder (Enter/Space/click). */
   onSelectFolder?: (folderId: string) => void;
   /** Trailing per-row action control (kebab menu); P4.T3, optional. */
-  renderFolderActions?: (node: FolderNode) => ReactNode;
-  /** Right-click menu entries per row; P4.T3, optional. */
+  renderFolderActions?: (node: FolderNode, active?: boolean) => ReactNode;
   renderFolderContextMenu?: (node: FolderNode) => ReactNode;
   className?: string;
   "aria-label"?: string;
@@ -288,7 +287,8 @@ export function FolderTree({
       {visible.map((entry, index) => {
         const { node } = entry;
         const selected = node.id === selectedFolderId;
-        const actions = renderFolderActions?.(node);
+        const active = node.id === activeId;
+        const actions = renderFolderActions?.(node, active);
         const menuContent = renderFolderContextMenu?.(node);
         const item = (
           <li
@@ -333,7 +333,7 @@ export function FolderTree({
             {/* P4.T4: the drag handle + the (absolute) drop overlay for this
                 row. The overlay is positioned over the `relative` <li>, so
                 the row markup itself is untouched. */}
-            <FolderRowDnd node={node} />
+            <FolderRowDnd node={node} active={active} />
             <span className="truncate">
               {node.title === "" ? "Untitled folder" : node.title}
             </span>
@@ -341,6 +341,12 @@ export function FolderTree({
               // Row-action control: clicks/keys stop here so they never
               // select the row or reach the tree's roving-focus handler.
               <span
+                ref={(el) => {
+                  if (el === null) return;
+                  for (const btn of el.querySelectorAll("button")) {
+                    btn.tabIndex = active ? 0 : -1;
+                  }
+                }}
                 className="ml-auto flex shrink-0 items-center"
                 onClick={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}

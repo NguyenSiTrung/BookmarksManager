@@ -603,7 +603,7 @@ describe("drag and drop (keyboard sensor)", () => {
     expect(screen.getByTestId("undo-toast")).toBeDefined();
   });
 
-  it("marks a fixed-root row's drop zone valid while hovered", async () => {
+  it("marks a fixed-root row's drop zone and slot drop zone valid with data-drop-over while hovered (U-07)", async () => {
     await renderApp();
     const from = handle("Alpha");
     from.focus();
@@ -620,6 +620,16 @@ describe("drag and drop (keyboard sensor)", () => {
 
     const zone = document.querySelector('[data-dnd-drop="folder:2"]');
     expect(zone?.getAttribute("data-drop-invalid")).not.toBe("true");
+    expect(zone?.getAttribute("data-drop-over")).toBe("true");
+
+    const slotIndex = order.indexOf("slot:b3");
+    expect(slotIndex).toBeGreaterThan(targetIndex);
+    for (let i = targetIndex + 1; i <= slotIndex; i += 1) {
+      fireEvent.keyDown(from, { code: "ArrowDown" });
+    }
+    await flush();
+    const slotZone = document.querySelector('[data-dnd-drop="slot:b3"]');
+    expect(slotZone?.getAttribute("data-drop-over")).toBe("true");
 
     fireEvent.keyDown(from, { code: "Escape" });
     await flush();

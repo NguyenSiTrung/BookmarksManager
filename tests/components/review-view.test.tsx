@@ -464,6 +464,25 @@ describe("ReviewView", () => {
       (within(first).getByRole("checkbox") as HTMLInputElement).checked,
     ).toBe(true);
   });
+
+  it("applies flex-wrap to per-card action bar and roving tabIndex to inner row controls (U-08c, U-10c)", async () => {
+    render(<ReviewView tree={await liveTree()} decisions={seedRows()} />);
+    const listbox = screen.getByRole("listbox", {
+      name: "Pending suggestions",
+    });
+    const options = within(listbox).getAllByRole("option");
+    const first = options[0] as HTMLElement;
+    const second = options[1] as HTMLElement;
+    const firstApprove = within(first).getByRole("button", {
+      name: /^Approve/,
+    });
+    const secondApprove = within(second).getByRole("button", {
+      name: /^Approve/,
+    });
+    expect(firstApprove.parentElement?.className).toContain("flex-wrap");
+    expect(firstApprove.tabIndex).toBe(0);
+    expect(secondApprove.tabIndex).toBe(-1);
+  });
 });
 
 // ---------------------------------------------------------------------------

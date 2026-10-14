@@ -204,6 +204,20 @@ describe("TagManager", () => {
     expect(screen.getByRole("group", { name: "Ops" })).toBeTruthy();
   });
 
+  it("wraps tag row controls with flex-wrap for narrow widths (U-08c)", async () => {
+    await createTag("Reading List");
+    render(<TagManager open />);
+    await screen.findByText("Reading List");
+    const row = tagRow("Reading List");
+    const renameBtn = within(row).getByRole("button", {
+      name: "Rename Reading List",
+    });
+    expect(renameBtn.parentElement?.className).toContain("flex-wrap");
+    expect(renameBtn.parentElement?.parentElement?.className).toContain(
+      "flex-wrap",
+    );
+  });
+
   it("filters the list via the search box", async () => {
     await createTag("Alpha");
     await createTag("Beta");

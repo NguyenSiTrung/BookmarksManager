@@ -135,48 +135,51 @@ export function useBookmarkSelection(
     return pruned;
   }, [rawSelected, indexById]);
 
-  return {
-    selectedIds,
-    isSelected: (id) => selectedIds.has(id),
-    selectOnly: (id) => {
-      setRawSelected(new Set([id]));
-      setAnchorId(id);
-    },
-    toggle: (id) => {
-      const next = new Set(selectedIds);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      setRawSelected(next);
-      setAnchorId(id);
-    },
-    selectRangeTo: (id, additive = false) => {
-      const target = indexById.get(id);
-      if (target === undefined) return;
-      const anchor = anchorId === null ? undefined : indexById.get(anchorId);
-      if (anchor === undefined) {
+  return useMemo(
+    () => ({
+      selectedIds,
+      isSelected: (id) => selectedIds.has(id),
+      selectOnly: (id) => {
         setRawSelected(new Set([id]));
         setAnchorId(id);
-        return;
-      }
-      const [lo, hi] = anchor <= target ? [anchor, target] : [target, anchor];
-      const range = orderedIds.slice(lo, hi + 1);
-      setRawSelected(
-        additive ? new Set([...selectedIds, ...range]) : new Set(range),
-      );
-    },
-    selectAll: () => {
-      setRawSelected(new Set(orderedIds));
-    },
-    setSelected: (ids) => {
-      setRawSelected(new Set(ids));
-    },
-    clear: () => {
-      setRawSelected(new Set());
-    },
-  };
+      },
+      toggle: (id) => {
+        const next = new Set(selectedIds);
+        if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+        setRawSelected(next);
+        setAnchorId(id);
+      },
+      selectRangeTo: (id, additive = false) => {
+        const target = indexById.get(id);
+        if (target === undefined) return;
+        const anchor = anchorId === null ? undefined : indexById.get(anchorId);
+        if (anchor === undefined) {
+          setRawSelected(new Set([id]));
+          setAnchorId(id);
+          return;
+        }
+        const [lo, hi] = anchor <= target ? [anchor, target] : [target, anchor];
+        const range = orderedIds.slice(lo, hi + 1);
+        setRawSelected(
+          additive ? new Set([...selectedIds, ...range]) : new Set(range),
+        );
+      },
+      selectAll: () => {
+        setRawSelected(new Set(orderedIds));
+      },
+      setSelected: (ids) => {
+        setRawSelected(new Set(ids));
+      },
+      clear: () => {
+        setRawSelected(new Set());
+      },
+    }),
+    [selectedIds, indexById, anchorId, orderedIds],
+  );
 }
 
 export const SelectionContext = createContext<BookmarkSelection | null>(null);
@@ -277,7 +280,7 @@ interface OptionProps {
   ) => void;
   onActivate: (item: BookmarkItem) => void;
   /** Trailing per-row action control (kebab menu); P4.T3, optional. */
-  renderItemActions?: (item: BookmarkItem) => ReactNode;
+  renderItemActions?: (item: BookmarkItem, active?: boolean) => ReactNode;
   /** Right-click menu entries for this row; P4.T3, optional. */
   renderItemContextMenu?: (item: BookmarkItem) => ReactNode;
 }
@@ -301,7 +304,7 @@ function Option({
 }: OptionProps) {
   const title = item.title === "" ? item.url : item.title;
   const domain = displayDomain(item.url);
-  const actions = renderItemActions?.(item);
+  const actions = renderItemActions?.(item, active);
   const menuContent = renderItemContextMenu?.(item);
   // P4.T4: the row doubles as a reorder drop slot ("insert before this row").
   // A bookmark has no children, so it is never a folder target. The slot is
@@ -309,7 +312,7 @@ function Option({
   // drop there can never be dispatched.
   const slotDisabled =
     !reorderable || item.parentId === undefined || item.index === undefined;
-  const { dropRef, invalid } = useDropZone(
+  const { dropRef, invalid, validOver } = useDropZone(
     `slot:${item.id}`,
     {
       kind: "slot",
@@ -330,6 +333,7 @@ function Option({
         data-bookmark-id={item.id}
         data-dnd-drop={slotDisabled ? undefined : `slot:${item.id}`}
         data-drop-invalid={invalid ? "true" : undefined}
+        data-drop-over={validOver ? "true" : undefined}
         ref={(el) => {
           registerRef(item.id, el);
           dropRef(el);
@@ -344,6 +348,7 @@ function Option({
           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           "aria-selected:border-primary aria-selected:bg-accent/40 aria-selected:ring-1 aria-selected:ring-primary/40",
           invalid && "ring-2 ring-destructive ring-inset",
+          validOver && "border-t-2 border-t-primary ring-2 ring-primary ring-inset",
         )}
       >
         {/* Card Header: Favicon squircle badge + Category chip + Action menu */}
@@ -367,6 +372,12 @@ function Option({
             {actions !== undefined && (
               <span
                 data-row-controls
+                ref={(el) => {
+                  if (el === null) return;
+                  for (const btn of el.querySelectorAll("button")) {
+                    btn.tabIndex = active ? 0 : -1;
+                  }
+                }}
                 className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
                 onClick={(event) => event.stopPropagation()}
                 onDoubleClick={(event) => event.stopPropagation()}
@@ -375,6 +386,16 @@ function Option({
                 {actions}
               </span>
             )}
+            <DragHandle
+              id={item.id}
+              kind="bookmark"
+              label={title}
+              parentId={item.parentId}
+              index={item.index}
+              disabled={item.isManaged}
+              tabIndex={active ? 0 : -1}
+              className={cn(REVEAL_CLASS, item.isManaged && REVEAL_DIMMED_CLASS)}
+            />
           </div>
         </div>
 
@@ -448,6 +469,7 @@ function Option({
       data-bookmark-id={item.id}
       data-dnd-drop={slotDisabled ? undefined : `slot:${item.id}`}
       data-drop-invalid={invalid ? "true" : undefined}
+      data-drop-over={validOver ? "true" : undefined}
       ref={(el) => {
         registerRef(item.id, el);
         dropRef(el);
@@ -460,6 +482,7 @@ function Option({
         "aria-selected:bg-accent aria-selected:text-accent-foreground",
         "hover:bg-row-hover",
         invalid && "ring-2 ring-destructive ring-inset",
+        validOver && "border-t-2 border-t-primary ring-2 ring-primary ring-inset",
         "flex items-center gap-2 px-2",
       )}
     >
@@ -482,7 +505,7 @@ function Option({
                   <span
                     key={nameKey}
                     data-tag={nameKey}
-                    className="rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
+                    className="max-w-[80px] truncate rounded-sm bg-muted px-1 py-0.5 text-[11px] text-muted-foreground"
                   >
                     {tagNameByKey?.get(nameKey) ?? nameKey}
                   </span>
@@ -516,6 +539,12 @@ function Option({
         // the row underneath, so every event stops at this wrapper.
         <span
           data-row-controls
+          ref={(el) => {
+            if (el === null) return;
+            for (const btn of el.querySelectorAll("button")) {
+              btn.tabIndex = active ? 0 : -1;
+            }
+          }}
           className={cn("flex shrink-0 items-center", REVEAL_CLASS)}
           onClick={(event) => event.stopPropagation()}
           onDoubleClick={(event) => event.stopPropagation()}
@@ -531,6 +560,7 @@ function Option({
         parentId={item.parentId}
         index={item.index}
         disabled={item.isManaged}
+        tabIndex={active ? 0 : -1}
         className={cn(REVEAL_CLASS, item.isManaged && REVEAL_DIMMED_CLASS)}
       />
     </div>
@@ -576,8 +606,7 @@ export interface BookmarkListProps {
    */
   reorderable?: boolean;
   /** Trailing per-row action control (kebab menu); P4.T3, optional. */
-  renderItemActions?: (item: BookmarkItem) => ReactNode;
-  /** Right-click menu entries per row; P4.T3, optional. */
+  renderItemActions?: (item: BookmarkItem, active?: boolean) => ReactNode;
   renderItemContextMenu?: (item: BookmarkItem) => ReactNode;
   /**
    * Optional content at the start of the toolbar row (the shell puts the
@@ -850,7 +879,7 @@ export function BookmarkList({
         )}
         <span
           className={cn(
-            "text-xs font-medium text-muted-foreground tabular-nums",
+            "shrink-0 whitespace-nowrap text-xs font-medium text-muted-foreground tabular-nums",
             leading === undefined && "mr-auto",
           )}
         >
@@ -938,7 +967,9 @@ export function BookmarkList({
                 {layout === "grid" ? (
                   <div className="grid h-full grid-cols-2 gap-2.5 px-3 py-1.5">
                     {row.map((item, column) => {
-                      const index = virtualRow.index * GRID_COLUMNS + column;
+                      const index =
+                        indexById.get(item.id) ??
+                        virtualRow.index * GRID_COLUMNS + column;
                       return (
                         <Option
                           key={item.id}
@@ -964,11 +995,14 @@ export function BookmarkList({
                   first !== undefined && (
                     <Option
                       item={first}
-                      index={virtualRow.index}
+                      index={indexById.get(first.id) ?? virtualRow.index}
                       setSize={items.length}
                       layout="list"
                       selected={selection.isSelected(first.id)}
-                      active={virtualRow.index === activeIndex}
+                      active={
+                        (indexById.get(first.id) ?? virtualRow.index) ===
+                        activeIndex
+                      }
                       reorderable={reorderable}
                       meta={metaById?.get(first.id)}
                       tagNameByKey={tagNameByKey}

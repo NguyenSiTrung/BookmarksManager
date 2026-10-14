@@ -345,6 +345,52 @@ describe("DuplicatesView rendering", () => {
     render(<DuplicatesView groups={groups} loading />);
     expect(screen.getByText(/[Ss]canning|[Ll]oading/)).toBeTruthy();
   });
+
+  it("virtualizes large duplicate group lists so DOM group count stays bounded (P-11)", () => {
+    const manyGroups: DuplicateGroup<BookmarkItem>[] = Array.from(
+      { length: 100 },
+      (_, i) => ({
+        kind: "exact" as const,
+        key: `https://dup-${i}.example/`,
+        items: [
+          {
+            id: `dup-${i}-a`,
+            title: `Dup ${i} A`,
+            url: `https://dup-${i}.example/`,
+            path: ["Bookmarks bar"],
+            isRoot: false,
+            isManaged: false,
+            depth: 1,
+            kind: "bookmark" as const,
+          },
+          {
+            id: `dup-${i}-b`,
+            title: `Dup ${i} B`,
+            url: `https://dup-${i}.example/`,
+            path: ["Other bookmarks"],
+            isRoot: false,
+            isManaged: false,
+            depth: 1,
+            kind: "bookmark" as const,
+          },
+        ],
+      }),
+    );
+    render(<DuplicatesView groups={manyGroups} />);
+    const renderedGroups = screen.getAllByTestId("duplicate-group");
+    expect(renderedGroups.length).toBeGreaterThan(0);
+    expect(renderedGroups.length).toBeLessThanOrEqual(25);
+  });
+
+  it("applies flex-wrap to group header and member row action bars for narrow sidepanel (U-08b)", async () => {
+    const groups = await groupsFromFake();
+    render(<DuplicatesView groups={groups} onActivateItem={() => {}} />);
+    const card = groupCard("https://x.example/");
+    expect(card.querySelector("header")?.className).toContain("flex-wrap");
+    const row = memberRow("x1");
+    const keepBtn = within(row).getByRole("button", { name: "Keep this one" });
+    expect(keepBtn.parentElement?.className).toContain("flex-wrap");
+  });
 });
 
 // ---------------------------------------------------------------------------

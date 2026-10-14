@@ -67,4 +67,11 @@ describe("ScopeHeading", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pick Dev" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it("opens the drawer on dragEnter or pointerEnter while dragging (U-07)", async () => {
+    render(<NarrowHarness />);
+    const trigger = screen.getByRole("button", { name: "All bookmarks" });
+    fireEvent.dragEnter(trigger);
+    expect(await screen.findByRole("dialog", { name: "Browse" })).toBeTruthy();
+  });
 });

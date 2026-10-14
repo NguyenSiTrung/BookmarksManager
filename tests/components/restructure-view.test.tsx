@@ -216,6 +216,55 @@ describe("RestructureView job lifecycle", () => {
     );
   });
 
+  it("displays job.error in an alert when a job fails and shows indeterminate initial progress (U-09c, U-10a)", async () => {
+    sendMessage = vi.fn(
+      workerFor(
+        jobRow({
+          status: "pending",
+          progress: { totalBatches: 4, committedBatches: 0, processedCount: 0 },
+        }),
+      ),
+    );
+    const { unmount } = mount();
+    const bar = await screen.findByRole("progressbar", {
+      name: "Assignment progress",
+    });
+    expect(bar.getAttribute("aria-valuenow")).toBeNull();
+    unmount();
+
+    sendMessage = vi.fn(
+      workerFor(
+        jobRow({
+          status: "failed",
+          error: "Provider rate limit exceeded.",
+        }),
+      ),
+    );
+    sendMessage.mockImplementation(async (raw: unknown) => {
+      const msg = raw as { type: string };
+      if (msg.type === "RESTRUCTURE_STATUS") {
+        return {
+          ok: true,
+          code: "job_state",
+          result: {
+            job: jobRow({
+              status: "failed",
+              error: "Provider rate limit exceeded.",
+            }),
+            diff: DIFF,
+          },
+        };
+      }
+      return workerFor(null)(raw);
+    });
+    mount();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Provider rate limit exceeded.");
+    fireEvent.click(screen.getByRole("button", { name: /Left in place \(1\)/i }));
+    const articleBLi = screen.getByText("Article B").closest("li");
+    expect(articleBLi?.getAttribute("tabindex")).toBeNull();
+  });
+
   it("renders the diff with text confidence chips, unresolved separated", async () => {
     sendMessage = vi.fn(
       workerFor(jobRow({ status: "completed" })),

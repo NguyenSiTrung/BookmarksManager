@@ -1125,7 +1125,7 @@ function ReviewRow({
       ref={(el) => onRegister(row.id, el)}
       onClick={() => onSelect(index)}
       className={cn(
-        "flex items-start gap-2 border-b border-border px-2 py-2",
+        "flex flex-wrap items-start gap-2 border-b border-border px-2 py-2",
         "cursor-default outline-hidden last:border-b-0",
         "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         BAND_FILL[band],
@@ -1134,6 +1134,7 @@ function ReviewRow({
     >
       <input
         type="checkbox"
+        tabIndex={active ? 0 : -1}
         checked={selected}
         onChange={() => onToggle(row.id)}
         onClick={stopEvent}
@@ -1198,13 +1199,20 @@ function ReviewRow({
           {BAND_LABEL[band]} · {percent}%
         </span>
         <span
-          className="flex items-center gap-1"
+          ref={(el) => {
+            if (el === null) return;
+            for (const btn of el.querySelectorAll("button")) {
+              btn.tabIndex = active ? 0 : -1;
+            }
+          }}
+          className="flex flex-wrap items-center justify-end gap-1"
           onClick={stopEvent}
           onKeyDown={(event) => event.stopPropagation()}
         >
           {canExplain && (
             <button
               type="button"
+              tabIndex={active ? 0 : -1}
               disabled={busy}
               aria-label={`Explain the suggestion for ${primaryLabel}`}
               onClick={() => onExplain(row)}
@@ -1216,6 +1224,7 @@ function ReviewRow({
           {canApprove && (
             <button
               type="button"
+              tabIndex={active ? 0 : -1}
               disabled={busy}
               aria-label={`Approve the suggestion for ${primaryLabel}`}
               onClick={() => onApprove(row)}
@@ -1227,6 +1236,7 @@ function ReviewRow({
           {canReject && (
             <button
               type="button"
+              tabIndex={active ? 0 : -1}
               disabled={busy}
               aria-label={`Reject the suggestion for ${primaryLabel}`}
               onClick={() => onReject(row)}
@@ -1238,6 +1248,7 @@ function ReviewRow({
           {canRevert && (
             <button
               type="button"
+              tabIndex={active ? 0 : -1}
               disabled={busy}
               aria-label={`Undo the applied suggestion for ${primaryLabel}`}
               onClick={() => onRevert(row)}

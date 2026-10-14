@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import {
   afterAll,
   afterEach,
@@ -65,10 +65,12 @@ describe("Favicon src", () => {
 });
 
 describe("Favicon fallback", () => {
-  it("swaps to a placeholder when the img errors", () => {
+  it("swaps to an aria-hidden placeholder when the img errors (U-10b)", () => {
     const img = renderFavicon();
     fireEvent.error(img);
-    expect(screen.getByRole("img", { name: /favicon/i })).toBeTruthy();
+    const placeholder = document.querySelector("[data-favicon='placeholder']");
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.getAttribute("aria-hidden")).toBe("true");
     expect(document.querySelector("img")).toBeNull();
   });
 
@@ -77,10 +79,11 @@ describe("Favicon fallback", () => {
     expect(() =>
       render(<Favicon pageUrl="https://example.com" />),
     ).not.toThrow();
-    expect(screen.getByRole("img", { name: /favicon/i })).toBeTruthy();
+    const placeholder = document.querySelector("[data-favicon='placeholder']");
+    expect(placeholder).not.toBeNull();
+    expect(placeholder?.getAttribute("aria-hidden")).toBe("true");
     expect(document.querySelector("img")).toBeNull();
   });
-
   it("retries the img when pageUrl changes after an error", () => {
     const { container, rerender } = render(
       <Favicon pageUrl="https://example.com" />,

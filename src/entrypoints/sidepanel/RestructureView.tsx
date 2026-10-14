@@ -237,10 +237,10 @@ function DiffList(props: DiffListProps) {
               {unchanged.map((row) => (
                 <li
                   key={row.bookmarkId}
-                  tabIndex={0}
+                  data-testid="restructure-row"
                   className={cn(
                     "rounded-sm border border-border px-2 py-1 text-xs",
-                    "outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+                    "outline-hidden",
                   )}
                 >
                   <span className="block truncate font-medium">{row.title}</span>
@@ -285,11 +285,10 @@ function DiffList(props: DiffListProps) {
               {unresolved.map((row) => (
                 <li
                   key={row.bookmarkId}
-                  tabIndex={0}
+                  data-testid="restructure-row"
                   className={cn(
                     "rounded-sm border border-dashed border-border px-2 py-1",
-                    "text-xs outline-hidden focus-visible:ring-2",
-                    "focus-visible:ring-ring",
+                    "text-xs outline-hidden",
                   )}
                 >
                   <span className="block truncate">{row.title}</span>
@@ -482,11 +481,14 @@ export function RestructureView(props: {
   const job = phase.kind === "active" || phase.kind === "arm_apply" ? phase.job : null;
   const running = job !== null && (job.status === "pending" || job.status === "running");
   const progress = job?.progress;
+  const isIndeterminate =
+    running &&
+    (progress?.committedBatches ?? 0) === 0 &&
+    (progress?.processedCount ?? 0) === 0;
   const pct =
     progress !== undefined && progress.totalBatches > 0
       ? Math.round((progress.committedBatches / progress.totalBatches) * 100)
       : 0;
-
   // Selection is keyed by job id: a superseding job's diff must not
   // inherit a deselection made against a different plan's rows.
   const [selectedIds, setSelectedIds] = useState<{
@@ -611,14 +613,28 @@ export function RestructureView(props: {
         <section aria-label="Assignment progress" className="space-y-2">
           <div
             role="progressbar"
-            aria-valuenow={pct}
+            {...(isIndeterminate ? {} : { "aria-valuenow": pct })}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-label="Assignment progress"
             className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
           >
-            <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
+            <div
+              className={cn(
+                "h-full bg-primary",
+                isIndeterminate && "w-1/3 animate-pulse",
+              )}
+              style={isIndeterminate ? undefined : { width: `${pct}%` }}
+            />
           </div>
+          {job.error !== undefined && (
+            <p
+              role="alert"
+              className="rounded-sm border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs text-destructive"
+            >
+              {job.error}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {job.status === "completed"
               ? "Assignments ready — review the proposed moves."

@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from "react";
 import { ChevronDownIcon } from "../../ui/components/icons";
+import { useDndState } from "./dnd";
 import { ScopeDrawer } from "./ScopeDrawer";
 
 /**
@@ -21,6 +22,7 @@ export function ScopeHeading({
   title,
   drawer,
 }: ScopeHeadingProps): ReactElement {
+  const { dragging } = useDndState();
   return (
     <h2 className="min-w-0 flex-1 text-sm font-medium">
       {drawer === undefined ? (
@@ -32,6 +34,12 @@ export function ScopeHeading({
           trigger={
             <button
               type="button"
+              onPointerEnter={() => {
+                if (dragging && !drawer.open) drawer.onOpenChange(true);
+              }}
+              onDragEnter={() => {
+                if (!drawer.open) drawer.onOpenChange(true);
+              }}
               className="-mx-1 flex w-fit max-w-full items-center gap-1 rounded-sm px-1 py-0.5 outline-hidden hover:bg-row-hover focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="truncate">{title}</span>

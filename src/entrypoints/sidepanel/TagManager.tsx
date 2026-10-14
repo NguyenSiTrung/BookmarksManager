@@ -275,12 +275,12 @@ function TagRow({
 
   return (
     <li className="rounded-md border border-border p-2">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <TagChip name={tag.name} color={tag.color} size="sm" />
         <span className="shrink-0 text-xs text-muted-foreground">
           {pluralBookmarks(count)}
         </span>
-        <span className="ml-auto flex shrink-0 items-center gap-1">
+        <span className="ml-auto flex shrink-0 flex-wrap items-center gap-1">
           <button
             type="button"
             aria-label={`Rename ${tag.name}`}
