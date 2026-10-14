@@ -25,7 +25,7 @@ import {
  */
 
 const REPO = resolve(__dirname, "..", "..");
-const RELEASE = "1.0.0";
+const RELEASE = "1.0.1";
 
 /**
  * The good fixture copies the BUILT manifest, so a clean checkout needs one
@@ -125,7 +125,7 @@ export function buildGoodFixture(root: string): void {
         commit: "0".repeat(40),
         generatedAt: "2026-09-28T00:00:00.000Z",
         zip: {
-          file: "bookmarks-manager-1.0.0-chrome.zip",
+          file: `bookmarks-manager-${RELEASE}-chrome.zip`,
           bytes: 123456,
           sha256: "0".repeat(64),
         },

@@ -1,0 +1,22 @@
+{
+  "version": "1.0.1",
+  "commit": "836c606623559006e230c12c3e002e7f39ecdbcc",
+  "generatedAt": "2026-10-14T00:00:00Z",
+  "channel": "public",
+  "zip": {
+    "file": "bookmarks-manager-1.0.1-chrome.zip",
+    "bytes": 606681,
+    "sha256": "8639908c7b7e44529ff8e8bd64d3f0208c50e18f58cebaf102ee431f52f5e190"
+  },
+  "gate": {
+    "lint": "pass",
+    "typecheck": "pass",
+    "build": "pass",
+    "checkManifest": "pass",
+    "checkBundle": "pass",
+    "checkSite": "pass",
+    "checkStore": "pass — public channel, 0 violations",
+    "auditRelease": "pass — name/bytes/sha256 recorded above"
+  },
+  "notes": "1.0.1 Chrome Web Store update cut from 836c606 (includes perf_ux_hardening_20261014, ui_ux_redesign_20261014, and Options Permissions consolidation into Connections and Data)."
+}

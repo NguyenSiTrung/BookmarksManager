@@ -14,7 +14,7 @@ export default defineConfig({
     // description in store/listing.md.
     description:
       "Fast, offline bookmarks manager in the side panel: search, save, tag, organize, import, de-duplicate. No account, no tracking.",
-    version: "1.0.0",
+    version: "1.0.1",
     permissions: [
       "activeTab",
       // J03 keepalive: a periodic alarm re-drives a job started this session

@@ -505,7 +505,7 @@ const isMain = (() => {
 
 if (isMain) {
   const releaseArg = process.argv.find((a) => a.startsWith("--release="));
-  const release = releaseArg?.split("=")[1] ?? "1.0.0";
+  const release = releaseArg?.split("=")[1] ?? "1.0.1";
   const channelArg = process.argv.find((a) => a.startsWith("--channel="));
   const channel = channelArg?.split("=")[1] ?? "trusted-tester";
   if (channel !== "trusted-tester" && channel !== "public") {
