@@ -1,5 +1,7 @@
-import { normalizeUrl } from "../duplicates/normalize";
-import { extractDomain } from "../search/index";
+import {
+  REF_TRACKING_HOSTS,
+  TRACKING_PARAMS,
+} from "../duplicates/normalize";
 import type {
   NearDuplicatePair,
   NearDuplicateSide,
@@ -82,6 +84,78 @@ interface Prepared {
   tokens: ReadonlySet<string>;
 }
 
+const TRACKING_PARAM_LOOKUP: Readonly<Record<string, true>> = Object.fromEntries(
+  TRACKING_PARAMS.map((name) => [name, true as const]),
+);
+const UTM_PREFIX = "utm_";
+
+/**
+ * Parse `item.url` once (P-03a) to derive both `extractDomain` and
+ * `normalizeUrl` without constructing two `URL` instances per bookmark.
+ */
+function prepare(item: NearDuplicateSource): Prepared | null {
+  let url: URL;
+  try {
+    url = new URL(item.url);
+  } catch {
+    return null;
+  }
+  const hostname = url.hostname;
+  const domain = hostname.startsWith("www.")
+    ? hostname.slice("www.".length)
+    : hostname;
+  if (domain === "") return null;
+
+  let normKey: string | null = null;
+  if (url.protocol === "http:" || url.protocol === "https:") {
+    const scheme = url.protocol.slice(0, -1);
+    const auth = url.username
+      ? `${url.username}${url.password ? `:${url.password}` : ""}@`
+      : "";
+    const host = domain.toLowerCase();
+    const port = url.port === "" ? "" : `:${url.port}`;
+    const path = url.pathname.replace(/\/+$/, "");
+    let query = "";
+    if (url.search !== "") {
+      const refTracked = REF_TRACKING_HOSTS.some(
+        (listed) => host === listed || host.endsWith(`.${listed}`),
+      );
+      const pairs: [string, string][] = [];
+      for (const [name, value] of new URLSearchParams(url.search)) {
+        const lower = name.toLowerCase();
+        const tracked =
+          lower === "ref"
+            ? refTracked
+            : lower.startsWith(UTM_PREFIX) || TRACKING_PARAM_LOOKUP[lower] === true;
+        if (!tracked) {
+          pairs.push([name, value]);
+        }
+      }
+      pairs.sort((a, b) => {
+        if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+        if (a[1] === b[1]) return 0;
+        return a[1] < b[1] ? -1 : 1;
+      });
+      query = new URLSearchParams(pairs).toString();
+    }
+    const route =
+      url.hash.startsWith("#/") || url.hash.startsWith("#!") ? url.hash : "";
+    normKey =
+      `${scheme}://${auth}${host}${port}${path}` +
+      `${query === "" ? "" : `?${query}`}${route}`;
+  }
+
+  return {
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    domain,
+    normKey,
+    normTitle: normalizeTitle(item.title),
+    tokens: tokenSet(item.title),
+  };
+}
+
 /**
  * Plan the near-duplicate pairs for `bookmarks`. Pure and deterministic:
  * input ordering never changes the result, and all rankings end in stable
@@ -95,20 +169,11 @@ export function planNearDuplicates(
   const byDomain = new Map<string, Prepared[]>();
   let exhaustiveComparisons = 0;
   for (const item of bookmarks) {
-    const domain = extractDomain(item.url);
-    if (domain === "") continue;
-    const prepared: Prepared = {
-      id: item.id,
-      title: item.title,
-      url: item.url,
-      domain,
-      normKey: normalizeUrl(item.url),
-      normTitle: normalizeTitle(item.title),
-      tokens: tokenSet(item.title),
-    };
-    const bucket = byDomain.get(domain);
+    const prepared = prepare(item);
+    if (prepared === null) continue;
+    const bucket = byDomain.get(prepared.domain);
     if (bucket === undefined) {
-      byDomain.set(domain, [prepared]);
+      byDomain.set(prepared.domain, [prepared]);
     } else {
       bucket.push(prepared);
     }

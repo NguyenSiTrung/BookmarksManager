@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { nearDuplicatePairs } from "../../src/decisions/candidates";
 import {
   NEAR_DUPLICATE_COMPARISON_LIMIT,
@@ -53,6 +53,10 @@ function normalizedDuplicates(count: number): Source[] {
     url: `https://example.com/dup?utm_source=${i}`,
   }));
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("planNearDuplicates", () => {
   it("bounds a dominant-domain common-title library on both limits", () => {
@@ -338,5 +342,28 @@ describe("planNearDuplicates", () => {
     expect(nearDuplicatePairs(fixture)).toEqual(
       planNearDuplicates(fixture).pairs,
     );
+  });
+
+  it("parses each bookmark URL at most once with new URL() during prepare (P-03a)", () => {
+    const NativeURL = globalThis.URL;
+    let urlParseCount = 0;
+    class CountingURL extends NativeURL {
+      constructor(url: string | URL, base?: string | URL) {
+        super(url, base);
+        urlParseCount += 1;
+      }
+    }
+    vi.stubGlobal("URL", CountingURL);
+
+    const fixture: Source[] = [
+      { id: "a", title: "Rust async guide", url: "https://www.example.com/a/?utm_source=x&b=2&a=1#section" },
+      { id: "b", title: "Rust async handbook", url: "https://example.com/b#/route" },
+      { id: "c", title: "Chrome page", url: "chrome://settings/passwords" },
+      { id: "d", title: "Opaque scheme", url: "javascript:void(0)" },
+    ];
+    const plan = planNearDuplicates(fixture);
+    expect(plan.pairs).toHaveLength(1);
+    expect(plan.pairs[0]?.a.domain).toBe("example.com");
+    expect(urlParseCount).toBe(fixture.length);
   });
 });

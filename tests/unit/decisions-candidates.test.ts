@@ -7,6 +7,7 @@ import {
   NONE_FOLDER_OPTION,
   RERANK_CANDIDATE_LIMIT,
   TAG_CANDIDATE_LIMIT,
+   buildPrecomputedAnalysisIndex,
   folderCandidates,
   misfiledCandidates,
   nearDuplicatePairs,
@@ -583,5 +584,124 @@ describe("rerankCandidates", () => {
     const out = rerankCandidates(result.hits);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ id: "b1", domain: "github.com" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PrecomputedAnalysisIndex (P-01a)
+// ---------------------------------------------------------------------------
+
+describe("buildPrecomputedAnalysisIndex", () => {
+  it("precomputes domainTagFreq, tagEntries, and folderEntries once and avoids per-bookmark full-library scans", () => {
+    const defs = [
+      tag("Rust", "Systems programming"),
+      tag("Async", "Futures and tasks"),
+      tag("Cooking", "Recipes"),
+    ];
+    const rawBookmarks = [
+      { id: "b1", url: "https://github.com/rust-lang/rust" },
+      { id: "b2", url: "https://github.com/tokio-rs/tokio" },
+      { id: "b3", url: "https://cooking.example/bread" },
+    ];
+    const rawMetas = [
+      metaRow("b1", ["rust"]),
+      metaRow("b2", ["rust", "async"]),
+      metaRow("b3", ["cooking"]),
+    ];
+    let bookmarkIterations = 0;
+    let metaIterations = 0;
+    const trackedBookmarks = new Proxy(rawBookmarks, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) {
+          bookmarkIterations += 1;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const trackedMetas = new Proxy(rawMetas, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) {
+          metaIterations += 1;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const corpus = { bookmarks: trackedBookmarks, metas: trackedMetas };
+    const tree = treeOf([
+      folder("f-rust", "Rust", ["Bookmarks bar", "Dev"]),
+      folder("f-food", "Recipes", ["Bookmarks bar"]),
+      folder("f-misc", "Misc", ["Bookmarks bar"]),
+    ]);
+    let folderValuesCalls = 0;
+    const origValues = tree.folders.values.bind(tree.folders);
+    tree.folders.values = () => {
+      folderValuesCalls += 1;
+      return origValues();
+    };
+
+    const precomputed = buildPrecomputedAnalysisIndex({
+      tagDefs: defs,
+      corpus,
+      tree,
+    });
+    expect(bookmarkIterations).toBe(1);
+    expect(metaIterations).toBe(1);
+    expect(folderValuesCalls).toBe(1);
+
+    const subjects = Array.from({ length: 10 }, (_, i) =>
+      bm(`s${i}`, `Rust async topic ${i}`, `https://github.com/rust/p${i}`, "f-misc"),
+    );
+    for (const s of subjects) {
+      const tagsWithPre = tagCandidates(s, defs, corpus, precomputed);
+      const foldersWithPre = folderCandidates(s, tree, precomputed);
+      const misfiledWithPre = misfiledCandidates(s, tree, precomputed);
+      expect(tagsWithPre[0]?.nameKey).toBe("rust");
+      expect(foldersWithPre.candidates[0]?.id).toBe("f-rust");
+      expect(misfiledWithPre.candidates.find((c) => c.id === "f-misc")?.current).toBe(true);
+    }
+    // Zero additional full-library iterations across all 10 bookmarks!
+    expect(bookmarkIterations).toBe(1);
+    expect(metaIterations).toBe(1);
+    expect(folderValuesCalls).toBe(1);
+  });
+
+  it("caches per-corpus and per-tree indexes via WeakMap when precomputed is omitted", () => {
+    const defs = [tag("Rust"), tag("Async")];
+    const rawBookmarks = [
+      { id: "b1", url: "https://github.com/rust-lang/rust" },
+      { id: "b2", url: "https://github.com/tokio-rs/tokio" },
+    ];
+    let bookmarkIterations = 0;
+    const trackedBookmarks = new Proxy(rawBookmarks, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) {
+          bookmarkIterations += 1;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const corpus = {
+      bookmarks: trackedBookmarks,
+      metas: [metaRow("b1", ["rust"]), metaRow("b2", ["rust", "async"])],
+    };
+    const tree = treeOf([
+      folder("f-rust", "Rust", ["Bookmarks bar", "Dev"]),
+      folder("f-misc", "Misc", ["Bookmarks bar"]),
+    ]);
+    let folderValuesCalls = 0;
+    const origValues = tree.folders.values.bind(tree.folders);
+    tree.folders.values = () => {
+      folderValuesCalls += 1;
+      return origValues();
+    };
+
+    for (let i = 0; i < 5; i++) {
+      const s = bm(`s${i}`, `Rust guide ${i}`, `https://github.com/rust/${i}`, "f-misc");
+      expect(tagCandidates(s, defs, corpus)[0]?.nameKey).toBe("rust");
+      expect(folderCandidates(s, tree).candidates[0]?.id).toBe("f-rust");
+      expect(misfiledCandidates(s, tree).candidates.some((c) => c.current === true)).toBe(true);
+    }
+    expect(bookmarkIterations).toBe(1);
+    expect(folderValuesCalls).toBe(1);
   });
 });

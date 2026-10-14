@@ -4,6 +4,7 @@ import { db } from "../../src/db/database";
 import {
   DecisionPipelineError,
   analyzeBookmark,
+  buildPrecomputedAnalysisIndex,
 } from "../../src/decisions/pipeline";
 import type { AnalyzeBookmarkOptions } from "../../src/decisions/pipeline";
 import { DecisionSettings } from "../../src/decisions/policy";
@@ -19,7 +20,7 @@ import { grantConsentAtOrigin } from "../../src/consent/records";
 import {
   writeLlmEscalationSettings,
 } from "../../src/llm/escalate";
-import { enqueueJob } from "../../src/jobs/queue";
+import { cancelJob, enqueueJob } from "../../src/jobs/queue";
 import { persistDecision } from "../../src/decisions/store";
 import type { DecisionRow } from "../../src/decisions/store";
 import { Decision } from "../../src/schemas/decision";
@@ -644,6 +645,93 @@ describe("analyzeBookmark", () => {
     expect(error).toBeInstanceOf(DecisionPipelineError);
     expect((error as DecisionPipelineError).code).toBe("invalid_input");
     expect(server.requests).toHaveLength(0);
+  });
+
+  it("uses context.precomputed when provided (P-01a)", async () => {
+    server.queue({ kind: "answer", model: "jev-1.13.0" });
+    const precomputed = buildPrecomputedAnalysisIndex({
+      tagDefs,
+      corpus,
+      tree,
+    });
+    const result = await analyzeBookmark(
+      options({
+        checks: ["categorize", "tags", "misfiled"],
+        context: { tagDefs, corpus, tree, precomputed },
+      }),
+    );
+    expect(result.sent).toBe(true);
+  });
+
+  it("re-checks assertJobAuthority after Jev network response before persistDecision (B-11)", async () => {
+    await db.jobs.clear();
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1"],
+      batchSize: 1,
+    });
+    const owner = { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 };
+    server.queue({ kind: "answer", model: "jev-1.13.0", answerOverrides: HIGH_CONFIDENCE });
+    // Cancel the job while the Jev request is in flight (after beforeSend).
+    const transport: JevTransport = async (scope, preset, model, request, opts) => {
+      const response = await serverTransport()(scope, preset, model, request, opts);
+      await cancelJob(job.id);
+      return response;
+    };
+
+    const error = await analyzeBookmark(
+      options({ job: owner, transport }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("illegal_transition");
+    // No decision row may be written after the job was canceled mid-request.
+    expect(await db.decisions.count()).toBe(0);
+    // Usage was still recorded because the network request completed.
+    expect(await db.usage.count()).toBe(1);
+  });
+
+  it("re-checks assertJobAuthority before auto-apply approveDecision (B-11)", async () => {
+    await db.jobs.clear();
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1"],
+      batchSize: 1,
+    });
+    const owner = { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 };
+    server.queue({ kind: "answer", model: "jev-1.13.0", answers: { category: HIGH_CONFIDENCE.category } });
+    const settings = DecisionSettings.parse({
+      autoApply: { add_tags: true, set_category: true },
+    });
+    // Let beforeSend and pre-persistDecision authority checks pass, then
+    // supersede the job right before the pre-approveDecision authority check.
+    const realGet = db.jobs.get.bind(db.jobs);
+    let getCalls = 0;
+    vi.spyOn(db.jobs, "get").mockImplementation(((id: string) => {
+      getCalls += 1;
+      // Call 1: client.run beforeSend; Call 2: pre-persistDecision; Call 3: pre-approveDecision
+      if (getCalls >= 3) {
+        return Promise.resolve({
+          ...job,
+          ownerGeneration: owner.ownerGeneration + 1,
+        });
+      }
+      return realGet(id);
+    }) as never);
+
+    const error = await analyzeBookmark(
+      options({
+        job: owner,
+        checks: ["categorize"],
+        context: { tagDefs, corpus, tree, settings },
+      }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DecisionPipelineError);
+    expect((error as DecisionPipelineError).code).toBe("illegal_transition");
+    // Decision remained pending and was NOT auto-applied!
+    expect(await db.bookmarkMeta.count()).toBe(0);
+    expect(await db.audit.count()).toBe(0);
   });
 });
 

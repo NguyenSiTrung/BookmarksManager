@@ -178,6 +178,46 @@ export interface RerankCandidate {
   domain: string;
 }
 
+
+/**
+ * Precomputed library index for candidate selection (P-01a): built once per
+ * `AnalysisContext` so per-bookmark candidate selection runs in O(T + F)
+ * instead of re-scanning all corpus bookmarks, metas, and folders per item.
+ */
+export interface PrecomputedAnalysisIndex {
+  /** domain -> (tagNameKey -> count of corpus bookmarks on that domain carrying the tag). */
+  readonly domainTagFreq: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  /** Unique tagDefs in library order with pre-tokenized name+description sets. */
+  readonly tagEntries: readonly {
+    readonly def: TagDef;
+    readonly tokens: ReadonlySet<string>;
+  }[];
+  /** Eligible folders with precomputed full path, pathKey, and token sets. */
+  readonly folderEntries: readonly {
+    readonly id: string;
+    readonly path: string[];
+    readonly pathKey: string;
+    readonly tokens: ReadonlySet<string>;
+  }[];
+}
+
+/**
+ * Build a {@link PrecomputedAnalysisIndex} in a single pass over `tagDefs`,
+ * `corpus`, and `tree`, and seed the per-input WeakMap caches.
+ */
+export function buildPrecomputedAnalysisIndex(input: {
+  readonly tagDefs: readonly TagDef[];
+  readonly corpus: TagCandidateContext;
+  readonly tree: FlattenedTree;
+}): PrecomputedAnalysisIndex {
+  const domainTagFreq = buildDomainTagFreq(input.corpus);
+  const tagEntries = buildTagEntries(input.tagDefs);
+  const folderEntries = buildFolderEntries(input.tree);
+  domainTagFreqCache.set(input.corpus, domainTagFreq);
+  tagEntriesCache.set(input.tagDefs, tagEntries);
+  folderEntriesCache.set(input.tree, folderEntries);
+  return { domainTagFreq, tagEntries, folderEntries };
+}
 // ---------------------------------------------------------------------------
 // Tag selector
 // ---------------------------------------------------------------------------
@@ -193,19 +233,19 @@ export function tagCandidates(
   subject: CandidateSubject,
   tagDefs: readonly TagDef[],
   corpus: TagCandidateContext,
+  precomputed?: PrecomputedAnalysisIndex,
 ): TagCandidate[] {
-  const wanted = subjectTokens(subject);
-  const domainUse = domainTagCounts(subject, corpus);
+  const { domain, tokens: wanted } = parseSubject(subject);
+  const entries = precomputed?.tagEntries ?? getTagEntries(tagDefs);
+  if (entries.length === 0) return [];
+  const freq =
+    domain === ""
+      ? undefined
+      : (precomputed?.domainTagFreq ?? getDomainTagFreq(corpus)).get(domain);
 
-  const seen = new Set<string>();
   const scored: TagCandidate[] = [];
-  for (const def of tagDefs) {
-    // nameKeys are unique per library; on malformed input the first def wins.
-    if (seen.has(def.nameKey)) continue;
-    seen.add(def.nameKey);
-    const tagTokens = tokenSet(def.name);
-    for (const t of tokenSet(def.description ?? "")) tagTokens.add(t);
-    const score = overlap(wanted, tagTokens) + (domainUse.get(def.nameKey) ?? 0);
+  for (const { def, tokens: tagTokens } of entries) {
+    const score = overlap(wanted, tagTokens) + (freq?.get(def.nameKey) ?? 0);
     scored.push({
       nameKey: def.nameKey,
       name: def.name,
@@ -239,23 +279,9 @@ export function tagCandidates(
 export function folderCandidates(
   subject: CandidateSubject,
   tree: FlattenedTree,
+  precomputed?: PrecomputedAnalysisIndex,
 ): FolderCandidateSet {
-  const wanted = subjectTokens(subject);
-  const scored: FolderCandidate[] = [];
-  for (const folder of tree.folders.values()) {
-    if (!eligibleFolder(folder)) continue;
-    scored.push(toFolderCandidate(folder, wanted));
-  }
-  scored.sort(
-    (x, y) =>
-      y.score - x.score ||
-      compareStrings(pathKey(x.path), pathKey(y.path)) ||
-      compareStrings(x.id, y.id),
-  );
-  return {
-    candidates: scored.slice(0, FOLDER_CANDIDATE_LIMIT),
-    none: NONE_FOLDER_OPTION,
-  };
+  return folderCandidatesForTokens(parseSubject(subject).tokens, tree, precomputed);
 }
 
 /**
@@ -271,8 +297,10 @@ export function folderCandidates(
 export function misfiledCandidates(
   item: BookmarkItem,
   tree: FlattenedTree,
+  precomputed?: PrecomputedAnalysisIndex,
 ): FolderCandidateSet {
-  const set = folderCandidates(item, tree);
+  const wanted = parseSubject(item).tokens;
+  const set = folderCandidatesForTokens(wanted, tree, precomputed);
   const currentId = item.parentId;
   if (currentId === undefined || currentId === ROOT_NODE_ID) return set;
   const current = tree.folders.get(currentId);
@@ -284,7 +312,7 @@ export function misfiledCandidates(
     set.candidates[index] = { ...existing, current: true };
   } else {
     set.candidates.push({
-      ...toFolderCandidate(current, subjectTokens(item)),
+      ...toFolderCandidate(current, wanted),
       current: true,
     });
   }
@@ -381,39 +409,165 @@ function overlap(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
  * domain (`extractDomain` — www.-stripped host), and its URL path. The URL
  * contributes real signal when titles are thin ("…/rust/async-book").
  */
-function subjectTokens(subject: CandidateSubject): ReadonlySet<string> {
+function parseSubject(subject: CandidateSubject): {
+  readonly domain: string;
+  readonly tokens: ReadonlySet<string>;
+} {
   const out = new Set(tokenSet(subject.title));
-  for (const t of tokenSet(extractDomain(subject.url))) out.add(t);
+  let domain = "";
   try {
-    for (const t of tokenSet(new URL(subject.url).pathname)) out.add(t);
+    const parsed = new URL(subject.url);
+    const hostname = parsed.hostname;
+    domain = hostname.startsWith("www.")
+      ? hostname.slice("www.".length)
+      : hostname;
+    for (const t of tokenSet(domain)) out.add(t);
+    for (const t of tokenSet(parsed.pathname)) out.add(t);
   } catch {
     // Unparseable URL — title + empty-domain tokens still stand.
   }
-  return out;
+  return { domain, tokens: out };
 }
 
-/**
- * nameKey → number of `corpus` bookmarks on the subject's domain whose meta
- * row carries the tag. Empty when the subject has no real domain.
- */
-function domainTagCounts(
-  subject: CandidateSubject,
+const domainTagFreqCache = new WeakMap<
+  TagCandidateContext,
+  ReadonlyMap<string, ReadonlyMap<string, number>>
+>();
+
+const tagEntriesCache = new WeakMap<
+  readonly TagDef[],
+   PrecomputedAnalysisIndex["tagEntries"]
+>();
+
+const folderEntriesCache = new WeakMap<
+  FlattenedTree,
+  PrecomputedAnalysisIndex["folderEntries"]
+>();
+
+function buildDomainTagFreq(
   corpus: TagCandidateContext,
-): ReadonlyMap<string, number> {
-  const domain = extractDomain(subject.url);
-  const counts = new Map<string, number>();
-  if (domain === "") return counts;
+): ReadonlyMap<string, ReadonlyMap<string, number>> {
+  const freq = new Map<string, Map<string, number>>();
+  if (corpus.metas.length === 0 || corpus.bookmarks.length === 0) {
+    return freq;
+  }
   const domainById = new Map<string, string>();
   for (const b of corpus.bookmarks) {
     domainById.set(b.id, extractDomain(b.url));
   }
   for (const meta of corpus.metas) {
-    if (domainById.get(meta.id) !== domain) continue;
+    const domain = domainById.get(meta.id);
+    if (domain === undefined || domain === "") continue;
+    let counts = freq.get(domain);
+    if (counts === undefined) {
+      counts = new Map<string, number>();
+      freq.set(domain, counts);
+    }
     for (const key of new Set(meta.tags)) {
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }
-  return counts;
+  return freq;
+}
+
+function getDomainTagFreq(
+  corpus: TagCandidateContext,
+): ReadonlyMap<string, ReadonlyMap<string, number>> {
+  const cached = domainTagFreqCache.get(corpus);
+  if (cached !== undefined) return cached;
+  const built = buildDomainTagFreq(corpus);
+  domainTagFreqCache.set(corpus, built);
+  return built;
+}
+
+function buildTagEntries(
+  tagDefs: readonly TagDef[],
+): PrecomputedAnalysisIndex["tagEntries"] {
+  const seen = new Set<string>();
+  const entries: { readonly def: TagDef; readonly tokens: ReadonlySet<string> }[] = [];
+  for (const def of tagDefs) {
+    // nameKeys are unique per library; on malformed input the first def wins.
+    if (seen.has(def.nameKey)) continue;
+    seen.add(def.nameKey);
+    const tokens = tokenSet(def.name);
+    if (def.description !== undefined) {
+      for (const t of tokenSet(def.description)) tokens.add(t);
+    }
+    entries.push({ def, tokens });
+  }
+  return entries;
+}
+
+function getTagEntries(
+  tagDefs: readonly TagDef[],
+): PrecomputedAnalysisIndex["tagEntries"] {
+  const cached = tagEntriesCache.get(tagDefs);
+  if (cached !== undefined) return cached;
+  const built = buildTagEntries(tagDefs);
+  tagEntriesCache.set(tagDefs, built);
+  return built;
+}
+
+function buildFolderEntries(
+  tree: FlattenedTree,
+): PrecomputedAnalysisIndex["folderEntries"] {
+  const entries: {
+    readonly id: string;
+    readonly path: string[];
+    readonly pathKey: string;
+    readonly tokens: ReadonlySet<string>;
+  }[] = [];
+  for (const folder of tree.folders.values()) {
+    if (!eligibleFolder(folder)) continue;
+    const path = fullPath(folder);
+    const tokens = new Set<string>();
+    for (const segment of path) {
+      for (const t of tokenSet(segment)) tokens.add(t);
+    }
+    entries.push({
+      id: folder.id,
+      path,
+      pathKey: pathKey(path),
+      tokens,
+    });
+  }
+  return entries;
+}
+
+function getFolderEntries(
+  tree: FlattenedTree,
+): PrecomputedAnalysisIndex["folderEntries"] {
+  const cached = folderEntriesCache.get(tree);
+  if (cached !== undefined) return cached;
+  const built = buildFolderEntries(tree);
+  folderEntriesCache.set(tree, built);
+  return built;
+}
+
+function folderCandidatesForTokens(
+  wanted: ReadonlySet<string>,
+  tree: FlattenedTree,
+  precomputed?: PrecomputedAnalysisIndex,
+): FolderCandidateSet {
+  const entries = precomputed?.folderEntries ?? getFolderEntries(tree);
+  const scored = entries.map((entry) => ({
+    id: entry.id,
+    path: [...entry.path],
+    pathKey: entry.pathKey,
+    score: overlap(wanted, entry.tokens),
+  }));
+  scored.sort(
+    (x, y) =>
+      y.score - x.score ||
+      compareStrings(x.pathKey, y.pathKey) ||
+      compareStrings(x.id, y.id),
+  );
+  return {
+    candidates: scored
+      .slice(0, FOLDER_CANDIDATE_LIMIT)
+      .map(({ id, path, score }) => ({ id, path, score })),
+    none: NONE_FOLDER_OPTION,
+  };
 }
 
 /** Folders that can actually receive a moved/created bookmark. */

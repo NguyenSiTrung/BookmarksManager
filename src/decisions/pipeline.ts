@@ -21,15 +21,20 @@ import type { BookmarkItem, FlattenedTree } from "../sync/tree";
 import { DecisionApplyError, approveDecision } from "./apply";
 import {
   NONE_FOLDER_OPTION,
+  buildPrecomputedAnalysisIndex,
   folderCandidates,
   misfiledCandidates,
   tagCandidates,
 } from "./candidates";
 import type {
   CandidateSubject,
+  PrecomputedAnalysisIndex,
   TagCandidate,
   TagCandidateContext,
 } from "./candidates";
+
+export { buildPrecomputedAnalysisIndex };
+export type { PrecomputedAnalysisIndex };
 import { minimizeBookmark } from "./minimize";
 import { evaluatePolicy } from "./policy";
 import type {
@@ -107,6 +112,8 @@ export interface AnalysisContext {
   readonly tree: FlattenedTree;
   /** §10.2 auto-apply settings; absent means every toggle is off. */
   readonly settings?: DecisionSettings;
+  /** Optional precomputed domain/tag/folder index across a job's batches (P-01a). */
+  readonly precomputed?: PrecomputedAnalysisIndex;
 }
 
 /** Which question sets one analysis run asks. */
@@ -297,6 +304,7 @@ function buildChecks(
           subject,
           context.tagDefs,
           context.corpus,
+          context.precomputed,
         );
         if (candidates.length === 0) break;
         const set = tags({
@@ -320,7 +328,11 @@ function buildChecks(
         break;
       }
       case "placement": {
-        const candidates = folderCandidates(subject, context.tree);
+        const candidates = folderCandidates(
+          subject,
+          context.tree,
+          context.precomputed,
+        );
         if (candidates.candidates.length === 0) break;
         const set = placement({
           bookmark: sent,
@@ -344,6 +356,7 @@ function buildChecks(
         const candidates = misfiledCandidates(
           toBookmarkItem(bookmark),
           context.tree,
+          context.precomputed,
         );
         if (candidates.candidates.length === 0) break;
         const set = misfiled({
@@ -779,6 +792,9 @@ async function persistDraft(
       },
     },
   };
+  if (options.job !== undefined) {
+    await assertJobAuthority(options.job);
+  }
   let row: DecisionRow;
   try {
     row = await persistDecision(document, {
@@ -803,6 +819,9 @@ async function persistDraft(
   // the older answer over a decision already made. The proposal stays
   // pending for review instead.
   if (await hasDecidedSlotRow(row.bookmarkIds, row.kind, row.id)) return row;
+  if (options.job !== undefined) {
+    await assertJobAuthority(options.job);
+  }
   try {
     return await approveDecision(row.id, "policy", "auto_applied");
   } catch (cause) {

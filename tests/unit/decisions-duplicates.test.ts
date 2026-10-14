@@ -16,7 +16,8 @@ import {
   scanNearDuplicates,
 } from "../../src/decisions/duplicates";
 import type { ScanNearDuplicatesOptions } from "../../src/decisions/duplicates";
-import type { NearDuplicateSource } from "../../src/decisions/candidates";
+import type { NearDuplicatePair, NearDuplicateSource } from "../../src/decisions/candidates";
+import { cancelJob, enqueueJob } from "../../src/jobs/queue";
 import { resetJevClientPools } from "../../src/jev/client";
 import type { JevClient, JevTransport } from "../../src/jev/client";
 import type { Answer } from "../../src/jev/wire";
@@ -334,7 +335,7 @@ describe("scanNearDuplicates", () => {
     expect(await db.usage.count()).toBe(0);
   });
 
-  it("rejects an out-of-range same_content level (no decision; usage still recorded)", async () => {
+  it("rejects an out-of-range same_content level when all pairs fail (no decision; usage still recorded)", async () => {
     const error = await scanNearDuplicates(
       options({ client: sequenceClient([scoreAnswer(5)]) }),
     ).catch((caught: unknown) => caught);
@@ -342,8 +343,9 @@ describe("scanNearDuplicates", () => {
     expect(error).toBeInstanceOf(DuplicateScanError);
     expect((error as DuplicateScanError).code).toBe("answer_mismatch");
     expect(server.requests).toHaveLength(0);
-    // The mismatched answers still egressed — the request's cost is recorded.
-    expect(await db.usage.count()).toBe(1);
+    // Both pairs in baseBookmarks() were attempted (per-pair isolation) and
+    // their egressed cost is recorded even though both failed validation.
+    expect(await db.usage.count()).toBe(2);
     expect(await db.decisions.count()).toBe(0);
   });
 
@@ -359,6 +361,67 @@ describe("scanNearDuplicates", () => {
     ).catch((caught: unknown) => caught);
     expect((error as DuplicateScanError).code).toBe("answer_mismatch");
     expect(await db.decisions.count()).toBe(0);
+    expect(await db.usage.count()).toBe(2);
+  });
+
+  it("isolates a per-pair failure so remaining pairs in the batch still succeed (B-11)", async () => {
+    const failedSeen: Array<{ pair: NearDuplicatePair; code: string }> = [];
+    const result = await scanNearDuplicates(
+      options({
+        // Pair 0 returns invalid level 5 (answer_mismatch); Pair 1 returns valid level 4 (review).
+        client: sequenceClient([scoreAnswer(5), scoreAnswer(4)]),
+        onPairFailure: (pair, err) => {
+          failedSeen.push({ pair, code: err.code });
+        },
+      }),
+    );
+
+    if (!result.sent) throw new Error("expected a sent result");
+    expect(result.pairs).toBe(2);
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.ids).toEqual(["bm-2", "bm-3"]);
+    expect(result.results[0]?.outcome).toBe("review");
+    expect(result.results[0]?.decision).toBeDefined();
+    expect(result.pairFailures).toEqual([
+      {
+        ids: ["bm-0", "bm-1"],
+        code: "answer_mismatch",
+        message: expect.any(String),
+      },
+    ]);
+    expect(failedSeen).toHaveLength(1);
+    expect(failedSeen[0]?.pair.a.id).toBe("bm-0");
+    expect(failedSeen[0]?.code).toBe("answer_mismatch");
+    expect(await db.decisions.count()).toBe(1);
+    expect(await db.usage.count()).toBe(2);
+  });
+
+  it("re-checks assertJobAuthority after client.run before persistDecision (B-11)", async () => {
+    await db.jobs.clear();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: baseBookmarks().map((b) => b.id),
+      batchSize: 25,
+    });
+    const owner = { id: job.id, ownerGeneration: job.ownerGeneration ?? 0 };
+    server.queue({ kind: "answer", answerOverrides: { same_content: scoreAnswer(4) } });
+    server.queue({ kind: "answer", answerOverrides: { same_content: scoreAnswer(4) } });
+    // Cancel the job while pair 0's network request is in flight.
+    const transport: JevTransport = async (scope, preset, model, request, opts) => {
+      const response = await serverTransport()(scope, preset, model, request, opts);
+      await cancelJob(job.id);
+      return response;
+    };
+
+    const error = await scanNearDuplicates(
+      options({ job: owner, transport }),
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DuplicateScanError);
+    expect((error as DuplicateScanError).code).toBe("illegal_transition");
+    // Pair 0's decision was not persisted and Pair 1 was never sent.
+    expect(await db.decisions.count()).toBe(0);
+    expect(server.requests).toHaveLength(1);
     expect(await db.usage.count()).toBe(1);
   });
 

@@ -19,7 +19,7 @@ import {
   persistDecision,
 } from "./store";
 import type { DecisionGuard, DecisionRow } from "./store";
-import { assertJobAuthority } from "../jobs/queue";
+import { assertJobAuthority, JobQueueError } from "../jobs/queue";
 import type { Job } from "../schemas/job";
 
 /**
@@ -125,6 +125,11 @@ interface ScanCommonOptions {
   readonly transport?: JevTransport;
   /** Captured batch owner, local-only and rechecked at every wire attempt. */
   readonly job?: Pick<Job, "id" | "ownerGeneration">;
+  /** Optional hook notified when an individual pair fails without aborting the batch. */
+  readonly onPairFailure?: (
+    pair: NearDuplicatePair,
+    error: DuplicateScanError,
+  ) => void | Promise<void>;
 }
 
 /** The end-to-end scan input: the scan's bookmarks. */
@@ -158,6 +163,13 @@ export interface DuplicatePairResult {
   readonly decision?: DecisionRow;
 }
 
+/** One pair that failed individually inside a batch without aborting sibling pairs. */
+export interface DuplicatePairFailure {
+  readonly ids: readonly [string, string];
+  readonly code: DuplicateScanErrorCode;
+  readonly message: string;
+}
+
 /** A completed scan: one result per sendable pair plus one usage row each. */
 export interface DuplicateScanSent {
   readonly sent: true;
@@ -166,6 +178,8 @@ export interface DuplicateScanSent {
   /** Pairs skipped because a side was blocklisted/sensitive. */
   readonly skipped: number;
   readonly results: readonly DuplicatePairResult[];
+  /** Pairs that failed individually when other pairs in the batch succeeded. */
+  readonly pairFailures?: readonly DuplicatePairFailure[];
   /** Exactly one row per pair egress, in pair order. */
   readonly usage: readonly UsageRecord[];
 }
@@ -187,6 +201,7 @@ export type DuplicateScanErrorCode =
   | JevClientError["code"]
   | "invalid_input"
   | "persist_failed"
+  | "illegal_transition"
   | "provider";
 
 /** Rejection for every failure this module produces. Messages stay redacted. */
@@ -210,12 +225,40 @@ function toDuplicateScanError(cause: unknown): DuplicateScanError {
   if (cause instanceof NetworkGateError) {
     return new DuplicateScanError(cause.code, cause.message);
   }
+  if (cause instanceof JobQueueError && cause.code === "illegal_transition") {
+    return new DuplicateScanError(cause.code, cause.message);
+  }
   return new DuplicateScanError(
     "provider",
     "The near-duplicate request failed before a response could be read.",
   );
 }
 
+
+/**
+ * Error codes that must abort the entire pair batch immediately (B-11):
+ * job-authority loss, auth/consent/permission/key revocation, contract
+ * violations, and rate-limit throttles (`retry_later` so the runner's
+ * circuit breaker can open).
+ */
+const BATCH_FATAL_CODES: Readonly<Record<string, true>> = {
+  unregistered_scope: true,
+  request_not_allowed: true,
+  unlisted_model: true,
+  https_only: true,
+  unlisted_origin: true,
+  no_consent: true,
+  no_permission: true,
+  no_key: true,
+  auth: true,
+  incompatible: true,
+  model_mismatch: true,
+  invalid_request: true,
+  invalid_input: true,
+  aborted: true,
+  retry_later: true,
+  illegal_transition: true,
+};
 // ---------------------------------------------------------------------------
 // Answer cross-check
 // ---------------------------------------------------------------------------
@@ -399,103 +442,139 @@ async function runPairs(
     });
 
   const results: DuplicatePairResult[] = [];
+  const pairFailures: DuplicatePairFailure[] = [];
   const usage: UsageRecord[] = [];
+  let firstError: DuplicateScanError | undefined;
+
   for (const entry of sendable) {
-    const set = nearDuplicate({ a: entry.a, b: entry.b });
-    const request = set.decision.build(set.state, client.model);
-    let result: JevRunResult;
     try {
-      result = await client.run(request, {
-        ...(options.job === undefined ? {} : { beforeSend: () => assertJobAuthority(options.job!) }),
-        onPartialUsage: async (partial) => { await recordUsage(partial, options.job?.id); },
+      const set = nearDuplicate({ a: entry.a, b: entry.b });
+      const request = set.decision.build(set.state, client.model);
+      const result = await client.run(request, {
+        ...(options.job === undefined
+          ? {}
+          : { beforeSend: () => assertJobAuthority(options.job!) }),
+        onPartialUsage: async (partial) => {
+          await recordUsage(partial, options.job?.id);
+        },
       });
-    } catch (cause) {
-      throw toDuplicateScanError(cause);
-    }
 
-    const answers = result.answers as Record<
-      string,
-      { type: string; score?: number; probabilities?: Record<string, number> }
-    >;
-    // The request left the device, so record its cost BEFORE the answer
-    // cross-check: an `answer_mismatch` throws after this point, and the
-    // mismatched response still egressed — its cost must still be recorded
-    // (matching the analyze pipeline). Exactly one row per completed call.
-    usage.push(await recordUsage(result, options.job?.id));
+      const answers = result.answers as Record<
+        string,
+        { type: string; score?: number; probabilities?: Record<string, number> }
+      >;
+      // The request left the device, so record its cost BEFORE the answer
+      // cross-check: an `answer_mismatch` throws after this point, and the
+      // mismatched response still egressed — its cost must still be recorded
+      // (matching the analyze pipeline). Exactly one row per completed call.
+      usage.push(await recordUsage(result, options.job?.id));
 
-    const level = crossCheckLevel(answers);
-    // Deliberate §10.2-sound divergence from §10.1: the confidence is a fixed
-    // map of the level ({@link levelToConfidence}); the answer's returned
-    // `confidence`, when present, is intentionally NOT blended in.
-    const confidence = levelToConfidence(level);
+      const level = crossCheckLevel(answers);
+      // Deliberate §10.2-sound divergence from §10.1: the confidence is a fixed
+      // map of the level ({@link levelToConfidence}); the answer's returned
+      // `confidence`, when present, is intentionally NOT blended in.
+      const confidence = levelToConfidence(level);
 
-    const outcome = evaluatePolicy({ kind: "merge_duplicates", confidence });
-    // J07: levels 1–2 (unrelated / same-topic-different-content) are NOT
-    // duplicates — persist nothing. An `unsure` merge row is still
-    // approvable (`unsure → applied` is legal), and a merge proposal for a
-    // non-duplicate must never be approvable.
-    if (outcome === "unsure") {
+      const outcome = evaluatePolicy({ kind: "merge_duplicates", confidence });
+      // J07: levels 1–2 (unrelated / same-topic-different-content) are NOT
+      // duplicates — persist nothing. An `unsure` merge row is still
+      // approvable (`unsure → applied` is legal), and a merge proposal for a
+      // non-duplicate must never be approvable.
+      if (outcome === "unsure") {
+        results.push({
+          ids: [entry.pair.a.id, entry.pair.b.id],
+          level,
+          confidence,
+          outcome,
+        });
+        continue;
+      }
+      // A merge is never auto-applied; a `review` decision lands `pending`.
+      const status: DecisionDocument["status"] = "pending";
+      // J04: one row per (jobId, pair, kind) — a replayed pair batch upserts
+      // the same row instead of duplicating the merge proposal.
+      const document = toMergeDocument(
+        entry,
+        options,
+        result.model,
+        confidence,
+        answers.same_content?.probabilities,
+        status,
+        await decisionIdFor({
+          jobId: options.job?.id,
+          bookmarkIds: [entry.pair.a.id, entry.pair.b.id],
+          kind: "merge_duplicates",
+        }),
+      );
+      // J05: the freshness guard is the send-time snapshot — the raw url/title
+      // of each side as the request was built (the pair sides, not the
+      // minimized wire form). A merge never moves, so no placements.
+      const guard: DecisionGuard = {
+        placements: {},
+        snapshots: {
+          [entry.pair.a.id]: {
+            url: entry.pair.a.url,
+            title: entry.pair.a.title,
+          },
+          [entry.pair.b.id]: {
+            url: entry.pair.b.url,
+            title: entry.pair.b.title,
+          },
+        },
+      };
+      if (options.job !== undefined) {
+        await assertJobAuthority(options.job);
+      }
+      let decision: DecisionRow;
+      try {
+        decision = await persistDecision(document, { guard });
+      } catch (cause) {
+        if (cause instanceof DecisionStoreError) {
+          throw new DuplicateScanError(
+            "persist_failed",
+            "Failed to persist the merge_duplicates decision.",
+          );
+        }
+        throw cause;
+      }
       results.push({
         ids: [entry.pair.a.id, entry.pair.b.id],
         level,
         confidence,
         outcome,
+        decision,
       });
-      continue;
-    }
-    // A merge is never auto-applied; a `review` decision lands `pending`.
-    const status: DecisionDocument["status"] = "pending";
-    // J04: one row per (jobId, pair, kind) — a replayed pair batch upserts
-    // the same row instead of duplicating the merge proposal.
-    const document = toMergeDocument(
-      entry,
-      options,
-      result.model,
-      confidence,
-      answers.same_content?.probabilities,
-      status,
-      await decisionIdFor({
-        jobId: options.job?.id,
-        bookmarkIds: [entry.pair.a.id, entry.pair.b.id],
-        kind: "merge_duplicates",
-      }),
-    );
-    // J05: the freshness guard is the send-time snapshot — the raw url/title
-    // of each side as the request was built (the pair sides, not the
-    // minimized wire form). A merge never moves, so no placements.
-    const guard: DecisionGuard = {
-      placements: {},
-      snapshots: {
-        [entry.pair.a.id]: {
-          url: entry.pair.a.url,
-          title: entry.pair.a.title,
-        },
-        [entry.pair.b.id]: {
-          url: entry.pair.b.url,
-          title: entry.pair.b.title,
-        },
-      },
-    };
-    let decision: DecisionRow;
-    try {
-      decision = await persistDecision(document, { guard });
     } catch (cause) {
-      if (cause instanceof DecisionStoreError) {
-        throw new DuplicateScanError(
-          "persist_failed",
-          "Failed to persist the merge_duplicates decision.",
-        );
+      const err = toDuplicateScanError(cause);
+      if (BATCH_FATAL_CODES[err.code] === true) {
+        throw err;
       }
-      throw cause;
+      firstError ??= err;
+      pairFailures.push({
+        ids: [entry.pair.a.id, entry.pair.b.id],
+        code: err.code,
+        message: err.message,
+      });
+      if (options.onPairFailure !== undefined) {
+        await options.onPairFailure(entry.pair, err);
+      }
     }
-    results.push({
-      ids: [entry.pair.a.id, entry.pair.b.id],
-      level,
-      confidence,
-      outcome,
-      decision,
-    });
   }
 
-  return { sent: true, pairs: pairs.length, skipped, results, usage };
+  if (
+    results.length === 0 &&
+    firstError !== undefined &&
+    options.onPairFailure === undefined
+  ) {
+    throw firstError;
+  }
+
+  return {
+    sent: true,
+    pairs: pairs.length,
+    skipped,
+    results,
+    ...(pairFailures.length === 0 ? {} : { pairFailures }),
+    usage,
+  };
 }
