@@ -13,11 +13,13 @@ import {
   PROVIDER_DISCLOSURES,
 } from "../../consent/disclosure";
 import {
+  consentVersionForScope,
   grantConsentAtOrigin,
   hasConsentAtOrigin,
   revokeConsentAtOrigin,
 } from "../../consent/records";
 import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
+import { db } from "../../db/database";
 import {
   addBlocklistEntry,
   BUILTIN_SENSITIVE_SITES,
@@ -34,7 +36,11 @@ import {
 import {
   CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
   LLM_ESCALATE_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
   type JevProviderId,
   PresetId,
 } from "../../schemas/provider";
@@ -130,14 +136,36 @@ const AUTO_APPLY_KINDS = [
   { kind: "add_tags", label: "Auto-apply tag additions" },
   { kind: "set_category", label: "Auto-apply category assignments" },
 ] as const;
+const FEATURE_CONSENT_SCOPES = [
+  LLM_EXPLAIN_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
+] as const;
+
+type FeatureConsentScope = (typeof FEATURE_CONSENT_SCOPES)[number];
+
+interface ActiveFeatureConsent {
+  readonly scope: FeatureConsentScope;
+  readonly origin: string;
+}
+
+type FeedbackSection =
+  | "consent"
+  | "automations"
+  | "escalation"
+  | "feature-consents"
+  | "blocklist";
 
 /**
- * A consent verdict paired with the preset the live query read it for —
- * lets a stale emission be recognized after a preset switch.
+ * Consent verdicts for the selected preset plus every rendered provider card —
+ * lets a stale emission after a preset switch be recognized while keeping
+ * unselected preset cards populated.
  */
 interface ConsentRead {
   preset: JevProviderId;
   granted: boolean;
+  byPreset: Record<JevProviderId, boolean>;
 }
 
 /**
@@ -280,10 +308,12 @@ export function DecisionSettings({
   const [blocklist, setBlocklist] = useState<readonly string[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [newEntry, setNewEntry] = useState("");
+  const [builtinBlocklistOpen, setBuiltinBlocklistOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [feedbackSection, setFeedbackSection] =
+    useState<FeedbackSection | null>(null);
   const [busy, setBusy] = useState(false);
-
   /** Selected provider under the cursor — lets a user click win the race
    *  against the mount-time restore probe (same guard as ProviderSetup). */
   const currentPreset = useRef<JevProviderId>(presetId);
@@ -343,14 +373,67 @@ export function DecisionSettings({
    * un-consented screen again.
    */
   const consentRead = useLiveQuery(
-    (): Promise<ConsentRead> =>
-      consentOrigin === null
-        ? Promise.resolve({ preset: selectedPreset, granted: false })
-        : hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, consentOrigin)
-            .then((granted) => ({ preset: selectedPreset, granted }))
-            .catch(() => ({ preset: selectedPreset, granted: false })),
-    [selectedPreset, consentOrigin],
+    async (): Promise<ConsentRead> => {
+      const [typesafeGranted, openrouterGranted, customGranted] =
+        await Promise.all([
+          hasConsentAtOrigin(
+            DECISIONS_CONSENT_SCOPE,
+            PRESETS.typesafe.origin,
+          ).catch(() => false),
+          hasConsentAtOrigin(
+            DECISIONS_CONSENT_SCOPE,
+            PRESETS.openrouter.origin,
+          ).catch(() => false),
+          customOrigin === null
+            ? Promise.resolve(false)
+            : hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, customOrigin).catch(
+                () => false,
+              ),
+        ]);
+      const byPreset: Record<JevProviderId, boolean> = {
+        typesafe: typesafeGranted,
+        openrouter: openrouterGranted,
+        [CUSTOM_PROVIDER_ID]: customGranted,
+      };
+      return {
+        preset: selectedPreset,
+        granted: consentOrigin === null ? false : byPreset[selectedPreset],
+        byPreset,
+      };
+    },
+    [selectedPreset, consentOrigin, customOrigin],
   );
+
+  const activeFeatureConsents =
+    useLiveQuery(async (): Promise<ActiveFeatureConsent[]> => {
+      try {
+        const rows = await db.consents
+          .where("scope")
+          .anyOf([...FEATURE_CONSENT_SCOPES])
+          .toArray();
+        const active = rows.filter(
+          (row): row is typeof row & { scope: FeatureConsentScope } =>
+            (FEATURE_CONSENT_SCOPES as readonly string[]).includes(row.scope) &&
+            row.consentVersion === consentVersionForScope(row.scope),
+        );
+        active.sort((left, right) => {
+          const leftIndex = FEATURE_CONSENT_SCOPES.indexOf(left.scope);
+          const rightIndex = FEATURE_CONSENT_SCOPES.indexOf(right.scope);
+          if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+          return left.origin < right.origin
+            ? -1
+            : left.origin > right.origin
+              ? 1
+              : 0;
+        });
+        return active.map((row) => ({
+          scope: row.scope,
+          origin: row.origin,
+        }));
+      } catch {
+        return [];
+      }
+    }, []) ?? [];
 
   /**
    * The verdict for the CURRENT provider only — `undefined` (pending) until
@@ -380,6 +463,7 @@ export function DecisionSettings({
     // previous failed attempt.
     setLoading(true);
     setError(null);
+    setFeedbackSection(null);
     try {
       const raw = await chrome.runtime.sendMessage(
         DecisionMessage.parse({ type: "GET_SETTINGS" }),
@@ -456,6 +540,7 @@ export function DecisionSettings({
     if (llmOrigin === null || inFlight.current || escalationBusy) return;
     if (grant && !escalationAgreed) return;
     setEscalationBusy(true);
+    setFeedbackSection("escalation");
     setError(null);
     setNotice(null);
     const write = grant
@@ -491,6 +576,7 @@ export function DecisionSettings({
   const onEscalationToggle = (enabled: boolean) => {
     if (inFlight.current || escalationBusy) return;
     setEscalationBusy(true);
+    setFeedbackSection("escalation");
     setError(null);
     setNotice(null);
     void chrome.runtime
@@ -525,6 +611,7 @@ export function DecisionSettings({
     setNewEntry("");
     setNotice(null);
     setError(null);
+    setFeedbackSection(null);
   };
 
   /** Apply one worker `settings_ok` snapshot to both rendered states. */
@@ -537,7 +624,12 @@ export function DecisionSettings({
   };
 
   /** Map a reply to a notice/error; returns true when it was `settings_ok`. */
-  const handleSettingsReply = (raw: unknown, okNotice: string): boolean => {
+  const handleSettingsReply = (
+    raw: unknown,
+    okNotice: string,
+    section: FeedbackSection,
+  ): boolean => {
+    setFeedbackSection(section);
     const result = DecisionMessageResult.safeParse(raw);
     if (result.success && result.data.ok && "settings" in result.data) {
       applySnapshot(result.data);
@@ -558,6 +650,7 @@ export function DecisionSettings({
     }
     inFlight.current = true;
     setBusy(true);
+    setFeedbackSection("consent");
     setError(null);
     setNotice(null);
     // Direct Dexie write: the gate re-verifies on every send, so the grant
@@ -567,7 +660,7 @@ export function DecisionSettings({
         setAgreedFor(null);
         armConsentDisclosureGate();
         setNotice(
-          `Bookmark analysis consent recorded for ${disclosure.name}. It applies once ${disclosure.name} is connected above.`,
+          `Bookmark analysis consent recorded for ${disclosure.name}. It applies once ${disclosure.name} is connected in Connections.`,
         );
       })
       .catch(() => {
@@ -585,6 +678,7 @@ export function DecisionSettings({
     }
     inFlight.current = true;
     setBusy(true);
+    setFeedbackSection("consent");
     setError(null);
     setNotice(null);
     // Removes only the jev_decisions row — the provider's jev_test grant and
@@ -605,12 +699,39 @@ export function DecisionSettings({
       });
   };
 
+  const onRevokeFeatureConsent = (
+    scope: FeatureConsentScope,
+    origin: string,
+  ) => {
+    if (inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setBusy(true);
+    setFeedbackSection("feature-consents");
+    setError(null);
+    setNotice(null);
+    const title = LLM_SCOPE_DISCLOSURES[scope].title;
+    void revokeConsentAtOrigin(scope, origin)
+      .then(() => {
+        setNotice(`${title} consent revoked for ${origin}.`);
+      })
+      .catch(() => {
+        setError("Something went wrong while revoking consent.");
+      })
+      .finally(() => {
+        inFlight.current = false;
+        setBusy(false);
+      });
+  };
+
   const onToggle = (kind: "add_tags" | "set_category") => {
     if (settings === null || inFlight.current) {
       return;
     }
     inFlight.current = true;
     setBusy(true);
+    setFeedbackSection("automations");
     setError(null);
     setNotice(null);
     // Field-level patch: only this kind's toggle leaves the page, so a
@@ -621,7 +742,7 @@ export function DecisionSettings({
         DecisionMessage.parse({ type: "PATCH_SETTINGS", patch }),
       )
       .then((raw) => {
-        handleSettingsReply(raw, "Auto-apply setting saved.");
+        handleSettingsReply(raw, "Auto-apply setting saved.", "automations");
       })
       .catch(() => {
         setError("Something went wrong while saving decision settings.");
@@ -640,6 +761,7 @@ export function DecisionSettings({
   }) => {
     inFlight.current = true;
     setBusy(true);
+    setFeedbackSection("blocklist");
     setError(null);
     setNotice(null);
     void chrome.runtime
@@ -653,7 +775,7 @@ export function DecisionSettings({
         }),
       )
       .then((raw) => {
-        if (handleSettingsReply(raw, "Blocklist saved.")) {
+        if (handleSettingsReply(raw, "Blocklist saved.", "blocklist")) {
           setNewEntry("");
         }
       })
@@ -674,6 +796,7 @@ export function DecisionSettings({
     try {
       next = addBlocklistEntry(blocklist, newEntry);
     } catch (cause) {
+      setFeedbackSection("blocklist");
       setError(
         cause instanceof Error
           ? cause.message
@@ -685,6 +808,7 @@ export function DecisionSettings({
     if (next === blocklist) {
       // Same array back means the normalized entry was already listed.
       const normalized = normalizeBlocklistEntry(newEntry) ?? newEntry.trim();
+      setFeedbackSection("blocklist");
       setNotice(`${normalized} is already on the blocklist.`);
       setError(null);
       setNewEntry("");
@@ -779,6 +903,25 @@ export function DecisionSettings({
   const escalationFirstAction = escalationPrerequisites.find(
     (step) => step.actionLabel !== undefined && step.target !== undefined,
   );
+  const renderSectionFeedback = (section: FeedbackSection) => {
+    if (feedbackSection !== section) {
+      return null;
+    }
+    return (
+      <>
+        {notice !== null && (
+          <div className="mt-4">
+            <Alert tone="success">{notice}</Alert>
+          </div>
+        )}
+        {error !== null && (
+          <div className="mt-4">
+            <Alert tone="error">{error}</Alert>
+          </div>
+        )}
+      </>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -809,8 +952,8 @@ export function DecisionSettings({
                 title={PROVIDER_DISCLOSURES[id].name}
                 inputLabel={PROVIDER_DISCLOSURES[id].name}
                 description={
-                  consentRead !== undefined && consentRead.preset === id
-                    ? consentRead.granted
+                  consentRead !== undefined
+                    ? consentRead.byPreset[id]
                       ? "Consent granted"
                       : "Not consented"
                     : undefined
@@ -826,9 +969,8 @@ export function DecisionSettings({
                 title={CUSTOM_JEV_PROVIDER_NAME}
                 inputLabel={CUSTOM_JEV_PROVIDER_NAME}
                 description={
-                  consentRead !== undefined &&
-                  consentRead.preset === CUSTOM_PROVIDER_ID
-                    ? consentRead.granted
+                  consentRead !== undefined
+                    ? consentRead.byPreset[CUSTOM_PROVIDER_ID]
                       ? `Consent granted · ${customOrigin}`
                       : `Not consented · ${customOrigin}`
                     : customOrigin
@@ -973,11 +1115,12 @@ export function DecisionSettings({
             </button>
             <p className="text-xs text-muted-foreground">
               Consent alone sends nothing — it takes effect once{" "}
-              {disclosure.name} is connected above, and only for the actions
-              listed.
+              {disclosure.name} is connected in Connections, and only for the
+              actions listed.
             </p>
           </div>
         )}
+        {renderSectionFeedback("consent")}
       </section>
 
       {/* Sub-card 2 — auto-apply switches */}
@@ -1020,8 +1163,8 @@ export function DecisionSettings({
             ))}
           </div>
         )}
+        {renderSectionFeedback("automations")}
       </section>
-
       {/* Sub-card 3 — second opinions (escalation) */}
       <section aria-labelledby="escalation-heading" className={cardClass}>
         <div className="flex items-center gap-2.5">
@@ -1034,10 +1177,10 @@ export function DecisionSettings({
         </div>
         <p className="mt-1.5 text-sm text-muted-foreground">
           When enabled, a suggestion whose confidence falls below the review
-          floor may get a second opinion from the LLM provider configured
-          above — inside a Save, Analyze, or library scan you started, and
-          only while the monthly cap allows it. The verdict is advisory: the
-          suggestion still waits for your review.
+          floor may get a second opinion from the LLM provider configured in
+          Connections — inside a Save, Analyze, or library scan you started,
+          and only while the monthly cap allows it. The verdict is advisory:
+          the suggestion still waits for your review.
         </p>
         {live.llmError !== null ? (
           <p className="mt-3 text-sm text-muted-foreground">
@@ -1056,7 +1199,7 @@ export function DecisionSettings({
           </p>
         ) : llmOrigin === null ? (
           <p className="mt-3 text-sm text-muted-foreground">
-            Configure and enable an LLM provider above to use second
+            Configure and enable an LLM provider in Connections to use second
             opinions.
           </p>
         ) : (
@@ -1202,6 +1345,58 @@ export function DecisionSettings({
             )}
           </div>
         )}
+        {renderSectionFeedback("escalation")}
+      </section>
+
+      {/* Sub-card 3b — per-feature consent inspection and revocation */}
+      <section aria-labelledby="feature-consents-heading" className={cardClass}>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ShieldIcon className="size-4" />
+          </span>
+          <h2 id="feature-consents-heading" className={sectionHeadingClass}>
+            Feature permissions
+          </h2>
+        </div>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Individual AI feature consents granted when you explain a decision,
+          propose a folder layout, or summarize a page.
+        </p>
+        {activeFeatureConsents.length === 0 ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No individual feature permissions granted yet.
+          </p>
+        ) : (
+          <ul className="mt-3 divide-y divide-border">
+            {activeFeatureConsents.map(({ scope, origin }) => {
+              const itemDisclosure = LLM_SCOPE_DISCLOSURES[scope];
+              return (
+                <li
+                  key={`${scope}:${origin}`}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">
+                      {itemDisclosure.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Consent granted · {origin}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRevokeFeatureConsent(scope, origin)}
+                    disabled={busy}
+                    className={`${ghostDangerButtonClass} shrink-0 whitespace-nowrap`}
+                  >
+                    Revoke {itemDisclosure.title} consent
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {renderSectionFeedback("feature-consents")}
       </section>
 
       {/* Sub-card 4 — blocklist */}
@@ -1251,6 +1446,16 @@ export function DecisionSettings({
                   type="text"
                   value={newEntry}
                   onChange={(event) => setNewEntry(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !busy &&
+                      newEntry.trim() !== ""
+                    ) {
+                      event.preventDefault();
+                      onAddEntry();
+                    }
+                  }}
                   placeholder="example.com"
                   className={inputClass}
                 />
@@ -1270,7 +1475,8 @@ export function DecisionSettings({
           <Disclosure
             title={`Built-in blocklist — ${BUILTIN_SENSITIVE_SITES.length} sites`}
             subtitle="Always applies, not editable."
-            open={false}
+            open={builtinBlocklistOpen}
+            onOpenChange={setBuiltinBlocklistOpen}
             regionLabel="Built-in blocklist"
           >
             <ul className="flex flex-wrap gap-1.5">
@@ -1282,14 +1488,15 @@ export function DecisionSettings({
             </ul>
           </Disclosure>
         </div>
+        {renderSectionFeedback("blocklist")}
       </section>
 
-      {notice !== null && (
+      {feedbackSection === null && notice !== null && (
         <div className="mt-4">
           <Alert tone="success">{notice}</Alert>
         </div>
       )}
-      {error !== null && (
+      {feedbackSection === null && error !== null && (
         <div className="mt-4">
           <Alert tone="error">{error}</Alert>
         </div>

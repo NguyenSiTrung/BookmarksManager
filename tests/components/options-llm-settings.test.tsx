@@ -387,7 +387,7 @@ describe("escalation section", () => {
     await section();
     await waitFor(() =>
       expect(
-        screen.getByText(/configure and enable an llm provider above/i),
+        screen.getByText(/configure and enable an llm provider in connections/i),
       ).toBeTruthy(),
     );
     expect(screen.queryByRole("switch", {

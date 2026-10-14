@@ -26,9 +26,11 @@ import {
   DECISIONS_TRIGGER_NOTE,
   DECISIONS_TRIGGERS,
   PROVIDER_DISCLOSURES,
+  LLM_SCOPE_DISCLOSURES,
 } from "../../src/consent/disclosure";
 import {
   CONSENT_VERSION,
+  consentVersionForScope,
   grantConsent,
   grantConsentAtOrigin,
   grantTestConsent,
@@ -65,7 +67,11 @@ import {
   CONSENT_SCOPE,
   CUSTOM_PROVIDER_ID,
   DECISIONS_CONSENT_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
   LLM_ESCALATE_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
   LLM_TEST_SCOPE,
   ProviderSettings,
   type JevProviderId,
@@ -1461,7 +1467,7 @@ describe("mounted shell — live provider state", () => {
     showPanel("Permissions");
     const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
     await within(escalation).findByText(
-      /configure and enable an llm provider above/i,
+      /configure and enable an llm provider in connections/i,
     );
 
     await enableLlmProvider({ cap: "5" });
@@ -1566,7 +1572,7 @@ describe("mounted shell — live provider state", () => {
     );
     showPanel("Permissions");
     await within(escalation).findByText(
-      /configure and enable an llm provider above/i,
+      /configure and enable an llm provider in connections/i,
     );
     expect(
       within(escalation).queryByRole("switch", { name: /second opinion/i }),
@@ -1811,5 +1817,126 @@ describe("mounted shell — live provider state", () => {
     );
     await within(consent).findByRole("checkbox", { name: /agree/i });
     await waitFor(() => expect(consent.textContent).toContain(SECOND_ORIGIN));
+  });
+});
+
+describe("Phase 4 Task 5: per-feature consent, preset card status, disclosure control, Enter add, and inline feedback", () => {
+  it("displays consent status across all rendered Jev preset cards, including unselected presets", async () => {
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "openrouter");
+    render(<DecisionSettings />);
+
+    const typesafeRadio = await screen.findByRole("radio", { name: "TypeSafe" });
+    const openrouterRadio = screen.getByRole("radio", { name: "OpenRouter" });
+    const typesafeCard = typesafeRadio.closest("label") as HTMLElement;
+    const openrouterCard = openrouterRadio.closest("label") as HTMLElement;
+
+    await waitFor(() => {
+      expect(typesafeCard.textContent).toContain("Not consented");
+      expect(openrouterCard.textContent).toContain("Consent granted");
+    });
+  });
+
+  it("inspects active per-feature consent grants (llm_explain, llm_restructure, llm_summary, jev_summary_verify) and revokes them individually", async () => {
+    await grantConsentAtOrigin(LLM_EXPLAIN_SCOPE, LLM_ORIGIN);
+    await grantConsentAtOrigin(LLM_RESTRUCTURE_SCOPE, LLM_ORIGIN);
+    await grantConsentAtOrigin(LLM_SUMMARY_SCOPE, LLM_ORIGIN);
+    await grantConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, PRESETS.typesafe.origin);
+
+    render(<DecisionSettings />);
+
+    // All four feature consent titles and their origins appear.
+    await screen.findByText(LLM_SCOPE_DISCLOSURES[LLM_EXPLAIN_SCOPE].title);
+    expect(
+      screen.getByText(LLM_SCOPE_DISCLOSURES[LLM_RESTRUCTURE_SCOPE].title),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(LLM_SCOPE_DISCLOSURES[LLM_SUMMARY_SCOPE].title),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(LLM_SCOPE_DISCLOSURES[JEV_SUMMARY_VERIFY_SCOPE].title),
+    ).toBeTruthy();
+
+    // Stale version rows are ignored.
+    await act(async () => {
+      await db.consents.put({
+        scope: LLM_SUMMARY_SCOPE,
+        origin: "https://stale.example.com",
+        consentVersion: consentVersionForScope(LLM_SUMMARY_SCOPE) - 1,
+        acceptedAt: "2025-01-01T00:00:00.000Z",
+      });
+    });
+    expect(screen.queryByText("https://stale.example.com")).toBeNull();
+
+    // Revoking one scope removes only that scope and shows a confirmation notice.
+    const revokeExplain = screen.getByRole("button", {
+      name: new RegExp(
+        `revoke ${LLM_SCOPE_DISCLOSURES[LLM_EXPLAIN_SCOPE].title} consent`,
+        "i",
+      ),
+    });
+    fireEvent.click(revokeExplain);
+
+    await waitFor(async () => {
+      expect(await hasConsentAtOrigin(LLM_EXPLAIN_SCOPE, LLM_ORIGIN)).toBe(
+        false,
+      );
+    });
+    expect(await hasConsentAtOrigin(LLM_RESTRUCTURE_SCOPE, LLM_ORIGIN)).toBe(
+      true,
+    );
+    const statusNotice = await screen.findByRole("status");
+    expect(statusNotice.textContent).toMatch(/revoked/i);
+  });
+
+  it("keeps Built-in blocklist Disclosure open across re-renders", async () => {
+    render(<DecisionSettings />);
+    await screen.findByLabelText(/block a host/i);
+
+    const region = screen.getByRole("region", { name: "Built-in blocklist" });
+    const details = region.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+
+    openDetails(region);
+    expect(details.open).toBe(true);
+
+    // Trigger a state re-render by typing into #blocklist-entry.
+    fireEvent.change(screen.getByLabelText(/block a host/i), {
+      target: { value: "example.com" },
+    });
+    expect(details.open).toBe(true);
+  });
+
+  it("adds a blocklist entry when pressing Enter in #blocklist-entry and renders feedback inside the acted-on section", async () => {
+    render(<DecisionSettings />);
+    const blocklistSection = screen.getByRole("region", {
+      name: BLOCKLIST_SECTION,
+    });
+    const input = await within(blocklistSection).findByLabelText(/block a host/i);
+    fireEvent.change(input, { target: { value: "enter-host.example" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await within(blocklistSection).findByText("enter-host.example");
+    expect(workerBlocklist).toContain("enter-host.example");
+
+    // Feedback notice renders inside the acted-on blocklist section.
+    const alertInSection = await within(blocklistSection).findByRole("status");
+    expect(alertInSection.textContent).toContain("Blocklist saved.");
+  });
+
+  it("uses 'in Connections' copy instead of stale 'above' references", async () => {
+    sendMessageSpy.mockImplementation(shellWorkerReply);
+    render(<DecisionSettings />);
+    const consentSection = screen.getByRole("region", { name: CONSENT_SECTION });
+    await within(consentSection).findByText(/is connected in Connections/i);
+
+    const escalationSection = screen.getByRole("region", {
+      name: ESCALATION_SECTION,
+    });
+    expect(escalationSection.textContent).toContain(
+      "LLM provider configured in Connections",
+    );
+    await within(escalationSection).findByText(
+      /Configure and enable an LLM provider in Connections/i,
+    );
   });
 });
