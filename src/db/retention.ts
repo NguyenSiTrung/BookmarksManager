@@ -299,6 +299,11 @@ export async function pruneAuditLocked(): Promise<number> {
  * inside a `rw` transaction covering `decisions`.
  */
 export async function pruneTerminalDecisionsLocked(): Promise<number> {
+  const totalCount = await db.decisions
+    .where("status")
+    .anyOf(...TERMINAL_DECISION_STATUSES)
+    .count();
+  if (totalCount <= DECISION_TERMINAL_RETENTION_CAP) return 0;
   const terminal = await db.decisions
     .where("status")
     .anyOf(...TERMINAL_DECISION_STATUSES)

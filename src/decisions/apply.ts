@@ -13,12 +13,11 @@ import type { TagOpsErrorCode } from "../sync/tag-ops";
 import { discardById, restoreById } from "../undo/restore";
 import type { UndoFailureCode } from "../undo/restore";
 import { captureNodes, pushSnapshot } from "../undo/snapshot";
-import type { UndoMeta } from "../schemas/undo";
+import { tagNameKey } from "../schemas/meta";
+import type { UndoMeta, UndoMetaDelta } from "../schemas/undo";
 import {
   claimDecision,
   DecisionStoreError,
-  getDecision,
-  isLegalTransition,
   releaseDecisionClaim,
   transitionStatus,
 } from "./store";
@@ -174,18 +173,6 @@ function toApplyError(cause: unknown): DecisionApplyError {
 // Internals
 // ---------------------------------------------------------------------------
 
-/** Load a row or reject `not_found`. */
-async function requireRow(id: string): Promise<DecisionRow> {
-  const row = await getDecision(id);
-  if (row === undefined) {
-    throw new DecisionApplyError(
-      "not_found",
-      `No decision exists for id "${id}".`,
-    );
-  }
-  return row;
-}
-
 /** Total existence probe — `get` rejects on an unknown id. */
 async function lookup(id: string): Promise<BookmarksTreeNode | undefined> {
   try {
@@ -261,11 +248,20 @@ async function preChangeMeta(
 }
 
 /** Push a `delete`-kind snapshot carrying only the pre-change meta rows. */
-async function pushMetaUndo(ids: readonly string[]): Promise<number> {
+async function pushMetaUndo(
+  ids: readonly string[],
+  metaDelta?: UndoMetaDelta,
+): Promise<number> {
   const meta = await preChangeMeta(ids);
   // Decision-origin (D05): approvals push in bursts and must not crowd the
   // user bucket.
-  return pushSnapshot({ kind: "delete", nodes: [], meta, origin: "decision" });
+  return pushSnapshot({
+    kind: "delete",
+    nodes: [],
+    meta,
+    origin: "decision",
+    ...(metaDelta === undefined ? {} : { metaDelta }),
+  });
 }
 
 /**
@@ -304,7 +300,11 @@ async function compensate(snapshotId: number): Promise<boolean> {
 async function applyTags(
   row: Extract<DecisionDocument, { kind: "add_tags" }>,
 ): Promise<number> {
-  const snapshotId = await pushMetaUndo(row.bookmarkIds);
+  const addedTags = row.tags.map(tagNameKey).filter((k) => k !== "");
+  const snapshotId = await pushMetaUndo(
+    row.bookmarkIds,
+    addedTags.length > 0 ? { field: "tags", addedTags } : undefined,
+  );
   let appliedAny = false;
   for (const tag of row.tags) {
     const result = await bulkAddTag(row.bookmarkIds, tag);
@@ -323,7 +323,10 @@ async function applyTags(
 async function applyCategory(
   row: Extract<DecisionDocument, { kind: "set_category" }>,
 ): Promise<number> {
-  const snapshotId = await pushMetaUndo(row.bookmarkIds);
+  const snapshotId = await pushMetaUndo(row.bookmarkIds, {
+    field: "category",
+    appliedCategory: row.category,
+  });
   const result = await bulkSetCategory(row.bookmarkIds, row.category);
   if (!result.ok) {
     // One transactional call — a failure leaves no net change to restore.
@@ -374,9 +377,20 @@ async function applyMerge(
   const group: DuplicateGroup = { key: row.keepId, kind: "exact", items };
   // Decision-origin (D05): `merge` snapshots are shared with the UI flow,
   // so the origin comes in as a parameter rather than living in mergeGroup.
-  const result = await mergeGroup(group, row.keepId, "decision");
+  // `allowDistinctUrls: true` (B-01): `assertFresh` already verified each
+  // member's send-time snapshot, and near-duplicate decisions legitimately
+  // merge bookmarks with distinct normalized URLs.
+  const result = await mergeGroup(group, row.keepId, "decision", {
+    allowDistinctUrls: true,
+  });
   if (!result.ok) {
     throw new DecisionApplyError(result.code, result.message);
+  }
+  if (result.removedIds.length === 0 || result.snapshotId === undefined) {
+    throw new DecisionApplyError(
+      "stale",
+      `Decision "${row.id}" is stale: no duplicate bookmarks remained to merge.`,
+    );
   }
   // mergeGroup pushed its own `merge` snapshot and returns its id (D04) —
   // never peekLatest(): a snapshot pushed concurrently in another context
@@ -527,7 +541,7 @@ export async function approveDecision(
 /** Claim the row for `to`, mapping store errors onto the apply model. */
 async function claim(
   id: string,
-  to: "applied" | "auto_applied" | "rejected",
+  to: "applied" | "auto_applied" | "rejected" | "reverted",
 ): Promise<{ row: DecisionRow; token: string }> {
   try {
     return await claimDecision(id, to);
@@ -572,48 +586,49 @@ export async function revertDecision(
   id: string,
   actor: AuditActor = "user",
 ): Promise<DecisionRow> {
-  const row = await requireRow(id);
-  if (!isLegalTransition(row.status, "reverted")) {
-    throw new DecisionApplyError(
-      "illegal_transition",
-      `Cannot revert decision "${id}" from "${row.status}".`,
-    );
-  }
-  const snapshotId = row.undoSnapshotId;
-  if (snapshotId === undefined) {
-    throw new DecisionApplyError(
-      "invalid",
-      `Decision "${id}" has no recorded undo snapshot to revert.`,
-    );
-  }
-  // Targeted replay: `restoreById` replays exactly the row this decision
-  // recorded, wherever it sits on the stack (D07/D05) — a snapshot another
-  // context pushed in the meantime is never popped in this decision's
-  // place, and a non-head row is no longer a false refusal. `empty` (the
-  // row was consumed) maps onto the same `undo_conflict` the head-moved
-  // refusal reported before.
-  const undone = await restoreById(snapshotId);
-  if (!undone.ok) {
-    if (undone.code === "empty" || undone.code === "conflict") {
-      throw new DecisionApplyError(
-        "undo_conflict",
-        `The undo snapshot for decision "${id}" is no longer available.`,
-      );
+  return serializeDecision(id, async () => {
+    const { row, token } = await claim(id, "reverted");
+    try {
+      const snapshotId = row.undoSnapshotId;
+      if (snapshotId === undefined) {
+        throw new DecisionApplyError(
+          "invalid",
+          `Decision "${id}" has no recorded undo snapshot to revert.`,
+        );
+      }
+      // Targeted replay: `restoreById` replays exactly the row this decision
+      // recorded, wherever it sits on the stack (D07/D05) — a snapshot another
+      // context pushed in the meantime is never popped in this decision's
+      // place, and a non-head row is no longer a false refusal. `empty` (the
+      // row was consumed) maps onto the same `undo_conflict` the head-moved
+      // refusal reported before.
+      const undone = await restoreById(snapshotId);
+      if (!undone.ok) {
+        if (undone.code === "empty" || undone.code === "conflict") {
+          throw new DecisionApplyError(
+            "undo_conflict",
+            `The undo snapshot for decision "${id}" is no longer available.`,
+          );
+        }
+        throw new DecisionApplyError(undone.code, undone.message);
+      }
+      try {
+        return await transition(id, "reverted", actor, undefined, token);
+      } catch (cause) {
+        // The undo already ran — the change is reverted but the row could not be
+        // marked so. Surface a typed error instead of leaving it inconsistent.
+        const detail = cause instanceof Error ? `: ${cause.message}` : "";
+        throw new DecisionApplyError(
+          "state_unrecorded",
+          `Decision "${id}" was reverted but its status could not be recorded` +
+            `${detail}.`,
+        );
+      }
+    } catch (cause) {
+      await releaseDecisionClaim(id, token).catch(() => {});
+      throw cause;
     }
-    throw new DecisionApplyError(undone.code, undone.message);
-  }
-  try {
-    return await transition(id, "reverted", actor);
-  } catch (cause) {
-    // The undo already ran — the change is reverted but the row could not be
-    // marked so. Surface a typed error instead of leaving it inconsistent.
-    const detail = cause instanceof Error ? `: ${cause.message}` : "";
-    throw new DecisionApplyError(
-      "state_unrecorded",
-      `Decision "${id}" was reverted but its status could not be recorded` +
-        `${detail}.`,
-    );
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------

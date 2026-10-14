@@ -159,6 +159,7 @@ export async function mergeGroup<T extends DuplicateCandidate>(
   keepId: string,
   /** D05: retention bucket for the pushed snapshot. Defaults to `user`. */
   origin: UndoOrigin = "user",
+  options?: { allowDistinctUrls?: boolean },
 ): Promise<MergeResult> {
   if (group.items.length < 2) {
     return {
@@ -229,7 +230,10 @@ export async function mergeGroup<T extends DuplicateCandidate>(
             `merge only accepts leaf bookmarks.`,
         };
       }
-      if (!urlsStillMatch(capture.node.url, keptNode.url)) {
+      if (
+        options?.allowDistinctUrls !== true &&
+        !urlsStillMatch(capture.node.url, keptNode.url)
+      ) {
         // Edited since grouping — the page that was grouped no longer
         // exists under this id. Drop it whole: keep its node, keep its
         // meta rows out of the snapshot AND the union (a different page's

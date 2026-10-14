@@ -18,7 +18,7 @@ import {
   revertBatch,
   revertDecision,
 } from "../../src/decisions/apply";
-import { persistDecision } from "../../src/decisions/store";
+import { getDecision, persistDecision } from "../../src/decisions/store";
 import type { DecisionRow } from "../../src/decisions/store";
 import { getMeta, putMeta } from "../../src/db/meta";
 import { Decision } from "../../src/schemas/decision";
@@ -26,7 +26,7 @@ import { get } from "../../src/sync/chrome-bookmarks";
 import { moveNode, removeTree } from "../../src/sync/mutations";
 import { captureSubtree, peekLatest, pushSnapshot } from "../../src/undo/snapshot";
 import { decisionBase } from "../fixtures/base-records";
-import { installBookmarksFake } from "../fakes/chrome-bookmarks";
+import { installBookmarksFake, type FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { removeWebLocksFake } from "../fakes/web-locks";
 
 /**
@@ -70,8 +70,10 @@ beforeAll(async () => {
   await db.open();
 });
 
+let fake: FakeBookmarksApi;
+
 beforeEach(async () => {
-  installBookmarksFake({
+  fake = installBookmarksFake({
     bookmarksBar: [
       { id: "f-target", title: "Target" },
       { id: "bm-a", title: "A", url: "https://a.example/" },
@@ -275,6 +277,62 @@ describe("approveDecision — merge_duplicates", () => {
       spy.mockRestore();
     }
   });
+
+  it("merges near-duplicate bookmarks with distinct normalized URLs when guard snapshots match (B-01)", async () => {
+    installBookmarksFake({
+      bookmarksBar: [
+        { id: "bm-near-1", title: "Near 1", url: "https://one.example/article" },
+        { id: "bm-near-2", title: "Near 2", url: "https://two.example/article" },
+      ],
+    });
+    await putMeta("bm-near-1", { tags: ["k1"] });
+    await putMeta("bm-near-2", { tags: ["k2"], notes: "from near-2" });
+    const d = await persistDecision(
+      decision({
+        kind: "merge_duplicates",
+        bookmarkIds: ["bm-near-1", "bm-near-2"],
+        keepId: "bm-near-1",
+      }),
+      {
+        guard: {
+          placements: { "bm-near-1": "1", "bm-near-2": "1" },
+          snapshots: {
+            "bm-near-1": { url: "https://one.example/article", title: "Near 1" },
+            "bm-near-2": { url: "https://two.example/article", title: "Near 2" },
+          },
+        },
+      },
+    );
+    const row = await approveDecision(d.id);
+    expect(row.status).toBe("applied");
+    expect(row.undoSnapshotId).toBeDefined();
+    await expect(get("bm-near-2")).rejects.toThrow();
+    expect(await getMeta("bm-near-1")).toMatchObject({
+      tags: ["k1", "k2"],
+      notes: "from near-2",
+    });
+  });
+
+  it("rejects stale when mergeGroup removes zero bookmarks (B-01)", async () => {
+    const d = await persistDecision(
+      decision({
+        kind: "merge_duplicates",
+        bookmarkIds: ["bm-c", "bm-d"],
+        keepId: "bm-c",
+      }),
+    );
+    // Simulate bm-d vanishing right after assertFresh / get before captureSubtree in mergeGroup
+    const realGetSubTree = fake.getSubTree.bind(fake);
+    vi.spyOn(fake, "getSubTree").mockImplementation(async (id: string) => {
+      if (id === "bm-d") {
+        throw new Error("Can't find bookmark for id.");
+      }
+      return realGetSubTree(id);
+    });
+    await expectApplyError(() => approveDecision(d.id), "stale");
+    expect((await getDecision(d.id))?.status).toBe("pending");
+    expect((await getDecision(d.id))?.undoSnapshotId).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -399,6 +457,63 @@ describe("revertDecision", () => {
     expect((await peekLatest())?.id).toBe(interloper);
   });
 
+  it("restores only the decision's tag delta on revert, preserving post-decision notes/category/tags (B-08)", async () => {
+    await putMeta("bm-a", {
+      tags: ["existing"],
+      category: "article",
+      notes: "original note",
+    });
+    const d = await persistDecision(
+      decision({
+        kind: "add_tags",
+        bookmarkIds: ["bm-a"],
+        tags: ["Existing", "Added"],
+      }),
+    );
+    await approveDecision(d.id);
+    // User edits notes, category, and adds another tag after the decision applied.
+    await putMeta("bm-a", {
+      tags: ["existing", "added", "user-tag"],
+      category: "docs",
+      notes: "user edited note",
+      summary: "user summary",
+    });
+
+    await revertDecision(d.id);
+    const meta = await getMeta("bm-a");
+    expect(meta?.tags).toEqual(["existing", "user-tag"]);
+    expect(meta?.category).toBe("docs");
+    expect(meta?.notes).toBe("user edited note");
+    expect(meta?.summary).toBe("user summary");
+  });
+
+  it("restores only the decision's category delta on revert, preserving post-decision notes/tags (B-08)", async () => {
+    await putMeta("bm-a", {
+      tags: ["initial"],
+      category: "article",
+      notes: "initial note",
+    });
+    const d = await persistDecision(
+      decision({
+        kind: "set_category",
+        bookmarkIds: ["bm-a"],
+        category: "docs",
+      }),
+    );
+    await approveDecision(d.id);
+    // User edits tags and notes after the decision applied.
+    await putMeta("bm-a", {
+      tags: ["initial", "later"],
+      category: "docs",
+      notes: "updated note",
+    });
+
+    await revertDecision(d.id);
+    const meta = await getMeta("bm-a");
+    expect(meta?.category).toBe("article");
+    expect(meta?.tags).toEqual(["initial", "later"]);
+    expect(meta?.notes).toBe("updated note");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -816,5 +931,29 @@ describe("mutual exclusion (J06)", () => {
     expect(row?.claim).toBeUndefined();
     await rejectDecision(d.id);
     expect((await getRow(d.id))?.status).toBe("rejected");
+  });
+
+  it("serializes and claim-guards revertDecision, releasing the claim if restoreById fails (P-02)", async () => {
+    const d = await persistDecision(
+      decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["once"] }),
+    );
+    await approveDecision(d.id);
+
+    // A foreign claim blocks revertDecision with `claimed`.
+    await seedClaim(d.id, {
+      token: "foreign-revert-claim",
+      at: new Date().toISOString(),
+    });
+    await expectApplyError(() => revertDecision(d.id), "claimed");
+    // Clear the foreign claim and verify failed restoreById releases its own claim.
+    const current = await getRow(d.id);
+    if (current !== undefined) {
+      delete current.claim;
+      await db.decisions.put(current);
+    }
+
+    removeWebLocksFake();
+    await expectApplyError(() => revertDecision(d.id), "undo_conflict");
+    expect((await getRow(d.id))?.claim).toBeUndefined();
   });
 });

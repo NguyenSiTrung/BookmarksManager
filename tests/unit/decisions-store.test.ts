@@ -15,7 +15,9 @@ import {
   DecisionStoreError,
   POPUP_DECISION_LIMIT,
   claimDecision,
+  deleteReviewableByBookmarkIds,
   getDecision,
+  hasDecidedSlotRow,
   isLegalTransition,
   listAutoApplied,
   listByStatus,
@@ -146,6 +148,32 @@ describe("persistDecision", () => {
     const rows = await listDecisions();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.confidence).toBe(0.5);
+  });
+
+  it("queries the *bookmarkIds index for supersession and skips claimed rows (P-02)", async () => {
+    const older = await persistDecision(
+      decision({ id: UUID, bookmarkIds: ["bm-001"], status: "pending" }),
+    );
+    const claimedRow = await persistDecision(
+      decision({ id: UUID2, bookmarkIds: ["bm-002"], status: "pending" }),
+    );
+    await claimDecision(claimedRow.id, "applied");
+
+    const whereSpy = vi.spyOn(db.decisions, "where");
+    // Superseding `older` uses bookmarkIds index:
+    await persistDecision(
+      decision({ id: UUID3, bookmarkIds: ["bm-001"], status: "pending" }),
+    );
+    expect(whereSpy).toHaveBeenCalledWith("bookmarkIds");
+    expect(await getDecision(older.id)).toBeUndefined();
+
+    // Superseding a claimed row must NOT delete the claimed row out from under its holder:
+    const replacementId = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
+    await persistDecision(
+      decision({ id: replacementId, bookmarkIds: ["bm-002"], status: "pending" }),
+    );
+    expect(await getDecision(claimedRow.id)).toBeDefined();
+    expect(await getDecision(replacementId)).toBeDefined();
   });
 });
 
@@ -689,6 +717,13 @@ describe("claimDecision", () => {
     expect(token).not.toBe("crashed");
     expect((await getRow(d.id))?.claim?.token).toBe(token);
   });
+
+  it("allows claiming an applied or auto_applied row for 'reverted' (P-02)", async () => {
+    const d = await persistDecision(decision({ status: "applied" }));
+    const { row, token } = await claimDecision(d.id, "reverted");
+    expect(token).toBeTruthy();
+    expect(row.claim?.token).toBe(token);
+  });
 });
 
 describe("claim-gated transitionStatus", () => {
@@ -748,5 +783,26 @@ describe("releaseDecisionClaim", () => {
     // Releasing again, or on an unknown id, is silently fine.
     await releaseDecisionClaim(d.id, token);
     await releaseDecisionClaim("missing", token);
+  });
+});
+
+describe("indexed bookmarkIds lookups (P-02)", () => {
+  it("hasDecidedSlotRow and deleteReviewableByBookmarkIds query the *bookmarkIds index", async () => {
+    await persistDecision(
+      decision({ id: UUID, bookmarkIds: ["bm-001"], status: "applied" }),
+    );
+    await persistDecision(
+      decision({ id: UUID2, bookmarkIds: ["bm-002"], status: "pending" }),
+    );
+
+    const whereSpy = vi.spyOn(db.decisions, "where");
+    expect(await hasDecidedSlotRow(["bm-001"], "set_category")).toBe(true);
+    expect(whereSpy).toHaveBeenCalledWith("bookmarkIds");
+    expect(await hasDecidedSlotRow([], "set_category")).toBe(false);
+
+    whereSpy.mockClear();
+    expect(await deleteReviewableByBookmarkIds(["bm-002"])).toBe(1);
+    expect(whereSpy).toHaveBeenCalledWith("bookmarkIds");
+    expect(await getDecision(UUID2)).toBeUndefined();
   });
 });

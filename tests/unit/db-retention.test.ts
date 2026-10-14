@@ -378,6 +378,35 @@ describe("prunePopupDecisions", () => {
       `2026-08-01T00:${String(Math.floor(7 / 60)).padStart(2, "0")}:${String(7 % 60).padStart(2, "0")}.000Z`,
     );
   });
+
+  it("short-circuits terminal decision pruning via count() when below the cap (P-02)", async () => {
+    await db.decisions.bulkAdd([
+      { ...validDecisionShape(), status: "rejected" as const },
+      { ...validDecisionShape(), status: "reverted" as const },
+    ]);
+    const realWhere = db.decisions.where.bind(db.decisions);
+    let terminalToArrayCalls = 0;
+    vi.spyOn(db.decisions, "where").mockImplementation(((index: unknown) => {
+      const clause = realWhere(index as never);
+      const realAnyOf = clause.anyOf.bind(clause);
+      vi.spyOn(clause, "anyOf").mockImplementation((...values: unknown[]) => {
+        const coll = realAnyOf(...(values as [never]));
+        const flat = values.flat();
+        if (flat.includes("rejected")) {
+          const realCollToArray = coll.toArray.bind(coll);
+          vi.spyOn(coll, "toArray").mockImplementation(() => {
+            terminalToArrayCalls += 1;
+            return realCollToArray();
+          });
+        }
+        return coll;
+      });
+      return clause;
+    }) as typeof db.decisions.where);
+
+    expect(await prunePopupDecisions()).toBe(0);
+    expect(terminalToArrayCalls).toBe(0);
+  });
 });
 
 describe("budget transaction indexed reads", () => {

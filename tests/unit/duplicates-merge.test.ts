@@ -526,6 +526,25 @@ describe("mergeGroup — failures", () => {
     await expect(get("bm-l1")).rejects.toThrow("Can't find bookmark");
   });
 
+
+  it("merges members with distinct normalized URLs when allowDistinctUrls is true (B-01)", async () => {
+    await putMeta("bm-k", { tags: ["keep"], notes: "k note" });
+    await putMeta("bm-l1", { tags: ["l1"], notes: "l1 note" });
+    await fake.update("bm-l1", { url: "https://near-duplicate.example/page" });
+    const result = expectMergeOk(
+      await mergeGroup(groupOf("bm-k", "bm-l1"), "bm-k", "decision", {
+        allowDistinctUrls: true,
+      }),
+    );
+    expect(result.removedIds).toEqual(["bm-l1"]);
+    expect(result.droppedIds).toEqual([]);
+    expect(result.snapshotId).toBeDefined();
+    await expect(get("bm-l1")).rejects.toThrow("Can't find bookmark");
+    expect(await getMeta("bm-k")).toMatchObject({
+      tags: ["keep", "l1"],
+      notes: ["k note", "l1 note"].join(MERGE_NOTES_SEPARATOR),
+    });
+  });
   it("is a no-op when every member drifted — no snapshot, nothing removed (D02)", async () => {
     await putMeta("bm-k", { tags: ["keep"], notes: "k note" });
     await fake.update("bm-l1", { url: "https://one.example/" });

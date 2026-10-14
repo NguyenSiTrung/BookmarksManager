@@ -185,12 +185,15 @@ export async function hasDecidedSlotRow(
   kind: DecisionDocument["kind"],
   excludeId?: string,
 ): Promise<boolean> {
-  const decided = await db.decisions
-    .where("status")
-    .anyOf(DECIDED_STATUSES)
+  const anchor = bookmarkIds[0];
+  if (anchor === undefined) return false;
+  const candidates = await db.decisions
+    .where("bookmarkIds")
+    .equals(anchor)
     .toArray();
-  return decided.some(
+  return candidates.some(
     (row) =>
+      DECIDED_STATUSES.includes((row as DecisionRow).status) &&
       row.id !== excludeId &&
       row.kind === kind &&
       sameBookmarkSet(row.bookmarkIds, bookmarkIds),
@@ -279,14 +282,16 @@ export async function persistDecision(
       // stored clears the older undecided rows for its slot. (Production
       // rows are always pending/unsure here — a decided row goes through
       // transitionStatus, never a fresh persist.)
-      if (UNDECIDED_STATUSES.includes(row.status)) {
-        const undecided = await db.decisions
-          .where("status")
-          .anyOf(UNDECIDED_STATUSES)
+      if (UNDECIDED_STATUSES.includes(row.status) && row.bookmarkIds.length > 0) {
+        const candidates = await db.decisions
+          .where("bookmarkIds")
+          .equals(row.bookmarkIds[0]!)
           .toArray();
-        const superseded = undecided.filter(
+        const superseded = candidates.filter(
           (other) =>
             other.id !== row.id &&
+            UNDECIDED_STATUSES.includes((other as DecisionRow).status) &&
+            !claimLive((other as DecisionRow).claim) &&
             other.kind === row.kind &&
             sameBookmarkSet(other.bookmarkIds, row.bookmarkIds),
         );
@@ -530,12 +535,37 @@ async function sweepReviewableDecisions(
  * A row spanning several bookmarks dies when ANY member is removed: the
  * suggestion's premise no longer matches the library.
  */
+const REVIEWABLE_STATUSES: readonly DecisionStatus[] = [
+  "pending",
+  "unsure",
+  "approved",
+];
+
 export async function deleteReviewableByBookmarkIds(
   ids: readonly string[],
 ): Promise<number> {
   if (ids.length === 0) return 0;
   const gone = new Set(ids);
-  return sweepReviewableDecisions((id) => gone.has(id));
+  return db.transaction("rw", db.decisions, async () => {
+    const candidates = (await db.decisions
+      .where("bookmarkIds")
+      .anyOf([...gone])
+      .distinct()
+      .toArray()) as DecisionRow[];
+    const victims = candidates
+      .filter(
+        (row) =>
+          REVIEWABLE_STATUSES.includes(row.status) &&
+          !claimLive(row.claim) &&
+          row.bookmarkIds.some(
+            (id) => !id.startsWith(POPUP_ID_PREFIX) && gone.has(id),
+          ),
+      )
+      .map((row) => row.id);
+    if (victims.length === 0) return 0;
+    await db.decisions.bulkDelete(victims);
+    return victims.length;
+  });
 }
 
 /**
@@ -685,7 +715,7 @@ function claimLive(claim: DecisionRow["claim"]): boolean {
  */
 export async function claimDecision(
   id: string,
-  to: "applied" | "auto_applied" | "rejected",
+  to: "applied" | "auto_applied" | "rejected" | "reverted",
 ): Promise<{ row: DecisionRow; token: string }> {
   const token = crypto.randomUUID();
   try {
