@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-14 (refresh — content current after perf_ux_hardening_20261014 archive; marker bump only) -->
+<!-- Last refreshed: 2026-10-14 (refresh — content current after ui_ux_redesign_20261014 archive; marker bump only) -->
 
 # Development Workflow
 

@@ -1,73 +1,82 @@
 {
-  "lastRefresh": "2026-10-14T12:00:00Z",
-  "previousRefresh": "2026-10-13T00:00:00Z",
+  "lastRefresh": "2026-10-14T16:35:00Z",
+  "previousRefresh": "2026-10-14T12:00:00Z",
   "scope": "all",
-  "baseCommit": "e4a4823",
-  "headCommit": "3426c7c",
+  "baseCommit": "3426c7c",
+  "headCommit": "f7e34aa",
   "commitsSinceLastRefresh": [
-    "8929059 chore(beads): sync issue export",
-    "26c233f conductor(newtrack): add perf_ux_hardening_20261014 track and Beads epic",
-    "02c67fe chore(beads): sync issue export",
-    "3d2b29a fix(db): coordinate MV3 DB release and batch tombstone/corrupt-meta ops (B-04, P-09)",
-    "b63f9ec fix(sync): keep verify cache coherent, maintain meta.url, and batch sync/tag ops (B-09, B-10, P-05, P-06)",
-    "abea0b8 fix(undo): add field-scoped metaDelta, recursive UNDO_NODE_BUDGET, protected restructure snapshots, and batched restore (B-08, B-10, P-08b)",
-    "ccec374 fix(io): transactional resumable import claim/cancel, batched import metadata, and parser fast-paths (B-03, B-16b, P-07)",
-    "1c3faa6 fix(decisions): index bookmarkIds lookups, support near-duplicate merge approval, and serialize revertDecision (B-01, B-08, P-02)",
-    "e6f9fb3 perf(decisions): add PrecomputedAnalysisIndex, single-pass URL parse, pair failure isolation, and post-network authority checks (B-11, P-01a, P-03a)",
-    "a8451a2 fix(llm,consent,summaries): propagate record.tier, harden explainDecision, scope consent/permission revocation, and record summary verify usage (B-05, B-06a, B-12, B-14)",
-    "00ba0c9 fix(jobs): slice bookmark batches positionally, cache AnalysisContext, serialize keepalive RMW, and handle worker DB release (B-02, B-04a, B-07b, B-11, B-15, P-01b, P-04)",
-    "7832cc6 fix(restructure): preflight Jev/size bounds, lock/cache applyRestructurePlan, discard snapshot on clean rollback, and bound synopsis paths (B-07a, B-13, B-16a, P-08a)",
-    "9453369 perf(search): precompute treeOrderRank, filter docs before hit allocation, incremental duplicate buckets, bulk-diff rebuild, and omnibox live-cache (P-12)",
-    "0b48937 fix(search): remove unimplemented is:dead suggestion, prefix-match filter keys, and harden QueryInput Escape/scroll ergonomics (U-06a-c)",
-    "d356401 fix(sidepanel): clear search on view selection, add Ctrl+Z undo, pause/offset UndoToast, keep BulkBar job card visible, and harden CommandPalette (P-03b, P-13b, U-01, U-03b, U-05, U-09b, U-10d)",
-    "e171e50 fix(sidepanel): virtualize DuplicatesView, memoize selection, add DnD indicators & grid DragHandle, and apply roving tabIndex (P-11, P-13a, U-07, U-08a-c, U-09c, U-10a-c)",
-    "480f911 fix(sidepanel): display/clear saved summaries, request runtime origin permissions on click, gate folder fields, and commit pending tag input (B-06b, U-02, U-04b, U-08d)",
-    "cda4bb1 fix(popup): defer search index until searchOpen, use O(1) duplicate lookup, commit pending tag input, and add filter autocomplete & Suggest feedback (P-10, U-04a, U-06d, U-09d)",
-    "2a90417 fix(options): add per-feature consent management, control built-in blocklist Disclosure, add inline card feedback, and handle Enter on #blocklist-entry (U-03a, U-09a)",
-    "d7cbfc2 test(audit): add 10k scaling benchmarks, e2e regression suite, and sync docs",
-    "a650b10 chore(conductor): mark perf_ux_hardening_20261014 track complete",
-    "3426c7c chore(conductor): archive perf_ux_hardening_20261014 track"
+    "9e20593 conductor(refresh): Sync context with codebase",
+    "de2b34e feat(popup): offer clickable folder chip for sub-threshold move suggestions",
+    "88c7016 fix(popup): show folder suggestion chip when folder picker was changed",
+    "64d4b16 chore(conductor): mark ui_ux_redesign_20261014 track open",
+    "aa1d8c4 chore(beads): re-export issues.jsonl",
+    "ed3d402 feat(ui): extract shared TagField with TagDef combobox autocomplete (UX-01)",
+    "fdccd49 feat(sidepanel): add folder filter and inline subfolder creation to MoveToDialog (UX-03)",
+    "66d5a0e feat(sidepanel): wire TagField into EditDialog and add tag autocomplete to BulkBar (UX-02)",
+    "9fbf30b feat(sidepanel): add one-click Open button and rich metadata cues to BookmarkList (UX-04, UX-05)",
+    "4b28e09 feat(sidepanel): add tag color dots and live bookmark counts to ScopePane (UX-06)",
+    "7d6caa6 feat(sidepanel): add narrow-mode ScopeHeading pill trigger and ViewChips Review promotion (UX-07)",
+    "2209500 feat(sidepanel): add QueryInput clear button, SearchBar filter hints, and TopBar palette shortcut (UX-08)",
+    "3e562ed feat(sidepanel): wire App metadata props and compact BulkBar selection pill (UX-05, UX-06, UX-09)",
+    "7ca9912 feat(sidepanel): format SummaryDialog disclosures with ConsentFacts and add Copy summary (UX-10)",
+    "5e0c276 feat(sidepanel): add Applied history with Undo and primary Approve styling to ReviewView (UX-11)",
+    "3c36490 docs(conductor): revise UX-02/UX-12 to preserve P-10 and DECISIONS_TRIGGERS invariants",
+    "1f499fd feat(popup): add filter hints to PopupSearch and lazy TagField autocomplete (UX-02, UX-12)",
+    "3d8eac8 feat(options): show inline Bookmark analysis consent status in ProviderSetup (UX-13)",
+    "103d9ba chore(conductor): complete ui_ux_redesign_20261014 visual verification, full gate, and docs sync",
+    "dd5eb20 chore(conductor): archive completed track ui_ux_redesign_20261014",
+    "4eebff4 chore(beads): re-export issues.jsonl for ui_ux_redesign_20261014",
+    "f7e34aa chore(beads): sync closed BookmarksManager-36j epic in issues.jsonl"
   ],
   "changes": [
-    "tech-stack.md: recorded DuplicatesView virtualization (@tanstack/react-virtual), MutationVerifyCache + field-scoped UndoMetaDelta + recursive UNDO_NODE_BUDGET + distinct-URL near-duplicate merges, search live-cache.ts + filter-before-hit runQuery + prefix-only suggest.ts, jev_summary_verify v3 + hasOtherProviderAtOrigin shared permission guard, PrecomputedAnalysisIndex + *bookmarkIds indexed store + positional JobRunner batch slicing + serialized keepalive RMW, 10k scaling benchmarks in decisions-perf/search-perf, updated suite counts (3037 unit/component cases across 167 files, 49 e2e specs incl. audit-deep-fixes.spec.ts), and .claude/** in eslint.config.mjs ignores",
-    "product.md: marked perf_ux_hardening_20261014 delivery bullet as archived (2026-10-14) with final checkpoint d7cbfc2 gate evidence (167 files/3037 unit/component tests, 49 e2e specs) and Beads epic BookmarksManager-3n9 closure",
-    "patterns.md: updated mid-file refresh marker and consolidated 4 additional learnings from perf_ux_hardening_20261014 (nested Dexie transaction store-scope guard + useLiveQuery catch on DB release, PrecomputedAnalysisIndex + WeakMap dual caching, restructure Jev preflight + locked diff/apply, and keeping unsupported query-syntax warnings in query.ts while excluding them from suggest.ts)",
-    "workflow.md: bumped refresh marker to 2026-10-14 (no methodology or CI drift)",
-    "tracks.md: unchanged — perf_ux_hardening_20261014 already archived at 3426c7c; 0 active tracks"
+    "product.md: recorded clickable popup folder suggestion chip (de2b34e/88c7016) for sub-threshold or user-overridden (folderTouched) move suggestions and Phase 5 checkpoint 103d9ba in the ui_ux_redesign_20261014 delivery bullet",
+    "tech-stack.md: updated dependency check date to 2026-10-14 (ui_ux_redesign_20261014), documented shared src/ui/components/tag-field.tsx and src/decisions/store.ts listApplied() in body sections, and updated e2e suite summary (50 tests across 14 spec files; 49 run by default, 1 store-assets skipped)",
+    "workflow.md: updated refresh marker to reflect ui_ux_redesign_20261014 archive (no methodology or CI drift)",
+    "patterns.md: updated top and mid-file refresh markers to ui_ux_redesign_20261014 and consolidated 4 additional patterns/gotchas from ui_ux_redesign_20261014 and de2b34e/88c7016 (optimistic folder state in MoveToDialog, excluding promoted Review chip from More activeMore label, opt-in popup folder chip for sub-threshold/folderTouched move suggestions, and resolvedOrigin consent lookup in ProviderSetup)",
+    "tracks.md: unchanged — ui_ux_redesign_20261014 already archived at dd5eb20; 0 active tracks, 13 archived tracks"
   ],
   "learnings": {
-    "tracksScanned": 12,
+    "tracksScanned": 13,
     "newLearningsFiles": 1,
     "newPatterns": 4,
-    "note": "Scanned all 12 archived tracks in conductor/archive/*/. Elevated the 4 remaining patterns/gotchas from conductor/archive/perf_ux_hardening_20261014/learnings.md (complementing the 8 elevated at d7cbfc2) and linked cross-track provenance with phase0, phase1, audit_hardening, and deep_audit_fixes."
+    "note": "Scanned all 13 archived tracks in conductor/archive/*/. Consolidated the 4 remaining reusable patterns from conductor/archive/ui_ux_redesign_20261014/learnings.md plus commits de2b34e/88c7016 (complementing the 4 patterns elevated at 103d9ba)."
   },
   "beads": {
-    "openFollowups": 12,
+    "openFollowups": 11,
     "inProgressIssues": 0,
     "blocked": 0,
-    "totalIssues": 400,
-    "closed": 388,
+    "totalIssues": 424,
+    "closed": 413,
     "syncDirection": "none needed (0 drift)",
     "completedThisCycle": [
-      "BookmarksManager-3n9 (epic perf_ux_hardening_20261014 + 27 child phase/task/checkpoint issues; all 28 closed 2026-10-14)"
+      "BookmarksManager-36j (epic ui_ux_redesign_20261014 + 23 child phase/task/checkpoint issues; all 24 closed 2026-10-14)",
+      "BookmarksManager-tax (ReviewView Applied history with Undo; closed 2026-10-14)"
     ],
     "newSinceLastRefresh": [
-      "BookmarksManager-3n9 and children .1/.1.1-.1.5, .2/.2.1-.2.6, .3/.3.1-.3.3, .4/.4.1-.4.6, .5/.5.1-.5.2 (all 28 closed)"
+      "BookmarksManager-36j and children .1/.1.1-.1.4, .2/.2.1-.2.3, .3/.3.1-.3.4, .4/.4.1-.4.5, .5/.5.1-.5.2 (all 24 closed)"
     ],
     "remainingOpenFollowups": [
-      "BookmarksManager-4fb", "BookmarksManager-42k", "BookmarksManager-4hw.7", "BookmarksManager-dfr",
-      "BookmarksManager-gtv", "BookmarksManager-mc9", "BookmarksManager-od9", "BookmarksManager-ope",
-      "BookmarksManager-rwy", "BookmarksManager-sb9", "BookmarksManager-tax", "BookmarksManager-xxo"
+      "BookmarksManager-4fb",
+      "BookmarksManager-42k",
+      "BookmarksManager-4hw.7",
+      "BookmarksManager-dfr",
+      "BookmarksManager-gtv",
+      "BookmarksManager-mc9",
+      "BookmarksManager-od9",
+      "BookmarksManager-ope",
+      "BookmarksManager-rwy",
+      "BookmarksManager-sb9",
+      "BookmarksManager-xxo"
     ],
-    "drift": "none — all 22 plan tasks in archived perf_ux_hardening_20261014 are [x] and all 28 mapped Beads issues under BookmarksManager-3n9 are closed; the 12 open P2/P3 backlog items match product.md.",
+    "drift": "none — all 18 plan tasks in archived ui_ux_redesign_20261014 are [x] and all 24 mapped Beads issues under BookmarksManager-36j plus BookmarksManager-tax are closed; the 11 open P2/P3 backlog items match product.md.",
     "cosmetic": [
       "beads.role not configured (GH#2950)"
     ]
   },
   "verification": {
-    "scope": "Documentation-only refresh following full gate verification at d7cbfc2.",
-    "gatesRun": "relied on Phase 5 checkpoint d7cbfc2 (lint, typecheck, 167 unit/component files / 3037 tests, build, check:manifest, check:bundle, check:store, check:site, 49 Playwright e2e specs)",
-    "factsVerified": "package.json dependencies unchanged; eslint.config.mjs ignores includes .claude/**; Dexie v9 with *bookmarkIds index; SUMMARY_VERIFY_CONSENT_VERSION = 3; bd stats 400 total / 388 closed / 12 open / 0 in_progress",
-    "sourceCommits": "3426c7c (HEAD prior to refresh commit); all local, unpushed"
+    "scope": "Documentation-only refresh following full gate and visual verification at 103d9ba.",
+    "gatesRun": "relied on Phase 5 checkpoint 103d9ba (lint, typecheck, 169 unit/component files / 3064 tests, build, check:manifest, check:bundle, check:store, check:site, 49 passed / 1 skipped Playwright e2e specs, and Chromium visual inspection via view_media)",
+    "factsVerified": "package.json dependencies unchanged; 13 archived tracks in conductor/archive/; bd stats 424 total / 413 closed / 11 open / 0 in_progress / 0 blocked",
+    "sourceCommits": "f7e34aa (HEAD prior to refresh commit); all local, unpushed"
   }
 }

@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-14 (refresh — consolidated remaining learnings from perf_ux_hardening_20261014) -->
+<!-- Last refreshed: 2026-10-14 (refresh — consolidated remaining learnings from ui_ux_redesign_20261014 and popup folder-chip follow-ups) -->
 
 # Codebase Patterns
 
@@ -32,7 +32,7 @@ Phase 1 (`phase1_core_manager_20260926`, Phases 1–5) delivered the offline cor
 
 ---
 
-Last refreshed: 2026-10-14 (full refresh; consolidated learnings from archived `perf_ux_hardening_20261014`)
+Last refreshed: 2026-10-14 (full refresh; consolidated learnings from archived `ui_ux_redesign_20261014`)
 
 ---
 
@@ -340,4 +340,8 @@ _Last refreshed: 2026-09-27_
 - **Preserve exact accessible names when adding trailing counts or shortcut badges.** Set `aria-label={tag.name}` on `ScopePane` tag buttons when adding `[data-tag-count]` badges, and mark decorative `<kbd>` shortcut hints `aria-hidden="true"` inside menu items so `getByRole("button", { name })` and `getByRole("menuitem", { name })` stay exact. (from: ui_ux_redesign_20261014, archived 2026-10-14)
 - **Avoid duplicate action button names across concurrent regions.** Pass `hideClearButton={resultCount === 0}` to `QueryInput` in `SearchBar` when the 0-hit empty state already renders a `"Clear search"` CTA button, and give row-level history Undo buttons descriptive `aria-label="Undo the applied suggestion for <title>"` labels so toast-level `getByRole("button", { name: /^undo$/i })` queries remain unambiguous. (from: ui_ux_redesign_20261014, archived 2026-10-14)
 - **Defer popup `listTags()` reads until `TagField` focus or `searchOpen` (`P-10`).** Loading `db.tags` lazily when `searchOpen || suggestionRequested` provides `availableTags` autocomplete as soon as the user focuses `Tags` while keeping the popup's initial mount free of IndexedDB table scans. (from: ui_ux_redesign_20261014, archived 2026-10-14)
+- **Record optimistically created folders in local dialog state before coalesced tree refresh.** Deduplicating locally created folders against `folderDestinations(tree)` in `MoveToDialog` lets inline subfolder creation immediately render and select the new destination before the parent's 50 ms coalesced `chrome.bookmarks` tree read settles (and in standalone component tests with a static `tree` prop). (from: ui_ux_redesign_20261014, archived 2026-10-14)
+- **Exclude dynamically promoted overflow views from the `More` trigger's `activeMore` label.** When `ViewChips` promotes `Review suggestions` to a top-level chip (`pendingCount > 0 || activeKind === "review"`), keep the `More` button labelled `"More"` when `activeKind === "review"` so no duplicate `"Review suggestions"` button renders and E2E `openMoreView` (`getByRole("button", { name: /^More/ })`) stays unambiguous. (from: ui_ux_redesign_20261014, archived 2026-10-14)
+- **Fall back to an opt-in folder chip when a popup `move` suggestion is not auto-preselected.** When the strongest `move` suggestion is below `MOVE_PRESELECT_THRESHOLD` (`0.75`) or the user manually touched the folder picker (`folderTouched`), `pickFolderSuggestion` offers it as a clickable `+ Folder: <label>` chip unless `targetFolderId === folderId`. (from: de2b34e, 88c7016, 2026-10-14)
+- **Key `ProviderSetup` inline analysis-consent status on `status?.origin ?? disclosure.origin`.** Reading `db.consents` against the resolved origin in `ProviderSetup` tracks both fixed preset origins and dynamic custom Jev provider origins without duplicating origin resolution logic. (from: ui_ux_redesign_20261014, archived 2026-10-14)
 

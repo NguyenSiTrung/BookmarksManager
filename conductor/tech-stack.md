@@ -3,10 +3,11 @@
 # Technology Stack
 
 The stack below reflects the declared dependencies in `package.json` and
-resolved versions in `package-lock.json`, checked on 2026-09-30 after the
-custom Jev provider track (`custom_jev_provider_20260929`, archived
-2026-09-29). That track added no dependencies; the Options redesign and
-Phase 0–6 deliveries remain the baseline. Items still planned in
+resolved versions in `package-lock.json`, checked on 2026-10-14 after the
+UI/UX refactor and ergonomics redesign track (`ui_ux_redesign_20261014`,
+archived 2026-10-14). That track added no runtime or dev dependencies; the
+Phase 0–6 deliveries and subsequent hardening tracks remain the baseline. Items
+still planned in
 `PROJECT_PLAN.md` but not yet installed are marked **[planned]**.
 
 ## Platform
@@ -85,7 +86,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   `src/duplicates/` (URL normalize + grouping + distinct-URL near-duplicate
   merges), `src/io/` (JSON/Netscape/CSV import/export planner + transactional
   resumable writers), and `src/ui/{components,hooks,lib}` (side-panel tree,
-  list/grid, dialogs, toasts).
+  list/grid, dialogs, toasts, and the shared `tag-field.tsx` `TagField`
+  combobox with `TagDef` autocomplete and colored chips across Popup,
+  `EditDialog`, and `BulkBar`).
 - `src/db/starter-tags.ts` (2026-09-30): one-shot starter tech tag pack
   (`STARTER_TAGS`, 18 name/description pairs). Seeds only when
   `prefs:starterTagsSeeded` has never been written **and** `listTags()` is
@@ -170,7 +173,8 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   policy; persist + usage), `policy.ts` (confidence bands, auto-apply limited to
   `add_tags`/`set_category`), `apply.ts` (guarded apply with field-scoped
   compensating undo and near-duplicate merge support), `store.ts` (`*bookmarkIds`
-  indexed persist + lifecycle), `rerank.ts` (Ask reordering with the 0.5
+  indexed persist + lifecycle + `listApplied` history query), `rerank.ts` (Ask
+  reordering with the 0.5
   no-match bar), `blocklist.ts`, `duplicates.ts`; `src/jobs/` —
   `queue.ts`/`runner.ts` (persisted, resumable, positional batch slicing,
   strictly sequential per bookmark, batch-commit progress, cached
@@ -246,8 +250,9 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   mid-job. The cross-feature audit regressions live in
   `tests/e2e/audit-data-safety.spec.ts` (+ `helpers/audit-data.ts`),
   `tests/e2e/audit-provider-workflows.spec.ts` (+ `helpers/audit-provider.ts`),
-  and `tests/e2e/audit-deep-fixes.spec.ts` (49 e2e specs total; 48 run by
-  default, 1 `store-assets` skipped).
+  `tests/e2e/audit-deep-fixes.spec.ts`, and `tests/e2e/dialog-visuals.spec.ts`
+  (50 e2e tests across 14 spec files; 49 run by default, 1 `store-assets`
+  skipped).
 - **ESLint 9 flat config** (`eslint.config.mjs`, ignoring `.output`, `.wxt`,
   `.worktrees/**`, and `.claude/**`) with typescript-eslint and
   react/react-hooks plugins; egress restriction rules ban `fetch`,
