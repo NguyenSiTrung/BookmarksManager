@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Ref } from "react";
 import { parseQuery } from "../../search/query";
 import type { SuggestionSources } from "../../search/suggest";
@@ -60,11 +61,20 @@ export interface SearchBarProps {
   onRerankOrder,
   askDebounceMs,
   }: SearchBarProps) {
+  const [focused, setFocused] = useState(false);
   const warnings = value === "" ? [] : parseQuery(value).warnings;
   const ask = useAskSearch(value, onRerankOrder, askDebounceMs);
   const askText = ask.askOn ? askNoteText(ask.note) : null;
   return (
-    <div className="min-w-0 flex-1">
+    <div
+      className="min-w-0 flex-1"
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setFocused(false);
+        }
+      }}
+    >
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <QueryInput
@@ -74,6 +84,7 @@ export interface SearchBarProps {
             value={value}
             onChange={onChange}
             sources={sources}
+            hideClearButton={resultCount === 0}
             onEscape={() => onChange("")}
           />
         </div>
@@ -90,6 +101,25 @@ export interface SearchBarProps {
           </button>
         )}
       </div>
+      {focused && value === "" && (
+        <div
+          data-testid="search-filter-hints"
+          className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground"
+        >
+          <span>Filter:</span>
+          {(["tag:", "folder:", "in:", "has:"] as const).map((prefix) => (
+            <button
+              key={prefix}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onChange(prefix)}
+              className="rounded-sm border border-border/70 bg-muted/50 px-1.5 py-0.5 font-mono text-[10px] text-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {prefix}
+            </button>
+          ))}
+        </div>
+      )}
       {askText !== null && (
         <p
           role="status"

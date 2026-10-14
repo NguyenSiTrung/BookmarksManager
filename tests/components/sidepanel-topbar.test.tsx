@@ -79,4 +79,11 @@ describe("TopBar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a direct Command palette shortcut button that dispatches command-palette (UX-08)", () => {
+    const { onTools } = renderTopBar(false);
+    const btn = screen.getByRole("button", { name: "Command palette" });
+    fireEvent.click(btn);
+    expect(onTools).toHaveBeenCalledWith("command-palette");
+  });
 });

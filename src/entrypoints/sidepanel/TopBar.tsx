@@ -45,6 +45,20 @@ export function TopBar({
       <h1 className="sr-only">Bookmarks Manager</h1>
       <div className="flex items-start gap-1">
         <div className="min-w-0 flex-1">{search}</div>
+        <button
+          type="button"
+          aria-label="Command palette"
+          title="Command palette (Ctrl+K)"
+          onClick={() => onTools("command-palette")}
+          className={`${ICON_BUTTON_CLASS} inline-flex items-center px-1.5 py-1 text-[11px] font-medium`}
+        >
+          <kbd
+            aria-hidden="true"
+            className="rounded-xs border border-border/80 bg-muted/60 px-1 py-0.5 font-sans text-[10px] leading-none"
+          >
+            ⌘K
+          </kbd>
+        </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -67,7 +81,13 @@ export function TopBar({
               Manage tags…
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onTools("command-palette")}>
-              Command palette…
+              <span>Command palette…</span>
+              <span
+                aria-hidden="true"
+                className="ml-auto pl-3 text-[10px] text-muted-foreground"
+              >
+                ⌘K
+              </span>
             </DropdownMenuItem>
             {visibility.showScan && (
               <DropdownMenuItem onSelect={() => onTools("scan")}>

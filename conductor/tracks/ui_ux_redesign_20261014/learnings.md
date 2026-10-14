@@ -66,6 +66,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: When `Review suggestions` is promoted to a top-level chip, excluding `review` from `activeMore` on the `More` trigger prevents duplicate buttons named `"Review suggestions"` when `activeKind === "review"` and keeps `getByRole("button", { name: /^More/ })` stable for E2E `openMoreView` helpers.
 ---
 
+## [2026-10-14 08:30] - Phase 3 Task 2: `QueryInput` search icon & clear button, `SearchBar` filter chips, and `TopBar` command-palette shortcut button (`UX-08`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added leading `SearchIcon` and trailing `"Clear search"` (`×`) button to `QueryInput`, added quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`) on focus to `SearchBar`, and added a direct `"Command palette"` (`⌘K`) button and menu shortcut badge to `TopBar`.
+- **Files changed:** `src/ui/components/query-input.tsx`, `src/entrypoints/sidepanel/SearchBar.tsx`, `src/entrypoints/sidepanel/TopBar.tsx`, `tests/components/query-input.test.tsx`, `tests/components/sidepanel-topbar.test.tsx`, `tests/components/sidepanel-search.test.tsx`
+- **Learnings:**
+  - Gotchas: When a side-panel search has 0 results (`resultCount === 0`), the empty state already renders a `"Clear search"` CTA button (`sidepanel-empty.test.tsx`). Passing `hideClearButton={resultCount === 0}` from `SearchBar` to `QueryInput` avoids duplicate buttons with `name: "Clear search"` when 0 results are shown.
+---
+
+
 
 
 

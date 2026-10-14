@@ -9,6 +9,7 @@ import type { Ref } from "react";
 import { suggestFilters } from "../../search/suggest";
 import type { SuggestionSources } from "../../search/suggest";
 import { cn } from "../lib/cn";
+import { SearchIcon, XIcon } from "./icons";
 
 /**
  * QueryInput — the shared search-query input used by the side panel,
@@ -40,6 +41,8 @@ export interface QueryInputProps {
   sources?: SuggestionSources;
   /** Called when Esc arrives with the suggestion popup already closed. */
   onEscape?: () => void;
+  /** When true, omits the inline Clear search button (e.g. when a 0-hit empty state already renders one). */
+  hideClearButton?: boolean;
   "aria-label"?: string;
   "aria-labelledby"?: string;
   placeholder?: string;
@@ -55,6 +58,7 @@ export function QueryInput({
   onChange,
   sources = EMPTY_SOURCES,
   onEscape,
+  hideClearButton = false,
   className,
   ref,
   ...rest
@@ -116,6 +120,7 @@ export function QueryInput({
 
   return (
     <div className="relative">
+      <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <input
         {...rest}
         ref={setRefs}
@@ -183,10 +188,27 @@ export function QueryInput({
           }
         }}
         className={cn(
-          "w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
+          "w-full rounded-md border border-input bg-background py-1 pr-7 pl-8 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
           className,
         )}
       />
+      {value !== "" && !hideClearButton && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          title="Clear search"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            setDismissed(false);
+            setActiveIndex(-1);
+            onChange("");
+            inputRef.current?.focus();
+          }}
+          className="absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground outline-hidden hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <XIcon className="size-3" />
+        </button>
+      )}
       {open && (
         <ul
           id={listId}

@@ -387,4 +387,21 @@ describe("side-panel search", () => {
       ),
     );
   });
+
+  it("shows quick filter-prefix pills when focused on an empty query and inserts the clicked token (UX-08)", async () => {
+    await renderApp();
+    const searchInput = screen.getByRole("combobox", {
+      name: "Search bookmarks",
+    }) as HTMLInputElement;
+    fireEvent.focus(searchInput);
+
+    const hints = screen.getByTestId("search-filter-hints");
+    expect(within(hints).getByRole("button", { name: "tag:" })).toBeTruthy();
+    expect(within(hints).getByRole("button", { name: "folder:" })).toBeTruthy();
+    expect(within(hints).getByRole("button", { name: "in:" })).toBeTruthy();
+    expect(within(hints).getByRole("button", { name: "has:" })).toBeTruthy();
+
+    fireEvent.click(within(hints).getByRole("button", { name: "tag:" }));
+    expect(searchInput.value).toBe("tag:");
+  });
 });

@@ -285,4 +285,17 @@ describe("QueryInput", () => {
       }
     }
   });
+
+  it("renders a leading search icon and a Clear search button when non-empty that clears the value and focuses the input (UX-08)", () => {
+    render(<Harness initial="rust" />);
+    const el = input();
+    const wrapper = el.parentElement;
+    expect(wrapper?.querySelector("svg")).not.toBeNull();
+
+    const clearBtn = screen.getByRole("button", { name: "Clear search" });
+    fireEvent.click(clearBtn);
+    expect(el.value).toBe("");
+    expect(document.activeElement).toBe(el);
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+  });
 });
