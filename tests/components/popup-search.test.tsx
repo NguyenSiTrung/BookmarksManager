@@ -321,4 +321,91 @@ describe("popup search", () => {
       screen.getByRole("button", { name: "Search bookmarks" }),
     );
   });
+
+  it("defers listMeta and listTags reads until search is opened (P-10)", async () => {
+    await db.tags.put({
+      nameKey: "rust",
+      name: "Rust",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const metaSpy = vi.spyOn(db.bookmarkMeta, "toArray");
+    const tagsSpy = vi.spyOn(db.tags, "toArray");
+
+    await renderPopup();
+    // Neither table should be scanned before the user opens search.
+    expect(metaSpy).not.toHaveBeenCalled();
+    expect(tagsSpy).not.toHaveBeenCalled();
+
+    await openSearch();
+    await waitFor(() => {
+      expect(metaSpy).toHaveBeenCalled();
+      expect(tagsSpy).toHaveBeenCalled();
+    });
+  });
+
+  it("toggles search closed when clicking the header Search button while open (U-09d)", async () => {
+    await renderPopup();
+    const searchBtn = screen.getByRole("button", { name: "Search bookmarks" });
+    fireEvent.click(searchBtn);
+    await screen.findByRole("combobox", { name: "Search bookmarks" });
+
+    // Clicking the header button again closes search.
+    fireEvent.click(searchBtn);
+    expect(
+      screen.queryByRole("combobox", { name: "Search bookmarks" }),
+    ).toBeNull();
+  });
+
+  it("renders ErrorAlert even while a search query hides the form (U-09d)", async () => {
+    tabsCreate.mockRejectedValueOnce(new Error("tabs permission denied"));
+    await renderPopup();
+    await openSearch();
+    fireEvent.change(searchInput(), { target: { value: "alpha" } });
+    await waitFor(() => expect(results().length).toBe(1));
+
+    fireEvent.keyDown(searchInput(), { key: "Enter" });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBeTruthy();
+  });
+
+  it("offers filter suggestions and splices a clicked suggestion into the query (U-06d)", async () => {
+    await db.tags.put({
+      nameKey: "rust",
+      name: "Rust",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await renderPopup();
+    await openSearch();
+
+    const el = searchInput();
+    fireEvent.focus(el);
+    fireEvent.change(el, { target: { value: "ta", selectionStart: 2 } });
+    el.setSelectionRange(2, 2);
+    fireEvent.select(el);
+
+    const suggestList = await screen.findByRole("listbox", {
+      name: "Filter suggestions",
+    });
+    const tagKeyOpt = Array.from(
+      suggestList.querySelectorAll('[role="option"]'),
+    ).find((o) => o.textContent === "tag:");
+    expect(tagKeyOpt).toBeTruthy();
+
+    fireEvent.mouseDown(tagKeyOpt!);
+    fireEvent.click(tagKeyOpt!);
+    expect(el.value).toBe("tag:");
+
+    // Wait for tagDefs to load and offer "Rust" as a value completion.
+    await waitFor(() => {
+      const list = screen.queryByRole("listbox", { name: "Filter suggestions" });
+      const opts = list
+        ? Array.from(list.querySelectorAll('[role="option"]')).map(
+            (o) => o.textContent,
+          )
+        : [];
+      expect(opts).toContain("Rust");
+    });
+  });
 });

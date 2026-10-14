@@ -458,6 +458,29 @@ describe("PopupApp — worker-side save (U06)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Could not open the manager panel");
   });
+
+  it("commits an uncommitted tag in the input when Save is clicked (U-04a)", async () => {
+    await renderPopupForFreshTab();
+    fireEvent.change(screen.getByLabelText("New tag name"), {
+      target: { value: "  uncommitted-tag  " },
+    });
+    // Click Save directly without pressing Enter/Tab/, or clicking Add tag.
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByTestId("save-confirmation");
+    const children = await fake.getChildren("2");
+    const created = children.find((node) => node.url === FRESH_TAB.url);
+    expect(created).toBeDefined();
+    if (created === undefined) return;
+    await expect(getMeta(created.id)).resolves.toMatchObject({
+      tags: ["uncommitted-tag"],
+    });
+  });
+
+  it("includes focus-visible:ring-2 on the popup title input (U-09d)", async () => {
+    await renderPopup();
+    expect(titleInput().className).toContain("focus-visible:ring-2");
+  });
 });
 
 // ---------------------------------------------------------------------------

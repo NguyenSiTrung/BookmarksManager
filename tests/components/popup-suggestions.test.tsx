@@ -642,4 +642,38 @@ describe("PopupApp — save suggestions", () => {
       }),
     ).toBeTruthy();
   });
+
+  it("shows feedback when the user explicitly clicks Suggest without consent or with empty results (U-09d)", async () => {
+    // 1. Without consent, clicking Suggest shows an unavailable/unconfigured note.
+    await renderPopup();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest" }));
+    await waitFor(() => {
+      const unconfiguredNote = screen.getByTestId("suggestions-status");
+      expect(unconfiguredNote.textContent ?? "").toMatch(/not configured|no.*consent|unavailable|options|settings/i);
+    });
+    cleanup();
+
+    // 2. With consent, while in-flight shows loading feedback, and when 0 rows arrive shows empty feedback.
+    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
+    const { promise, resolve: resolveReply } = Promise.withResolvers<unknown>();
+    sendMessage.mockImplementationOnce(() => promise);
+    await renderPopup();
+    fireEvent.click(screen.getByRole("button", { name: "Suggest" }));
+    const loadingNote = await screen.findByTestId("suggestions-status");
+    expect(loadingNote.textContent ?? "").toMatch(/loading|fetching|generating|getting|suggest/i);
+
+    await act(async () => {
+      resolveReply({
+        ok: true,
+        code: "analyze_ok",
+        result: { sent: true, decisionCount: 0 },
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const emptyNote = screen.getByTestId("suggestions-status");
+      expect(emptyNote.textContent ?? "").toMatch(/no suggestions/i);
+    });
+  });
 });

@@ -94,7 +94,7 @@ export function PageCard({
           disabled={disabled}
           placeholder="Untitled page"
           onChange={(event) => onTitleChange(event.target.value)}
-          className="-mx-1.5 w-[calc(100%+0.75rem)] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[15px] leading-snug font-semibold outline-hidden transition-colors placeholder:font-normal hover:bg-secondary focus:bg-secondary disabled:opacity-100"
+          className="-mx-1.5 w-[calc(100%+0.75rem)] truncate rounded-md bg-transparent px-1.5 py-0.5 text-[15px] leading-snug font-semibold outline-hidden transition-colors placeholder:font-normal hover:bg-secondary focus:bg-secondary focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-100"
         />
         {urlEditable ? (
           <>

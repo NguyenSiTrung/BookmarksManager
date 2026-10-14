@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isOpenableUrl } from "../../search/openable";
 import { runQuery } from "../../search/run";
 import type { SearchIndexHandle } from "../../search/run";
 import type { SearchHit } from "../../search/index";
+import { suggestFilters } from "../../search/suggest";
+import type { SuggestionSources } from "../../search/suggest";
 import type { OpenUrlDisposition } from "../../sync/tabs";
 import { Favicon } from "../../ui/components/favicon";
 import { SearchIcon, XIcon } from "../../ui/components/icons";
@@ -33,6 +35,7 @@ import { hostOf } from "./PageCard";
  */
 
 const TOP_N = 10;
+const EMPTY_SOURCES: SuggestionSources = { tags: [], folders: [] };
 
 export interface PopupSearchProps {
   /** `null` until the lazy index build lands. */
@@ -42,6 +45,8 @@ export interface PopupSearchProps {
   onOpen(url: string, disposition: OpenUrlDisposition): void;
   /** Escape on an empty query (or × once clear): close the search row. */
   onClose(): void;
+  /** Optional tag/folder autocomplete sources. */
+  sources?: SuggestionSources;
 }
 
 export function PopupSearch({
@@ -50,12 +55,19 @@ export function PopupSearch({
   onQueryChange,
   onOpen,
   onClose,
+  sources,
 }: PopupSearchProps) {
   const listId = "popup-search-results";
+  const suggestListId = "popup-filter-suggestions";
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const optionRefs = useRef<(HTMLLIElement | null)[]>([]);
   const [active, setActive] = useState(0);
   const [lastQuery, setLastQuery] = useState(query);
-
+  const [caret, setCaret] = useState(query.length);
+  const [focused, setFocused] = useState(true);
+  const [dismissed, setDismissed] = useState(false);
+  const [activeSuggestIndex, setActiveSuggestIndex] = useState(-1);
+  const pendingCaret = useRef<number | null>(null);
   const hits = useMemo<SearchHit[]>(() => {
     if (search === null || query === "") return [];
     return runQuery(search.index, query, search.ctx).hits.slice(0, TOP_N);
@@ -77,6 +89,39 @@ export function PopupSearch({
     optionRefs.current[active]?.scrollIntoView?.({ block: "nearest" });
   }, [active, hits]);
 
+  const suggestions = useMemo(
+    () => suggestFilters(query, caret, sources ?? EMPTY_SOURCES),
+    [query, caret, sources],
+  );
+  const suggestOpen = focused && !dismissed && suggestions.length > 0;
+
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (el !== null && pendingCaret.current !== null) {
+      el.setSelectionRange(pendingCaret.current, pendingCaret.current);
+      setCaret(pendingCaret.current);
+      pendingCaret.current = null;
+    }
+  }, [query]);
+
+  const syncCaret = (el: HTMLInputElement): void => {
+    setCaret(el.selectionStart ?? el.value.length);
+  };
+
+  const acceptSuggestion = (index: number): void => {
+    const s = suggestions[index];
+    if (s === undefined) return;
+    const next =
+      query.slice(0, s.replaceFrom) +
+      s.insertText +
+      query.slice(s.replaceTo);
+    const nextCaret = s.replaceFrom + s.insertText.length;
+    pendingCaret.current = nextCaret;
+    setCaret(nextCaret);
+    setActiveSuggestIndex(-1);
+    onQueryChange(next);
+  };
+
   const openHit = (hit: SearchHit, disposition: OpenUrlDisposition): void => {
     if (!isOpenableUrl(hit.url)) return;
     onOpen(hit.url, disposition);
@@ -85,23 +130,40 @@ export function PopupSearch({
   const handleKeyDown = (event: React.KeyboardEvent): void => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActive(Math.min(active + 1, hits.length - 1));
+      if (suggestOpen && hits.length === 0) {
+        setActiveSuggestIndex((prev) => (prev + 1) % suggestions.length);
+      } else {
+        setActive(Math.min(active + 1, Math.max(hits.length - 1, 0)));
+      }
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActive(Math.max(active - 1, 0));
+      if (suggestOpen && hits.length === 0) {
+        setActiveSuggestIndex((prev) =>
+          prev <= 0 ? suggestions.length - 1 : prev - 1,
+        );
+      } else {
+        setActive(Math.max(active - 1, 0));
+      }
     } else if (event.key === "Escape") {
       event.preventDefault();
+      setDismissed(true);
+      setActiveSuggestIndex(-1);
       if (query !== "") {
         onQueryChange("");
       } else {
         onClose();
       }
-    } else if (event.key === "Enter" && activeHit !== undefined) {
-      event.preventDefault();
-      openHit(
-        activeHit,
-        event.ctrlKey || event.metaKey ? "current" : "foreground",
-      );
+    } else if (event.key === "Enter") {
+      if (suggestOpen && activeSuggestIndex >= 0) {
+        event.preventDefault();
+        acceptSuggestion(activeSuggestIndex);
+      } else if (activeHit !== undefined) {
+        event.preventDefault();
+        openHit(
+          activeHit,
+          event.ctrlKey || event.metaKey ? "current" : "foreground",
+        );
+      }
     }
   };
 
@@ -110,6 +172,7 @@ export function PopupSearch({
       <div className="relative">
         <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
+          ref={inputRef}
           role="combobox"
           autoFocus
           aria-label="Search bookmarks"
@@ -119,7 +182,22 @@ export function PopupSearch({
             activeHit === undefined ? undefined : `${listId}-${activeHit.id}`
           }
           value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
+          onFocus={(event) => {
+            setFocused(true);
+            syncCaret(event.target);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            setActiveSuggestIndex(-1);
+          }}
+          onChange={(event) => {
+            setDismissed(false);
+            setActiveSuggestIndex(-1);
+            syncCaret(event.target);
+            onQueryChange(event.target.value);
+          }}
+          onSelect={(event) => syncCaret(event.target as HTMLInputElement)}
+          onKeyUp={(event) => syncCaret(event.target as HTMLInputElement)}
           onKeyDown={handleKeyDown}
           placeholder="Search bookmarks…"
           className="h-9 w-full rounded-lg border border-transparent bg-secondary pr-8 pl-9 text-sm outline-hidden transition-colors placeholder:text-muted-foreground focus:border-ring focus:bg-background focus:ring-2 focus:ring-ring/30"
@@ -133,6 +211,37 @@ export function PopupSearch({
         >
           <XIcon className="size-3.5" />
         </button>
+        {suggestOpen && (
+          <ul
+            id={suggestListId}
+            role="listbox"
+            aria-label="Filter suggestions"
+            className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border bg-popover p-1 text-xs text-popover-foreground shadow-md"
+          >
+            {suggestions.map((s, i) => (
+              <li
+                key={`${s.kind}:${s.key}:${s.label}`}
+                id={`${suggestListId}-opt-${i}`}
+                role="option"
+                aria-selected={i === activeSuggestIndex}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  acceptSuggestion(i);
+                }}
+                className={cn(
+                  "cursor-pointer rounded-sm px-2 py-1",
+                  i === activeSuggestIndex && "bg-accent text-accent-foreground",
+                )}
+              >
+                {s.kind === "key" ? (
+                  <span className="font-medium">{s.label}</span>
+                ) : (
+                  s.label
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {query !== "" &&

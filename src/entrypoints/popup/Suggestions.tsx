@@ -38,13 +38,15 @@ import { InfoIcon } from "../../ui/components/icons";
 
 /** Where the SAVE_SUGGEST round-trip stands, for the quiet notes. */
 export type SuggestionStatus =
-  /** Request in flight or not yet attempted — render nothing. */
+  /** Request not yet attempted — render nothing. */
   | "idle"
+  /** Request in flight — render loading note when explicitly requested. */
+  | "loading"
   /** The worker answered `sent:true`; suggestions may stream in via Dexie. */
   | "sent"
   /** `sent:false, reason:"blocklisted"` — render the "not sent" note. */
   | "blocklisted"
-  /** No consent, a refused/invalid reply, or a failure — render nothing. */
+  /** No consent, a refused/invalid reply, or a failure — quiet unless explicitly requested. */
   | "unavailable";
 
 export interface SuggestionsProps {
@@ -52,6 +54,8 @@ export interface SuggestionsProps {
   bookmarkId: string;
   /** Outcome of the request, as reported by the parent. */
   status: SuggestionStatus;
+  /** True when the user explicitly clicked the Suggest button. */
+  explicitRequest?: boolean;
   /** Tag nameKeys already staged by the user — matching suggestions hide. */
   appliedTagKeys: ReadonlySet<string>;
   /** Currently selected category (`""` = none). */
@@ -150,6 +154,7 @@ function pickCategorySuggestion(
 export function Suggestions({
   bookmarkId,
   status,
+  explicitRequest = false,
   appliedTagKeys,
   category,
   onFolderSuggestion,
@@ -188,6 +193,40 @@ export function Suggestions({
   }
 
   if (tagSuggestions.length === 0 && categorySuggestion === null) {
+    if (!explicitRequest) return null;
+    if (status === "loading") {
+      return (
+        <p
+          data-testid="suggestions-status"
+          role="status"
+          className="text-xs text-muted-foreground"
+        >
+          Getting suggestions…
+        </p>
+      );
+    }
+    if (status === "unavailable") {
+      return (
+        <p
+          data-testid="suggestions-status"
+          role="status"
+          className="text-xs text-muted-foreground"
+        >
+          AI suggestions are unavailable — check Settings.
+        </p>
+      );
+    }
+    if (status === "sent") {
+      return (
+        <p
+          data-testid="suggestions-status"
+          role="status"
+          className="text-xs text-muted-foreground"
+        >
+          No suggestions for this page.
+        </p>
+      );
+    }
     return null;
   }
 

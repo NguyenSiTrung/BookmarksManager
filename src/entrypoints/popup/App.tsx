@@ -120,6 +120,8 @@ declare const chrome: {
 };
 
 const EMPTY_TREE: FlattenedTree = { folders: new Map(), bookmarks: new Map() };
+const EMPTY_METAS: readonly BookmarkMeta[] = [];
+const EMPTY_TAG_DEFS: readonly TagDef[] = [];
 
 /** One staged tag chip: the storage key plus the display label. */
 interface StagedTag {
@@ -219,7 +221,7 @@ export function App() {
   const [suggestionStatus, setSuggestionStatus] =
     useState<SuggestionStatus>("idle");
   const [suggestionRequested, setSuggestionRequested] = useState(false);
-  /** Single-shot guard: SAVE_SUGGEST goes out exactly once per popup open. */
+  const [explicitSuggest, setExplicitSuggest] = useState(false);
   const suggestAttemptedRef = useRef(false);
   /**
    * True once the user changes the folder picker. A late `move` suggestion is
@@ -277,7 +279,7 @@ export function App() {
   // paint (ready === true). `useSearchIndex` then builds off-paint inside an
   // effect; until the handle lands, the results area reads "Indexing…".
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !searchOpen) return;
     let cancelled = false;
     void (async () => {
       const [metaRows, tagRows] = await Promise.all([
@@ -291,7 +293,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [ready]);
+  }, [ready, searchOpen]);
 
   // --- Jev save suggestions (FR10): fire-and-forget -------------------------
   // Exactly once after an explicit user action, off the render path. A refusal at any step —
@@ -309,6 +311,7 @@ export function App() {
     if (!ready || !suggestionRequested || suggestAttemptedRef.current) return;
     suggestAttemptedRef.current = true;
     let cancelled = false;
+    setSuggestionStatus("loading");
     void (async () => {
       // Cheap local gate: skip the worker round-trip entirely when no
       // provider holds a current `jev_decisions` grant — the worker would
@@ -375,19 +378,42 @@ export function App() {
     };
   }, [ready, suggestId, suggestionRequested]);
 
-  const search = useSearchIndex(tree, metas, tagDefs);
+  const search = useSearchIndex(
+    searchOpen ? tree : EMPTY_TREE,
+    searchOpen ? metas : EMPTY_METAS,
+    searchOpen ? tagDefs : EMPTY_TAG_DEFS,
+  );
+
+  const suggestionSources = useMemo(
+    () =>
+      searchOpen
+        ? {
+            tags: tagDefs.map((tag) => tag.name),
+            folders: [...tree.folders.values()]
+              .filter((folder) => folder.title !== "")
+              .map((folder) => folder.title),
+          }
+        : { tags: [], folders: [] },
+    [searchOpen, tagDefs, tree.folders],
+  );
 
   const destinations = useMemo(() => folderOptions(tree), [tree]);
+
+  const bookmarkByNormalizedUrl = useMemo(() => {
+    const map = new Map<string, BookmarkItem>();
+    for (const item of tree.bookmarks.values()) {
+      const k = normalizeUrl(item.url);
+      if (k !== null && !map.has(k)) map.set(k, item);
+    }
+    return map;
+  }, [tree]);
 
   /** The existing bookmark whose normalized URL matches the typed one. */
   const duplicate = useMemo((): BookmarkItem | null => {
     const key = normalizeUrl(url.trim());
     if (key === null) return null;
-    for (const item of tree.bookmarks.values()) {
-      if (normalizeUrl(item.url) === key) return item;
-    }
-    return null;
-  }, [url, tree]);
+    return bookmarkByNormalizedUrl.get(key) ?? null;
+  }, [url, bookmarkByNormalizedUrl]);
 
   const addChip = (): void => {
     const label = tagInput.trim();
@@ -474,6 +500,18 @@ export function App() {
       if (isBlockedScheme(trimmedUrl)) {
         throw new Error("This URL scheme cannot be saved as a bookmark.");
       }
+      let effectiveChips = chips;
+      const pendingLabel = tagInput.trim();
+      if (pendingLabel !== "") {
+        const pendingKey = tagNameKey(pendingLabel);
+        if (pendingKey !== "") {
+          effectiveChips = chips.some((c) => c.key === pendingKey)
+            ? chips
+            : [...chips, { key: pendingKey, label: pendingLabel }];
+          setChips(effectiveChips);
+          setTagInput("");
+        }
+      }
       // One SAVE message to the worker (U06): the whole sequence — tag def
       // resolve-or-create, createBookmark, patchMeta with an unwind on
       // failure, last-folder — runs in the service worker, which outlives
@@ -483,7 +521,7 @@ export function App() {
         parentId: folderId,
         title: trimmedTitle,
         url: trimmedUrl,
-        tags: chips,
+        tags: effectiveChips,
         category,
         notes,
       });
@@ -596,7 +634,7 @@ export function App() {
           aria-controls="popup-search-row"
           title="Search bookmarks"
           ref={searchIconButtonRef}
-          onClick={() => setSearchOpen(true)}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
           className={cn(ghostButton, "w-8 justify-center px-0")}
         >
           <SearchIcon />
@@ -629,7 +667,13 @@ export function App() {
             onQueryChange={setSearchQuery}
             onOpen={handleOpenResult}
             onClose={closeSearch}
+            sources={suggestionSources}
           />
+        </div>
+      )}
+      {searchQuery !== "" && error !== null && (
+        <div className="shrink-0 px-4 pb-3">
+          <ErrorAlert message={error} />
         </div>
       )}
 
@@ -729,7 +773,10 @@ export function App() {
                     type="button"
                     disabled={suggestionRequested}
                     aria-describedby="popup-suggest-note"
-                    onClick={() => setSuggestionRequested(true)}
+                    onClick={() => {
+                      setExplicitSuggest(true);
+                      setSuggestionRequested(true);
+                    }}
                     className={cn(ghostButton, "disabled:opacity-50")}
                   >
                     Suggest
@@ -738,6 +785,7 @@ export function App() {
                 <Suggestions
                   bookmarkId={suggestId}
                   status={suggestionStatus}
+                  explicitRequest={explicitSuggest}
                   appliedTagKeys={appliedTagKeys}
                   category={category}
                   onFolderSuggestion={handleFolderSuggestion}
