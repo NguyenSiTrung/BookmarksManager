@@ -8,7 +8,8 @@ import {
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ScopePane } from "../../src/entrypoints/sidepanel/ScopePane";
 import type { ScopePaneProps } from "../../src/entrypoints/sidepanel/ScopePane";
-import type { TagDef } from "../../src/schemas/meta";
+import { tagCounts } from "../../src/entrypoints/sidepanel/scope";
+import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
 import type { BookmarksTreeNode } from "../../src/sync/chrome-bookmarks";
 import { flattenTree } from "../../src/sync/tree";
 import type { FlattenedTree } from "../../src/sync/tree";
@@ -119,6 +120,36 @@ describe("ScopePane", () => {
     expect(
       screen.getByRole("button", { name: /^Docs/ }).getAttribute("aria-pressed"),
     ).toBe("false");
+  });
+
+  it("computes tagCounts ignoring orphaned meta rows and renders color dots and counts in ScopePane (UX-06)", () => {
+    const metas: BookmarkMeta[] = [
+      { id: "b1", tags: ["ops", "rust"], updatedAt: ISO },
+      { id: "orphan", tags: ["ops"], updatedAt: ISO },
+    ];
+    const counts = tagCounts(metas, tree);
+    expect(counts.get("ops")).toBe(1);
+    expect(counts.get("rust")).toBe(1);
+
+    const coloredTag: TagDef = {
+      name: "Ops",
+      nameKey: "ops",
+      color: "#10b981",
+      createdAt: ISO,
+      updatedAt: ISO,
+    };
+    renderPane({
+      tagDefs: [coloredTag],
+      tagCounts: counts,
+    });
+
+    const opsBtn = screen.getByRole("button", { name: "Ops" });
+    const dot = opsBtn.querySelector("[data-tag-dot]") as HTMLElement | null;
+    expect(dot).not.toBeNull();
+    expect(dot?.style.backgroundColor).toBe("rgb(16, 185, 129)");
+    expect(
+      opsBtn.querySelector("[data-tag-count='ops']")?.textContent,
+    ).toBe("1");
   });
 });
 

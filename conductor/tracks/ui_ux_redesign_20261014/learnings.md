@@ -50,6 +50,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: Using SVG icons inside `[data-has-notes]` / `[data-has-summary]` and empty `<span data-tag-dot>` elements preserves existing `row.textContent` assertions.
 ---
 
+## [2026-10-14 08:21] - Phase 2 Task 2: `ScopePane` tag color dots & bookmark counts (`UX-06`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added `tagCounts(metas, tree)` in `src/entrypoints/sidepanel/scope.ts` (filtering out orphaned meta rows) and rendered each tag's color dot (`[data-tag-dot]`) and trailing bookmark count (`[data-tag-count]`) in `ScopePane.tsx` while keeping `aria-label={tag.name}` on the tag button.
+- **Files changed:** `src/entrypoints/sidepanel/scope.ts`, `src/entrypoints/sidepanel/ScopePane.tsx`, `tests/components/sidepanel-scope-pane.test.tsx`
+- **Learnings:**
+  - Patterns: Setting `aria-label={tag.name}` on the `ScopePane` tag button preserves exact `getByRole("button", { name: tag.name })` queries when trailing count badges are added inside the button.
+---
+
+
 
 
 

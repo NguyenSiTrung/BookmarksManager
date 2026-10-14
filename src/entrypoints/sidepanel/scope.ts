@@ -34,6 +34,24 @@ export function categoryCounts(
   });
 }
 
+/**
+ * Bookmarks per tag `nameKey`. Meta rows for bookmarks that no longer exist in
+ * `tree` are ignored so orphaned rows never inflate counts.
+ */
+export function tagCounts(
+  metas: readonly BookmarkMeta[],
+  tree: FlattenedTree,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const meta of metas) {
+    if (!tree.bookmarks.has(meta.id)) continue;
+    for (const key of new Set(meta.tags)) {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export interface AiVisibility {
   showReview: boolean;
   showRestructure: boolean;

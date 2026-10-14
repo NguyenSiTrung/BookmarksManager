@@ -52,12 +52,12 @@
   - [x] Write failing component tests in `tests/components/sidepanel-rows.test.tsx` verifying: (1) list rows and grid cards render a one-click `Open <title>` button inside `[data-row-controls]` for openable URLs that triggers `onActivateItem` without altering selection, with roving `tabIndex={active ? 0 : -1}`; (2) `[data-tag]` chips render tag color dots when `tagColorByKey` / `tagDefs` provides a color; (3) rows/cards with `meta.notes` or `meta.summary` render `[data-has-notes="true"]` / `[data-has-summary="true"]` indicators; and (4) when `showFolderPath` is true, rows display the immediate parent folder title alongside the domain.
   - [x] Implement the row/card enhancements in `src/entrypoints/sidepanel/BookmarkList.tsx` and `src/entrypoints/sidepanel/row-text.ts`.
 
-- [~] Task 2: `ScopePane` tag color dots & bookmark counts (`UX-06`)
+- [x] Task 2: `ScopePane` tag color dots & bookmark counts (`UX-06`)
   <!-- files: src/entrypoints/sidepanel/ScopePane.tsx, src/entrypoints/sidepanel/scope.ts, tests/components/sidepanel-scope-pane.test.tsx -->
-  - [ ] Write failing component tests in `tests/components/sidepanel-scope-pane.test.tsx` verifying: (1) `tagCounts(metas, tree)` computes live bookmark counts per tag `nameKey` (ignoring orphaned meta rows); and (2) `ScopePane` renders a color dot (`tag.color`) and the bookmark count badge on each tag row while preserving `aria-label={tag.name}` so `getByRole("button", { name: tag.name })` stays exact.
-  - [ ] Implement `tagCounts` in `src/entrypoints/sidepanel/scope.ts` and update `src/entrypoints/sidepanel/ScopePane.tsx`.
+  - [x] Write failing component tests in `tests/components/sidepanel-scope-pane.test.tsx` verifying: (1) `tagCounts(metas, tree)` computes live bookmark counts per tag `nameKey` (ignoring orphaned meta rows); and (2) `ScopePane` renders a color dot (`tag.color`) and the bookmark count badge on each tag row while preserving `aria-label={tag.name}` so `getByRole("button", { name: tag.name })` stays exact.
+  - [x] Implement `tagCounts` in `src/entrypoints/sidepanel/scope.ts` and update `src/entrypoints/sidepanel/ScopePane.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Side Panel Bookmark List Ergonomics & Scope Sidebar Richness' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Side Panel Bookmark List Ergonomics & Scope Sidebar Richness' (Protocol in workflow.md)
   <!-- depends: task1, task2 -->
 
 ---
@@ -65,7 +65,7 @@
 ## Phase 3: Side Panel Shell, Search Bar & Bulk Bar Streamlining
 <!-- execution: parallel -->
 
-- [ ] Task 1: Narrow-mode `ScopeHeading` pill trigger & `ViewChips` dynamic `Review` promotion (`UX-07`)
+- [~] Task 1: Narrow-mode `ScopeHeading` pill trigger & `ViewChips` dynamic `Review` promotion (`UX-07`)
   <!-- files: src/entrypoints/sidepanel/ScopeHeading.tsx, src/entrypoints/sidepanel/ViewChips.tsx, tests/components/sidepanel-scope-drawer.test.tsx, tests/components/sidepanel-chips.test.tsx -->
   - [ ] Write failing component tests verifying: (1) `ScopeHeading` in narrow mode renders an icon-badged pill button (`data-testid="scope-drawer-trigger"`) while keeping `getByRole("button", { name: title })`; and (2) `ViewChips` promotes `Review suggestions` (with its `{pendingCount}` badge) to a top-level chip whenever `pendingCount > 0` (and when `activeKind === "review"`), while keeping `More` functional for all menu items.
   - [ ] Update `src/entrypoints/sidepanel/ScopeHeading.tsx` and `src/entrypoints/sidepanel/ViewChips.tsx`.

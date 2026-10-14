@@ -18,6 +18,7 @@ export interface ScopePaneProps {
   tree: FlattenedTree;
   view: SidePanelView;
   tagDefs: readonly TagDef[];
+  tagCounts?: ReadonlyMap<string, number>;
   categories: readonly CategoryCount[];
   onSelect(view: SidePanelView): void;
   renderFolderActions?: (node: FolderNode) => ReactNode;
@@ -81,6 +82,7 @@ export function ScopePane({
   tree,
   view,
   tagDefs,
+  tagCounts,
   categories,
   onSelect,
   renderFolderActions,
@@ -115,25 +117,55 @@ export function ScopePane({
       {tagDefs.length > 0 && (
         <Section {...sectionProps("tags", "Tags")}>
           <ul className="space-y-0.5">
-            {tagDefs.map((tag) => (
-              <li key={tag.nameKey}>
-                <button
-                  type="button"
-                  aria-pressed={
-                    view.kind === "tag" && view.nameKey === tag.nameKey
-                  }
-                  onClick={() =>
-                    onSelect({ kind: "tag", nameKey: tag.nameKey })
-                  }
-                  className={ROW_CLASS}
-                >
-                  <span className="truncate">
-                    <span aria-hidden="true">#</span>
-                    {tag.name}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {tagDefs.map((tag) => {
+              const count =
+                tagCounts !== undefined
+                  ? (tagCounts.get(tag.nameKey) ?? 0)
+                  : undefined;
+              return (
+                <li key={tag.nameKey}>
+                  <button
+                    type="button"
+                    aria-label={tag.name}
+                    aria-pressed={
+                      view.kind === "tag" && view.nameKey === tag.nameKey
+                    }
+                    onClick={() =>
+                      onSelect({ kind: "tag", nameKey: tag.nameKey })
+                    }
+                    className={ROW_CLASS}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <span
+                        aria-hidden="true"
+                        data-tag-dot=""
+                        className={
+                          "size-2 shrink-0 rounded-full " +
+                          (tag.color === undefined ? "bg-muted-foreground" : "")
+                        }
+                        style={
+                          tag.color === undefined
+                            ? undefined
+                            : { backgroundColor: tag.color }
+                        }
+                      />
+                      <span className="truncate">
+                        <span aria-hidden="true">#</span>
+                        {tag.name}
+                      </span>
+                    </span>
+                    {count !== undefined && (
+                      <span
+                        data-tag-count={tag.nameKey}
+                        className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                      >
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </Section>
       )}
