@@ -482,3 +482,113 @@ test("double approve applies once; revert targets the addressed decision", async
     ext.dispose();
   }
 });
+
+test("near-duplicate merge approval, search-to-folder routing, and saved summary view/clear (B-01, U-01, U-02)", async () => {
+  test.setTimeout(150_000);
+  const ext = await launchAuditExtension({ hostResolverSink: SINK_HOSTS });
+  try {
+    const sidepanel = await openSurface(ext.context, ext.id, "sidepanel");
+    await waitForSidePanelReady(sidepanel);
+
+    // 1. B-01: Near-duplicate `merge_duplicates` approval where URLs normalize
+    // to distinct URLs merges metadata onto keepId and removes the loser.
+    const keep = await createBookmark(sidepanel, {
+      title: "Rust Async Book — Guide",
+      url: "https://near-dup.dev/rust-async-guide",
+    });
+    const lose = await createBookmark(sidepanel, {
+      title: "Rust Async Book (Mirror)",
+      url: "https://near-dup.dev/rust-async-mirror",
+    });
+    const now = new Date().toISOString();
+    await writeStoreRows(sidepanel, "bookmarkMeta", [
+      {
+        id: keep.id,
+        url: keep.url,
+        tags: ["rust"],
+        notes: "Primary note",
+        summary: "Saved summary for Rust Async Book.",
+        updatedAt: now,
+      },
+      {
+        id: lose.id,
+        url: lose.url,
+        tags: ["async"],
+        notes: "Mirror note",
+        updatedAt: now,
+      },
+    ]);
+    await writeStoreRows(sidepanel, "tags", [
+      { name: "rust", nameKey: "rust", createdAt: now, updatedAt: now },
+      { name: "async", nameKey: "async", createdAt: now, updatedAt: now },
+    ]);
+    const mergeDecisionId = "11111111-2222-4333-8444-555555555555";
+    await writeStoreRows(sidepanel, "decisions", [
+      {
+        id: mergeDecisionId,
+        kind: "merge_duplicates",
+        status: "pending",
+        bookmarkIds: [keep.id, lose.id].sort(),
+        keepId: keep.id,
+        confidence: 0.91,
+        probabilities: { duplicate: 0.91 },
+        source: {
+          engine: "jev",
+          providerId: "typesafe",
+          model: "jev-latest",
+          questionSetVersion: "1",
+        },
+        createdAt: now,
+      },
+    ]);
+
+    const approveMerge = (await sendAuditMessage(sidepanel, {
+      type: "APPROVE_DECISION",
+      decisionId: mergeDecisionId,
+    })) as { ok?: boolean; code?: string };
+    expect(approveMerge.ok, JSON.stringify(approveMerge)).toBe(true);
+
+    await expect
+      .poll(async () => {
+        const metas = await bookmarkMetaRows(sidepanel);
+        return metas.find((m) => m.id === keep.id)?.tags;
+      })
+      .toEqual(["rust", "async"]);
+
+    // 2. U-01: Typing a search query and then selecting a folder clears the
+    // search query and displays the selected folder view.
+    const searchInput = sidepanel.getByRole("combobox", {
+      name: "Search bookmarks",
+    });
+    await searchInput.fill("Rust Async");
+    await expect(searchInput).toHaveValue("Rust Async");
+    await sidepanel
+      .getByRole("button", { name: "All", exact: true })
+      .click();
+    await expect(searchInput).toHaveValue("");
+
+    // 3. U-02: Opening Summarize… on a bookmark with a saved summary displays
+    // the saved summary immediately and allows clearing it.
+    const actionsBtn = sidepanel.getByRole("button", {
+      name: `Actions for ${keep.title}`,
+    });
+    await actionsBtn.click();
+    await sidepanel.getByRole("menuitem", { name: "Summarize…" }).click();
+    await expect(sidepanel.getByTestId("summary-text")).toHaveText(
+      "Saved summary for Rust Async Book.",
+    );
+    await sidepanel.getByRole("button", { name: "Clear summary" }).click();
+    await expect
+      .poll(async () => {
+        const metas = await readStoreRows<{ id: string; summary?: string }>(
+          sidepanel,
+          "bookmarkMeta",
+        );
+        return metas.find((m) => m.id === keep.id)?.summary;
+      })
+      .toBeUndefined();
+  } finally {
+    await ext.context.close();
+    ext.dispose();
+  }
+});

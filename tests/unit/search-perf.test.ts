@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { buildIndex, buildTagNameMap } from "../../src/search/index";
 import type { SearchSourceBookmark } from "../../src/search/index";
-import { collectDuplicateIds, runQuery } from "../../src/search/run";
+import {
+  buildTreeOrderRank,
+  collectDuplicateIds,
+  runQuery,
+} from "../../src/search/run";
 import type { RunQueryContext } from "../../src/search/run";
-
+import { toSearchDocument } from "../../src/search/index";
+import type { SearchDocument } from "../../src/search/index";
+import { createLiveSearchCache } from "../../src/search/live-cache";
+import type { FlattenedTree, BookmarkItem, FolderNode } from "../../src/sync/tree";
 /**
  * Phase 2 perf gate (spec NFR): a synthetic 10k-bookmark corpus must build in
  * under 500 ms and answer a median query in under 50 ms. Deterministic data —
@@ -38,11 +45,11 @@ const FOLDERS = [
 ] as const;
 const TAG_KEYS = ["typescript", "reading list", "rust", "cooking", "later"];
 const TAGS = [
-  { name: "TypeScript", nameKey: "typescript" },
-  { name: "Reading List", nameKey: "reading list" },
-  { name: "Rust", nameKey: "rust" },
-  { name: "Cooking", nameKey: "cooking" },
-  { name: "Later", nameKey: "later" },
+  { name: "TypeScript", nameKey: "typescript", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+  { name: "Reading List", nameKey: "reading list", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+  { name: "Rust", nameKey: "rust", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+  { name: "Cooking", nameKey: "cooking", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+  { name: "Later", nameKey: "later", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
 ];
 const WORDS = [
   "async", "guide", "tutorial", "reference", "release", "design",
@@ -139,5 +146,93 @@ describe("search performance at 10k bookmarks", () => {
     // The gate is the MEDIAN of per-shape bests — one slow shape can't fail
     // the suite, a systematically slow executor can.
     expect(median(bests)).toBeLessThan(50);
+  });
+
+  it("answers term-free / filter-only queries in under 25 ms with precomputed docs and treeOrderRank (P-12)", () => {
+    const index = builtIndex ?? buildIndex(docs, tagNames);
+    const docMap = new Map<string, SearchDocument>();
+    for (const d of docs) {
+      docMap.set(d.id, toSearchDocument(d, tagNames));
+    }
+    const fastCtx: RunQueryContext = {
+      ...ctx,
+      treeOrderRank: buildTreeOrderRank(ctx.treeOrder),
+      docs: docMap,
+    };
+    const filterQueries = [
+      "domain:github.com",
+      "folder:dev/rust",
+      "is:untagged",
+      "is:duplicate",
+      "tag:typescript category:article",
+      "",
+    ];
+    const bests = filterQueries.map((query) => {
+      let best = Infinity;
+      for (let i = 0; i < QUERY_SAMPLES; i++) {
+        const start = performance.now();
+        const res = runQuery(index, query, fastCtx);
+        best = Math.min(best, performance.now() - start);
+        expect(res.hits.length).toBeGreaterThan(0);
+      }
+      return best;
+    });
+    expect(median(bests)).toBeLessThan(25);
+  });
+
+  it("updates createLiveSearchCache for a 1-bookmark edit on a 10k library in under 100 ms (P-12)", () => {
+    const folders = new Map<string, FolderNode>([
+      [
+        "1",
+        {
+          id: "1",
+          kind: "folder",
+          title: "Bookmarks bar",
+          parentId: "0",
+          index: 0,
+          path: [],
+          depth: 0,
+          childIds: docs.map((d) => d.id),
+          isRoot: true,
+          isManaged: false,
+        },
+      ],
+    ]);
+    const bookmarks = new Map<string, BookmarkItem>();
+    for (const [idx, d] of docs.entries()) {
+      bookmarks.set(d.id, {
+        id: d.id,
+        kind: "bookmark",
+        title: d.title,
+        url: d.url,
+        parentId: "1",
+        index: idx,
+        dateAdded: d.dateAdded,
+        path: ["Bookmarks bar"],
+        depth: 1,
+        isRoot: false,
+        isManaged: false,
+      });
+    }
+    const tree: FlattenedTree = { folders, bookmarks };
+    const cache = createLiveSearchCache();
+    cache.update(tree, [], TAGS);
+
+    let best = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const nextBookmarks = new Map(bookmarks);
+      const first = nextBookmarks.get("bm0")!;
+      nextBookmarks.set("bm0", {
+        ...first,
+        title: `Updated title ${i}`,
+        url: `https://www.example.com/updated/${i}`,
+      });
+      const nextTree: FlattenedTree = { folders, bookmarks: nextBookmarks };
+      const start = performance.now();
+      const handle = cache.update(nextTree, [], TAGS);
+      best = Math.min(best, performance.now() - start);
+      expect(handle.index.documentCount).toBe(CORPUS_SIZE);
+    }
+    expect(best).toBeLessThan(100);
   });
 });

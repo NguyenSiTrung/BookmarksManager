@@ -13,15 +13,24 @@ import { grantConsent } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { productionHandlers } from "../../src/entrypoints/background";
 import { resetJevClientPools } from "../../src/jev/client";
+import {
+  buildPrecomputedAnalysisIndex,
+  folderCandidates,
+  tagCandidates,
+} from "../../src/decisions/candidates";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import {
   NEAR_DUPLICATE_COMPARISON_LIMIT,
   NEAR_DUPLICATE_PAIR_LIMIT,
   planNearDuplicates,
 } from "../../src/decisions/near-duplicate-plan";
+import { persistDecision } from "../../src/decisions/store";
 import { sendConsented } from "../../src/net/send";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import type { TagDef } from "../../src/schemas/meta";
+import { getTree } from "../../src/sync/chrome-bookmarks";
+import { reconcileMetadata } from "../../src/sync/reconcile";
+import { flattenTree } from "../../src/sync/tree";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
 import { startMockJevServer } from "../mock-servers/jev";
 import type { MockJevServer } from "../mock-servers/jev";
@@ -358,5 +367,101 @@ describe("near-duplicate planning performance", () => {
         `first pass ${elapsed.toFixed(1)}ms (budget ${PLAN_BUDGET_MS}ms)`,
     );
     expect(elapsed).toBeLessThan(PLAN_BUDGET_MS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Precomputed candidate selection, indexed persistence & startup reconcile
+// (perf_ux_hardening_20261014 Phase 5 — P-01, P-02, P-05)
+// ---------------------------------------------------------------------------
+
+describe("10k scaling budgets (P-01, P-02, P-05)", () => {
+  it("selects tag and folder candidates for 100 bookmarks on a 10k library in under 500 ms with PrecomputedAnalysisIndex (P-01)", async () => {
+    const rawTree = await getTree();
+    const tree = flattenTree(rawTree);
+    const bookmarks = [...tree.bookmarks.values()].map(({ id, title, url }) => ({
+      id,
+      title,
+      url,
+    }));
+    const metas = await db.bookmarkMeta.toArray();
+    const corpus = { bookmarks, metas };
+    const subjects = [...tree.bookmarks.values()].slice(0, 100);
+
+    let best = Infinity;
+    for (let sample = 0; sample < 3; sample += 1) {
+      const start = performance.now();
+      const precomputed = buildPrecomputedAnalysisIndex({
+        tagDefs,
+        corpus,
+        tree,
+      });
+      for (const subject of subjects) {
+        const tagCands = tagCandidates(subject, tagDefs, corpus, precomputed);
+        const folderCands = folderCandidates(subject, tree, precomputed);
+        expect(tagCands.length).toBeGreaterThan(0);
+        expect(folderCands.candidates.length).toBeGreaterThan(0);
+      }
+      best = Math.min(best, performance.now() - start);
+    }
+
+    expect(best).toBeLessThan(500);
+  });
+
+  it("persists a decision via the *bookmarkIds index against 2,000 existing rows in under 200 ms (P-02)", async () => {
+    const baseRows = Array.from({ length: 2_000 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, "0")}`,
+      status: (i % 2 === 0 ? "pending" : "rejected") as "pending" | "rejected",
+      bookmarkIds: [`bm-${i}`],
+      confidence: 0.8,
+      probabilities: { docs: 0.8 },
+      source: {
+        engine: "jev" as const,
+        providerId: "typesafe" as const,
+        model: "jev-latest",
+        questionSetVersion: "1",
+      },
+      createdAt: NOW,
+      kind: "set_category" as const,
+      category: "docs" as const,
+    }));
+    await db.decisions.bulkPut(baseRows);
+
+    let best = Infinity;
+    for (let sample = 0; sample < 3; sample += 1) {
+      const targetId = `bm-${9_000 + sample}`;
+      const start = performance.now();
+      const row = await persistDecision({
+        id: `00000000-0000-4000-8000-${String(9_000 + sample).padStart(12, "0")}`,
+        status: "pending",
+        kind: "set_category",
+        bookmarkIds: [targetId],
+        category: "article",
+        confidence: 0.88,
+        probabilities: { article: 0.88 },
+        source: {
+          engine: "jev",
+          providerId: "typesafe",
+          model: "jev-latest",
+          questionSetVersion: "1",
+        },
+        createdAt: NOW,
+      });
+      best = Math.min(best, performance.now() - start);
+      expect(row.bookmarkIds).toEqual([targetId]);
+    }
+
+    expect(best).toBeLessThan(200);
+  });
+
+  it("completes startup reconcileMetadata on the 10k library in under 500 ms when metaTombstones is empty (P-05)", async () => {
+    let best = Infinity;
+    for (let sample = 0; sample < 3; sample += 1) {
+      const start = performance.now();
+      const reaped = await reconcileMetadata();
+      best = Math.min(best, performance.now() - start);
+      expect(reaped).toBe(0);
+    }
+    expect(best).toBeLessThan(500);
   });
 });

@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-13 (refresh — e2e workers=4 + vitest parallel-load budgets recorded; test-analysis doc linked; no dependency drift) -->
+<!-- Last refreshed: 2026-10-14 (perf_ux_hardening_20261014 delivered; no dependency drift) -->
 
 # Technology Stack
 

@@ -413,6 +413,8 @@ test("budget exhaustion and revoke refuse further sends", async () => {
   });
   const openai = await routeFakeOpenAi(ext.context, { content: PROPOSAL });
   const page = await openSurface(ext.context, ext.id, "options");
+  await enableTypesafe(page, { key: "e2e-jev-key" });
+  await grantDecisionsConsent(page);
   // Custom endpoints are the only branch exposing per-token pricing — a
   // $0 cap + priced model means the reservation estimate refuses before
   // anything reaches the wire.
