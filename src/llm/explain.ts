@@ -3,16 +3,15 @@ import type { DecisionRow } from "../decisions/store";
 import { getDecision, persistDecisionRationale } from "../decisions/store";
 import { minimizeBookmark } from "../decisions/minimize";
 import { readBlocklist } from "../decisions/blocklist";
-import { get } from "../sync/chrome-bookmarks";
+import { get, ROOT_NODE_ID } from "../sync/chrome-bookmarks";
 import type { SentBookmark } from "../schemas/decision-state";
-import type { TokenUsage } from "./wire";
+import type { TokenUsage, ChatMessage } from "./wire";
 import { createLlmClient } from "./client";
 import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
 import { LlmGateError } from "../net/llm-send";
 import { readLlmProvider } from "./settings";
-import type { ChatMessage } from "./wire";
-
+import { stripUrlsAndMarkdown } from "./sanitize";
 /**
  * Decision explanations (spec FR5). An explicit, manual Explain action on a
  * pending review-queue decision: sends ONLY the minimized decision state —
@@ -67,8 +66,35 @@ export interface ExplainOptions {
 const MAX_INPUT_TOKENS = 8_192;
 const MAX_OUTPUT_TOKENS = 1_024;
 
+async function resolveFolderPath(folderId: string): Promise<string> {
+  const segments: string[] = [];
+  const seen = new Set<string>();
+  let currentId: string | undefined = folderId;
+  while (
+    currentId !== undefined &&
+    currentId !== ROOT_NODE_ID &&
+    !seen.has(currentId)
+  ) {
+    seen.add(currentId);
+    let node;
+    try {
+      node = (await get(currentId))[0];
+    } catch {
+      break;
+    }
+    if (node === undefined) break;
+    if (node.title !== "") {
+      segments.unshift(node.title);
+    }
+    currentId = node.parentId;
+  }
+  return segments.length > 0 ? segments.join("/") : folderId;
+}
+
 /** The question wording Jev answered, per decision kind. */
-function questionFor(row: DecisionRow): { question: string; answer: string } {
+async function questionFor(
+  row: DecisionRow,
+): Promise<{ question: string; answer: string }> {
   switch (row.kind) {
     case "set_category":
       return {
@@ -83,7 +109,7 @@ function questionFor(row: DecisionRow): { question: string; answer: string } {
     case "move":
       return {
         question: "Which folder should this bookmark live in?",
-        answer: `folder id ${row.targetFolderId}`,
+        answer: await resolveFolderPath(row.targetFolderId),
       };
     case "mark_dead":
       return {
@@ -107,7 +133,6 @@ function questionFor(row: DecisionRow): { question: string; answer: string } {
       };
   }
 }
-
 /**
  * Fetch the decision's live bookmarks and reduce each to its sendable
  * `{title, url, domain}` triple. A blocked reference refuses the WHOLE
@@ -119,22 +144,21 @@ async function minimizedBookmarks(
   row: DecisionRow,
   captured: readonly SentBookmark[] = [],
 ): Promise<SentBookmark[]> {
-  const nodes = (
-    await Promise.all(
-      row.bookmarkIds.map(async (id) => {
-        try {
-          return await get(id);
-        } catch {
-          // An unreadable reference may itself be blocked; dropping it
-          // would still leak the decision derived from it.
-          throw new ExplainError(
-            "stale",
-            "A referenced bookmark cannot be checked for explanation sending.",
-          );
-        }
-      }),
-    )
-  ).flat();
+  const entries = await Promise.all(
+    row.bookmarkIds.map(async (id) => {
+      try {
+        const fetched = await get(id);
+        return { id, nodes: fetched };
+      } catch {
+        // An unreadable reference may itself be blocked; dropping it
+        // would still leak the decision derived from it.
+        throw new ExplainError(
+          "stale",
+          "A referenced bookmark cannot be checked for explanation sending.",
+        );
+      }
+    }),
+  );
   const blocklist = await readBlocklist();
   function refuseBlocked(): never {
     throw new ExplainError(
@@ -142,15 +166,66 @@ async function minimizedBookmarks(
       "A referenced bookmark is blocked from explanation sending.",
     );
   }
+  function refuseStale(): never {
+    throw new ExplainError(
+      "stale",
+      "A referenced bookmark moved or changed since the decision was created.",
+    );
+  }
   for (const bookmark of captured) {
     if (minimizeBookmark(bookmark, blocklist) === null) refuseBlocked();
   }
   const bookmarks: SentBookmark[] = [];
-  for (const node of nodes) {
-    if (node.url === undefined) continue;
-    const sent = minimizeBookmark({ title: node.title, url: node.url }, blocklist);
-    if (sent === null) refuseBlocked();
-    bookmarks.push(sent);
+  for (const { id, nodes } of entries) {
+    if (nodes.length === 0) refuseStale();
+    for (const node of nodes) {
+      if (row.guard !== undefined) {
+        const snapshot = row.guard.snapshots?.[id];
+        const hasBookmarkEntry =
+          "bookmarks" in row.guard &&
+          typeof row.guard.bookmarks === "object" &&
+          row.guard.bookmarks !== null &&
+          id in row.guard.bookmarks;
+        const expectedParent = row.guard.placements[id];
+        if (
+          (expectedParent === undefined &&
+            snapshot === undefined &&
+            !hasBookmarkEntry) ||
+          (expectedParent !== undefined && node.parentId !== expectedParent)
+        ) {
+          refuseStale();
+        }
+        if (
+          snapshot !== undefined &&
+          ((node.url ?? "") !== snapshot.url || node.title !== snapshot.title)
+        ) {
+          refuseStale();
+        }
+        if (hasBookmarkEntry && "bookmarks" in row.guard) {
+          const entry: unknown = Reflect.get(
+            Object(row.guard.bookmarks),
+            id,
+          );
+          if (typeof entry === "object" && entry !== null) {
+            const expUrl: unknown = Reflect.get(entry, "url");
+            const expTitle: unknown = Reflect.get(entry, "title");
+            if (
+              (typeof expUrl === "string" && (node.url ?? "") !== expUrl) ||
+              (typeof expTitle === "string" && node.title !== expTitle)
+            ) {
+              refuseStale();
+            }
+          }
+        }
+      }
+      if (node.url === undefined) continue;
+      const sent = minimizeBookmark(
+        { title: node.title, url: node.url },
+        blocklist,
+      );
+      if (sent === null) refuseBlocked();
+      bookmarks.push(sent);
+    }
   }
   return bookmarks;
 }
@@ -190,11 +265,20 @@ export async function explainDecision(
   if (record === null) {
     throw new LlmGateError("invalid_provider", "Unknown LLM provider.");
   }
-  const { question, answer } = questionFor(row);
+  const { question, answer } = await questionFor(row);
+  const rawProbabilities = row.probabilities ?? {};
+  const probabilities: Record<string, number> = {};
+  for (const [key, prob] of Object.entries(rawProbabilities)) {
+    const resolvedKey =
+      row.kind === "move" && key !== "none"
+        ? await resolveFolderPath(key)
+        : key;
+    probabilities[resolvedKey] = prob;
+  }
   const payload = {
     question,
-    candidates: Object.keys(row.probabilities ?? {}).sort(),
-    probabilities: row.probabilities ?? {},
+    candidates: Object.keys(probabilities).sort(),
+    probabilities,
     answer,
     bookmarks,
   };
@@ -222,7 +306,7 @@ export async function explainDecision(
     ...(options?.signal !== undefined ? { signal: options.signal } : {}),
   });
   const run = await runStructured({
-    tier: "json_schema",
+    tier: record.tier ?? "json_schema",
     model: resolveLlmDestination(record.provider).model,
     schema: ExplainResponse,
     schemaName: "explanation",
@@ -234,10 +318,17 @@ export async function explainDecision(
       return client.send(request);
     },
   });
-  await persistDecisionRationale(decisionId, run.value.rationale);
+  const rationale = stripUrlsAndMarkdown(run.value.rationale);
+  if (rationale === "") {
+    throw new ExplainError(
+      "provider",
+      "The provider's explanation contained no usable text.",
+    );
+  }
+  await persistDecisionRationale(decisionId, rationale);
   const result: ExplainResult = {
     decisionId,
-    rationale: run.value.rationale,
+    rationale,
     model: run.model,
     ...(run.usage !== undefined ? { usage: run.usage } : {}),
   };

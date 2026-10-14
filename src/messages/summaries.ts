@@ -41,11 +41,17 @@ export const SummaryConsentPreflight = z.strictObject({
   approval: SummaryConsentApproval,
   llmGranted: z.boolean(),
   jevGranted: z.boolean(),
+  pageOrigin: z.string().min(1).optional(),
+  hasPagePermission: z.boolean().optional(),
 });
 export type SummaryConsentPreflight = z.infer<typeof SummaryConsentPreflight>;
 
 export const SummarizeMessage = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("LLM_SUMMARY_PREFLIGHT") }),
+  z.strictObject({
+    type: z.literal("LLM_SUMMARY_PREFLIGHT"),
+    tabId: z.number().int().positive().optional(),
+    bookmarkId: z.string().min(1).optional(),
+  }),
   // Summarize the saved bookmark the active tab maps to. `unknownCostConfirmed`
   // is ONLY honored on this manual intent — it is the CostConfirmationDialog
   // resend flag (spec FR7.8).
@@ -273,7 +279,12 @@ export async function handleSummarizeMessage(
     switch (parsed.data.type) {
       case "LLM_SUMMARY_PREFLIGHT": {
         const { readSummaryConsent } = await import("../decisions/summaries");
-        const current = await readSummaryConsent();
+        const current = await readSummaryConsent(undefined, {
+          ...(parsed.data.tabId !== undefined ? { tabId: parsed.data.tabId } : {}),
+          ...(parsed.data.bookmarkId !== undefined
+            ? { bookmarkId: parsed.data.bookmarkId }
+            : {}),
+        });
         return current.ok
           ? { ok: true, code: "summary_consent", consent: current.consent }
           : outcomeToReply(current);

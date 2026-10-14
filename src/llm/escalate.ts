@@ -12,8 +12,8 @@ import { resolveProviderPricing } from "./pricing";
 import { runStructured } from "./structured";
 import { resolveLlmDestination } from "./providers";
 import { readLlmProvider } from "./settings";
+import { stripUrlsAndMarkdown } from "./sanitize";
 import type { ChatMessage } from "./wire";
-
 /**
  * Automatic low-confidence escalation (spec FR6). When — and only when — the
  * user has configured a priced LLM provider, granted `llm_escalate` consent,
@@ -165,15 +165,16 @@ export async function maybeEscalateDecision(
       ...(context.beforeSend === undefined ? {} : { beforeSend: context.beforeSend }),
     });
     const run = await runStructured({
-      tier: "json_schema",
+      tier: record.tier ?? "json_schema",
       model: resolveLlmDestination(record.provider).model,
       schema: EscalationResponse,
       schemaName: "second_opinion",
       messages,
       send: client.send,
     });
-    const { verdict, alternative, rationale } = run.value;
-    // Candidate cross-check: an alternative must be one of the offered ids,
+    const { verdict, alternative } = run.value;
+    const rationale = stripUrlsAndMarkdown(run.value.rationale);
+    if (rationale === "") return null;
     // and `disagree` must carry one. Anything else is an invented action.
     if (
       alternative !== undefined &&

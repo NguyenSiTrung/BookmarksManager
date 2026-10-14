@@ -38,7 +38,7 @@ settings or from the provider's Revoke action in Options.
 |---|---|---|
 | `https://api.typesafe.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the TypeSafe provider, started by the user |
 | `https://openrouter.ai/*` | optional | Jev provider connection (Test connection and bookmark decisions) to the OpenRouter provider, started by the user |
-| `https://*/*` | optional | Capability only — lets the user grant the exact origin of a custom OpenAI-compatible LLM provider or a custom System One-compatible Jev endpoint at runtime from a direct click; the egress gate re-checks the exact origin and a per-scope consent record before any request can fire |
+| `https://*/*` | optional | Capability only — lets the user grant the exact origin of a custom OpenAI-compatible LLM provider, a custom System One-compatible Jev endpoint, or a bookmarked page's origin for side-panel page summarization when `activeTab` is not active on the target tab, at runtime from a direct click; the egress gate re-checks the exact origin and a per-scope consent record before any request can fire |
 | `http://localhost/*` | optional | Optional LLM or custom Jev provider on a loopback endpoint (e.g. a local model server); Chrome patterns cannot express ports, so the gate enforces the full origin (host + port) itself |
 | `http://127.0.0.1/*` | optional | Same loopback provider endpoint via the IPv4 literal |
 | `http://[::1]/*` | optional | Same loopback provider endpoint via the IPv6 literal |

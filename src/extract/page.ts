@@ -127,7 +127,7 @@ const RESTRICTED_HOSTS = new Set([
 ]);
 
 /** Whether `url` is an injectable http(s) page address. */
-function isExtractableUrl(url: string | undefined): boolean {
+export function isExtractableUrl(url: string | undefined): boolean {
   if (typeof url !== "string" || url === "") return false;
   try {
     const parsed = new URL(url);

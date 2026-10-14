@@ -488,4 +488,117 @@ describe("explainDecision", () => {
       explainDecision(UUID2, PROVIDER_ID),
     ).rejects.toBeInstanceOf(ExplainError);
   });
+
+  it("uses the persisted provider tier instead of always starting at json_schema (B-14)", async () => {
+    await saveLlmProvider({
+      providerId: PROVIDER_ID,
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      tier: "prompt_only",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await saveCredential(PROVIDER_ID, "sk-test-1234");
+    await grantConsentAtOrigin("llm_explain", ORIGIN);
+    await persistDecision(decision());
+    const result = await explainDecision(UUID, PROVIDER_ID);
+    expect(result.rationale).toBe("Jev ranked 'article' highest.");
+    expect(server.requests).toHaveLength(1);
+    const body = server.requests[0]!.body as { response_format?: unknown };
+    expect(body.response_format).toBeUndefined();
+  });
+
+  it("checks row.guard freshness and refuses moved or edited bookmarks as stale (B-14)", async () => {
+    await seedEnabledProvider();
+    await persistDecision(decision({ bookmarkIds: ["bm-001"] }), {
+      guard: {
+        placements: { "bm-001": "1" },
+        snapshots: {
+          "bm-001": { url: "https://a-site.com/?q=secret", title: "A" },
+        },
+      },
+    });
+    await bookmarksApi.move("bm-001", { parentId: "2" });
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "stale",
+    });
+    expect(server.requests).toHaveLength(0);
+
+    await resetEnv();
+    await seedEnabledProvider();
+    await persistDecision(
+      decision({
+        kind: "rename",
+        newTitle: "New Title",
+        category: undefined,
+        bookmarkIds: ["bm-001"],
+      }),
+      {
+        guard: {
+          placements: { "bm-001": "1" },
+          snapshots: {
+            "bm-001": { url: "https://a-site.com/?q=secret", title: "A" },
+          },
+        },
+      },
+    );
+    await bookmarksApi.update("bm-001", { title: "Edited Title" });
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "stale",
+    });
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("resolves move targetFolderId to human-readable folder path instead of raw folder id (B-14)", async () => {
+    await seedEnabledProvider();
+    const work = await bookmarksApi.create({ parentId: "1", title: "Work" });
+    const docs = await bookmarksApi.create({ parentId: work.id, title: "Docs" });
+    await persistDecision(
+      decision({
+        kind: "move",
+        targetFolderId: docs.id,
+        category: undefined,
+        probabilities: { [docs.id]: 0.72, none: 0.28 },
+      }),
+    );
+    await explainDecision(UUID, PROVIDER_ID);
+    expect(server.requests).toHaveLength(1);
+    const body = server.requests[0]!.body as {
+      messages: { role: string; content: string }[];
+    };
+    const user = body.messages.find((m) => m.role === "user")!;
+    const payload = JSON.parse(user.content) as {
+      answer: string;
+      candidates: string[];
+      probabilities: Record<string, number>;
+    };
+    expect(payload.answer).toContain("Work/Docs");
+    expect(payload.answer).not.toContain(`folder id ${docs.id}`);
+    expect(payload.candidates.some((c) => c.includes("Work/Docs"))).toBe(true);
+  });
+
+  it("sanitizes rationale with stripUrlsAndMarkdown and rejects empty sanitized rationale (B-14)", async () => {
+    server = makeOpenAiServer({
+      completion: completionWith({
+        rationale: "**Ranked** [article](https://evil.example/phish) https://bare.example/leak",
+      }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    await seedEnabledProvider();
+    await persistDecision(decision());
+    const res = await explainDecision(UUID, PROVIDER_ID);
+    expect(res.rationale).toBe("Ranked article");
+    expect((await getDecision(UUID))?.rationale).toBe("Ranked article");
+
+    await resetEnv();
+    server = makeOpenAiServer({
+      completion: completionWith({ rationale: "https://evil.example/only-url" }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    await seedEnabledProvider();
+    await persistDecision(decision());
+    await expect(explainDecision(UUID, PROVIDER_ID)).rejects.toMatchObject({
+      code: "provider",
+    });
+    expect((await getDecision(UUID))?.rationale).toBeUndefined();
+  });
 });

@@ -1206,6 +1206,38 @@ describe("LLM_REVOKE", () => {
     // Consent already gone — the gate still blocks every send.
     expect(await db.consents.count()).toBe(0);
   });
+
+  it("revokes only LLM consent scopes and preserves shared host permission when a Jev provider uses the same origin (B-05)", async () => {
+    const openrouterId = "preset:openrouter";
+    const openrouterOrigin = "https://openrouter.ai";
+    await saveLlmProvider({
+      providerId: openrouterId,
+      provider: { kind: "preset", preset: "openrouter", model: "openai/gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await saveCredential(openrouterId, "sk-or-1234");
+    await grantConsentAtOrigin("llm_test", openrouterOrigin);
+    await grantConsentAtOrigin("llm_summary", openrouterOrigin);
+    await grantConsentAtOrigin("jev_test", openrouterOrigin);
+    await grantConsentAtOrigin("jev_decisions", openrouterOrigin);
+    await db.metadata.put({
+      key: "openrouter",
+      value: { preset: "openrouter", model: "jev-latest", keySuffix: "5678" },
+    });
+
+    const res = await call({
+      type: "LLM_REVOKE",
+      providerId: openrouterId,
+      deleteKey: true,
+    });
+    expect(res).toMatchObject({ ok: true });
+    expect(await hasConsentAtOrigin("llm_test", openrouterOrigin)).toBe(false);
+    expect(await hasConsentAtOrigin("llm_summary", openrouterOrigin)).toBe(false);
+    expect(await hasConsentAtOrigin("jev_test", openrouterOrigin)).toBe(true);
+    expect(await hasConsentAtOrigin("jev_decisions", openrouterOrigin)).toBe(true);
+    expect(removeSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("LLM_BUDGET_SNAPSHOT", () => {

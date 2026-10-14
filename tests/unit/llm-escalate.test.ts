@@ -384,4 +384,45 @@ describe("maybeEscalateDecision", () => {
     });
     expect(server.requests).toHaveLength(0);
   });
+
+  it("uses record.tier and sanitizes rationale via stripUrlsAndMarkdown (B-14)", async () => {
+    server = makeOpenAiServer({
+      completion: completionWith({
+        verdict: "agree",
+        rationale: "**Consistent** with [docs](https://evil.example/phish) https://bare.example/x",
+      }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    await saveLlmProvider({
+      providerId: PROVIDER_ID,
+      provider: {
+        kind: "custom",
+        baseUrl: "https://llm.example.com/v1",
+        model: "m",
+        auth: "none",
+        pricing: { inputPerMillion: 1, outputPerMillion: 2 },
+      },
+      tier: "prompt_only",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+      monthlyBudgetUsd: 5,
+    });
+    await grantConsentAtOrigin("llm_escalate", ORIGIN);
+    await writeLlmEscalationSettings({ enabled: true, providerId: PROVIDER_ID });
+    const result = await maybeEscalateDecision(lowConfidence(), CONTEXT);
+    expect(result).toMatchObject({
+      verdict: "agree",
+      rationale: "Consistent with docs",
+    });
+    const body = server.requests[0]!.body as { response_format?: unknown };
+    expect(body.response_format).toBeUndefined();
+
+    server = makeOpenAiServer({
+      completion: completionWith({
+        verdict: "agree",
+        rationale: "https://evil.example/only-url",
+      }),
+    });
+    vi.stubGlobal("fetch", server.fetch);
+    expect(await maybeEscalateDecision(lowConfidence(), CONTEXT)).toBeNull();
+  });
 });

@@ -1,6 +1,7 @@
 import {
   grantConsentAtOrigin,
   hasConsentAtOrigin,
+  JEV_CONSENT_SCOPES,
   revokeConsentAtOrigin,
   revokeConsentsAtOrigin,
 } from "../consent/records";
@@ -12,10 +13,12 @@ import {
   type JevDestination,
 } from "../jev/providers";
 import { readJevProvider } from "../jev/settings";
+import { resolveLlmDestination } from "../llm/providers";
 import { NetworkGateError } from "../net/send";
-import { LlmBaseUrl } from "../schemas/llm";
+import { LlmBaseUrl, LlmProviderRecord } from "../schemas/llm";
 import {
   CONSENT_SCOPE,
+  JEV_PROVIDER_IDS,
   JevProviderId,
   ProviderApiKey,
   ProviderSettings,
@@ -434,7 +437,7 @@ async function revokeProvider(message: {
   // its consent rows, if any, die with the settings row below.
   if (destination !== null) {
     try {
-      await revokeConsentsAtOrigin(destination.origin);
+      await revokeConsentsAtOrigin(destination.origin, JEV_CONSENT_SCOPES);
     } catch {
       return failure(
         "revoke_failed",
@@ -445,18 +448,54 @@ async function revokeProvider(message: {
 
   const failures: string[] = [];
   if (destination !== null) {
+    let permissionShared = false;
     try {
-      const removed = await chrome.permissions.remove({
-        origins: [destination.permissionPattern],
-      });
-      // `remove` can report false (e.g. the grant was already gone); count
-      // the step as done only when the permission is not held afterwards.
-      const released =
-        removed === true ||
-        !(await hasOriginPermission(destination.permissionPattern));
-      if (!released) failures.push("browser permission");
+      for (const id of JEV_PROVIDER_IDS) {
+        if (id === message.preset) continue;
+        const other = await readJevProvider(id);
+        if (
+          other !== null &&
+          resolveJevDestination(other).permissionPattern ===
+            destination.permissionPattern
+        ) {
+          permissionShared = true;
+          break;
+        }
+      }
+      if (!permissionShared) {
+        const llmRows = await db.metadata
+          .where("key")
+          .startsWith("llmProvider:")
+          .toArray();
+        for (const row of llmRows) {
+          const parsed = LlmProviderRecord.safeParse(row.value);
+          if (
+            parsed.success &&
+            resolveLlmDestination(parsed.data.provider).permissionPattern ===
+              destination.permissionPattern
+          ) {
+            permissionShared = true;
+            break;
+          }
+        }
+      }
     } catch {
-      failures.push("browser permission");
+      permissionShared = false;
+    }
+    if (!permissionShared) {
+      try {
+        const removed = await chrome.permissions.remove({
+          origins: [destination.permissionPattern],
+        });
+        // `remove` can report false (e.g. the grant was already gone); count
+        // the step as done only when the permission is not held afterwards.
+        const released =
+          removed === true ||
+          !(await hasOriginPermission(destination.permissionPattern));
+        if (!released) failures.push("browser permission");
+      } catch {
+        failures.push("browser permission");
+      }
     }
   }
 

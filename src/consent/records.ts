@@ -3,12 +3,35 @@ import { resolvePreset } from "../net/presets";
 import {
   CONSENT_SCOPES,
   CONSENT_SCOPE,
+  DECISIONS_CONSENT_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
+  LLM_ESCALATE_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
+  LLM_TEST_SCOPE,
   ConsentRecord,
   type ConsentScope,
   type PresetId,
 } from "../schemas/provider";
 
 export type { ConsentScope };
+
+/** Consent scopes owned by the Jev provider layer. */
+export const JEV_CONSENT_SCOPES = [
+  CONSENT_SCOPE,
+  DECISIONS_CONSENT_SCOPE,
+  JEV_SUMMARY_VERIFY_SCOPE,
+] as const;
+
+/** Consent scopes owned by the dynamic LLM provider layer. */
+export const LLM_CONSENT_SCOPES = [
+  LLM_TEST_SCOPE,
+  LLM_EXPLAIN_SCOPE,
+  LLM_ESCALATE_SCOPE,
+  LLM_RESTRUCTURE_SCOPE,
+  LLM_SUMMARY_SCOPE,
+] as const;
 
 /**
  * Base version of the consent grant. Scope-specific disclosures may override
@@ -141,9 +164,12 @@ export class ConsentRevokeError extends Error {
  * it throws a `ConsentRevokeError` after the others have run. Safe when rows
  * are absent.
  */
-export async function revokeConsentsAtOrigin(origin: string): Promise<void> {
+export async function revokeConsentsAtOrigin(
+  origin: string,
+  scopes: readonly ConsentScope[] = CONSENT_SCOPES,
+): Promise<void> {
   const results = await Promise.allSettled(
-    CONSENT_SCOPES.map((scope) => revokeConsentAtOrigin(scope, origin)),
+    scopes.map((scope) => revokeConsentAtOrigin(scope, origin)),
   );
   const rejected = results.filter(
     (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -157,5 +183,8 @@ export async function revokeConsentsAtOrigin(origin: string): Promise<void> {
 }
 
 export function revokeProviderConsents(preset: PresetId): Promise<void> {
-  return revokeConsentsAtOrigin(resolvePreset(preset).origin);
+  return revokeConsentsAtOrigin(
+    resolvePreset(preset).origin,
+    JEV_CONSENT_SCOPES,
+  );
 }

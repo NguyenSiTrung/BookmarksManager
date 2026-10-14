@@ -142,7 +142,11 @@ describe("verifySummary task", () => {
     const result = await verifySummaryRun(client, STATE);
     expect(result.verdict).toBe("supported");
     expect(result.confidence).toBe(0.9);
-    // The state reaching the wire is exactly what was passed.
+    expect(result.usage).toEqual({
+      inputTokens: 400,
+      outputTokens: 20,
+      cost: 0.001,
+    });
     expect(client.run).toHaveBeenCalledWith(
       expect.objectContaining({ model: "jev-latest", state: STATE }),
     );

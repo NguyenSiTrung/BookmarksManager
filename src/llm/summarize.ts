@@ -92,7 +92,7 @@ export async function summarizePage(
     ...(options?.signal !== undefined ? { signal: options.signal } : {}),
   });
   const run = await runStructured({
-    tier: "json_schema",
+    tier: record.tier ?? "json_schema",
     model: resolveLlmDestination(record.provider).model,
     schema: SummaryDraft,
     schemaName: "page_summary",

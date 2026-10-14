@@ -1,6 +1,6 @@
 import { choice, defineDecision } from "../define";
 import type { QuestionSet } from "./index";
-import type { JevClient } from "../client";
+import type { JevClient, JevRunResult } from "../client";
 import type {
   SummaryVerificationState,
   SummaryVerdict,
@@ -64,6 +64,10 @@ export interface SummaryVerificationResult {
   verdict: SummaryVerdict;
   /** API-reported confidence in the chosen option. */
   confidence: number;
+  /** Versioned model id returned by the provider. */
+  model?: string;
+  /** Token and cost usage reported by the Jev client. */
+  usage?: JevRunResult["usage"];
 }
 
 /**
@@ -79,7 +83,9 @@ export async function verifySummaryRun(
   const { decision } = verifySummary(state);
   const result = await decision.run(client, state);
   return {
-    verdict: result.values[VERDICT_FIELD] as SummaryVerdict,
+    verdict: result.values[VERDICT_FIELD],
     confidence: result.confidence[VERDICT_FIELD] ?? 0,
+    ...(result.model !== undefined ? { model: result.model } : {}),
+    ...(result.usage !== undefined ? { usage: result.usage } : {}),
   };
 }

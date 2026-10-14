@@ -1007,12 +1007,19 @@ describe("summarizeActiveBookmark", () => {
     expect(outcome.ok).toBe(true);
     const usage = await db.llmUsage.toArray();
     expect(usage.some((row) => row.feature === "llm_summary")).toBe(true);
-    const jevUsage = await db.usage.toArray().catch(() => []);
-    expect(Array.isArray(jevUsage)).toBe(true);
+    const jevUsage = await db.usage.toArray();
+    expect(jevUsage).toHaveLength(1);
+    expect(jevUsage[0]).toMatchObject({
+      model: "jev-latest",
+      inputTokens: 30,
+      outputTokens: 4,
+      costUsd: 0.0001,
+    });
     const meta = await getMeta(BOOKMARK_ID);
     const serialized = JSON.stringify(meta ?? {});
     expect(serialized).not.toContain("caching layer in detail");
     expect(meta?.summary).toBe("A page about a caching layer.");
+    expect(meta?.url).toBe(PAGE_URL);
   });
 
   it("leaves meta untouched when the provider is not configured", async () => {
@@ -1143,5 +1150,41 @@ describe("summarizePage payload defense", () => {
       expect(await getMeta(BOOKMARK_ID), mode).toBeUndefined();
       expect(await db.bookmarkMeta.count(), mode).toBe(0);
     }
+  });
+
+  it("persists summary even when the tab closed or navigated during verify, and summarizePage honors record.tier (B-12, B-14)", async () => {
+    await saveLlmProvider({
+      providerId: PROVIDER_ID,
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      tier: "prompt_only",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await saveCredential(PROVIDER_ID, "sk-test-1234");
+    await db.metadata.put({
+      key: "typesafe",
+      value: { preset: "typesafe", model: "jev-latest", keySuffix: "1234" },
+    });
+    await grantConsentAtOrigin("jev_test", JEV_ORIGIN);
+    await grantAll();
+
+    const supported = jevTransportFor("supported");
+    const tabClosingJev = vi.fn<JevTransport>(async (...args) => {
+      const response = await supported(...args);
+      // User closes or navigates the tab while the Jev verify response returns
+      tabsGet.mockRejectedValue(new Error("Tab closed"));
+      return response;
+    });
+    const outcome = await summarizeExtracted(
+      { tabId: TAB_ID, bookmarkId: BOOKMARK_ID, jevTransport: tabClosingJev },
+      { ...PAGE_EXTRACT, url: PAGE_URL, documentIdentity: 1000 },
+    );
+    expect(outcome).toMatchObject({
+      ok: true,
+      summary: "A page about a caching layer.",
+    });
+    const body = server.requests[0]!.body as { response_format?: unknown };
+    expect(body.response_format).toBeUndefined();
+    expect((await getMeta(BOOKMARK_ID))?.summary).toBe("A page about a caching layer.");
   });
 });

@@ -2,7 +2,12 @@ import { get } from "../sync/chrome-bookmarks";
 import { minimizeBookmark } from "./minimize";
 import { sameSummaryResource } from "./summary-identity";
 import { readBlocklist } from "./blocklist";
-import { extractActivePage, verifyExtractedDocument, type PageExtract } from "../extract/page";
+import {
+  extractActivePage,
+  isExtractableUrl,
+  verifyExtractedDocument,
+  type PageExtract,
+} from "../extract/page";
 import { summarizePage } from "../llm/summarize";
 import { stripUrlsAndMarkdown } from "../llm/sanitize";
 import { verifySummaryRun } from "../jev/tasks/verify-summary";
@@ -25,9 +30,24 @@ import {
 } from "../schemas/provider";
 import { resolveLlmDestination } from "../llm/providers";
 import { readActiveJevProvider, type ActiveJevProvider } from "../jev/settings";
-import { setBookmarkSummary } from "../db/meta";
+import { patchMeta, setBookmarkSummary } from "../db/meta";
+import { appendUsage } from "../db/retention";
+import { UsageRecord } from "../schemas/usage";
 import { sendConsented } from "../net/send";
 
+declare const chrome: {
+  tabs?: {
+    get?(tabId: number): Promise<{
+      id?: number;
+      incognito?: boolean;
+      url?: string;
+      pendingUrl?: string;
+    }>;
+  } | null;
+  permissions?: {
+    contains?(permissions: { origins?: string[] }): Promise<boolean>;
+  } | null;
+};
 /**
  * Summary orchestration (spec FR10): extract the active tab's page → send
  * the bounded extract to the configured LLM under `llm_summary` → ask Jev
@@ -197,7 +217,113 @@ type SummaryConsentContext =
   | Exclude<SummarizeOutcome, { ok: true }>;
 
 /** Read-only: no extraction, keys, consent writes, or provider requests. */
-export async function readSummaryConsent(providerId?: string): Promise<SummaryConsentContext> {
+export async function readSummaryConsent(
+  providerId?: string,
+  context?: { tabId?: number; bookmarkId?: string },
+): Promise<SummaryConsentContext> {
+  let pageOrigin: string | undefined;
+  let hasPagePermission: boolean | undefined;
+  if (context?.tabId !== undefined && context?.bookmarkId !== undefined) {
+    let node;
+    try {
+      node = (await get(context.bookmarkId))[0];
+    } catch {
+      node = undefined;
+    }
+    if (node === undefined || node.url === undefined) {
+      return {
+        ok: false,
+        stage: "match",
+        code: "no_bookmark",
+        message: "No saved bookmark found for this page.",
+      };
+    }
+    const blocklist = await readBlocklist();
+    if (
+      minimizeBookmark({ title: node.title, url: node.url }, blocklist) === null
+    ) {
+      return {
+        ok: false,
+        stage: "match",
+        code: "unsendable",
+        message: "This page or its saved bookmark is blocked from summary sending.",
+      };
+    }
+    const getTab = chrome.tabs?.get;
+    if (typeof getTab === "function") {
+      let tab;
+      try {
+        tab = await getTab.call(chrome.tabs, context.tabId);
+      } catch {
+        return {
+          ok: false,
+          stage: "extract",
+          code: "no_tab",
+          message: "The requested tab could not be read.",
+        };
+      }
+      if (tab.incognito === true) {
+        return {
+          ok: false,
+          stage: "extract",
+          code: "incognito",
+          message: "Page text is never extracted from incognito tabs.",
+        };
+      }
+      if (typeof tab.url === "string" && tab.url !== "") {
+        if (!isExtractableUrl(tab.url)) {
+          return {
+            ok: false,
+            stage: "extract",
+            code: "restricted_url",
+            message:
+              "This page's address cannot be extracted (only public http/https pages).",
+          };
+        }
+        if (!sameSummaryResource(node.url, tab.url)) {
+          return {
+            ok: false,
+            stage: "match",
+            code: "mismatch",
+            message: "The active page's URL does not match this bookmark.",
+          };
+        }
+        if (
+          minimizeBookmark({ title: node.title, url: tab.url }, blocklist) ===
+          null
+        ) {
+          return {
+            ok: false,
+            stage: "match",
+            code: "unsendable",
+            message:
+              "This page or its saved bookmark is blocked from summary sending.",
+          };
+        }
+      }
+    }
+    try {
+      const parsed = new URL(node.url);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        pageOrigin = parsed.origin;
+        const contains = chrome.permissions?.contains;
+        if (typeof contains === "function") {
+          try {
+            hasPagePermission = await contains.call(chrome.permissions, {
+              origins: [`${pageOrigin}/*`],
+            });
+          } catch {
+            hasPagePermission = false;
+          }
+        } else {
+          hasPagePermission = false;
+        }
+      }
+    } catch {
+      // Leave pageOrigin unset when unparseable.
+    }
+  }
+
   const record = providerId === undefined
     ? await readActiveLlmProvider() : await readLlmProvider(providerId);
   if (record === null) {
@@ -218,6 +344,8 @@ export async function readSummaryConsent(providerId?: string): Promise<SummaryCo
       },
       llmGranted: await hasConsentAtOrigin(LLM_SUMMARY_SCOPE, llm.origin),
       jevGranted: await hasConsentAtOrigin(JEV_SUMMARY_VERIFY_SCOPE, jev.destination.origin),
+      ...(pageOrigin !== undefined ? { pageOrigin } : {}),
+      ...(hasPagePermission !== undefined ? { hasPagePermission } : {}),
     },
   };
 }
@@ -342,6 +470,22 @@ export async function summarizeExtracted(
   } catch (cause) {
     return { ok: false, stage: "verify", code: codeOf(cause), message: messageOf(cause) };
   }
+  if (verdict.usage !== undefined) {
+    await appendUsage(
+      UsageRecord.parse({
+        model:
+          verdict.model !== undefined && verdict.model !== ""
+            ? verdict.model
+            : jev.model,
+        inputTokens: verdict.usage.inputTokens,
+        outputTokens: verdict.usage.outputTokens,
+        ...(verdict.usage.cost !== undefined
+          ? { costUsd: verdict.usage.cost }
+          : {}),
+        recordedAt: new Date().toISOString(),
+      }),
+    ).catch(() => {});
+  }
   if (verdict.verdict !== "supported") {
     return {
       ok: false,
@@ -357,8 +501,14 @@ export async function summarizeExtracted(
   // verify hop and this write must not receive the summary (or orphan a
   // `bookmarkMeta` row). The admission codes surface as the persist code.
   try {
-    await admitSummary(input.bookmarkId, extract, input.tabId);
+    const recheck = await admitSummary(input.bookmarkId, extract);
+    const liveNode = (await get(input.bookmarkId).catch(() => []))[0];
+    const metaUrl =
+      liveNode?.url !== undefined && liveNode.url.length <= 2048
+        ? liveNode.url
+        : recheck.url;
     await setBookmarkSummary(input.bookmarkId, summary);
+    await patchMeta(input.bookmarkId, { summary, url: metaUrl });
   } catch (cause) {
     return { ok: false, stage: "persist", code: codeOf(cause), message: messageOf(cause) };
   }

@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   grantConsent,
+  grantConsentAtOrigin,
   hasConsent,
   hasConsentAtOrigin,
   hasTestConsent,
@@ -538,6 +539,42 @@ describe("REVOKE_PROVIDER", () => {
     expect(await hasTestConsent("typesafe")).toBe(true);
     expect(removeSpy).not.toHaveBeenCalled();
     expect(deleteKey).not.toHaveBeenCalled();
+  });
+
+  it("revokes only Jev consent scopes and preserves shared host permission when an LLM provider uses the same origin (B-05)", async () => {
+    await handleProviderMessage(
+      enableMessage({ preset: "openrouter", model: "jev-latest" }),
+      optionsSender,
+    );
+    await grantConsentAtOrigin("jev_decisions", PRESETS.openrouter.origin);
+    await grantConsentAtOrigin("jev_summary_verify", PRESETS.openrouter.origin);
+    await grantConsentAtOrigin("llm_test", PRESETS.openrouter.origin);
+    await grantConsentAtOrigin("llm_explain", PRESETS.openrouter.origin);
+    await db.metadata.put({
+      key: "llmProvider:preset:openrouter",
+      value: {
+        providerId: "preset:openrouter",
+        provider: {
+          kind: "preset",
+          preset: "openrouter",
+          model: "openai/gpt-4o-mini",
+        },
+        keySuffix: "1234",
+        configuredAt: "2026-09-15T00:00:00.000Z",
+      },
+    });
+
+    const result = await handleProviderMessage(
+      { type: "REVOKE_PROVIDER", preset: "openrouter", deleteKey: true },
+      optionsSender,
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(await hasConsentAtOrigin("jev_test", PRESETS.openrouter.origin)).toBe(false);
+    expect(await hasConsentAtOrigin("jev_decisions", PRESETS.openrouter.origin)).toBe(false);
+    expect(await hasConsentAtOrigin("jev_summary_verify", PRESETS.openrouter.origin)).toBe(false);
+    expect(await hasConsentAtOrigin("llm_test", PRESETS.openrouter.origin)).toBe(true);
+    expect(await hasConsentAtOrigin("llm_explain", PRESETS.openrouter.origin)).toBe(true);
+    expect(removeSpy).not.toHaveBeenCalled();
   });
 });
 

@@ -2,10 +2,13 @@ import { pingRequest } from "../llm/prompt-contracts";
 import {
   grantConsentAtOrigin,
   hasConsentAtOrigin,
+  LLM_CONSENT_SCOPES,
   revokeConsentsAtOrigin,
   revokeConsentAtOrigin,
 } from "../consent/records";
 import { db } from "../db/database";
+import { resolveJevDestination } from "../jev/providers";
+import { readJevProvider } from "../jev/settings";
 import {
   budgetChoiceOf,
   monthlyBudgetSnapshot,
@@ -32,7 +35,7 @@ import {
   LlmAuthMode,
   ModelPricing,
 } from "../schemas/llm";
-import { ProviderApiKey } from "../schemas/provider";
+import { JEV_PROVIDER_IDS, ProviderApiKey } from "../schemas/provider";
 import { z } from "../schemas/z";
 import {
   CredentialError,
@@ -761,7 +764,7 @@ async function revokeProvider(message: {
   const destination = resolveLlmDestination(record.provider);
 
   try {
-    await revokeConsentsAtOrigin(destination.origin);
+    await revokeConsentsAtOrigin(destination.origin, LLM_CONSENT_SCOPES);
   } catch {
     return failure(
       "revoke_failed",
@@ -770,16 +773,52 @@ async function revokeProvider(message: {
   }
 
   const failures: string[] = [];
+  let permissionShared = false;
   try {
-    const removed = await chrome.permissions.remove({
-      origins: [destination.permissionPattern],
-    });
-    const released =
-      removed === true ||
-      !(await hasOriginPermission(destination.permissionPattern));
-    if (!released) failures.push("browser permission");
+    const llmRows = await db.metadata
+      .where("key")
+      .startsWith("llmProvider:")
+      .toArray();
+    for (const row of llmRows) {
+      const parsed = LlmProviderRecord.safeParse(row.value);
+      if (
+        parsed.success &&
+        parsed.data.providerId !== record.providerId &&
+        resolveLlmDestination(parsed.data.provider).permissionPattern ===
+          destination.permissionPattern
+      ) {
+        permissionShared = true;
+        break;
+      }
+    }
+    if (!permissionShared) {
+      for (const id of JEV_PROVIDER_IDS) {
+        const jev = await readJevProvider(id);
+        if (
+          jev !== null &&
+          resolveJevDestination(jev).permissionPattern ===
+            destination.permissionPattern
+        ) {
+          permissionShared = true;
+          break;
+        }
+      }
+    }
   } catch {
-    failures.push("browser permission");
+    permissionShared = false;
+  }
+  if (!permissionShared) {
+    try {
+      const removed = await chrome.permissions.remove({
+        origins: [destination.permissionPattern],
+      });
+      const released =
+        removed === true ||
+        !(await hasOriginPermission(destination.permissionPattern));
+      if (!released) failures.push("browser permission");
+    } catch {
+      failures.push("browser permission");
+    }
   }
 
   try {

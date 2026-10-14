@@ -509,4 +509,46 @@ describe("handleSummarizeMessage", () => {
     expect(reply).toMatchObject({ ok: true, code: "summary_read" });
     expect(reply).not.toHaveProperty("summary");
   });
+
+  it("LLM_SUMMARY_PREFLIGHT with tabId and bookmarkId validates tab/bookmark match and reports pageOrigin and hasPagePermission (B-06a)", async () => {
+    await seedProvider();
+    const okReply = await handleSummarizeMessage(
+      { type: "LLM_SUMMARY_PREFLIGHT", tabId: 42, bookmarkId: BOOKMARK_ID },
+      TRUSTED,
+    );
+    expect(okReply).toMatchObject({
+      ok: true,
+      code: "summary_consent",
+      consent: {
+        pageOrigin: "https://a-site.com",
+        hasPagePermission: true,
+      },
+    });
+
+    // Mismatched active tab URL
+    tabsGet.mockResolvedValueOnce({
+      id: 42,
+      url: "https://different-site.org/other",
+      incognito: false,
+    });
+    expect(
+      await handleSummarizeMessage(
+        { type: "LLM_SUMMARY_PREFLIGHT", tabId: 42, bookmarkId: BOOKMARK_ID },
+        TRUSTED,
+      ),
+    ).toMatchObject({ ok: false, code: "mismatch", stage: "match" });
+
+    // Incognito tab
+    tabsGet.mockResolvedValueOnce({
+      id: 42,
+      url: PAGE_URL,
+      incognito: true,
+    });
+    expect(
+      await handleSummarizeMessage(
+        { type: "LLM_SUMMARY_PREFLIGHT", tabId: 42, bookmarkId: BOOKMARK_ID },
+        TRUSTED,
+      ),
+    ).toMatchObject({ ok: false, code: "incognito", stage: "extract" });
+  });
 });

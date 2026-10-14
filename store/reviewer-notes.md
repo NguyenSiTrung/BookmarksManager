@@ -168,11 +168,12 @@ without a paid account by pointing a custom provider at a local model server.
 **About the broad `https://*/*` optional pattern in the manifest:** it is a
 capability pattern, not default access — the extension requests no host
 access at install time, and the pattern exists so Chrome can grant the
-*exact* custom origin the user configures, at runtime, from a direct Enable
-click. The single egress gate then re-checks the exact origin (scheme, host,
-and port — loopback ports included), the per-scope consent record, and the
-closed request schema before any request can leave; revoking removes the
-grant, the permission, and the key.
+*exact* custom origin the user configures (or the bookmarked page's origin
+when summarizing from the side panel without an active `activeTab` grant),
+at runtime, from a direct user click. The single egress gate then re-checks
+the exact origin (scheme, host, and port — loopback ports included), the
+per-scope consent record, and the closed request schema before any request
+can leave; revoking removes the grant, the permission, and the key.
 
 - Open the options page → "LLM provider". Choose a preset (OpenAI or
   OpenRouter) or a custom base URL. Custom remote endpoints must be HTTPS;
