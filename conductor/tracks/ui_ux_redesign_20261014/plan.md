@@ -33,13 +33,13 @@
   - [x] Write failing component tests in `tests/components/move-to-dialog.test.tsx` verifying: (1) typing in `"Filter folders"` narrows destination folder buttons case-insensitively by label; (2) clicking `"+ New folder"` opens an inline folder name input, creates the folder under the selected parent (or `"Bookmarks bar"` default) via `createFolder`, selects the newly created folder as the destination, and enables immediate move.
   - [x] Implement folder filtering and inline subfolder creation in `src/entrypoints/sidepanel/MoveToDialog.tsx`.
 
-- [~] Task 3: Wire `TagField` & tag autocomplete into `EditDialog` and `BulkBar` (`UX-02`)
+- [x] Task 3: Wire `TagField` & tag autocomplete into `EditDialog` and `BulkBar` (`UX-02`)
   <!-- files: src/entrypoints/sidepanel/EditDialog.tsx, src/entrypoints/sidepanel/BulkBar.tsx, tests/components/sidepanel-actions.test.tsx -->
   <!-- depends: task1 -->
-  - [ ] Write failing component tests verifying: (1) `EditDialog` uses the unified `TagField` with `availableTags` autocomplete and `Backspace` removal while preserving `"Add tag"` button reachability; and (2) `BulkBar`'s `TagPromptDialog` offers clickable/keyboard-selectable tag suggestions from existing tags (prioritizing tags on selected bookmarks in `"remove"` mode).
-  - [ ] Update `src/entrypoints/sidepanel/EditDialog.tsx` and `src/entrypoints/sidepanel/BulkBar.tsx`.
+  - [x] Write failing component tests verifying: (1) `EditDialog` uses the unified `TagField` with `availableTags` autocomplete and `Backspace` removal while preserving `"Add tag"` button reachability; and (2) `BulkBar`'s `TagPromptDialog` offers clickable/keyboard-selectable tag suggestions from existing tags (prioritizing tags on selected bookmarks in `"remove"` mode).
+  - [x] Update `src/entrypoints/sidepanel/EditDialog.tsx` and `src/entrypoints/sidepanel/BulkBar.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 1: Shared Primitives — TagField Autocomplete & MoveToDialog Upgrade' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 1: Shared Primitives — TagField Autocomplete & MoveToDialog Upgrade' (Protocol in workflow.md)
   <!-- depends: task1, task2, task3 -->
 
 ---
@@ -47,7 +47,7 @@
 ## Phase 2: Side Panel Bookmark List Ergonomics & Scope Sidebar Richness
 <!-- execution: parallel -->
 
-- [ ] Task 1: `BookmarkList` one-click open button, colored tag dots, note/summary indicators & folder path context (`UX-04`, `UX-05`)
+- [~] Task 1: `BookmarkList` one-click open button, colored tag dots, note/summary indicators & folder path context (`UX-04`, `UX-05`)
   <!-- files: src/entrypoints/sidepanel/BookmarkList.tsx, src/entrypoints/sidepanel/row-text.ts, tests/components/sidepanel-rows.test.tsx -->
   - [ ] Write failing component tests in `tests/components/sidepanel-rows.test.tsx` verifying: (1) list rows and grid cards render a one-click `Open <title>` button inside `[data-row-controls]` for openable URLs that triggers `onActivateItem` without altering selection, with roving `tabIndex={active ? 0 : -1}`; (2) `[data-tag]` chips render tag color dots when `tagColorByKey` / `tagDefs` provides a color; (3) rows/cards with `meta.notes` or `meta.summary` render `[data-has-notes="true"]` / `[data-has-summary="true"]` indicators; and (4) when `showFolderPath` is true, rows display the immediate parent folder title alongside the domain.
   - [ ] Implement the row/card enhancements in `src/entrypoints/sidepanel/BookmarkList.tsx` and `src/entrypoints/sidepanel/row-text.ts`.

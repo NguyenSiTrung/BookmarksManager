@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../../db/database";
-import { deleteMetaByIds } from "../../db/meta";
+import { deleteMetaByIds, listTags } from "../../db/meta";
+import type { TagDef } from "../../schemas/meta";
 import { estimateJobCost } from "../../jobs/estimate";
 import { MAX_JOB_BOOKMARK_IDS } from "../../schemas/job";
 import type { Job as JobDocument, JobCostEstimate } from "../../schemas/job";
@@ -797,8 +798,45 @@ function TagPromptDialog({
 }) {
   const toast = useToast();
   const [name, setName] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const idsKey = ids.join(",");
+  const promptData = useLiveQuery(async () => {
+    const [allTags, metaRows] = await Promise.all([
+      listTags().catch((): TagDef[] => []),
+      mode === "remove"
+        ? db.bookmarkMeta.bulkGet([...ids]).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    const selectedTagKeys = new Set<string>();
+    for (const row of metaRows) {
+      for (const tagKey of row?.tags ?? []) {
+        selectedTagKeys.add(tagKey);
+      }
+    }
+    return { allTags, selectedTagKeys };
+  }, [mode, idsKey]);
+
+  const matchingTags = useMemo(() => {
+    const allTags = promptData?.allTags ?? [];
+    if (allTags.length === 0) return [];
+    const selectedTagKeys = promptData?.selectedTagKeys ?? new Set<string>();
+    const candidates =
+      mode === "remove" && selectedTagKeys.size > 0
+        ? allTags.filter((tag) => selectedTagKeys.has(tag.nameKey))
+        : allTags;
+    const query = name.trim().toLowerCase();
+    if (query === "") return candidates;
+    return candidates.filter(
+      (tag) =>
+        tag.name.toLowerCase().includes(query) || tag.nameKey.includes(query),
+    );
+  }, [mode, name, promptData]);
+
+  const clampedIndex =
+    activeIndex >= 0 && activeIndex < matchingTags.length ? activeIndex : -1;
 
   const submit = async (): Promise<void> => {
     const label = name.trim();
@@ -848,15 +886,82 @@ function TagPromptDialog({
         <input
           id="tag-name"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setActiveIndex(-1);
+          }}
           onKeyDown={(event) => {
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              if (matchingTags.length > 0) {
+                event.preventDefault();
+                const count = matchingTags.length;
+                setActiveIndex((prev) =>
+                  event.key === "ArrowDown"
+                    ? (prev + 1) % count
+                    : prev <= 0
+                      ? count - 1
+                      : prev - 1,
+                );
+              }
+              return;
+            }
             if (event.key === "Enter") {
               event.preventDefault();
-              void submit();
+              if (
+                clampedIndex >= 0 &&
+                matchingTags[clampedIndex] !== undefined &&
+                name !== matchingTags[clampedIndex].name
+              ) {
+                setName(matchingTags[clampedIndex].name);
+                setActiveIndex(-1);
+              } else {
+                void submit();
+              }
             }
           }}
           className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         />
+        {matchingTags.length > 0 && (
+          <ul
+            data-testid="tag-prompt-suggestions"
+            role="listbox"
+            aria-label="Existing tags"
+            className="max-h-40 space-y-0.5 overflow-y-auto rounded-md border border-border p-1 text-xs"
+          >
+            {matchingTags.map((tag, index) => (
+              <li
+                key={tag.nameKey}
+                role="option"
+                aria-selected={index === clampedIndex}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setName(tag.name);
+                  setActiveIndex(-1);
+                }}
+                className={
+                  "flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 select-none hover:bg-accent hover:text-accent-foreground " +
+                  (index === clampedIndex
+                    ? "bg-accent text-accent-foreground"
+                    : "")
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className={
+                    "size-2 shrink-0 rounded-full " +
+                    (tag.color === undefined ? "bg-muted-foreground" : "")
+                  }
+                  style={
+                    tag.color === undefined
+                      ? undefined
+                      : { backgroundColor: tag.color }
+                  }
+                />
+                <span className="truncate font-medium">{tag.name}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {error !== null && (
           <p role="alert" className="text-sm text-destructive">
             {error}

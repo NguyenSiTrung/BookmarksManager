@@ -374,6 +374,36 @@ describe("EditDialog", () => {
     });
     expect((await fake.get("10"))[0]?.parentId).toBe("2");
   });
+
+  it("supports TagField autocomplete from defined tags and Backspace chip removal (UX-02)", async () => {
+    await createTag("Frontend", { color: "#3b82f6" });
+    await patchMeta("b1", { tags: ["initial"] });
+    await createTag("Initial");
+    await renderApp();
+
+    await openItemMenu("Alpha");
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit…" }));
+    const dialog = await screen.findByRole("dialog");
+
+    const tagInput = within(dialog).getByLabelText(
+      "New tag name",
+    ) as HTMLInputElement;
+    // Backspace on empty input removes the staged "Initial" chip
+    fireEvent.keyDown(tagInput, { key: "Backspace" });
+    expect(within(dialog).queryByRole("group", { name: "Initial" })).toBeNull();
+
+    // Typing "fr" opens autocomplete suggestions from db.tags
+    fireEvent.focus(tagInput);
+    fireEvent.change(tagInput, { target: { value: "fr" } });
+    const suggestions = await within(dialog).findByTestId(
+      "tag-field-suggestions",
+    );
+    const opt = within(suggestions).getByRole("option", { name: "Frontend" });
+    fireEvent.mouseDown(opt);
+
+    expect(within(dialog).getByRole("group", { name: "Frontend" })).toBeTruthy();
+    expect(tagInput.value).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -617,6 +647,49 @@ describe("BulkBar", () => {
     await waitFor(() =>
       expect(toast().textContent).toContain("Cleared category on 2 bookmarks"),
     );
+  });
+
+  it("offers existing tag autocomplete in TagPromptDialog and prioritizes tags on selected bookmarks in remove mode (UX-02)", async () => {
+    await createTag("Archive", { color: "#10b981" });
+    await createTag("Urgent", { color: "#ef4444" });
+    await putMeta("b1", { tags: ["urgent"] });
+    await renderApp();
+
+    fireEvent.click(option(/Alpha/));
+    fireEvent.click(
+      within(selectionBar()).getByRole("button", { name: "Add tag" }),
+    );
+
+    let dialog = await screen.findByRole("dialog");
+    const list = await within(dialog).findByTestId("tag-prompt-suggestions");
+    const addOptions = within(list).getAllByRole("option");
+    expect(addOptions.map((o) => o.textContent)).toEqual(["Archive", "Urgent"]);
+
+    // Keyboard navigation selects "Archive" into the input
+    const addInput = within(dialog).getByLabelText(
+      "Tag name",
+    ) as HTMLInputElement;
+    fireEvent.keyDown(addInput, { key: "ArrowDown" });
+    fireEvent.keyDown(addInput, { key: "Enter" });
+    expect(addInput.value).toBe("Archive");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // In "Remove tag" mode, only/first tags present on selected bookmarks ("Urgent") appear
+    fireEvent.click(
+      within(selectionBar()).getByRole("button", { name: "Remove tag" }),
+    );
+    dialog = await screen.findByRole("dialog");
+    const removeList = await within(dialog).findByTestId(
+      "tag-prompt-suggestions",
+    );
+    const removeOptions = within(removeList).getAllByRole("option");
+    expect(removeOptions.map((o) => o.textContent)).toEqual(["Urgent"]);
+
+    fireEvent.click(removeOptions[0]!);
+    expect(
+      (within(dialog).getByLabelText("Tag name") as HTMLInputElement).value,
+    ).toBe("Urgent");
   });
 });
 

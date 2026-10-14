@@ -32,4 +32,14 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: Avoid naming any inline close button `"Cancel"` inside a dialog that already has a footer `"Cancel"` button so `within(dialog).getByRole("button", { name: "Cancel" })` stays unambiguous.
 ---
 
+## [2026-10-14 08:14] - Phase 1 Task 3: Wire `TagField` & tag autocomplete into `EditDialog` and `BulkBar` (`UX-02`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Replaced the separate tag chip list + input in `EditDialog.tsx` with the shared `TagField` (with live `listTags()` fallback when `tagDefs` prop is omitted), and added `data-testid="tag-prompt-suggestions"` existing-tag autocomplete to `BulkBar.tsx`'s `TagPromptDialog` (filtering to tags on the selected bookmarks in `"remove"` mode).
+- **Files changed:** `src/entrypoints/sidepanel/EditDialog.tsx`, `src/entrypoints/sidepanel/BulkBar.tsx`, `tests/components/sidepanel-actions.test.tsx`
+- **Learnings:**
+  - Patterns: In `TagPromptDialog`, pressing `Enter` while a suggestion is highlighted (`clampedIndex >= 0` and `name !== suggestion.name`) fills the input first and clears the highlight so a subsequent `Enter` or button click submits.
+  - Gotchas: `createTag(name, options)` takes `{ color }` in an options object rather than a positional color string.
+---
+
+
 

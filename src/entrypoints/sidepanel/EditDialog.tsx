@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { patchMeta } from "../../db/meta";
+import { useLiveQuery } from "dexie-react-hooks";
+import { listTags, patchMeta } from "../../db/meta";
 import type { MetaPatch } from "../../db/meta";
 import { Category } from "../../schemas/bookmark";
 import { NOTES_MAX_LENGTH, tagNameKey } from "../../schemas/meta";
-import type { BookmarkMeta } from "../../schemas/meta";
+import type { BookmarkMeta, TagDef } from "../../schemas/meta";
 import { moveNode, renameFolder, updateBookmark } from "../../sync/mutations";
 import type { FlattenedTree, TreeEntry } from "../../sync/tree";
 import { bulkAddTag, bulkRemoveTag } from "../../sync/tag-ops";
@@ -15,6 +16,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../../ui/components/dialog";
+import { TagField } from "../../ui/components/tag-field";
+import type { TagFieldChip } from "../../ui/components/tag-field";
 import { folderDestinations, moveDeniedIds } from "./MoveToDialog";
 import { errorMessage, useToast } from "./UndoToast";
 
@@ -44,12 +47,6 @@ import { errorMessage, useToast } from "./UndoToast";
  *    the toast) so the user can correct the input.
  */
 
-/** One staged tag chip: the storage key plus the display name. */
-interface TagChip {
-  key: string;
-  label: string;
-}
-
 export interface EditDialogProps {
   /** The node being edited; `null` while closed. */
   target: TreeEntry | null;
@@ -60,6 +57,8 @@ export interface EditDialogProps {
   meta?: BookmarkMeta;
   /** Tag display names keyed by nameKey (falls back to the key). */
   tagNameByKey?: ReadonlyMap<string, string>;
+  /** Defined tags for combobox autocomplete and chip colors. */
+  tagDefs?: readonly TagDef[];
 }
 
 export function EditDialog({
@@ -69,6 +68,7 @@ export function EditDialog({
   tree,
   meta,
   tagNameByKey,
+  tagDefs,
 }: EditDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -80,6 +80,7 @@ export function EditDialog({
             tree={tree}
             meta={meta}
             tagNameByKey={tagNameByKey}
+            tagDefs={tagDefs}
             onClose={() => onOpenChange(false)}
           />
         )}
@@ -93,20 +94,27 @@ function EditForm({
   tree,
   meta,
   tagNameByKey,
+  tagDefs,
   onClose,
 }: {
   target: TreeEntry;
   tree: FlattenedTree;
   meta?: BookmarkMeta;
   tagNameByKey?: ReadonlyMap<string, string>;
+  tagDefs?: readonly TagDef[];
   onClose: () => void;
 }) {
   const toast = useToast();
   const isBookmark = target.kind === "bookmark";
+  const liveTagDefs = useLiveQuery(
+    () => (tagDefs !== undefined ? [] : listTags().catch((): TagDef[] => [])),
+    [tagDefs !== undefined],
+  );
+  const availableTags = tagDefs ?? liveTagDefs ?? [];
   const [title, setTitle] = useState(target.title);
   const [url, setUrl] = useState(isBookmark ? target.url : "");
   const [parentId, setParentId] = useState(target.parentId ?? "");
-  const [chips, setChips] = useState<TagChip[]>(() =>
+  const [chips, setChips] = useState<TagFieldChip[]>(() =>
     (meta?.tags ?? []).map((key) => ({
       key,
       label: tagNameByKey?.get(key) ?? key,
@@ -127,8 +135,8 @@ function EditForm({
     [tree, target.id],
   );
 
-  const addChip = (): void => {
-    const label = tagInput.trim();
+  const addChip = (explicitLabel?: string): void => {
+    const label = (explicitLabel ?? tagInput).trim();
     const key = tagNameKey(label);
     if (key === "" || chips.some((chip) => chip.key === key)) return;
     setChips([...chips, { key, label }]);
@@ -290,52 +298,16 @@ function EditForm({
               <span className="text-sm font-medium" id="edit-tags-label">
                 Tags
               </span>
-              <div
-                aria-labelledby="edit-tags-label"
-                className="flex flex-wrap items-center gap-1 rounded-md border border-input p-2"
-              >
-                {chips.length === 0 && (
-                  <span className="text-xs text-muted-foreground">No tags</span>
-                )}
-                {chips.map((chip) => (
-                  <span
-                    key={chip.key}
-                    className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-xs"
-                  >
-                    {chip.label}
-                    <button
-                      type="button"
-                      aria-label={`Remove tag ${chip.label}`}
-                      onClick={() => removeChip(chip.key)}
-                      className="rounded-sm text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex items-center gap-1">
-                <input
-                  aria-label="New tag name"
-                  value={tagInput}
-                  maxLength={64}
-                  onChange={(event) => setTagInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      addChip();
-                    }
-                  }}
-                  className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              <div aria-labelledby="edit-tags-label">
+                <TagField
+                  chips={chips}
+                  input={tagInput}
+                  disabled={busy}
+                  availableTags={availableTags}
+                  onInputChange={setTagInput}
+                  onCommit={addChip}
+                  onRemove={removeChip}
                 />
-                <button
-                  type="button"
-                  onClick={addChip}
-                  disabled={tagInput.trim() === ""}
-                  className="rounded-md border border-input px-3 py-2 text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                >
-                  Add tag
-                </button>
               </div>
             </div>
             <div className="space-y-1">
