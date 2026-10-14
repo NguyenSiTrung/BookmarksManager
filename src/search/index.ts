@@ -299,14 +299,39 @@ function upsert(index: SearchIndex, doc: SearchDocument): void {
   }
 }
 
+export interface ApplyDocDiffOptions {
+  /** Complete current document set; enables in-place rebuild on bulk diffs. */
+  allDocs?: Iterable<SearchDocument>;
+  /** Optional custom indexed fields when configured on the index. */
+  indexedFields?: readonly string[];
+}
+
 /**
  * Apply a batch of document changes to a live index. Discards run first so a
  * diff carrying `discard` + `add` for the same id lands correctly; `add` and
  * `replace` both upsert via MiniSearch `add`/`replace`/`discard`, and
- * unknown ids never throw. MiniSearch's auto-vacuum cleans up the discarded
- * postings on its own schedule.
+ * unknown ids never throw. When bulk mutations exceed 30% of the index
+ * (> 10 docs), rebuilds in-place via `removeAll` + `addAll` when `allDocs`
+ * is supplied, or triggers `vacuum` otherwise.
  */
-export function applyDocDiff(index: SearchIndex, diff: SearchDocDiff): void {
+export function applyDocDiff(
+  index: SearchIndex,
+  diff: SearchDocDiff,
+  options?: ApplyDocDiffOptions,
+): void {
+  const discardCount = diff.discard?.length ?? 0;
+  const replaceCount = diff.replace?.length ?? 0;
+  const mutated = discardCount + replaceCount;
+  const bulkMutated =
+    index.documentCount > 0 &&
+    mutated > Math.max(10, Math.floor(index.documentCount * 0.3));
+
+  if (bulkMutated && options?.allDocs !== undefined) {
+    index.removeAll();
+    index.addAll([...options.allDocs]);
+    return;
+  }
+
   for (const id of diff.discard ?? []) {
     if (index.has(id)) {
       index.discard(id);
@@ -317,5 +342,9 @@ export function applyDocDiff(index: SearchIndex, diff: SearchDocDiff): void {
   }
   for (const doc of diff.add ?? []) {
     upsert(index, doc);
+  }
+
+  if (bulkMutated && index.dirtCount > 0 && !index.isVacuuming) {
+    void index.vacuum();
   }
 }

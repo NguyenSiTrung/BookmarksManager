@@ -377,7 +377,7 @@ describe("registerOmnibox", () => {
     await omnibox.fireChanged("fish secret");
     await omnibox.fireEntered("https://fish.example/?a=1&b='2'", "currentTab");
     for (const spy of [console.log, console.warn, console.error]) {
-      for (const call of (spy as ReturnType<typeof vi.fn>).mock.calls) {
+      for (const call of vi.mocked(spy).mock.calls) {
         expect(String(call.join(" "))).not.toContain("fish");
         expect(String(call.join(" "))).not.toContain("secret");
       }
@@ -466,5 +466,36 @@ describe("shared worker-lifetime index (D14)", () => {
     await vi.waitFor(async () => {
       expect(await sharedSearchIndex()).not.toBe(first);
     });
+  });
+
+  it("incrementally updates the live cache across invalidateSearchIndex instead of rebuilding from scratch", async () => {
+    const fake = createFakeBookmarks({
+      bookmarksBar: [
+        { id: "a", title: "Alpha", url: "https://a.example/" },
+        { id: "b", title: "Beta", url: "https://b.example/" },
+      ],
+    });
+    vi.stubGlobal("chrome", { bookmarks: fake });
+    invalidateSearchIndex();
+    const first = await sharedSearchIndex();
+    expect(first).not.toBeNull();
+    const docABefore = first!.ctx.docs?.get("a");
+    expect(docABefore).toBeDefined();
+
+    await fake.create({
+      parentId: "1",
+      title: "Gamma",
+      url: "https://g.example/",
+    });
+    invalidateSearchIndex();
+    const second = await sharedSearchIndex();
+    expect(second).not.toBeNull();
+    expect(second).not.toBe(first);
+    // Underlying MiniSearch instance and unchanged SearchDocument are reused!
+    expect(second!.index).toBe(first!.index);
+    expect(second!.ctx.docs?.get("a")).toBe(docABefore);
+    expect(
+      runQuery(second!.index, "gamma", second!.ctx).hits.map((h) => h.url),
+    ).toEqual(["https://g.example/"]);
   });
 });

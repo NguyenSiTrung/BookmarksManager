@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { buildIndex, buildTagNameMap } from "../../src/search/index";
-import type { SearchIndex, SearchSourceBookmark } from "../../src/search/index";
+import { describe, expect, it, vi } from "vitest";
+import { buildIndex, buildTagNameMap, toSearchDocument } from "../../src/search/index";
+import type { SearchDocument, SearchIndex, SearchSourceBookmark } from "../../src/search/index";
 import { parseQuery } from "../../src/search/query";
-import { collectDuplicateIds, runQuery } from "../../src/search/run";
+import {
+  buildSearchHandle,
+  buildTreeOrderRank,
+  collectDuplicateIds,
+  runQuery,
+} from "../../src/search/run";
 import type { RunQueryContext, RunQueryResult } from "../../src/search/run";
+import { flattenTree } from "../../src/sync/tree";
 import { searchSource, searchTagDefs } from "../fixtures/search";
 
 /**
@@ -622,5 +628,87 @@ describe("collectDuplicateIds", () => {
         { id: "b", url: "https://b.example/" },
       ]),
     ).toEqual(new Set());
+  });
+});
+
+describe("buildTreeOrderRank & docs fast-path in runQuery (P-12)", () => {
+  it("buildTreeOrderRank maps each id to its first occurrence index", () => {
+    const rank = buildTreeOrderRank(["b", "a", "b", "c"]);
+    expect(rank.get("b")).toBe(0);
+    expect(rank.get("a")).toBe(1);
+    expect(rank.get("c")).toBe(3);
+    expect(rank.size).toBe(3);
+  });
+
+  it("buildSearchHandle precomputes treeOrderRank and docs on ctx", () => {
+    const tree = flattenTree([
+      {
+        id: "0",
+        title: "",
+        children: [
+          {
+            id: "1",
+            title: "Bar",
+            parentId: "0",
+            children: [
+              { id: "a", parentId: "1", title: "Alpha", url: "https://a.example/" },
+              { id: "b", parentId: "1", title: "Beta", url: "https://b.example/" },
+            ],
+          },
+        ],
+      },
+    ]);
+    const handle = buildSearchHandle(tree, [], []);
+    expect(handle.ctx.treeOrderRank?.get("a")).toBe(0);
+    expect(handle.ctx.treeOrderRank?.get("b")).toBe(1);
+    expect(handle.ctx.docs?.get("a")?.title).toBe("Alpha");
+    expect(handle.ctx.docs?.get("b")?.title).toBe("Beta");
+  });
+
+  it("filters SearchDocument directly without calling index.search(wildcard) when ctx.docs is provided", () => {
+    const docsMap = new Map<string, SearchDocument>(
+      corpus.map((src) => [src.id, toSearchDocument(src, tagNames)]),
+    );
+    const expectedTagIds = ids(run("tag:typescript"));
+    const expectedDupIds = ids(run("is:duplicate"));
+    const expectedNegIds = ids(run("-rust"));
+    const fastCtx: RunQueryContext = {
+      treeOrder: corpusTree,
+      treeOrderRank: buildTreeOrderRank(corpusTree),
+      docs: docsMap,
+      duplicateIds: corpusCtx.duplicateIds,
+    };
+    const searchSpy = vi.spyOn(corpusIndex, "search");
+
+    const emptyRes = runQuery(corpusIndex, "", fastCtx);
+    expect(ids(emptyRes)).toEqual(ALL_TREE);
+    expect(searchSpy).not.toHaveBeenCalled();
+
+    const tagRes = runQuery(corpusIndex, "tag:typescript", fastCtx);
+    expect(ids(tagRes)).toEqual(expectedTagIds);
+    expect(searchSpy).not.toHaveBeenCalled();
+
+    const dupRes = runQuery(corpusIndex, "is:duplicate", fastCtx);
+    expect(ids(dupRes)).toEqual(expectedDupIds);
+    expect(searchSpy).not.toHaveBeenCalled();
+
+    // Negated term still queries the negated term only, not wildcard.
+    const negRes = runQuery(corpusIndex, "-rust", fastCtx);
+    expect(ids(negRes)).toEqual(expectedNegIds);
+    expect(searchSpy).toHaveBeenCalledTimes(1);
+    expect(searchSpy).toHaveBeenCalledWith("rust");
+
+    // Docs missing from treeOrder still sort after ordered docs.
+    const partialTree = ["exsub", "dup-a"];
+    const partialCtx: RunQueryContext = {
+      treeOrder: partialTree,
+      treeOrderRank: buildTreeOrderRank(partialTree),
+      docs: docsMap,
+    };
+    const partialIds = ids(runQuery(corpusIndex, "", partialCtx));
+    expect(partialIds.slice(0, 2)).toEqual(partialTree);
+    expect(partialIds.length).toBe(corpus.length);
+
+    searchSpy.mockRestore();
   });
 });

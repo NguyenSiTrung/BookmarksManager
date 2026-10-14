@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   applyDocDiff,
   buildIndex,
@@ -488,5 +488,79 @@ describe("applyDocDiff", () => {
     applyDocDiff(index, { replace: [docB()] });
     expect(index.has("b")).toBe(true);
     expect(index.documentCount).toBe(2);
+  });
+
+  it("rebuilds in place via removeAll + addAll when bulk mutations exceed 30% and allDocs is supplied", () => {
+    const docs: SearchDocument[] = [];
+    for (let i = 0; i < 30; i++) {
+      docs.push(
+        toSearchDocument(
+          searchSource({
+            id: `bm-${i}`,
+            title: `Original title ${i}`,
+            url: `https://bm${i}.example/`,
+          }),
+          tagNames,
+        ),
+      );
+    }
+    const index = createSearchIndex();
+    index.addAll(docs);
+    const removeAllSpy = vi.spyOn(index, "removeAll");
+    const addAllSpy = vi.spyOn(index, "addAll");
+
+    // Replace 15 of 30 documents (> max(10, floor(30 * 0.3) = 9)).
+    const replaced: SearchDocument[] = [];
+    const nextDocs = docs.map((doc, i) => {
+      if (i < 15) {
+        const updated = toSearchDocument(
+          searchSource({
+            id: doc.id,
+            title: `Revised title ${i}`,
+            url: doc.url,
+          }),
+          tagNames,
+        );
+        replaced.push(updated);
+        return updated;
+      }
+      return doc;
+    });
+
+    applyDocDiff(index, { replace: replaced }, { allDocs: nextDocs });
+
+    expect(removeAllSpy).toHaveBeenCalledTimes(1);
+    expect(addAllSpy).toHaveBeenCalledTimes(1);
+    expect(index.dirtCount).toBe(0);
+    expect(index.documentCount).toBe(30);
+    expect(index.search("Revised title 0").map((r) => r.id)).toEqual(["bm-0"]);
+    expect(index.search("Original title 0")).toEqual([]);
+    expect(index.search("Original title 20").map((r) => r.id)).toEqual(["bm-20"]);
+  });
+
+  it("triggers vacuum when bulk mutations exceed 30% without allDocs", () => {
+    const docs: SearchDocument[] = [];
+    for (let i = 0; i < 30; i++) {
+      docs.push(
+        toSearchDocument(
+          searchSource({
+            id: `bm-${i}`,
+            title: `Original title ${i}`,
+            url: `https://bm${i}.example/`,
+          }),
+          tagNames,
+        ),
+      );
+    }
+    const index = createSearchIndex();
+    index.addAll(docs);
+    const vacuumSpy = vi.spyOn(index, "vacuum");
+
+    // 15 discards: > max(10, 9), but < 20 (MiniSearch's default minDirtCount).
+    const discard = docs.slice(0, 15).map((d) => d.id);
+    applyDocDiff(index, { discard });
+
+    expect(vacuumSpy).toHaveBeenCalledTimes(1);
+    expect(index.documentCount).toBe(15);
   });
 });

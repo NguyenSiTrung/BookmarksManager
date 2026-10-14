@@ -3,8 +3,9 @@ import { getTree } from "../sync/chrome-bookmarks";
 import { flattenTree } from "../sync/tree";
 import { openBookmarkUrl } from "../sync/tabs";
 import type { OpenUrlDisposition } from "../sync/tabs";
+import { createLiveSearchCache } from "./live-cache";
 import { isOpenableUrl } from "./openable";
-import { buildSearchHandle, runQuery } from "./run";
+import { runQuery } from "./run";
 import type { SearchIndexHandle } from "./run";
 
 /**
@@ -122,11 +123,16 @@ export function toSuggestions(
   return out;
 }
 
+const liveCache = createLiveSearchCache({
+  indexedFields: OMNIBOX_INDEXED_FIELDS,
+});
+
 /**
  * Build the session index from the live tree + meta rows (notes are
- * excluded from the index, D14). Total: any failure (dead bookmarks
- * surface, closed DB) yields `null`, which the listeners translate to
- * "no suggestions".
+ * excluded from the index, D14), updating the worker-lifetime live cache
+ * incrementally across generations. Total: any failure (dead bookmarks
+ * surface, closed DB) clears the cache and yields `null`, which the
+ * listeners translate to "no suggestions".
  */
 export async function loadSessionIndex(): Promise<SearchIndexHandle | null> {
   try {
@@ -135,13 +141,9 @@ export async function loadSessionIndex(): Promise<SearchIndexHandle | null> {
       listMeta(),
       listTags(),
     ]);
-    return buildSearchHandle(
-      flattenTree(rawTree),
-      metas,
-      tagDefs,
-      OMNIBOX_INDEXED_FIELDS,
-    );
+    return liveCache.update(flattenTree(rawTree), metas, tagDefs);
   } catch {
+    liveCache.clear();
     return null;
   }
 }

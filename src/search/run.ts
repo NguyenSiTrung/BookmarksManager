@@ -11,7 +11,7 @@ import type {
   QueryFilter,
   QueryWarning,
 } from "./query";
-import type { SearchHit, SearchIndex } from "./index";
+import type { SearchDocument, SearchHit, SearchIndex } from "./index";
 import {
   buildTagNameMap,
   createSearchIndex,
@@ -87,6 +87,16 @@ export interface RunQueryContext {
    */
   treeOrder: readonly string[];
   /**
+   * Precomputed `id → first index` rank map over {@link treeOrder} so
+   * filter-only / empty queries avoid rebuilding a rank map per keystroke.
+   */
+  treeOrderRank?: ReadonlyMap<string, number>;
+  /**
+   * Document map by bookmark id so term-free queries can filter
+   * {@link SearchDocument} rows before allocating {@link SearchHit} objects.
+   */
+  docs?: ReadonlyMap<string, SearchDocument>;
+  /**
    * Ids belonging to a duplicate group — backs `is:duplicate`. Compute once
    * per corpus change with {@link collectDuplicateIds} and reuse across
    * keystrokes; when absent, `is:duplicate` matches nothing.
@@ -95,11 +105,29 @@ export interface RunQueryContext {
 }
 
 /**
+ * Precomputes the `id → first occurrence index` map over `treeOrder` (first
+ * occurrence wins).
+ */
+export function buildTreeOrderRank(
+  treeOrder: readonly string[],
+): ReadonlyMap<string, number> {
+  const rank = new Map<string, number>();
+  for (let i = 0; i < treeOrder.length; i++) {
+    const id = treeOrder[i]!;
+    if (!rank.has(id)) {
+      rank.set(id, i);
+    }
+  }
+  return rank;
+}
+
+/**
  * One-shot handle builder for surfaces that own a whole index rather than
  * subscribing to a live one — the omnibox session build and tests. Maps
  * every bookmark through {@link toSourceBookmark} (the same source mapping
  * `useSearchIndex` uses), adds all documents to a fresh index, and derives
- * `ctx` (`treeOrder` + `duplicateIds`) from the same tree.
+ * `ctx` (`treeOrder`, `treeOrderRank`, `docs`, `duplicateIds`) from the
+ * same tree.
  */
 export function buildSearchHandle(
   tree: FlattenedTree,
@@ -110,16 +138,25 @@ export function buildSearchHandle(
   const tagNames = buildTagNameMap(tagDefs);
   const metaById = new Map(metas.map((meta) => [meta.id, meta]));
   const index = createSearchIndex(indexedFields);
-  index.addAll(
-    [...tree.bookmarks.values()].map((item) =>
-      toSearchDocument(toSourceBookmark(tree, item, metaById.get(item.id)), tagNames)
-    ),
-  );
   const bookmarks = [...tree.bookmarks.values()];
+  const docs = new Map<string, SearchDocument>();
+  for (const item of bookmarks) {
+    docs.set(
+      item.id,
+      toSearchDocument(
+        toSourceBookmark(tree, item, metaById.get(item.id)),
+        tagNames,
+      ),
+    );
+  }
+  index.addAll([...docs.values()]);
+  const treeOrder = bookmarks.map((item) => item.id);
   return {
     index,
     ctx: {
-      treeOrder: bookmarks.map((item) => item.id),
+      treeOrder,
+      treeOrderRank: buildTreeOrderRank(treeOrder),
+      docs,
       duplicateIds: collectDuplicateIds(bookmarks),
     },
   };
@@ -211,19 +248,40 @@ export function runQuery(
     };
     hits = (index.search(querySpec) as SearchHit[]).filter(accept);
   } else {
-    // Term-free path: wildcard returns every doc in index order; re-sort by
-    // the caller's tree order. The sort is stable, so ids missing from
-    // treeOrder keep index order at the end.
-    hits = (index.search(MiniSearch.wildcard) as SearchHit[]).filter(accept);
-    const rank = new Map<string, number>();
-    ctx.treeOrder.forEach((id, i) => {
-      if (!rank.has(id)) rank.set(id, i);
-    });
-    hits.sort(
-      (a, b) =>
-        (rank.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER) -
-        (rank.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER),
-    );
+    // Term-free path: when `ctx.docs` is available, filter SearchDocument
+    // directly in treeOrder and allocate SearchHit only for matching items.
+    const rank = ctx.treeOrderRank ?? buildTreeOrderRank(ctx.treeOrder);
+    if (ctx.docs !== undefined) {
+      hits = [];
+      let seenInRank = 0;
+      for (const id of rank.keys()) {
+        const doc = ctx.docs.get(id);
+        if (doc !== undefined) {
+          seenInRank += 1;
+          if (!excluded.has(doc.id) && filtersOk(doc, plan, dupIds)) {
+            hits.push(toWildcardHit(doc));
+          }
+        }
+      }
+      if (seenInRank < ctx.docs.size) {
+        for (const [id, doc] of ctx.docs) {
+          if (
+            !rank.has(id) &&
+            !excluded.has(id) &&
+            filtersOk(doc, plan, dupIds)
+          ) {
+            hits.push(toWildcardHit(doc));
+          }
+        }
+      }
+    } else {
+      hits = (index.search(MiniSearch.wildcard) as SearchHit[]).filter(accept);
+      hits.sort(
+        (a, b) =>
+          (rank.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER),
+      );
+    }
   }
 
   return { hits, warnings: parsed.warnings };
@@ -436,8 +494,26 @@ function domainMatch(domain: string, value: string): boolean {
   return domain === value || domain.endsWith(`.${value}`);
 }
 
+function toWildcardHit(doc: SearchDocument): SearchHit {
+  return {
+    id: doc.id,
+    title: doc.title,
+    url: doc.url,
+    domain: doc.domain,
+    folderIds: doc.folderIds,
+    folderTitles: doc.folderTitles,
+    tagKeys: doc.tagKeys,
+    ...(doc.dateAdded === undefined ? {} : { dateAdded: doc.dateAdded }),
+    ...(doc.category === undefined ? {} : { category: doc.category }),
+    score: 1,
+    terms: [],
+    queryTerms: [],
+    match: {},
+  };
+}
+
 function filtersOk(
-  hit: SearchHit,
+  hit: SearchHit | SearchDocument,
   plan: FilterPlan,
   duplicateIds: ReadonlySet<string> | undefined,
 ): boolean {
@@ -475,7 +551,7 @@ function dateOk(
 
 function flagOk(
   f: { value: IsFlag; negated: boolean },
-  hit: SearchHit,
+  hit: SearchHit | SearchDocument,
   duplicateIds: ReadonlySet<string> | undefined,
 ): boolean {
   const base =

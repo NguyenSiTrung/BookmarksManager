@@ -1,16 +1,17 @@
+import { normalizeUrl } from "../duplicates/normalize";
 import type { BookmarkMeta, TagDef } from "../schemas/meta";
 import type { FlattenedTree } from "../sync/tree";
 import {
   applyDocDiff,
   buildTagNameMap,
   createSearchIndex,
+  INDEXED_FIELDS,
   toSearchDocument,
   toSourceBookmark,
 } from "./index";
 import type { SearchDocument, SearchIndex } from "./index";
-import { collectDuplicateIds } from "./run";
+import { buildTreeOrderRank } from "./run";
 import type { SearchIndexHandle } from "./run";
-
 /**
  * Pure, Chrome- and React-free state machine behind
  * {@link useSearchIndex}. It owns the live MiniSearch index and the
@@ -41,6 +42,12 @@ import type { SearchIndexHandle } from "./run";
  * next `update` rebuilds from scratch (unmount cleanup).
  */
 
+/** Options for {@link createLiveSearchCache}. */
+export interface LiveSearchCacheOptions {
+  /** Indexed fields passed to MiniSearch (defaults to {@link INDEXED_FIELDS}). */
+  indexedFields?: readonly string[];
+}
+
 /** A live cache over one component's search index. */
 export interface LiveSearchCache {
   /**
@@ -56,7 +63,6 @@ export interface LiveSearchCache {
   /** Drop the index, document map, signatures, and dup set (unmount). */
   clear(): void;
 }
-
 const SIG_SEP = "\u0000";
 const KEY_SEP = "\u0001";
 
@@ -87,25 +93,67 @@ function computeFolderKeys(tree: FlattenedTree): Map<string, string> {
   return keys;
 }
 
-/** Whether two `id → url` maps hold the same pairs (order-insensitive). */
-function sameCorpus(
-  prev: ReadonlyMap<string, string>,
-  next: ReadonlyMap<string, string>,
+function sameOrder(
+  prev: readonly string[],
+  next: readonly string[],
 ): boolean {
-  if (prev.size !== next.size) return false;
-  for (const [id, url] of next) {
-    if (prev.get(id) !== url) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < next.length; i++) {
+    if (prev[i] !== next[i]) return false;
   }
   return true;
 }
 
+function addToSetBucket(
+  buckets: Map<string, Set<string>>,
+  dupBuckets: Set<Set<string>>,
+  key: string,
+  id: string,
+): void {
+  let set = buckets.get(key);
+  if (set === undefined) {
+    set = new Set<string>();
+    buckets.set(key, set);
+  }
+  set.add(id);
+  if (set.size >= 2) {
+    dupBuckets.add(set);
+  }
+}
+
+function removeFromSetBucket(
+  buckets: Map<string, Set<string>>,
+  dupBuckets: Set<Set<string>>,
+  key: string,
+  id: string,
+): void {
+  const set = buckets.get(key);
+  if (set === undefined) return;
+  set.delete(id);
+  if (set.size < 2) {
+    dupBuckets.delete(set);
+  }
+  if (set.size === 0) {
+    buckets.delete(key);
+  }
+}
+
 /** Create an empty live cache; see {@link LiveSearchCache}. */
-export function createLiveSearchCache(): LiveSearchCache {
+export function createLiveSearchCache(
+  options?: LiveSearchCacheOptions,
+): LiveSearchCache {
+  const indexedFields = options?.indexedFields ?? INDEXED_FIELDS;
   let index: SearchIndex | null = null;
   let docs = new Map<string, SearchDocument>();
   let signatures = new Map<string, string>();
   let corpus = new Map<string, string>();
+  let normById = new Map<string, string | null>();
+  let byRawUrl = new Map<string, Set<string>>();
+  let byNormKey = new Map<string, Set<string>>();
+  let dupBuckets = new Set<Set<string>>();
   let duplicateIds: ReadonlySet<string> = new Set();
+  let treeOrder: readonly string[] = [];
+  let treeOrderRank: ReadonlyMap<string, number> = new Map();
 
   return {
     update(tree, metas, tagDefs) {
@@ -116,8 +164,11 @@ export function createLiveSearchCache(): LiveSearchCache {
       const nextDocs = new Map<string, SearchDocument>();
       const nextSignatures = new Map<string, string>();
       const nextCorpus = new Map<string, string>();
+      const nextTreeOrder: string[] = [];
+      let corpusChanged = false;
 
       for (const item of tree.bookmarks.values()) {
+        nextTreeOrder.push(item.id);
         const meta = metaById.get(item.id);
         const tagKeys = meta?.tags ?? NO_TAGS;
         const resolvedTags = tagKeys
@@ -166,24 +217,72 @@ export function createLiveSearchCache(): LiveSearchCache {
       }
 
       if (index === null) {
-        index = createSearchIndex();
+        index = createSearchIndex(indexedFields);
         index.addAll([...nextDocs.values()]);
       } else {
-        applyDocDiff(index, { discard, replace, add });
+        applyDocDiff(
+          index,
+          { discard, replace, add },
+          { allDocs: nextDocs.values(), indexedFields },
+        );
+      }
+
+      for (const [id, oldUrl] of corpus) {
+        if (!nextCorpus.has(id)) {
+          corpusChanged = true;
+          removeFromSetBucket(byRawUrl, dupBuckets, oldUrl, id);
+          const oldNorm = normById.get(id);
+          if (oldNorm !== undefined && oldNorm !== null) {
+            removeFromSetBucket(byNormKey, dupBuckets, oldNorm, id);
+          }
+          normById.delete(id);
+        }
+      }
+
+      for (const [id, nextUrl] of nextCorpus) {
+        const oldUrl = corpus.get(id);
+        if (oldUrl === nextUrl) continue;
+        corpusChanged = true;
+        if (oldUrl !== undefined) {
+          removeFromSetBucket(byRawUrl, dupBuckets, oldUrl, id);
+          const oldNorm = normById.get(id);
+          if (oldNorm !== undefined && oldNorm !== null) {
+            removeFromSetBucket(byNormKey, dupBuckets, oldNorm, id);
+          }
+        }
+        addToSetBucket(byRawUrl, dupBuckets, nextUrl, id);
+        const nextNorm = normalizeUrl(nextUrl);
+        normById.set(id, nextNorm);
+        if (nextNorm !== null) {
+          addToSetBucket(byNormKey, dupBuckets, nextNorm, id);
+        }
+      }
+
+      if (corpusChanged) {
+        const nextDupIds = new Set<string>();
+        for (const set of dupBuckets) {
+          for (const id of set) {
+            nextDupIds.add(id);
+          }
+        }
+        duplicateIds = nextDupIds;
+        corpus = nextCorpus;
+      }
+
+      if (!sameOrder(treeOrder, nextTreeOrder)) {
+        treeOrder = nextTreeOrder;
+        treeOrderRank = buildTreeOrderRank(nextTreeOrder);
       }
 
       docs = nextDocs;
       signatures = nextSignatures;
 
-      if (!sameCorpus(corpus, nextCorpus)) {
-        duplicateIds = collectDuplicateIds([...tree.bookmarks.values()]);
-        corpus = nextCorpus;
-      }
-
       return {
         index,
         ctx: {
-          treeOrder: [...tree.bookmarks.keys()],
+          treeOrder,
+          treeOrderRank,
+          docs,
           duplicateIds,
         },
       };
@@ -194,7 +293,13 @@ export function createLiveSearchCache(): LiveSearchCache {
       docs = new Map();
       signatures = new Map();
       corpus = new Map();
+      normById = new Map();
+      byRawUrl = new Map();
+      byNormKey = new Map();
+      dupBuckets = new Set();
       duplicateIds = new Set();
+      treeOrder = [];
+      treeOrderRank = new Map();
     },
   };
 }

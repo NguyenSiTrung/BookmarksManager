@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as NormalizeModule from "../../src/duplicates/normalize";
 import type { BookmarkMeta, TagDef } from "../../src/schemas/meta";
+import type * as SearchIndexModule from "../../src/search/index";
 import type { BookmarksTreeNode } from "../../src/sync/chrome-bookmarks";
 import { flattenTree } from "../../src/sync/tree";
 import type { FlattenedTree } from "../../src/sync/tree";
@@ -10,35 +12,33 @@ import type { FlattenedTree } from "../../src/sync/tree";
  * one {@link SearchDocument} per bookmark, and reuses a document whenever
  * every input it depends on is unchanged — its own fields, its meta row, its
  * ancestor folder chain, and the resolved tag display names. Duplicate
- * grouping is amortized to corpus shape: it reruns only when the set of
- * `{id, url}` pairs changes, never on a metadata or tree-order edit.
+ * grouping is amortized to corpus shape: it normalizes only added or
+ * URL-changed bookmarks, never on a metadata or tree-order edit.
  *
- * The document builder and the duplicate collector are the module boundary
- * the cache wraps; spying on them (via the repo's importOriginal mock
- * pattern) proves which work the cache actually performed.
+ * The document builder and URL normalizer are the module boundaries the
+ * cache wraps; spying on them proves which work the cache actually performed.
  */
 
 vi.mock("../../src/search/index", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../src/search/index")>();
+  const actual = await importOriginal<typeof SearchIndexModule>();
   return { ...actual, toSearchDocument: vi.fn(actual.toSearchDocument) };
 });
-vi.mock("../../src/search/run", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/search/run")>();
-  return { ...actual, collectDuplicateIds: vi.fn(actual.collectDuplicateIds) };
+vi.mock("../../src/duplicates/normalize", async (importOriginal) => {
+  const actual = await importOriginal<typeof NormalizeModule>();
+  return { ...actual, normalizeUrl: vi.fn(actual.normalizeUrl) };
 });
-
+import { normalizeUrl } from "../../src/duplicates/normalize";
 import { toSearchDocument } from "../../src/search/index";
 import { collectDuplicateIds, runQuery } from "../../src/search/run";
 import type { SearchIndexHandle } from "../../src/search/run";
 import { createLiveSearchCache } from "../../src/search/live-cache";
 
 const buildDocument = vi.mocked(toSearchDocument);
-const collectDupes = vi.mocked(collectDuplicateIds);
+const normalizeSpy = vi.mocked(normalizeUrl);
 
 beforeEach(() => {
   buildDocument.mockClear();
-  collectDupes.mockClear();
+  normalizeSpy.mockClear();
 });
 
 // ---------------------------------------------------------------------------
@@ -120,14 +120,17 @@ function ids(query: string, handle: SearchIndexHandle): string[] {
 }
 
 describe("createLiveSearchCache", () => {
-  it("builds every document once and groups duplicates once on the first update", () => {
+  it("builds every document once and normalizes each URL once on the first update", () => {
     const tree = makeTree([bookmark("a"), bookmark("b")]);
     const handle = createLiveSearchCache().update(tree, [], []);
 
     expect(handle.index.documentCount).toBe(2);
     expect(buildDocument).toHaveBeenCalledTimes(2);
-    expect(collectDupes).toHaveBeenCalledTimes(1);
+    expect(normalizeSpy).toHaveBeenCalledTimes(2);
     expect(handle.ctx.treeOrder).toEqual(["a", "b"]);
+    expect(handle.ctx.treeOrderRank?.get("a")).toBe(0);
+    expect(handle.ctx.treeOrderRank?.get("b")).toBe(1);
+    expect(handle.ctx.docs?.size).toBe(2);
   });
 
   it("rebuilds only the edited document and never reruns duplicate grouping", () => {
@@ -136,7 +139,7 @@ describe("createLiveSearchCache", () => {
     const first = cache.update(tree, [], []);
     const index = first.index;
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const second = cache.update(
       tree,
@@ -147,7 +150,8 @@ describe("createLiveSearchCache", () => {
     expect(second.index).toBe(index);
     expect(buildDocument).toHaveBeenCalledTimes(1);
     expect(buildDocument.mock.calls[0]?.[0]?.id).toBe("b");
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
+    expect(second.ctx.treeOrderRank).toBe(first.ctx.treeOrderRank);
     expect(ids("needle", second)).toEqual(["b"]);
   });
 
@@ -158,7 +162,7 @@ describe("createLiveSearchCache", () => {
     cache.update(tree, [makeMeta("a")], defs);
 
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
     const tagged = cache.update(
       tree,
       [makeMeta("a", { tags: ["typescript"] })],
@@ -190,7 +194,7 @@ describe("createLiveSearchCache", () => {
     );
     expect(buildDocument).toHaveBeenCalledTimes(1);
     expect(ids("extra", noted)).toEqual(["a"]);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
   });
 
   it("rebuilds descendant documents when an ancestor folder is renamed", () => {
@@ -205,7 +209,7 @@ describe("createLiveSearchCache", () => {
     const cache = createLiveSearchCache();
     cache.update(tree, [], []);
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const renamed = makeTree([
       {
@@ -219,7 +223,7 @@ describe("createLiveSearchCache", () => {
 
     // Exactly the two descendants' ancestor paths changed.
     expect(buildDocument).toHaveBeenCalledTimes(2);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
     expect(ids("folder:wide", handle)).toEqual(["leaf", "leaf2"]);
     expect(ids("folder:deep", handle)).toEqual([]);
   });
@@ -240,7 +244,7 @@ describe("createLiveSearchCache", () => {
     const cache = createLiveSearchCache();
     cache.update(tree, [], []);
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const moved = makeTree([
       {
@@ -259,7 +263,7 @@ describe("createLiveSearchCache", () => {
 
     expect(buildDocument).toHaveBeenCalledTimes(1);
     expect(ids("folder:destination/deep", handle)).toEqual(["leaf"]);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
   });
 
   it("adds and discards only the changed documents", () => {
@@ -267,7 +271,7 @@ describe("createLiveSearchCache", () => {
     const cache = createLiveSearchCache();
     cache.update(tree, [], []);
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const after = makeTree([bookmark("a"), bookmark("c")]);
     const handle = cache.update(after, [], []);
@@ -277,25 +281,31 @@ describe("createLiveSearchCache", () => {
     expect(handle.index.has("b")).toBe(false);
     expect(handle.index.has("c")).toBe(true);
     expect(handle.index.documentCount).toBe(2);
-    // The corpus shape changed (b → c), so duplicates rerun.
-    expect(collectDupes).toHaveBeenCalledTimes(1);
+    // Only the newly added bookmark "c" is normalized; "a" is reused!
+    expect(normalizeSpy).toHaveBeenCalledTimes(1);
+    expect(normalizeSpy).toHaveBeenCalledWith("https://www.c.example/");
   });
 
-  it("reruns duplicate grouping only when the id/url corpus changes", () => {
-    const tree = makeTree([bookmark("a"), bookmark("b")]);
+  it("normalizes only added or URL-changed bookmarks and matches collectDuplicateIds exactly", () => {
+    const tree = makeTree([
+      bookmark("a", { url: "https://a.example/" }),
+      bookmark("b", { url: "https://b.example/" }),
+      bookmark("c", { url: "javascript:void(0)" }),
+    ]);
     const cache = createLiveSearchCache();
     cache.update(tree, [], []);
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
-    // A metadata-only edit must not touch the corpus.
+    // A metadata-only edit must not touch URL normalization.
     cache.update(tree, [makeMeta("a", { notes: "quiet" })], []);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
 
-    // Changing one URL to match the other creates a duplicate pair.
+    // Changing ONLY b's URL to a www-variant of a's URL normalizes ONLY b!
     const dup = makeTree([
-      bookmark("a", { url: "https://dup.example/" }),
-      bookmark("b", { url: "https://dup.example/" }),
+      bookmark("a", { url: "https://a.example/" }),
+      bookmark("b", { url: "https://www.a.example/" }),
+      bookmark("c", { url: "javascript:void(0)" }),
     ]);
     const handle = cache.update(
       dup,
@@ -303,8 +313,37 @@ describe("createLiveSearchCache", () => {
       [],
     );
 
-    expect(collectDupes).toHaveBeenCalledTimes(1);
+    expect(normalizeSpy).toHaveBeenCalledTimes(1);
+    expect(normalizeSpy).toHaveBeenCalledWith("https://www.a.example/");
     expect(ids("is:duplicate", handle)).toEqual(["a", "b"]);
+    expect(handle.ctx.duplicateIds).toEqual(
+      collectDuplicateIds([...dup.bookmarks.values()]),
+    );
+
+    // Adding a second non-http(s) raw duplicate ("javascript:void(0)") matches exact-only groups.
+    normalizeSpy.mockClear();
+    const withRawDup = makeTree([
+      bookmark("a", { url: "https://a.example/" }),
+      bookmark("b", { url: "https://www.a.example/" }),
+      bookmark("c", { url: "javascript:void(0)" }),
+      bookmark("d", { url: "javascript:void(0)" }),
+    ]);
+    const handle2 = cache.update(withRawDup, [], []);
+    expect(normalizeSpy).toHaveBeenCalledTimes(1);
+    expect(ids("is:duplicate", handle2)).toEqual(["a", "b", "c", "d"]);
+    expect(handle2.ctx.duplicateIds).toEqual(
+      collectDuplicateIds([...withRawDup.bookmarks.values()]),
+    );
+
+    // Removing "b" and "d" dissolves both duplicate groups without calling normalizeUrl.
+    normalizeSpy.mockClear();
+    const dissolved = makeTree([
+      bookmark("a", { url: "https://a.example/" }),
+      bookmark("c", { url: "javascript:void(0)" }),
+    ]);
+    const handle3 = cache.update(dissolved, [], []);
+    expect(normalizeSpy).not.toHaveBeenCalled();
+    expect(ids("is:duplicate", handle3)).toEqual([]);
   });
 
   it("keeps documents and duplicate ids when only tree order changes", () => {
@@ -316,7 +355,7 @@ describe("createLiveSearchCache", () => {
     const first = cache.update(tree, [], []);
     const index = first.index;
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const reordered = makeTree([
       bookmark("a", { index: 1 }),
@@ -326,7 +365,7 @@ describe("createLiveSearchCache", () => {
 
     expect(handle.index).toBe(index);
     expect(buildDocument).not.toHaveBeenCalled();
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
     expect(handle.ctx.treeOrder).toEqual(["b", "a"]);
   });
 
@@ -346,14 +385,14 @@ describe("createLiveSearchCache", () => {
     expect(ids("reading", cache.update(tree, metas, [label("Reading List")])))
       .toEqual(["a"]);
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const handle = cache.update(tree, metas, [label("Deep Reads")]);
 
     // Only the dependent document rebuilds; duplicate grouping is unaffected.
     expect(buildDocument).toHaveBeenCalledTimes(1);
     expect(buildDocument.mock.calls[0]?.[0]?.id).toBe("a");
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
     // The new display name is searchable; the stale one is gone.
     expect(ids("deep", handle)).toEqual(["a"]);
     expect(ids("reads", handle)).toEqual(["a"]);
@@ -370,7 +409,7 @@ describe("createLiveSearchCache", () => {
       [makeTag("TypeScript")],
     );
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     // A rename propagates through meta rows (see renameTag): the tag key and
     // the def change together.
@@ -381,7 +420,7 @@ describe("createLiveSearchCache", () => {
     );
 
     expect(buildDocument).toHaveBeenCalledTimes(1);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
     expect(ids('tag:"ts"', handle)).toEqual(["a"]);
     expect(ids('tag:"typescript"', handle)).toEqual([]);
     expect(ids("typescript", handle)).toEqual([]);
@@ -394,12 +433,12 @@ describe("createLiveSearchCache", () => {
 
     cache.clear();
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
 
     const second = cache.update(tree, [], []);
     expect(second.index).not.toBe(first.index);
     expect(buildDocument).toHaveBeenCalledTimes(2);
-    expect(collectDupes).toHaveBeenCalledTimes(1);
+    expect(normalizeSpy).toHaveBeenCalledTimes(2);
   });
 
   it("stays selective across a large corpus", () => {
@@ -417,7 +456,7 @@ describe("createLiveSearchCache", () => {
     expect(buildDocument).toHaveBeenCalledTimes(2_000);
 
     buildDocument.mockClear();
-    collectDupes.mockClear();
+    normalizeSpy.mockClear();
     const head = metas[0]!;
     const edited = [
       makeMeta(head.id, { tags: ["typescript"], notes: "needle" }),
@@ -427,7 +466,21 @@ describe("createLiveSearchCache", () => {
 
     expect(buildDocument).toHaveBeenCalledTimes(1);
     expect(buildDocument.mock.calls[0]?.[0]?.id).toBe(head.id);
-    expect(collectDupes).not.toHaveBeenCalled();
+    expect(normalizeSpy).not.toHaveBeenCalled();
     expect(ids("needle", handle)).toEqual([head.id]);
+  });
+
+  it("supports custom indexedFields option (e.g. omitting notes for omnibox)", () => {
+    const tree = makeTree([bookmark("a")]);
+    const cache = createLiveSearchCache({
+      indexedFields: ["title", "tags", "domain", "url"],
+    });
+    const handle = cache.update(
+      tree,
+      [makeMeta("a", { notes: "secret-note-token" })],
+      [],
+    );
+    expect(ids("secret-note-token", handle)).toEqual([]);
+    expect(ids("bookmark", handle)).toEqual(["a"]);
   });
 });
