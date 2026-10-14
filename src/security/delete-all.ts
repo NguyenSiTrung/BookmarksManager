@@ -229,32 +229,47 @@ export async function requestDbRelease(graceMs: number): Promise<void> {
 }
 
 /**
+ * Handle {@link RELEASE_DB_MESSAGE} synchronously: run `onRelease`
+ * (best-effort) and close `db` with `disableAutoOpen: true` so subsequent
+ * queries cannot re-open the connection and block `db.delete()`. Returns
+ * `true` when `message` was the release signal.
+ */
+export function handleDbReleaseMessage(
+  message: unknown,
+  onRelease?: () => void,
+): boolean {
+  if (message !== RELEASE_DB_MESSAGE) return false;
+  try {
+    onRelease?.();
+  } catch {
+    // Best-effort release callback — never block closing the DB.
+  }
+  try {
+    db.close({ disableAutoOpen: true });
+  } catch {
+    // Already closed / never opened — nothing to release.
+  }
+  return true;
+}
+
+/**
  * Register the answering half of {@link requestDbRelease} on an extension
  * page: a `chrome.runtime.onMessage` listener that closes THIS page's shared
  * Dexie connection when the release message arrives. Returns an unsubscribe.
  *
- * The listener is registered independently of the provider `onMessage`
- * handler in `src/entrypoints/background.ts` (which is deliberately left
- * untouched), and it answers nothing — the provider handler owns the response
- * channel. Total: a missing `runtime` / `onMessage` surface returns an inert
+ * Total: a missing `runtime` / `onMessage` surface returns an inert
  * unsubscribe, and a `db` that was never opened (or is already closed) is
- * handled by Dexie's idempotent `close()`.
+ * handled by Dexie's idempotent `close({ disableAutoOpen: true })`.
  */
-export function registerDbReleaseListener(): () => void {
+export function registerDbReleaseListener(options?: {
+  onRelease?: () => void;
+}): () => void {
   const api = runtimeApi();
   const onMessage = api?.onMessage;
   if (onMessage === undefined) return () => {};
 
   const listener = (message: unknown): void => {
-    if (message !== RELEASE_DB_MESSAGE) return;
-    try {
-      // `disableAutoOpen` (Dexie's default) is what makes this stick: without
-      // it the very next query would silently re-open the connection and
-      // block the drop again.
-      db.close();
-    } catch {
-      // Already closed / never opened — nothing to release.
-    }
+    handleDbReleaseMessage(message, options?.onRelease);
   };
 
   try {

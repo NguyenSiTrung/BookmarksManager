@@ -11,6 +11,7 @@ import {
 import {
   pruneTombstones,
   reattachTombstone,
+  tombstoneMetaByIds,
   TOMBSTONE_ROW_CAP,
 } from "../../src/db/tombstones";
 import { reconcileMetadata } from "../../src/sync/reconcile";
@@ -151,6 +152,60 @@ describe("tombstones (D12)", () => {
     expect(await reattachTombstone("new-id", "https://stale.example/")).toBe(false);
     expect(await getMeta("new-id")).toBeUndefined();
     expect(await db.metaTombstones.get("https://stale.example/")).toBeUndefined();
+  });
+
+  it("pruneTombstones deletes expired rows via removedAt index primaryKeys and bulkDelete", async () => {
+    install();
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+    await db.metaTombstones.put({
+      url: "https://expired-indexed.example/",
+      tags: ["x"],
+      deadId: "dead-idx",
+      removedAt: old,
+    });
+    const bulkDeleteSpy = vi.spyOn(db.metaTombstones, "bulkDelete");
+    expect(await pruneTombstones()).toBe(1);
+    expect(bulkDeleteSpy).toHaveBeenCalledWith(["https://expired-indexed.example/"]);
+  });
+
+  it("tombstoneMetaByIds batches reads, tombstone puts, corrupt retention, and deletes", async () => {
+    install();
+    await putMeta("valid-1", { tags: ["a"], url: "https://v1.example/" });
+    await putMeta("valid-2", { tags: ["b"], url: "https://v2.example/" });
+    await db.bookmarkMeta.put({
+      id: "corrupt-1",
+      tags: ["Not A Key"],
+      updatedAt: ISO,
+    });
+    await db.bookmarkMeta.put({
+      id: "corrupt-2",
+      tags: ["Also Invalid"],
+      updatedAt: ISO,
+    });
+
+    const getSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const bulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const bulkPutSpy = vi.spyOn(db.metaTombstones, "bulkPut");
+    const bulkDeleteSpy = vi.spyOn(db.bookmarkMeta, "bulkDelete");
+    const corruptBulkAddSpy = vi.spyOn(db.corruptMeta, "bulkAdd");
+
+    const tombstoned = await tombstoneMetaByIds([
+      { id: "valid-1" },
+      { id: "valid-2" },
+      { id: "corrupt-1" },
+      { id: "corrupt-2" },
+      { id: "missing-1" },
+    ]);
+
+    expect(tombstoned).toBe(2);
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(bulkGetSpy).toHaveBeenCalledTimes(1);
+    expect(bulkPutSpy).toHaveBeenCalledTimes(1);
+    expect(bulkDeleteSpy).toHaveBeenCalledTimes(1);
+    expect(corruptBulkAddSpy).toHaveBeenCalledTimes(1);
+    expect(await db.corruptMeta.count()).toBe(2);
+    expect(await db.metaTombstones.count()).toBe(2);
+    expect(await db.bookmarkMeta.count()).toBe(0);
   });
 
   it("evicts the oldest rows beyond the row cap", async () => {

@@ -150,7 +150,7 @@ export function LlmBudget() {
         db.metadata.count(),
         db.llmUsage.count(),
         db.llmReservations.count(),
-      ]),
+      ]).catch(() => [0, 0, 0] as const),
     [],
   );
   useEffect(() => {

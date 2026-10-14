@@ -8,6 +8,7 @@ import {
   OPTIONAL_HOST_ORIGINS,
   RELEASE_DB_MESSAGE,
   deleteAllExtensionData as rawDeleteAllExtensionData,
+  handleDbReleaseMessage,
   registerDbReleaseListener,
 } from "../../src/security/delete-all";
 
@@ -423,6 +424,18 @@ describe("registerDbReleaseListener", () => {
 
     off();
     expect(runtime.listeners).toHaveLength(0);
+  });
+  it("passes disableAutoOpen: true and runs onRelease hook via handleDbReleaseMessage", async () => {
+    await db.open();
+    const closeSpy = vi.spyOn(db, "close");
+    const onRelease = vi.fn();
+
+    expect(handleDbReleaseMessage({ type: "OTHER" }, onRelease)).toBe(false);
+    expect(onRelease).not.toHaveBeenCalled();
+
+    expect(handleDbReleaseMessage(RELEASE_DB_MESSAGE, onRelease)).toBe(true);
+    expect(onRelease).toHaveBeenCalledTimes(1);
+    expect(closeSpy).toHaveBeenCalledWith({ disableAutoOpen: true });
   });
 
   it("is an inert unsubscribe when there is no runtime surface", () => {

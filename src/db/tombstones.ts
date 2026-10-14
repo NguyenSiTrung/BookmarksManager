@@ -1,6 +1,6 @@
 import { db } from "./database";
 import { BookmarkMeta, type MetaTombstone } from "../schemas/meta";
-import { emitMetaChanged, putMeta, retainCorruptMeta } from "./meta";
+import { emitMetaChanged, putMeta, retainCorruptMetaBatch } from "./meta";
 
 /**
  * URL-keyed tombstones for removed bookmark metadata (D12).
@@ -63,10 +63,14 @@ function cutoffIso(now: Date): string {
  */
 export async function pruneTombstones(now = new Date()): Promise<number> {
   const cutoff = cutoffIso(now);
-  let removed = await db.metaTombstones
+  const expired = await db.metaTombstones
     .where("removedAt")
     .below(cutoff)
-    .delete();
+    .primaryKeys();
+  if (expired.length > 0) {
+    await db.metaTombstones.bulkDelete(expired);
+  }
+  let removed = expired.length;
   const excess = (await db.metaTombstones.count()) - TOMBSTONE_ROW_CAP;
   if (excess > 0) {
     const stale = await db.metaTombstones
@@ -98,20 +102,34 @@ export async function tombstoneMetaByIds(
     db.corruptMeta,
     async () => {
       const removedAt = nowIso();
+      const rawRows = await db.bookmarkMeta.bulkGet(
+        candidates.map((candidate) => candidate.id),
+      );
+      const existingIds = new Set<string>();
+      const seenCorruptIds = new Set<string>();
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      const tombstones: MetaTombstone[] = [];
       let tombstoned = 0;
-      for (const { id, url } of candidates) {
-        const raw = await db.bookmarkMeta.get(id);
+      for (let i = 0; i < candidates.length; i += 1) {
+        const candidate = candidates[i];
+        if (candidate === undefined) continue;
+        const { id, url } = candidate;
+        const raw = rawRows[i];
         if (raw === undefined) continue;
+        existingIds.add(id);
         const meta = BookmarkMeta.safeParse(raw);
         if (!meta.success) {
-          await retainCorruptMeta(id, corruptReason);
+          if (!seenCorruptIds.has(id)) {
+            seenCorruptIds.add(id);
+            corruptRows.push({ id, raw });
+          }
           continue;
         }
         // Prefer the witnessed URL (freshest); fall back to the row's own
         // recorded url for the unwitnessed reconcile path.
         const key = url ?? meta.data.url;
         if (key === undefined) continue; // no re-attach key — delete only
-        const tombstone: MetaTombstone = {
+        tombstones.push({
           url: key,
           tags: meta.data.tags,
           ...(meta.data.category === undefined
@@ -123,17 +141,21 @@ export async function tombstoneMetaByIds(
             : { summary: meta.data.summary }),
           deadId: id,
           removedAt,
-        };
-        await db.metaTombstones.put(tombstone);
+        });
         tombstoned += 1;
       }
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, corruptReason);
+      }
+      if (tombstones.length > 0) {
+        await db.metaTombstones.bulkPut(tombstones);
+      }
       // Every candidate row dies — tombstoned, corrupt-retained, or plain.
-      const died = await db.bookmarkMeta
-        .where("id")
-        .anyOf(candidates.map((candidate) => candidate.id))
-        .delete();
+      if (existingIds.size > 0) {
+        await db.bookmarkMeta.bulkDelete([...existingIds]);
+      }
       await pruneTombstones();
-      if (died > 0) emitMetaChanged();
+      if (existingIds.size > 0) emitMetaChanged();
       return tombstoned;
     },
   );

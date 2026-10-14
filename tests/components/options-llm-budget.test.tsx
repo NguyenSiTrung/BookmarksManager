@@ -432,4 +432,30 @@ describe("LlmBudget live refresh", () => {
     );
     expect(capInput().value).toBe("42");
   });
+
+  it("tolerates a closed Dexie instance in useLiveQuery without logging or throwing", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    db.close({ disableAutoOpen: true });
+    try {
+      const region = await ready();
+      expect(region.textContent).toContain("$4.50");
+      // Wait for useLiveQuery's promise to settle onto the fallback [0, 0, 0]
+      await waitFor(() => {
+        expect(
+          sendMessageSpy.mock.calls.filter(
+            ([msg]: unknown[]) =>
+              typeof msg === "object" &&
+              msg !== null &&
+              "type" in msg &&
+              msg.type === "LLM_BUDGET_SNAPSHOT",
+          ).length,
+        ).toBeGreaterThanOrEqual(2);
+      });
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+    } finally {
+      await db.open();
+    }
+  });
 });

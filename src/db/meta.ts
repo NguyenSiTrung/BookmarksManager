@@ -215,18 +215,24 @@ function parseTagDef(raw: unknown): TagDef | undefined {
  * verbatim, bounded to the newest {@link CORRUPT_META_CAP} rows. Returns
  * true when a copy was retained — a VALID or missing row is a no-op.
  */
-export async function retainCorruptMeta(
-  id: string,
+export async function retainCorruptMetaBatch(
+  rows: readonly { id: string; raw: unknown }[],
   reason: CorruptMetaRow["reason"],
-): Promise<boolean> {
-  const raw = await db.bookmarkMeta.get(id);
-  if (raw === undefined || parseMeta(raw) !== undefined) return false;
-  await db.corruptMeta.add({
-    bookmarkId: id,
-    raw,
-    reason,
-    retainedAt: nowIso(),
-  });
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const retainedAt = nowIso();
+  const entries: CorruptMetaRow[] = [];
+  for (const { id, raw } of rows) {
+    if (raw === undefined || parseMeta(raw) !== undefined) continue;
+    entries.push({
+      bookmarkId: id,
+      raw,
+      reason,
+      retainedAt,
+    });
+  }
+  if (entries.length === 0) return 0;
+  await db.corruptMeta.bulkAdd(entries);
   // Bounded: drop the oldest beyond the cap (retainedAt indexes order).
   const excess = (await db.corruptMeta.count()) - CORRUPT_META_CAP;
   if (excess > 0) {
@@ -236,7 +242,16 @@ export async function retainCorruptMeta(
       .primaryKeys();
     await db.corruptMeta.bulkDelete(stale);
   }
-  return true;
+  return entries.length;
+}
+
+export async function retainCorruptMeta(
+  id: string,
+  reason: CorruptMetaRow["reason"],
+): Promise<boolean> {
+  const raw = await db.bookmarkMeta.get(id);
+  if (raw === undefined) return false;
+  return (await retainCorruptMetaBatch([{ id, raw }], reason)) > 0;
 }
 
 /** How many forensic copies `corruptMeta` keeps. */
@@ -536,9 +551,13 @@ export interface MetaIntegrity {
  * absent). Called by `reconcileMetadata`; safe to call anywhere.
  */
 export async function refreshMetaIntegrity(): Promise<MetaIntegrity> {
+  const [invalidRows, corruptRows] = await Promise.all([
+    countInvalidMetaRows(),
+    db.corruptMeta.count(),
+  ]);
   const integrity: MetaIntegrity = {
-    invalidRows: await countInvalidMetaRows(),
-    corruptRows: await db.corruptMeta.count(),
+    invalidRows,
+    corruptRows,
     checkedAt: nowIso(),
   };
   await db.metadata.put({ key: META_INTEGRITY_KEY, value: integrity });

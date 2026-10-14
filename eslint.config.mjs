@@ -26,6 +26,7 @@ export default tseslint.config(
     ignores: [
       ".agents/**",
       ".beads/**",
+      ".claude/**",
       ".codex/**",
       ".output/**",
       ".superpowers/**",
