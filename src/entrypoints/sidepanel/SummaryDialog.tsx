@@ -14,8 +14,9 @@ import {
   type SummaryConsentApproval,
   type SummaryConsentPreflight,
 } from "../../messages/summaries";
-import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
+import { LLM_NEVER_SENT, LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
 import { getMeta, patchMeta } from "../../db/meta";
+import { ConsentFacts } from "../options/components";
 
 /** Read-only preflight on open; only the disclosed affirmative send may
  * authorize extraction/egress. Unknown-cost confirmation is separate and
@@ -314,38 +315,124 @@ export function SummaryDialog(props: SummaryDialogProps) {
         >
           {phase.kind === "loading" && <p>Loading summary disclosure…</p>}
           {phase.kind === "saved" && (
-            <p className="text-sm text-foreground" data-testid="summary-text">
-              {phase.summary}
-            </p>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  Verified summary
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void navigator.clipboard?.writeText(phase.summary)
+                  }
+                  className="rounded-md border border-input px-2.5 py-1 text-xs font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Copy summary
+                </button>
+              </div>
+              <p
+                className="rounded-lg border border-border bg-card p-3 text-sm leading-relaxed text-foreground"
+                data-testid="summary-text"
+              >
+                {phase.summary}
+              </p>
+            </div>
           )}
           {phase.kind === "disclosure" && (
             <div className="space-y-3 text-sm">
-              <p>Consent version {phase.consent.approval.consentVersion}. Review both recipients before agreeing.</p>
+              <p className="text-xs text-muted-foreground">
+                Consent version {phase.consent.approval.consentVersion}. Review
+                both recipients before agreeing.
+              </p>
               {(["llm", "jev"] as const).map((hop) => {
-                const disclosure = LLM_SCOPE_DISCLOSURES[hop === "llm" ? "llm_summary" : "jev_summary_verify"];
+                const disclosure =
+                  LLM_SCOPE_DISCLOSURES[
+                    hop === "llm" ? "llm_summary" : "jev_summary_verify"
+                  ];
+                const granted =
+                  hop === "llm"
+                    ? phase.consent.llmGranted
+                    : phase.consent.jevGranted;
+                const hopBinding = phase.consent.approval[hop];
                 return (
-                  <section key={hop} aria-label={`${disclosure.title} disclosure`}>
-                    <h3 className="font-semibold">{disclosure.title}</h3>
-                    <p>{phase.consent.approval[hop].origin}</p>
-                    <p>{disclosure.purpose}</p>
-                    <ul>{disclosure.fields.map((field) => <li key={field}>{field}</li>)}</ul>
-                    <p>{hop === "llm" ? "Site name and meta description are included when present." : "The title is the saved bookmark title."}</p>
-                    <p>{disclosure.credentialUse}</p>
-                    <p>{(hop === "llm" ? phase.consent.llmGranted : phase.consent.jevGranted) ? "Current grant" : "New or renewed consent required"}</p>
+                  <section
+                    key={hop}
+                    aria-label={`${disclosure.title} disclosure`}
+                    className="space-y-2.5 rounded-lg border border-border bg-card p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold text-foreground">
+                        {disclosure.title}
+                      </h3>
+                      <span
+                        className={
+                          granted
+                            ? "rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                            : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                        }
+                      >
+                        {granted
+                          ? "Current grant"
+                          : "New or renewed consent required"}
+                      </span>
+                    </div>
+                    <ConsentFacts
+                      recipientName={`${hopBinding.providerId} (${hopBinding.model})`}
+                      origin={hopBinding.origin}
+                      sent={disclosure.fields}
+                      sentNote={
+                        hop === "llm"
+                          ? "Site name and meta description are included when present."
+                          : "The title is the saved bookmark title."
+                      }
+                      neverSent={LLM_NEVER_SENT}
+                      why={disclosure.purpose}
+                      when={disclosure.trigger}
+                    >
+                      <p className="text-xs text-muted-foreground">
+                        {disclosure.credentialUse}
+                      </p>
+                    </ConsentFacts>
                   </section>
                 );
               })}
-              <p>Query strings, fragments, and embedded URL credentials are removed. Notes, byline, and the full page DOM are not sent.</p>
-              <p>Agreeing authorizes these summary scopes for these recipients and starts this request. Unknown-cost confirmation, if needed, is a separate choice.</p>
+              <p className="text-xs text-muted-foreground">
+                Query strings, fragments, and embedded URL credentials are
+                removed. Notes, byline, and the full page DOM are not sent.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Agreeing authorizes these summary scopes for these recipients
+                and starts this request. Unknown-cost confirmation, if needed,
+                is a separate choice.
+              </p>
             </div>
           )}
           {phase.kind === "running" && (
             <p className="text-sm text-muted-foreground">Summarizing the page…</p>
           )}
           {phase.kind === "done" && (
-            <p className="text-sm text-foreground" data-testid="summary-text">
-              {phase.summary}
-            </p>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  Verified · {phase.model}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void navigator.clipboard?.writeText(phase.summary)
+                  }
+                  className="rounded-md border border-input px-2.5 py-1 text-xs font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Copy summary
+                </button>
+              </div>
+              <p
+                className="rounded-lg border border-border bg-card p-3 text-sm leading-relaxed text-foreground"
+                data-testid="summary-text"
+              >
+                {phase.summary}
+              </p>
+            </div>
           )}
           {phase.kind === "error" && (
             <p role="alert" className="text-sm text-destructive">

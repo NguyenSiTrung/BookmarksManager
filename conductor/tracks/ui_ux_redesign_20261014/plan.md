@@ -89,12 +89,12 @@
 ## Phase 4: AI Workflows, Dialogs, Popup & Options Cohesion
 <!-- execution: parallel -->
 
-- [~] Task 1: `SummaryDialog` `ConsentFacts` card formatting, model badge & `"Copy summary"` (`UX-10`)
+- [x] Task 1: `SummaryDialog` `ConsentFacts` card formatting, model badge & `"Copy summary"` (`UX-10`)
   <!-- files: src/entrypoints/sidepanel/SummaryDialog.tsx, tests/components/summary-dialog.test.tsx -->
-  - [ ] Write failing component tests in `tests/components/summary-dialog.test.tsx` verifying: (1) the `disclosure` phase renders structured `Recipient` / `Sent` / `Never sent` / `Why` / `When` facts for both hops with grant badges; and (2) the `saved` and `done` phases offer a `"Copy summary"` button that writes the summary text to `navigator.clipboard.writeText`.
-  - [ ] Update `src/entrypoints/sidepanel/SummaryDialog.tsx`.
+  - [x] Write failing component tests in `tests/components/summary-dialog.test.tsx` verifying: (1) the `disclosure` phase renders structured `Recipient` / `Sent` / `Never sent` / `Why` / `When` facts for both hops with grant badges; and (2) the `saved` and `done` phases offer a `"Copy summary"` button that writes the summary text to `navigator.clipboard.writeText`.
+  - [x] Update `src/entrypoints/sidepanel/SummaryDialog.tsx`.
 
-- [ ] Task 2: `ReviewView` primary `Approve` styling & collapsible `Applied history` with `Undo` (`UX-11`, `BookmarksManager-tax`)
+- [~] Task 2: `ReviewView` primary `Approve` styling & collapsible `Applied history` with `Undo` (`UX-11`, `BookmarksManager-tax`)
   <!-- files: src/decisions/store.ts, src/entrypoints/sidepanel/ReviewView.tsx, src/entrypoints/sidepanel/App.tsx, tests/unit/decisions-store.test.ts, tests/components/review-view.test.tsx -->
   - [ ] Write failing unit and component tests verifying: (1) `listApplied()` in `src/decisions/store.ts` returns recent `applied` decision rows ordered newest-first; (2) `ReviewView` renders both manually `applied` and `auto_applied` rows inside the applied-history section (`aria-label="Auto-applied suggestions"` / collapsible history) with a working `Undo` (`REVERT_DECISION`) button; and (3) per-row `Approve` buttons carry primary accent classes.
   - [ ] Implement `listApplied()` in `src/decisions/store.ts` and update `src/entrypoints/sidepanel/ReviewView.tsx` and `src/entrypoints/sidepanel/App.tsx`.

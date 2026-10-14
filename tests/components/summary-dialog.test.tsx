@@ -245,6 +245,33 @@ describe("SummaryDialog saved summary and runtime origin permissions (B-06b, U-0
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("renders structured ConsentFacts cards in disclosure phase and offers Copy summary in saved and done phases (UX-10)", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderDialog();
+    await screen.findByRole("button", { name: "Agree and summarize" });
+    const llmRegion = screen.getByRole("region", {
+      name: "Page summaries disclosure",
+    });
+    const jevRegion = screen.getByRole("region", {
+      name: "Jev summary verification disclosure",
+    });
+    for (const term of ["Recipient", "Sent", "Never sent", "Why", "When"]) {
+      expect(within(llmRegion).getByText(term)).toBeTruthy();
+      expect(within(jevRegion).getByText(term)).toBeTruthy();
+    }
+
+    await approve();
+    await screen.findByTestId("summary-text");
+    expect(screen.getByText(/gpt-4o-mini/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Copy summary/i }));
+    expect(writeText).toHaveBeenCalledWith("A page about caching.");
+  });
+
   it("requests missing runtime origin permissions on Agree and summarize click (B-06b)", async () => {
     const contains = vi.fn(async ({ origins }: { origins?: string[] }) =>
       origins?.[0] === "https://api.typesafe.ai/*",

@@ -82,6 +82,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Patterns: Embedding `<button aria-label="Clear selection">×</button>` inside the `{count} selected` pill keeps `getByRole("button", { name: "Clear selection" })` working while saving horizontal toolbar width on 320px narrow panels.
 ---
 
+## [2026-10-14 08:36] - Phase 4 Task 1: `SummaryDialog` `ConsentFacts` card formatting, model badge & `"Copy summary"` (`UX-10`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Refactored `SummaryDialog.tsx`'s `disclosure` phase to render each hop (`llm_summary` and `jev_summary_verify`) inside a styled card using `ConsentFacts` with grant status badges, and added Verified/model badges plus a `"Copy summary"` button in the `saved` and `done` phases.
+- **Files changed:** `src/entrypoints/sidepanel/SummaryDialog.tsx`, `tests/components/summary-dialog.test.tsx`
+- **Learnings:**
+  - Patterns: Reusing `ConsentFacts` inside `SummaryDialog` renders `props.origin` inside its own `<code>` chip, preserving exact `findByText(origin)` assertions while unifying disclosure layout across Options and Side Panel.
+---
+
+
 
 
 
