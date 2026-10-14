@@ -229,6 +229,7 @@ export function App() {
    * clobber a folder the user already chose.
    */
   const folderTouchedRef = useRef(false);
+  const [folderTouched, setFolderTouched] = useState(false);
   /**
    * Always holds the latest form values. The SAVE_SUGGEST effect is one-shot
    * per popup open (`suggestAttemptedRef`), so it must not depend on
@@ -398,6 +399,10 @@ export function App() {
   );
 
   const destinations = useMemo(() => folderOptions(tree), [tree]);
+  const folderLabels = useMemo(
+    () => new Map(destinations.map((d) => [d.id, d.label])),
+    [destinations],
+  );
 
   const bookmarkByNormalizedUrl = useMemo(() => {
     const map = new Map<string, BookmarkItem>();
@@ -436,6 +441,7 @@ export function App() {
   /** User picked a folder: mark it touched, then apply the choice. */
   const handleFolderChange = (next: string): void => {
     folderTouchedRef.current = true;
+    setFolderTouched(true);
     setFolderId(next);
   };
 
@@ -788,7 +794,11 @@ export function App() {
                   explicitRequest={explicitSuggest}
                   appliedTagKeys={appliedTagKeys}
                   category={category}
+                  folderId={folderId}
+                  folderTouched={folderTouched}
+                  folderLabels={folderLabels}
                   onFolderSuggestion={handleFolderSuggestion}
+                  onAcceptFolder={handleFolderChange}
                   onAcceptTag={handleAcceptTag}
                   onAcceptCategory={handleAcceptCategory}
                 />

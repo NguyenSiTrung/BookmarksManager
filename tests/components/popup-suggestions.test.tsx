@@ -392,13 +392,14 @@ describe("PopupApp — save suggestions", () => {
     await waitFor(() => expect(folderSelect().value).toBe("fold"));
   });
 
-  it("leaves the folder picker on the default below 0.7", async () => {
+  it("leaves the folder picker on the default below 0.7 and offers a clickable folder chip", async () => {
     await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
     await renderPopup();
     const { id } = await waitForSuggestRequest();
 
     // A weak move suggestion plus an observable tag row (proving the live
-    // query delivered both) — the picker must not move.
+    // query delivered both) — the picker must not move automatically, and
+    // the folder suggestion renders as an opt-in chip instead.
     await putMoveDecision({
       bookmarkId: id,
       targetFolderId: "barfold",
@@ -408,6 +409,16 @@ describe("PopupApp — save suggestions", () => {
     await screen.findByRole("button", { name: "Add suggested tag reading" });
 
     expect(folderSelect().value).toBe("2");
+    const folderChip = await screen.findByRole("button", {
+      name: "Set folder to Bookmarks bar / Dev",
+    });
+    fireEvent.click(folderChip);
+    await waitFor(() => expect(folderSelect().value).toBe("barfold"));
+    expect(
+      screen.queryByRole("button", {
+        name: "Set folder to Bookmarks bar / Dev",
+      }),
+    ).toBeNull();
   });
 
   it("offers suggested tags as chips that apply only on click", async () => {

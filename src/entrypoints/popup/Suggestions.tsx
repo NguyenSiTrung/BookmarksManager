@@ -21,8 +21,10 @@ import { InfoIcon } from "../../ui/components/icons";
  *
  * - `move` at `confidence >= MOVE_PRESELECT_THRESHOLD` (0.7) → asks the parent
  *   to pre-select `targetFolderId` once. The parent suppresses the call when
- *   the user already touched the picker or the folder no longer exists; a
- *   sub-threshold `move` never reaches the callback at all.
+ *   the user already touched the picker or the folder no longer exists.
+ * - `move` below `MOVE_PRESELECT_THRESHOLD` → one clickable chip (`Folder: …`)
+ *   applying the folder on click; suppressed when the user already touched the
+ *   picker, the folder is already selected, or the folder no longer exists.
  * - `add_tags` → one clickable chip per tag nameKey (`+ tag`); clicking stages
  *   the tag through the parent's normal chip merge (deduped by `tagNameKey`).
  *   A tag the user already staged hides its suggestion twin.
@@ -60,8 +62,16 @@ export interface SuggestionsProps {
   appliedTagKeys: ReadonlySet<string>;
   /** Currently selected category (`""` = none). */
   category: Category | "";
+  /** Currently selected folder id. */
+  folderId?: string;
+  /** True once the user manually changed the folder picker. */
+  folderTouched?: boolean;
+  /** Pickable folder id → display label map, for sub-threshold folder chips. */
+  folderLabels?: ReadonlyMap<string, string>;
   /** Pre-select `targetFolderId`; the parent may ignore it (user touched). */
   onFolderSuggestion(targetFolderId: string): void;
+  /** Apply a clicked folder suggestion. */
+  onAcceptFolder?(targetFolderId: string): void;
   /** Merge one suggested tag label into the staged chips. */
   onAcceptTag(label: string): void;
   /** Apply the suggested category. */
@@ -70,6 +80,11 @@ export interface SuggestionsProps {
 
 interface TagSuggestion {
   key: string;
+  label: string;
+}
+
+interface FolderSuggestion {
+  id: string;
   label: string;
 }
 
@@ -151,19 +166,57 @@ function pickCategorySuggestion(
   return best;
 }
 
+/**
+ * The strongest sub-threshold `move` suggestion — offered as an opt-in chip
+ * when confidence is below `MOVE_PRESELECT_THRESHOLD` (0.7), the user has not
+ * manually changed the folder picker, and the target folder is valid and not
+ * already selected.
+ */
+function pickFolderSuggestion(
+  rows: readonly DecisionRow[],
+  folderLabels: ReadonlyMap<string, string> | undefined,
+  folderId: string | undefined,
+  folderTouched: boolean,
+): FolderSuggestion | null {
+  if (folderTouched || folderLabels === undefined) return null;
+  let best: (DecisionRow & { kind: "move" }) | null = null;
+  for (const row of rows) {
+    if (row.kind !== "move") continue;
+    if (!folderLabels.has(row.targetFolderId)) continue;
+    if (best === null || row.confidence > best.confidence) best = row;
+  }
+  if (
+    best === null ||
+    best.confidence >= MOVE_PRESELECT_THRESHOLD ||
+    best.targetFolderId === folderId
+  ) {
+    return null;
+  }
+  const label = folderLabels.get(best.targetFolderId);
+  return label === undefined ? null : { id: best.targetFolderId, label };
+}
+
 export function Suggestions({
   bookmarkId,
   status,
   explicitRequest = false,
   appliedTagKeys,
   category,
+  folderId,
+  folderTouched = false,
+  folderLabels,
   onFolderSuggestion,
+  onAcceptFolder,
   onAcceptTag,
   onAcceptCategory,
 }: SuggestionsProps) {
   const rows = useSuggestionRows(bookmarkId);
 
   const preselect = useMemo(() => pickPreselect(rows), [rows]);
+  const folderSuggestion = useMemo(
+    () => pickFolderSuggestion(rows, folderLabels, folderId, folderTouched),
+    [rows, folderLabels, folderId, folderTouched],
+  );
   const tagSuggestions = useMemo(
     () => pickTagSuggestions(rows, appliedTagKeys),
     [rows, appliedTagKeys],
@@ -192,7 +245,11 @@ export function Suggestions({
     );
   }
 
-  if (tagSuggestions.length === 0 && categorySuggestion === null) {
+  if (
+    tagSuggestions.length === 0 &&
+    categorySuggestion === null &&
+    folderSuggestion === null
+  ) {
     if (!explicitRequest) return null;
     if (status === "loading") {
       return (
@@ -241,6 +298,17 @@ export function Suggestions({
     >
       <span className="text-xs text-muted-foreground">Suggested</span>
       <div className="flex flex-wrap items-center gap-1.5">
+        {folderSuggestion !== null && (
+          <button
+            type="button"
+            aria-label={`Set folder to ${folderSuggestion.label}`}
+            title={`Set folder to ${folderSuggestion.label}`}
+            onClick={() => onAcceptFolder?.(folderSuggestion.id)}
+            className={chipClass}
+          >
+            Folder: {folderSuggestion.label}
+          </button>
+        )}
         {tagSuggestions.map((tag) => (
           <button
             key={tag.key}
