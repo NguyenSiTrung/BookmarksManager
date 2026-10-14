@@ -17,6 +17,7 @@ import {
   getMeta,
   getMetaByIds,
   getTag,
+  META_CHANGED_CHANNEL,
   putMeta,
 } from "../../src/db/meta";
 import type { UndoSnapshot } from "../../src/schemas/undo";
@@ -38,7 +39,7 @@ import {
   pushSnapshot,
   UNDO_STACK_LIMIT,
 } from "../../src/undo/snapshot";
-import { discardLatest, undoExpected, undoLatest } from "../../src/undo/restore";
+import { discardLatest, restoreById, undoExpected, undoLatest } from "../../src/undo/restore";
 import type { UndoResult, UndoSuccess } from "../../src/undo/restore";
 import type { FakeBookmarksApi } from "../fakes/chrome-bookmarks";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -808,6 +809,7 @@ describe("undoLatest — restructure", () => {
     const rowId = await pushSnapshot({ kind: "restructure", ...capture });
     await removeWithCascade("bm-b");
     vi.spyOn(db.bookmarkMeta, "put").mockRejectedValue(new Error("controlled metadata failure"));
+    vi.spyOn(db.bookmarkMeta, "bulkPut").mockRejectedValue(new Error("controlled metadata failure"));
     expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
     const kept = await db.undo.get(rowId);
     const mappedId = kept?.idMap?.["bm-b"];
@@ -962,6 +964,7 @@ describe("undoLatest — restructure", () => {
     const rowId = await pushSnapshot({ kind: "restructure", ...capture });
     await removeWithCascade("bm-b");
     vi.spyOn(db.bookmarkMeta, "put").mockRejectedValue(new Error("controlled metadata failure"));
+    vi.spyOn(db.bookmarkMeta, "bulkPut").mockRejectedValue(new Error("controlled metadata failure"));
 
     expect(await undoLatest()).toMatchObject({ ok: false, code: "api" });
     const remapped = (await db.undo.get(rowId))?.idMap?.["bm-b"];
@@ -1488,5 +1491,250 @@ describe("undoExpected", () => {
     expect(createSpy).not.toHaveBeenCalled();
     expect((await peekLatest())?.id).toBe(rowId);
     await expect(get("bm-b")).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-08, B-10, P-08b — field-scoped metadata undo, origin filtering, and batching
+// ---------------------------------------------------------------------------
+
+describe("field-scoped metadata undo (B-08)", () => {
+  it("reverts add_tags delta by removing only added tags not in preTags while preserving later edits to notes, summary, category, and tags", async () => {
+    await putMeta("bm-b", {
+      tags: ["pre-keep", "pre-removed"],
+      category: "article",
+      notes: "initial note",
+      url: "https://b.example/",
+    });
+    const [preMeta] = await getMetaByIds(["bm-b"]);
+    expect(preMeta).toBeDefined();
+
+    const snapId = await pushSnapshot({
+      kind: "delete",
+      nodes: [],
+      meta: [preMeta!],
+      origin: "decision",
+      metaDelta: {
+        field: "tags",
+        addedTags: ["ai-tag", "pre-keep"],
+      },
+    });
+
+    // Decision applied "ai-tag", then user later edited notes, summary, category,
+    // removed "pre-removed", and added "user-tag".
+    await putMeta("bm-b", {
+      tags: ["pre-keep", "ai-tag", "user-tag"],
+      category: "docs",
+      notes: "user updated note",
+      summary: "Verified summary.",
+      url: "https://b.example/",
+    });
+
+    const result = expectOk(await restoreById(snapId));
+    expect(result.restoredIds).toEqual(["bm-b"]);
+    expect(await getMeta("bm-b")).toMatchObject({
+      tags: ["pre-keep", "user-tag"],
+      category: "docs",
+      notes: "user updated note",
+      summary: "Verified summary.",
+      url: "https://b.example/",
+    });
+  });
+
+  it("reverts set_category delta when current category matches appliedCategory, preserving tags/notes/summary, or leaves a user-changed category untouched", async () => {
+    await putMeta("bm-b", {
+      tags: ["existing"],
+      category: "article",
+      url: "https://b.example/",
+    });
+    const [preB] = await getMetaByIds(["bm-b"]);
+    const [preC] = await getMetaByIds(["bm-c"]);
+    const now = new Date().toISOString();
+
+    const snapB = await pushSnapshot({
+      kind: "delete",
+      nodes: [],
+      meta: [preB!],
+      origin: "decision",
+      metaDelta: {
+        field: "category",
+        appliedCategory: "docs",
+      },
+    });
+    const snapC = await pushSnapshot({
+      kind: "delete",
+      nodes: [],
+      meta: [
+        preC ?? {
+          id: "bm-c",
+          tags: [],
+          url: "https://c.example/",
+          updatedAt: now,
+        },
+      ],
+      origin: "decision",
+      metaDelta: {
+        field: "category",
+        appliedCategory: "docs",
+      },
+    });
+
+    // bm-b got "docs" from decision and later got notes + summary from user.
+    await putMeta("bm-b", {
+      tags: ["existing", "user-added"],
+      category: "docs",
+      notes: "later note",
+      summary: "Later summary.",
+      url: "https://b.example/",
+    });
+    // bm-c got "docs" from decision, then user manually changed category to "video".
+    await putMeta("bm-c", {
+      tags: [],
+      category: "video",
+      url: "https://c.example/",
+    });
+
+    expectOk(await restoreById(snapB));
+    expect(await getMeta("bm-b")).toMatchObject({
+      tags: ["existing", "user-added"],
+      category: "article",
+      notes: "later note",
+      summary: "Later summary.",
+      url: "https://b.example/",
+    });
+
+    expectOk(await restoreById(snapC));
+    // User's manual change to "video" is preserved!
+    expect(await getMeta("bm-c")).toMatchObject({
+      category: "video",
+      url: "https://c.example/",
+    });
+  });
+});
+
+describe("undoLatest origin filtering (B-08)", () => {
+  it("pops only user-origin snapshots in undoLatest while leaving decision-origin snapshots for restoreById", async () => {
+    const capB = await captureSubtree("bm-b");
+    const userSnapId = await pushSnapshot({
+      kind: "delete",
+      nodes: [capB!.node],
+      meta: capB!.meta,
+      origin: "user",
+    });
+    await removeTree("bm-b");
+
+    await putMeta("bm-c", { category: "docs", url: "https://c.example/" });
+    const decisionSnapId = await pushSnapshot({
+      kind: "delete",
+      nodes: [],
+      meta: [
+        {
+          id: "bm-c",
+          tags: [],
+          url: "https://c.example/",
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      origin: "decision",
+      metaDelta: { field: "category", appliedCategory: "docs" },
+    });
+
+    // undoLatest skips the decision snapshot at the head and pops the user snapshot.
+    const undoneUser = expectOk(await undoLatest());
+    expect(undoneUser.idMap["bm-b"]).toBeDefined();
+    expect(await db.undo.get(userSnapId)).toBeUndefined();
+    expect(await db.undo.get(decisionSnapId)).toBeDefined();
+
+    // Calling undoLatest again finds no more user snapshots.
+    expect(await undoLatest()).toMatchObject({ ok: false, code: "empty" });
+    expect(await db.undo.get(decisionSnapId)).toBeDefined();
+
+    // restoreById still replays the decision snapshot by ID.
+    expectOk(await restoreById(decisionSnapId));
+    expect(await db.undo.get(decisionSnapId)).toBeUndefined();
+    expect(await getMeta("bm-c")).toBeUndefined();
+  });
+});
+
+describe("cached nodeExists and batched metadata restore (P-08b, B-10)", () => {
+  it("batches restoreMetaRows, restoreRestructure, and restoreTagDelete with bulkGet/bulkPut, preserves url, and reuses ctx.verify.nodes", async () => {
+    await putMeta("bm-b", {
+      tags: ["t1"],
+      notes: "note b",
+      url: "https://b.example/",
+    });
+    await putMeta("bm-c", {
+      tags: ["t2"],
+      notes: "note c",
+      url: "https://c.example/",
+    });
+    const cap = await captureNodes(["bm-b", "bm-c"]);
+    await pushSnapshot({ kind: "restructure", ...cap });
+    await removeWithCascade("bm-b");
+    await removeWithCascade("bm-c");
+
+    const messages: unknown[] = [];
+    const channel = new BroadcastChannel(META_CHANGED_CHANNEL);
+    channel.onmessage = (ev) => messages.push(ev.data);
+
+    const metaGetSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const metaPutSpy = vi.spyOn(db.bookmarkMeta, "put");
+    const metaBulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const metaBulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+    const fakeGetSpy = vi.spyOn(fake, "get");
+
+    try {
+      const res = expectOk(await undoLatest());
+      const newB = res.idMap["bm-b"]!;
+      const newC = res.idMap["bm-c"]!;
+      expect(metaGetSpy).not.toHaveBeenCalled();
+      expect(metaPutSpy).not.toHaveBeenCalled();
+      expect(metaBulkGetSpy).toHaveBeenCalledTimes(1);
+      expect(metaBulkPutSpy).toHaveBeenCalledTimes(1);
+      // Parent "1" was resolved for both bm-b and bm-c but fetched only once via ctx.verify.nodes.
+      const parentOneGets = fakeGetSpy.mock.calls.filter(
+        (call) => call[0] === BOOKMARKS_BAR_ID,
+      );
+      expect(parentOneGets).toHaveLength(1);
+
+      expect((await getMeta(newB))?.url).toBe("https://b.example/");
+      expect((await getMeta(newC))?.url).toBe("https://c.example/");
+      await vi.waitFor(() => {
+        expect(messages).toHaveLength(1);
+      });
+    } finally {
+      channel.close();
+    }
+  });
+
+  it("batches restoreTagDelete and restoreMetaRows with corrupt-row retention and single broadcast (P-08b, D13)", async () => {
+    await db.corruptMeta.clear();
+    await createTag("Batched Tag");
+    await putMeta("bm-b", { tags: ["batched tag", "keep"], url: "https://b.example/" });
+    await putMeta("bm-c", { tags: ["batched tag"], url: "https://c.example/" });
+    const tagDef = await getTag("batched tag");
+    const meta = await getMetaByIds(["bm-b", "bm-c"]);
+    await pushSnapshot({ kind: "tag_delete", nodes: [], meta, tagDef });
+    await deleteTag("batched tag");
+    // Seed a corrupt row at bm-c before restoreTagDelete overwrites it.
+    await db.bookmarkMeta.put({
+      id: "bm-c",
+      tags: [123 as unknown as string],
+      updatedAt: "not-a-date",
+    });
+
+    const metaGetSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const metaPutSpy = vi.spyOn(db.bookmarkMeta, "put");
+    const metaBulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const metaBulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+
+    expectOk(await undoLatest());
+    expect(metaGetSpy).not.toHaveBeenCalled();
+    expect(metaPutSpy).not.toHaveBeenCalled();
+    expect(metaBulkGetSpy).toHaveBeenCalledTimes(1);
+    expect(metaBulkPutSpy).toHaveBeenCalledTimes(1);
+    expect((await getMeta("bm-b"))?.tags).toEqual(["batched tag", "keep"]);
+    expect((await getMeta("bm-c"))?.tags).toEqual(["batched tag"]);
+    expect(await db.corruptMeta.count()).toBe(1);
   });
 });

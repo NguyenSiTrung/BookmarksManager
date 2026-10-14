@@ -1,17 +1,20 @@
 import { db } from "../db/database";
 import {
-  getMeta,
+  emitMetaChanged,
   getTag,
   MetaRepoError,
-  patchMeta,
-  putMeta,
+  retainCorruptMetaBatch,
 } from "../db/meta";
 import type { MetaRepoErrorCode } from "../db/meta";
 import { UndoSnapshot } from "../schemas/undo";
 import type { UndoMeta, UndoNode } from "../schemas/undo";
-import type { BookmarkMeta } from "../schemas/meta";
+import {
+  BookmarkMeta,
+  MERGE_NOTES_SEPARATOR,
+  tagNameKey,
+} from "../schemas/meta";
+import type { TagNameKey } from "../schemas/meta";
 import type { Category } from "../schemas/bookmark";
-import { MERGE_NOTES_SEPARATOR } from "../schemas/meta";
 import {
   get,
   getChildren,
@@ -254,6 +257,10 @@ async function nodeExists(
   ctx?: RestoreContext,
   expectedUrl?: string,
 ): Promise<boolean> {
+  const cached = ctx?.verify.nodes.get(id);
+  if (cached !== undefined) {
+    return expectedUrl === undefined || cached.url === expectedUrl;
+  }
   const node =
     ctx?.kind === "restructure"
       ? await getRestructureNode(id)
@@ -261,6 +268,7 @@ async function nodeExists(
           .then((found) => found[0])
           .catch(() => undefined);
   if (node === undefined) return false;
+  ctx?.verify.nodes.set(id, node);
   return expectedUrl === undefined || node.url === expectedUrl;
 }
 
@@ -494,46 +502,192 @@ function mergeSurvivorMeta(
   };
 }
 
+interface ResolvedMetaFields {
+  tags: readonly string[];
+  category: Category | null | undefined;
+  notes: string | null | undefined;
+  summary: string | null | undefined;
+  url: string | null | undefined;
+}
+
+function stageMetaRow(
+  id: string,
+  fields: ResolvedMetaFields,
+  hasExistingRaw: boolean,
+  updatedAt: string,
+  puts: BookmarkMeta[],
+  deletes: string[],
+): void {
+  const seen = new Set<string>();
+  const tags: TagNameKey[] = [];
+  for (const tag of fields.tags) {
+    const key = tagNameKey(tag);
+    if (key === "" || seen.has(key)) continue;
+    seen.add(key);
+    tags.push(key);
+  }
+  const category = fields.category ?? undefined;
+  const notes =
+    fields.notes === null || fields.notes === "" ? undefined : fields.notes;
+  const summary =
+    fields.summary === null || fields.summary === ""
+      ? undefined
+      : fields.summary;
+  const url =
+    fields.url === null || fields.url === "" ? undefined : fields.url;
+  const parsed = BookmarkMeta.safeParse({
+    id,
+    tags,
+    ...(category === undefined ? {} : { category }),
+    ...(notes === undefined ? {} : { notes }),
+    ...(summary === undefined ? {} : { summary }),
+    ...(url === undefined ? {} : { url }),
+    schemaVersion: 1,
+    updatedAt,
+  });
+  if (!parsed.success) {
+    throw new MetaRepoError(
+      "invalid_meta",
+      parsed.error.issues[0]?.message ?? "schema validation failed",
+    );
+  }
+  if (
+    parsed.data.tags.length === 0 &&
+    parsed.data.category === undefined &&
+    (parsed.data.notes === undefined || parsed.data.notes === "") &&
+    (parsed.data.summary === undefined || parsed.data.summary === "")
+  ) {
+    if (hasExistingRaw) deletes.push(id);
+    return;
+  }
+  puts.push({ ...parsed.data, tags: [...parsed.data.tags] });
+}
+
 /**
  * `delete`/`merge` metadata pass. `idMap` covers snapshotted (recreated)
  * ids; any other meta row belongs to a surviving node — for a merge that is
  * exactly the kept bookmark's pre-merge row. A surviving row of a `merge`
  * snapshot is MERGED with the live row (D09 — post-merge edits survive);
+ * a row carrying `metaDelta` restores only the delta field (B-08);
  * every other survivor row is written back wholesale.
  */
 async function restoreMetaRows(
   snapshot: UndoSnapshot,
   ctx: RestoreContext,
 ): Promise<void> {
+  const targets: {
+    targetId: string;
+    meta: UndoMeta;
+    isRemapped: boolean;
+  }[] = [];
   for (const meta of snapshot.meta) {
     const remapped = ctx.idMap[meta.id];
     if (remapped !== undefined) {
-      await putMeta(remapped, {
-        tags: meta.tags,
-        category: meta.category ?? null,
-        notes: meta.notes ?? null,
-        summary: meta.summary ?? null,
-        url: meta.url ?? null,
-      });
+      targets.push({ targetId: remapped, meta, isRemapped: true });
       continue;
     }
     // never manufacture orphans; the url check (D12) keeps a meta row
     // from attaching to a re-used id pointing at a different bookmark
-    if (!(await nodeExists(meta.id, undefined, meta.url))) continue;
-    if (snapshot.kind === "merge") {
-      const current = await getMeta(meta.id);
-      await putMeta(meta.id, mergeSurvivorMeta(meta, snapshot.meta, current));
-    } else {
-      await putMeta(meta.id, {
-        tags: meta.tags,
-        category: meta.category ?? null,
-        notes: meta.notes ?? null,
-        summary: meta.summary ?? null,
-        url: meta.url ?? null,
-      });
-    }
-    ctx.restoredIds.push(meta.id);
+    if (!(await nodeExists(meta.id, ctx, meta.url))) continue;
+    targets.push({ targetId: meta.id, meta, isRemapped: false });
   }
+  if (targets.length === 0) return;
+
+  let changed = false;
+  await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+    const targetIds = targets.map((t) => t.targetId);
+    const rawRows = await db.bookmarkMeta.bulkGet(targetIds);
+    const corruptRows: { id: string; raw: unknown }[] = [];
+    const puts: BookmarkMeta[] = [];
+    const deletes: string[] = [];
+    const updatedAt = new Date().toISOString();
+
+    for (let i = 0; i < targets.length; i += 1) {
+      const target = targets[i];
+      if (target === undefined) continue;
+      const { targetId, meta, isRemapped } = target;
+      const raw = rawRows[i];
+      let current: BookmarkMeta | undefined;
+      if (raw !== undefined) {
+        const parsedExisting = BookmarkMeta.safeParse(raw);
+        if (parsedExisting.success) {
+          current = parsedExisting.data;
+        } else {
+          corruptRows.push({ id: targetId, raw });
+        }
+      }
+
+      let fields: ResolvedMetaFields;
+      if (!isRemapped && snapshot.metaDelta !== undefined) {
+        if (snapshot.metaDelta.field === "tags") {
+          const preTags = new Set(meta.tags);
+          const addedSet = new Set(
+            snapshot.metaDelta.addedTags.map((t) => tagNameKey(t)),
+          );
+          const baseTags = current !== undefined ? current.tags : meta.tags;
+          fields = {
+            tags: baseTags.filter(
+              (tag) => !addedSet.has(tag) || preTags.has(tag),
+            ),
+            category: current?.category ?? null,
+            notes: current?.notes ?? null,
+            summary: current?.summary ?? null,
+            url: current?.url ?? meta.url ?? null,
+          };
+        } else {
+          const nextCategory =
+            snapshot.metaDelta.appliedCategory === undefined ||
+            current?.category === snapshot.metaDelta.appliedCategory
+              ? (meta.category ?? null)
+              : (current?.category ?? null);
+          fields = {
+            tags: current?.tags ?? [],
+            category: nextCategory,
+            notes: current?.notes ?? null,
+            summary: current?.summary ?? null,
+            url: current?.url ?? meta.url ?? null,
+          };
+        }
+      } else if (!isRemapped && snapshot.kind === "merge") {
+        fields = mergeSurvivorMeta(meta, snapshot.meta, current);
+      } else {
+        fields = {
+          tags: meta.tags,
+          category: meta.category ?? null,
+          notes: meta.notes ?? null,
+          summary: meta.summary ?? null,
+          url: meta.url ?? null,
+        };
+      }
+
+      stageMetaRow(
+        targetId,
+        fields,
+        raw !== undefined,
+        updatedAt,
+        puts,
+        deletes,
+      );
+    }
+
+    if (corruptRows.length > 0) {
+      await retainCorruptMetaBatch(corruptRows, "overwrite");
+    }
+    if (puts.length > 0) {
+      await db.bookmarkMeta.bulkPut(puts);
+    }
+    if (deletes.length > 0) {
+      await db.bookmarkMeta.bulkDelete(deletes);
+    }
+    changed = puts.length > 0 || deletes.length > 0;
+  });
+
+  for (const target of targets) {
+    if (!target.isRemapped) {
+      ctx.restoredIds.push(target.meta.id);
+    }
+  }
+  if (changed) emitMetaChanged();
 }
 
 /**
@@ -606,15 +760,58 @@ async function restoreRestructure(
   ctx: RestoreContext,
 ): Promise<void> {
   await restoreMoves(snapshot, ctx);
+  const remappedTargets: { targetId: string; meta: UndoMeta }[] = [];
   for (const meta of snapshot.meta) {
     const remapped = ctx.idMap[meta.id];
     if (remapped === undefined) continue;
-    await putMeta(remapped, {
-      tags: meta.tags,
-      category: meta.category ?? null,
-      notes: meta.notes ?? null,
-      summary: meta.summary ?? null,
+    remappedTargets.push({ targetId: remapped, meta });
+  }
+  if (remappedTargets.length > 0) {
+    let changed = false;
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+      const targetIds = remappedTargets.map((t) => t.targetId);
+      const rawRows = await db.bookmarkMeta.bulkGet(targetIds);
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      const puts: BookmarkMeta[] = [];
+      const deletes: string[] = [];
+      const updatedAt = new Date().toISOString();
+
+      for (let i = 0; i < remappedTargets.length; i += 1) {
+        const target = remappedTargets[i];
+        if (target === undefined) continue;
+        const { targetId, meta } = target;
+        const raw = rawRows[i];
+        if (raw !== undefined && !BookmarkMeta.safeParse(raw).success) {
+          corruptRows.push({ id: targetId, raw });
+        }
+        stageMetaRow(
+          targetId,
+          {
+            tags: meta.tags,
+            category: meta.category ?? null,
+            notes: meta.notes ?? null,
+            summary: meta.summary ?? null,
+            url: meta.url ?? null,
+          },
+          raw !== undefined,
+          updatedAt,
+          puts,
+          deletes,
+        );
+      }
+
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, "overwrite");
+      }
+      if (puts.length > 0) {
+        await db.bookmarkMeta.bulkPut(puts);
+      }
+      if (deletes.length > 0) {
+        await db.bookmarkMeta.bulkDelete(deletes);
+      }
+      changed = puts.length > 0 || deletes.length > 0;
     });
+    if (changed) emitMetaChanged();
   }
   for (const id of [...(snapshot.createdFolderIds ?? [])].reverse()) {
     const current = await getRestructureNode(id);
@@ -622,16 +819,13 @@ async function restoreRestructure(
       ctx.restoredIds.push(id); // already gone — nothing to remove
       continue;
     }
+    ctx.verify.nodes.set(id, current);
     if (!isFolder(current)) continue;
     // A failed read retains the snapshot for retry, never means "empty".
     const children = await getChildren(id);
     if (children.length > 0) continue; // user filed into it since — keep
     // Chrome's non-recursive remove protects even a racing child insertion.
-    await removeNode(id);
-    // `removeNode` is not cache-aware (guard must read live children): the
-    // removal shrinks the folder's parent — drop the seeded count so the
-    // next writer re-reads it instead of clamping against a stale high
-    // water mark.
+    await removeNode(id, ctx.verify);
     if (current.parentId !== undefined) {
       ctx.verify.childCounts.delete(current.parentId);
     }
@@ -671,24 +865,77 @@ async function restoreTagDelete(
       }
     });
   }
+  const liveMetas: UndoMeta[] = [];
   for (const meta of snapshot.meta) {
-    if (!(await nodeExists(meta.id, undefined, meta.url))) continue;
-    const current = await getMeta(meta.id);
-    if (current !== undefined && current.tags.includes(tagDef.nameKey)) {
-      continue; // already re-added — nothing changes
+    if (await nodeExists(meta.id, ctx, meta.url)) {
+      liveMetas.push(meta);
     }
-    const tags = [...(current?.tags ?? [])];
-    const recorded = meta.tags.indexOf(tagDef.nameKey);
-    // Insert where the key sat in the pre-delete list, clamped to the
-    // current list; not found (defensive) → append.
-    const at = recorded < 0 ? tags.length : Math.min(recorded, tags.length);
-    tags.splice(at, 0, tagDef.nameKey);
-    await patchMeta(meta.id, {
-      tags,
-      ...(meta.url === undefined ? {} : { url: meta.url }),
-    });
-    ctx.restoredIds.push(meta.id);
   }
+  if (liveMetas.length === 0) return;
+
+  const restoredForTag: string[] = [];
+  let changed = false;
+  await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+    const targetIds = liveMetas.map((m) => m.id);
+    const rawRows = await db.bookmarkMeta.bulkGet(targetIds);
+    const corruptRows: { id: string; raw: unknown }[] = [];
+    const puts: BookmarkMeta[] = [];
+    const deletes: string[] = [];
+    const updatedAt = new Date().toISOString();
+
+    for (let i = 0; i < liveMetas.length; i += 1) {
+      const meta = liveMetas[i];
+      if (meta === undefined) continue;
+      const raw = rawRows[i];
+      let current: BookmarkMeta | undefined;
+      if (raw !== undefined) {
+        const parsedExisting = BookmarkMeta.safeParse(raw);
+        if (parsedExisting.success) {
+          current = parsedExisting.data;
+        } else {
+          corruptRows.push({ id: meta.id, raw });
+        }
+      }
+      if (current !== undefined && current.tags.includes(tagDef.nameKey)) {
+        continue; // already re-added — nothing changes
+      }
+      const tags = [...(current?.tags ?? [])];
+      const recorded = meta.tags.indexOf(tagDef.nameKey);
+      // Insert where the key sat in the pre-delete list, clamped to the
+      // current list; not found (defensive) → append.
+      const at = recorded < 0 ? tags.length : Math.min(recorded, tags.length);
+      tags.splice(at, 0, tagDef.nameKey);
+      stageMetaRow(
+        meta.id,
+        {
+          tags,
+          category: current?.category ?? null,
+          notes: current?.notes ?? null,
+          summary: current?.summary ?? null,
+          url: meta.url ?? current?.url ?? null,
+        },
+        raw !== undefined,
+        updatedAt,
+        puts,
+        deletes,
+      );
+      restoredForTag.push(meta.id);
+    }
+
+    if (corruptRows.length > 0) {
+      await retainCorruptMetaBatch(corruptRows, "overwrite");
+    }
+    if (puts.length > 0) {
+      await db.bookmarkMeta.bulkPut(puts);
+    }
+    if (deletes.length > 0) {
+      await db.bookmarkMeta.bulkDelete(deletes);
+    }
+    changed = puts.length > 0 || deletes.length > 0;
+  });
+
+  ctx.restoredIds.push(...restoredForTag);
+  if (changed) emitMetaChanged();
 }
 
 function toFailure(cause: unknown): UndoFailure {
@@ -852,7 +1099,7 @@ async function runRestoreById(snapshotId: number): Promise<UndoResult> {
 
 async function runUndoExpected(snapshotId: number): Promise<UndoResult> {
   try {
-    const head = await peekLatest();
+    const head = await peekLatest({ origin: "any" });
     if (head?.id !== snapshotId) {
       return {
         ok: false,
@@ -883,7 +1130,7 @@ export function discardLatest(hold?: UndoLockHold): Promise<DiscardResult> {
   return serialize(() =>
     withUndoLock(async (): Promise<DiscardResult> => {
       try {
-        const snapshot = await peekLatest();
+        const snapshot = await peekLatest({ origin: "any" });
         if (snapshot === undefined || snapshot.id === undefined) {
           return { ok: false, code: "empty", message: "Nothing to discard." };
         }

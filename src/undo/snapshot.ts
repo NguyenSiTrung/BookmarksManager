@@ -1,9 +1,15 @@
+import Dexie from "dexie";
 import { db } from "../db/database";
-import type { DecisionRow } from "../decisions/store";
 import { getMetaByIds } from "../db/meta";
 import type { TagDef } from "../schemas/meta";
 import { UndoSnapshot } from "../schemas/undo";
-import type { UndoKind, UndoMeta, UndoNode, UndoOrigin } from "../schemas/undo";
+import type {
+  UndoKind,
+  UndoMeta,
+  UndoMetaDelta,
+  UndoNode,
+  UndoOrigin,
+} from "../schemas/undo";
 import { get, getSubTree, isFixedRoot } from "../sync/chrome-bookmarks";
 import type { BookmarksTreeNode } from "../sync/chrome-bookmarks";
 
@@ -93,9 +99,24 @@ export interface UndoSnapshotInput {
    * decision/job applies. Defaults to `user`.
    */
   origin?: UndoOrigin;
+  /** Field-scoped metadata delta for decision applies (B-08). */
+  metaDelta?: UndoMetaDelta;
   createdAt?: string;
 }
 
+/** Count every node and nested `children` recursively (B-08). */
+export function countUndoNodes(nodes: readonly UndoNode[]): number {
+  let total = 0;
+  for (const node of nodes) {
+    if (node !== null && typeof node === "object") {
+      total += 1;
+      if (Array.isArray(node.children) && node.children.length > 0) {
+        total += countUndoNodes(node.children);
+      }
+    }
+  }
+  return total;
+}
 /** Every id inside an UndoNode tree, depth-first. */
 function collectNodeIds(node: UndoNode, into: string[] = []): string[] {
   into.push(node.id);
@@ -230,46 +251,60 @@ export async function pushSnapshot(
       `undo snapshot failed schema validation: ${issue?.message ?? "invalid document"}`,
     );
   }
-  // The transaction covers `decisions` too: the protected-id read must see
-  // the same snapshot of the world as the eviction that follows it.
-  return db.transaction("rw", db.undo, db.decisions, async () => {
+  // The transaction covers `decisions` (and `jobs` unless an outer transaction
+  // omitted it): the protected-id read must see the same snapshot of the world
+  // as the eviction that follows it.
+  const includeJobs =
+    Dexie.currentTransaction === null ||
+    Dexie.currentTransaction.storeNames.includes("jobs");
+  const tables = includeJobs
+    ? [db.undo, db.decisions, db.jobs]
+    : [db.undo, db.decisions];
+  return db.transaction("rw", tables, async () => {
     const id = await db.undo.add({ ...parsed.data });
 
-    // Snapshot ids a live decision can still revert through — never
-    // evicted, whatever the cap says (D05). `undoSnapshotId` exists only on
-    // applied/auto_applied rows (the DecisionRow sidecar, not the base
-    // Decision schema); rejected/reverted decisions no longer need theirs.
+    // Snapshot ids a live decision or applied restructure job can still revert
+    // through — never evicted, whatever the cap says (D05, B-08).
     const protectedIds = new Set<number>();
     await db.decisions
-      .filter((row) => {
-        const sidecar = row as DecisionRow;
-        return (
-          sidecar.undoSnapshotId !== undefined &&
-          sidecar.status !== "rejected" &&
-          sidecar.status !== "reverted"
-        );
-      })
+      .where("status")
+      .anyOf(["applied", "auto_applied"])
       .each((row) => {
-        protectedIds.add((row as DecisionRow).undoSnapshotId as number);
+        if (
+          "undoSnapshotId" in row &&
+          typeof row.undoSnapshotId === "number"
+        ) {
+          protectedIds.add(row.undoSnapshotId);
+        }
       });
-
+    if (includeJobs) {
+      await db.jobs
+        .where("kind")
+        .equals("restructure")
+        .each((job) => {
+          const snapshotId = job.restructure?.applied?.snapshotId;
+          if (typeof snapshotId === "number") {
+            protectedIds.add(snapshotId);
+          }
+        });
+    }
     const origin: UndoOrigin = parsed.data.origin ?? "user";
     const bucket = (await db.undo.toArray()).filter(
-      (row) => (row.origin as UndoOrigin | undefined ?? "user") === origin,
+      (row) => (row.origin ?? "user") === origin,
     ); // toArray() is primary-key order: oldest first
     const excess = bucket.length - UNDO_STACK_LIMIT;
     let nodeTotal = 0;
     for (const row of bucket) {
-      nodeTotal += (row.nodes as unknown[] | undefined)?.length ?? 0;
+      nodeTotal += Array.isArray(row.nodes) ? countUndoNodes(row.nodes) : 0;
     }
     const evict: number[] = [];
     for (const row of bucket) {
       if (evict.length >= excess && nodeTotal <= UNDO_NODE_BUDGET) break;
-      const rowId = row.id as number | undefined;
-      if (rowId === undefined || rowId === id) continue; // never the new row
+      const rowId = row.id;
+      if (typeof rowId !== "number" || rowId === id) continue; // never the new row
       if (protectedIds.has(rowId)) continue;
       evict.push(rowId);
-      nodeTotal -= (row.nodes as unknown[] | undefined)?.length ?? 0;
+      nodeTotal -= Array.isArray(row.nodes) ? countUndoNodes(row.nodes) : 0;
     }
     if (evict.length > 0) await db.undo.bulkDelete(evict);
     return id;
@@ -298,14 +333,23 @@ export async function listSnapshots(): Promise<UndoSnapshot[]> {
  * row at a time, newest-first, skipping corrupt rows exactly like
  * `listSnapshots` — instead of loading and validating the whole stack.
  */
-export async function peekLatest(): Promise<UndoSnapshot | undefined> {
+export async function peekLatest(options?: {
+  origin?: UndoOrigin | "any";
+}): Promise<UndoSnapshot | undefined> {
+  const targetOrigin = options?.origin ?? "user";
   let row = await db.undo.toCollection().reverse().first();
   while (row !== undefined) {
     const parsed = UndoSnapshot.safeParse(row);
-    if (parsed.success) return parsed.data;
-    const id = row.id as number;
-    // Step back one row: the corrupt head does not poison the rest.
-    row = await db.undo.where(":id").below(id).reverse().first();
+    if (
+      parsed.success &&
+      (targetOrigin === "any" ||
+        (parsed.data.origin ?? "user") === targetOrigin)
+    ) {
+      return parsed.data;
+    }
+    if (typeof row.id !== "number") break;
+    // Step back one row: a corrupt or non-matching head does not block the rest.
+    row = await db.undo.where(":id").below(row.id).reverse().first();
   }
   return undefined;
 }

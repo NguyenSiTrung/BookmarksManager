@@ -5,11 +5,14 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import { db } from "../../src/db/database";
 import type { DecisionRow } from "../../src/decisions/store";
+import type { Job } from "../../src/schemas/job";
 import type { UndoNode, UndoSnapshot } from "../../src/schemas/undo";
 import {
+  countUndoNodes,
   listSnapshots,
   peekLatest,
   pushSnapshot,
@@ -55,6 +58,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await db.undo.clear();
   await db.decisions.clear();
+  await db.jobs.clear();
 });
 
 describe("D05 — per-origin retention", () => {
@@ -171,6 +175,75 @@ describe("D05 — per-origin retention", () => {
     expect(await db.undo.get(fat1)).toBeUndefined();
     expect(await db.undo.get(fat2)).toBeDefined();
   });
+
+  it("counts nested folder children recursively toward UNDO_NODE_BUDGET (B-08)", async () => {
+    const nestedRoot: UndoNode = {
+      id: "root-folder",
+      parentId: "1",
+      index: 0,
+      title: "Root Folder",
+      children: Array.from({ length: UNDO_NODE_BUDGET - 1 }, (_, i) =>
+        leaf(`nested-${i}`),
+      ),
+    };
+    expect(countUndoNodes([nestedRoot])).toBe(UNDO_NODE_BUDGET);
+
+    const fatNested = await pushSnapshot({
+      kind: "delete",
+      nodes: [nestedRoot],
+      meta: [],
+    });
+    const nextId = await pushSnapshot({
+      kind: "delete",
+      nodes: [leaf("after-nested")],
+      meta: [],
+    });
+    expect(await db.undo.get(fatNested)).toBeUndefined();
+    expect(await db.undo.get(nextId)).toBeDefined();
+  });
+
+  it("protects a snapshot referenced by a restructure job's applied.snapshotId and queries decisions via status index (B-08)", async () => {
+    const restructureSnapId = await push("user", "restructure-protected");
+    await push("user", "unprotected-user");
+
+    const now = new Date().toISOString();
+    const job: Job = {
+      id: "33333333-3333-4333-8333-333333333333",
+      kind: "restructure",
+      status: "completed",
+      progress: { totalBatches: 1, committedBatches: 1, processedCount: 1 },
+      batchSize: 20,
+      bookmarkIds: ["bm-1"],
+      usage: { inputTokens: 10, outputTokens: 10, requests: 1 },
+      restructure: {
+        proposal: { folders: [{ path: "Tech", description: "Tech" }] },
+        assignments: [],
+        applied: {
+          at: now,
+          moved: 1,
+          snapshotId: restructureSnapId,
+          reusedPaths: [],
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.jobs.put(job);
+
+    const filterSpy = vi.spyOn(db.decisions, "filter");
+    const whereSpy = vi.spyOn(db.decisions, "where");
+
+    for (let i = 0; i < UNDO_STACK_LIMIT + 2; i++) {
+      await push("user", `fill-job-${i}`);
+    }
+
+    expect(filterSpy).not.toHaveBeenCalled();
+    expect(whereSpy).toHaveBeenCalledWith("status");
+    expect(await db.undo.get(restructureSnapId)).toBeDefined();
+
+    filterSpy.mockRestore();
+    whereSpy.mockRestore();
+  });
 });
 
 describe("D06 — peekLatest reverse cursor", () => {
@@ -207,5 +280,15 @@ describe("D06 — peekLatest reverse cursor", () => {
     const [head] = await listSnapshots();
     expect(head).toBeDefined();
     expect(await peekLatest()).toMatchObject({ id: head?.id });
+  });
+
+  it("defaults peekLatest to origin: 'user', skipping 'decision' snapshots unless requested (B-08)", async () => {
+    const userId = await push("user", "u-1");
+    const decisionId = await push("decision", "d-1");
+
+    expect((await peekLatest())?.id).toBe(userId);
+    expect((await peekLatest({ origin: "user" }))?.id).toBe(userId);
+    expect((await peekLatest({ origin: "decision" }))?.id).toBe(decisionId);
+    expect((await peekLatest({ origin: "any" }))?.id).toBe(decisionId);
   });
 });

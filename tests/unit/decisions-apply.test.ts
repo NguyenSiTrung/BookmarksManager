@@ -162,7 +162,7 @@ describe("approveDecision — add_tags", () => {
       decision({ kind: "add_tags", bookmarkIds: ["bm-a"], tags: ["new"] }),
     );
     await approveDecision(d.id);
-    const snapshot = await peekLatest();
+    const snapshot = await peekLatest({ origin: "decision" });
     expect(snapshot?.kind).toBe("delete");
     expect(snapshot?.nodes).toEqual([]);
     expect(snapshot?.meta.map((m) => m.id)).toEqual(["bm-a"]);
@@ -188,7 +188,7 @@ describe("approveDecision — set_category", () => {
     const row = await approveDecision(d.id);
     expect(row.status).toBe("applied");
     expect((await getMeta("bm-a"))?.category).toBe("docs");
-    expect((await peekLatest())?.kind).toBe("delete");
+    expect((await peekLatest({ origin: "decision" }))?.kind).toBe("delete");
   });
 });
 
@@ -204,7 +204,7 @@ describe("approveDecision — move", () => {
     const row = await approveDecision(d.id);
     expect(row.status).toBe("applied");
     expect((await get("bm-b"))[0]?.parentId).toBe("f-target");
-    const snapshot = await peekLatest();
+    const snapshot = await peekLatest({ origin: "decision" });
     expect(snapshot?.kind).toBe("bulk_move");
     expect(snapshot?.nodes[0]).toMatchObject({ id: "bm-b", parentId: "1" });
   });
@@ -228,7 +228,7 @@ describe("approveDecision — merge_duplicates", () => {
     await expect(get("bm-d")).rejects.toThrow();
     expect((await get("bm-c"))[0]?.id).toBe("bm-c");
     // mergeGroup pushed its own merge snapshot.
-    expect((await peekLatest())?.kind).toBe("merge");
+    expect((await peekLatest({ origin: "decision" }))?.kind).toBe("merge");
   });
 
   it("records the merge snapshot's own id even when another snapshot interleaves (D04)", async () => {
@@ -586,7 +586,7 @@ describe("apply rollback and compensation", () => {
     // Zero mutations: the change is still applied and the row still says so.
     expect((await getMeta("bm-a"))?.category).toBe("docs");
     expect((await db.decisions.get(d.id))?.status).toBe("applied");
-    expect(await peekLatest()).toBeDefined();
+    expect(await peekLatest({ origin: "decision" })).toBeDefined();
   });
 
   it("reports state_unrecorded when a failed status write cannot be compensated", async () => {
@@ -602,7 +602,7 @@ describe("apply rollback and compensation", () => {
     // The change is applied but unrecorded — reported, never silent.
     expect((await getMeta("bm-a"))?.tags).toEqual(["x"]);
     expect((await db.decisions.get(d.id))?.status).toBe("pending");
-    expect((await peekLatest())?.meta.map((meta) => meta.id)).toEqual(["bm-a"]);
+    expect((await peekLatest({ origin: "decision" }))?.meta.map((meta) => meta.id)).toEqual(["bm-a"]);
   });
 });
 

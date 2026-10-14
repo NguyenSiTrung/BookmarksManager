@@ -1,6 +1,6 @@
 import { z } from "./z";
+import { Category } from "./bookmark";
 import { BookmarkMeta, TagDef } from "./meta";
-
 /** Operations that write an undo snapshot before mutating the tree/tags. */
 export const UndoKind = z.enum([
   "delete",
@@ -58,6 +58,24 @@ export const UndoMeta = BookmarkMeta;
 export type UndoMeta = z.infer<typeof UndoMeta>;
 
 /**
+ * Field-scoped metadata delta recorded by decision applies (`add_tags` /
+ * `set_category`, B-08) so reverting one decision restores only the field it
+ * touched instead of overwriting subsequent edits to `notes`, `summary`,
+ * `tags`, or `category`.
+ */
+export const UndoMetaDelta = z.discriminatedUnion("field", [
+  z.strictObject({
+    field: z.literal("tags"),
+    addedTags: z.array(z.string().min(1)),
+  }),
+  z.strictObject({
+    field: z.literal("category"),
+    appliedCategory: Category.optional(),
+  }),
+]);
+export type UndoMetaDelta = z.infer<typeof UndoMetaDelta>;
+
+/**
  * Snapshot written to the Dexie `undo` table (`++id,createdAt`) before a
  * delete, bulk move, merge, or tag-delete. `id` is auto-incremented on write,
  * so it is absent in the input document and present once persisted.
@@ -86,6 +104,8 @@ export const UndoSnapshot = z
     createdFolderIds: z.array(z.string().min(1)).optional(),
     /** D05 retention bucket; absent rows read as `user`. */
     origin: UndoOrigin.optional(),
+    /** B-08 field-scoped metadata delta for decision applies. */
+    metaDelta: UndoMetaDelta.optional(),
   })
   .superRefine((snapshot, ctx) => {
     if (snapshot.kind === "tag_delete" && snapshot.tagDef === undefined) {
