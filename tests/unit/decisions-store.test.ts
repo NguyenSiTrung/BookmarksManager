@@ -19,6 +19,7 @@ import {
   getDecision,
   hasDecidedSlotRow,
   isLegalTransition,
+  listApplied,
   listAutoApplied,
   listByStatus,
   listDecisions,
@@ -804,5 +805,26 @@ describe("indexed bookmarkIds lookups (P-02)", () => {
     expect(await deleteReviewableByBookmarkIds(["bm-002"])).toBe(1);
     expect(whereSpy).toHaveBeenCalledWith("bookmarkIds");
     expect(await getDecision(UUID2)).toBeUndefined();
+  });
+
+  it("listApplied returns recent applied decision rows ordered newest-first (UX-11)", async () => {
+    await persistDecision(
+      decision({
+        id: UUID,
+        bookmarkIds: ["bm-001"],
+        status: "applied",
+        createdAt: "2026-10-01T10:00:00.000Z",
+      }),
+    );
+    await persistDecision(
+      decision({
+        id: UUID2,
+        bookmarkIds: ["bm-002"],
+        status: "applied",
+        createdAt: "2026-10-02T10:00:00.000Z",
+      }),
+    );
+    const applied = await listApplied();
+    expect(applied.map((r) => r.id)).toEqual([UUID2, UUID]);
   });
 });

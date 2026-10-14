@@ -396,6 +396,18 @@ export async function listAutoApplied(limit = 50): Promise<DecisionRow[]> {
 }
 
 /**
+ * Manually applied decisions (bounded, newest-first) — surfaces in ReviewView's
+ * applied history section (`BookmarksManager-tax`) so users can inspect and
+ * revert approved suggestions even after the 8-second Undo toast has expired.
+ */
+export async function listApplied(limit = 50): Promise<DecisionRow[]> {
+  const rows = await listByStatus("applied");
+  return rows
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+/**
  * The full review surface: `pending` rows plus `unsure` ones — unsure rows
  * carry the LLM second-opinion verdicts and remain user-reviewable (they
  * can still reach `applied`/`rejected`). Oldest-first by `createdAt`.

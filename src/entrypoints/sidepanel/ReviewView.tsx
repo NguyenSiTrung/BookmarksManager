@@ -360,6 +360,12 @@ const secondaryButtonClass =
   "focus-visible:ring-2 focus-visible:ring-ring " +
   "disabled:cursor-not-allowed disabled:opacity-50";
 
+const approveButtonClass =
+  "shrink-0 rounded-sm border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-medium text-primary " +
+  "outline-hidden hover:bg-primary hover:text-primary-foreground " +
+  "focus-visible:ring-2 focus-visible:ring-ring " +
+  "disabled:cursor-not-allowed disabled:opacity-50";
+
 /** Dialog confirm — same weight/shape as CostConfirmationDialog's. */
 const primaryButtonClass =
   "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
@@ -507,15 +513,19 @@ export function ReviewView({
     () => decisions.filter(isUnsavedDecision).length,
     [decisions],
   );
-  // H05: the auto-applied audit surface — history rows the feed carries,
-  // newest first. Compact variant below; never selectable or bulk-approved.
+  // H05 + BookmarksManager-tax: the applied & auto-applied audit surface —
+  // history rows the feed carries, newest first. Compact variant below;
+  // never selectable or bulk-approved.
   const autoRows = useMemo(
     () =>
       decisions
-        .filter((row) => row.status === "auto_applied")
+        .filter(
+          (row) => row.status === "auto_applied" || row.status === "applied",
+        )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [decisions],
   );
+  const [historyOpen, setHistoryOpen] = useState(true);
   const rows = useMemo(
     () =>
       [...queue].sort(
@@ -935,21 +945,33 @@ export function ReviewView({
       {autoRows.length > 0 && (
         <section
           aria-label="Auto-applied suggestions"
-          className="max-h-40 shrink-0 overflow-y-auto border-t border-border"
+          className="max-h-48 shrink-0 overflow-y-auto border-t border-border"
         >
-          <h3 className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">
-            Auto-applied — review what changed and where it came from
+          <h3 className="px-3 pt-2 pb-1">
+            <button
+              type="button"
+              aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen((open) => !open)}
+              className="flex w-full items-center justify-between text-left text-xs font-medium text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <span>
+                Applied history ({autoRows.length}) — review what changed and
+                where it came from
+              </span>
+              <span aria-hidden="true">{historyOpen ? "▾" : "▸"}</span>
+            </button>
           </h3>
-          {autoRows.map((row) => (
-            <AutoAppliedRow
-              key={row.id}
-              row={row}
-              tree={tree}
-              busy={busyIds.has(row.id)}
-              failure={failures.get(row.id)}
-              onRevert={handleRevert}
-            />
-          ))}
+          {historyOpen &&
+            autoRows.map((row) => (
+              <AutoAppliedRow
+                key={row.id}
+                row={row}
+                tree={tree}
+                busy={busyIds.has(row.id)}
+                failure={failures.get(row.id)}
+                onRevert={handleRevert}
+              />
+            ))}
         </section>
       )}
       <CostConfirmationDialog
@@ -1228,7 +1250,7 @@ function ReviewRow({
               disabled={busy}
               aria-label={`Approve the suggestion for ${primaryLabel}`}
               onClick={() => onApprove(row)}
-              className={secondaryButtonClass}
+              className={approveButtonClass}
             >
               Approve
             </button>
@@ -1332,7 +1354,7 @@ function AutoAppliedRow({
         <button
           type="button"
           disabled={busy}
-          aria-label={`Undo the auto-applied suggestion for ${primaryLabel}`}
+          aria-label={`Undo the ${row.status === "auto_applied" ? "auto-applied" : "applied"} suggestion for ${primaryLabel}`}
           onClick={() => onRevert(row)}
           className={secondaryButtonClass}
         >

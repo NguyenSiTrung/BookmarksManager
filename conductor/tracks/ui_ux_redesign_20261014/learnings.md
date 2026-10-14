@@ -90,6 +90,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Patterns: Reusing `ConsentFacts` inside `SummaryDialog` renders `props.origin` inside its own `<code>` chip, preserving exact `findByText(origin)` assertions while unifying disclosure layout across Options and Side Panel.
 ---
 
+## [2026-10-14 08:44] - Phase 4 Task 2: `ReviewView` primary `Approve` styling & collapsible `Applied history` with `Undo` (`UX-11`, `BookmarksManager-tax`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added `listApplied(limit = 50)` in `src/decisions/store.ts`, wired it into `App.tsx`'s `pendingDecisions` live query, gave `ReviewRow`'s `Approve` button primary accent styling (`approveButtonClass`), and expanded `ReviewView.tsx`'s collapsible `Applied history` section (`aria-label="Auto-applied suggestions"`) to include both manually `applied` and `auto_applied` rows with `Undo` (`REVERT_DECISION`).
+- **Files changed:** `src/decisions/store.ts`, `src/entrypoints/sidepanel/ReviewView.tsx`, `src/entrypoints/sidepanel/App.tsx`, `tests/unit/decisions-store.test.ts`, `tests/components/review-view.test.tsx`
+- **Learnings:**
+  - Gotchas: Naming the row-level undo button `aria-label="Undo the applied suggestion for <title>"` avoids colliding with toast-level `getByRole("button", { name: /^undo$/i })` queries.
+---
+
+
 
 
 

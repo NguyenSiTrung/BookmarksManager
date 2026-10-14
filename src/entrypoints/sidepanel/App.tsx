@@ -58,7 +58,11 @@ import {
   readPendingEditId,
 } from "../popup/chrome";
 import { registerDbReleaseListener } from "../../security/delete-all";
-import { listAutoApplied, listReviewable } from "../../decisions/store";
+import {
+  listApplied,
+  listAutoApplied,
+  listReviewable,
+} from "../../decisions/store";
 import type { DecisionRow } from "../../decisions/store";
 import { DecisionMessage } from "../../messages/decisions";
 import { TagManager } from "./TagManager";
@@ -230,8 +234,12 @@ export function App(props?: {
   const pendingDecisions =
     useLiveQuery(
       () =>
-        Promise.all([listReviewable(), listAutoApplied()])
-          .then(([reviewable, autoApplied]) => [...reviewable, ...autoApplied])
+        Promise.all([listReviewable(), listAutoApplied(), listApplied()])
+          .then(([reviewable, autoApplied, applied]) => [
+            ...reviewable,
+            ...autoApplied,
+            ...applied,
+          ])
           .catch((): DecisionRow[] => []),
       [],
     ) ?? EMPTY_DECISIONS;

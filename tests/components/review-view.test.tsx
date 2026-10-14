@@ -1309,4 +1309,46 @@ describe("Auto-applied provenance (H05)", () => {
     await waitFor(() => expect(moreButton.textContent).toContain("4"));
     expect(moreButton.textContent).not.toContain("5");
   });
+
+  it("styles per-row Approve with primary accent classes and renders manually applied rows in collapsible history with Undo (UX-11, BookmarksManager-tax)", async () => {
+    const appliedRow = decision({
+      id: "f6a7b8c9-d0e1-4f2a-8b3c-4d5e6f7a8b9c",
+      kind: "set_category",
+      category: "docs",
+      bookmarkIds: ["b1"],
+      confidence: 0.91,
+      status: "applied",
+      createdAt: "2026-09-28T10:00:00.000Z",
+    });
+    await db.decisions.put(appliedRow);
+    render(
+      <ReviewView
+        tree={await liveTree()}
+        decisions={[...seedRows(), appliedRow]}
+      />,
+    );
+
+    const approveBtn = screen.getByRole("button", {
+      name: "Approve the suggestion for Alpha",
+    });
+    expect(approveBtn.className).toContain("text-primary");
+    expect(approveBtn.className).toContain("bg-primary/10");
+
+    const section = screen.getByRole("region", {
+      name: "Auto-applied suggestions",
+    });
+    expect(within(section).getByText(/category: docs/)).toBeTruthy();
+    const undoApplied = within(section).getByRole("button", {
+      name: "Undo the applied suggestion for Alpha",
+    });
+    fireEvent.click(undoApplied);
+
+    await waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: "REVERT_DECISION",
+        decisionId: appliedRow.id,
+      });
+    });
+    expect((await db.decisions.get(appliedRow.id))?.status).toBe("reverted");
+  });
 });
