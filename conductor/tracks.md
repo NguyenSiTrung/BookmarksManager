@@ -48,5 +48,5 @@ This file tracks major development tracks.
 
 ---
 
-## [ ] Track: Correctness, Performance & UI/UX Hardening (2026-10-14 Audit)
+## [x] Track: Correctness, Performance & UI/UX Hardening (2026-10-14 Audit)
 *Link: [./conductor/tracks/perf_ux_hardening_20261014/](./conductor/tracks/perf_ux_hardening_20261014/)*
