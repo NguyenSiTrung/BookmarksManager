@@ -11,6 +11,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 import { useState } from "react";
 import { QueryInput } from "../../src/ui/components/query-input";
@@ -95,9 +96,8 @@ describe("QueryInput", () => {
     expect(el.getAttribute("aria-controls")).toBe(list?.id);
 
     const labels = optionEls().map((o) => o.textContent);
-    // `t` prefix-matches `tag:` first; `before:`/`after:` don't contain t…
-    expect(labels).toContain("tag:");
-    expect(labels[0]).toBe("tag:");
+    // `t` prefix-matches `tag:` only (no substring matches).
+    expect(labels).toEqual(["tag:"]);
   });
 
   it("arrow keys move the highlight and Enter accepts a suggestion", () => {
@@ -190,19 +190,99 @@ describe("QueryInput", () => {
     expect(listbox()).toBeNull();
   });
 
-  it("suggests only in the token under the caret", () => {
+  it("suggests only in the token under the caret and stays closed on trailing space", () => {
     render(<Harness initial="tag:Rust " />);
     const el = input();
     el.focus();
-    // Past the last token (trailing space) is a fresh context: all keys.
+    // Past the last token (trailing space) has no active token: listbox stays closed.
     el.setSelectionRange(9, 9);
     fireEvent.select(el);
-    expect(listbox()).not.toBeNull();
-    expect(optionEls().length).toBe(7); // the 7 FILTER_KEYS
+    expect(listbox()).toBeNull();
 
     // Back inside the `tag:` value region, only tag values are offered.
     el.setSelectionRange(7, 7);
     fireEvent.select(el);
     expect(optionEls().map((o) => o.textContent)).toEqual(["Rust"]);
+  });
+
+  it("resets activeIndex to -1 on onChange when typing new characters", () => {
+    render(<Harness />);
+    const el = input();
+    el.focus();
+    typeText("tag:");
+
+    fireEvent.keyDown(el, { key: "ArrowDown" });
+    expect(optionEls()[0]?.getAttribute("aria-selected")).toBe("true");
+    expect(el.getAttribute("aria-activedescendant")).toBe(optionEls()[0]?.id);
+
+    typeText("t");
+    expect(listbox()).not.toBeNull();
+    expect(el.getAttribute("aria-activedescendant")).toBeNull();
+    for (const opt of optionEls()) {
+      expect(opt.getAttribute("aria-selected")).toBe("false");
+    }
+  });
+
+  it("keeps listbox dismissed when Escape clears the query while closed", () => {
+    function ClearingHarness() {
+      const [value, setValue] = useState("rust");
+      return (
+        <QueryInput
+          aria-label="Search bookmarks"
+          value={value}
+          onChange={setValue}
+          sources={SOURCES}
+          onEscape={() => setValue("-")}
+        />
+      );
+    }
+    render(<ClearingHarness />);
+    const el = input();
+    el.focus();
+    expect(listbox()).toBeNull();
+
+    // Escape when closed calls onEscape and sets dismissed=true so even if
+    // the new value would have suggestions, the popup stays closed.
+    fireEvent.keyDown(el, { key: "Escape" });
+    expect(el.value).toBe("-");
+    expect(listbox()).toBeNull();
+  });
+
+  it("calls scrollIntoView({ block: 'nearest' }) on the active option during ArrowDown/ArrowUp", () => {
+    const scrollIntoViewMock = vi.fn();
+    const priorDescriptor = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollIntoViewMock,
+    });
+
+    try {
+      render(<Harness />);
+      const el = input();
+      el.focus();
+      typeText("tag:");
+
+      expect(scrollIntoViewMock).not.toHaveBeenCalled();
+
+      fireEvent.keyDown(el, { key: "ArrowDown" });
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+      expect(scrollIntoViewMock).toHaveBeenLastCalledWith({ block: "nearest" });
+      expect(scrollIntoViewMock.mock.instances[0]).toBe(optionEls()[0]);
+
+      fireEvent.keyDown(el, { key: "ArrowUp" });
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(2);
+      expect(scrollIntoViewMock).toHaveBeenLastCalledWith({ block: "nearest" });
+      expect(scrollIntoViewMock.mock.instances[1]).toBe(optionEls()[2]);
+    } finally {
+      if (priorDescriptor === undefined) {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+      } else {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", priorDescriptor);
+      }
+    }
   });
 });

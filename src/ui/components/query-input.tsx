@@ -84,6 +84,12 @@ export function QueryInput({
     }
   }, [value]);
 
+  useLayoutEffect(() => {
+    if (!open || activeIndex < 0) return;
+    const optEl = document.getElementById(`${listId}-opt-${activeIndex}`);
+    optEl?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeIndex, listId]);
+
   const setRefs = (el: HTMLInputElement | null) => {
     inputRef.current = el;
     if (typeof ref === "function") ref(el);
@@ -134,6 +140,7 @@ export function QueryInput({
         }}
         onChange={(e) => {
           setDismissed(false);
+          setActiveIndex(-1);
           syncCaret(e.target);
           onChange(e.target.value);
         }}
@@ -169,6 +176,8 @@ export function QueryInput({
               setDismissed(true);
               setActiveIndex(-1);
             } else {
+              setDismissed(true);
+              setActiveIndex(-1);
               onEscape?.();
             }
           }

@@ -24,34 +24,29 @@ const labels = (ss: Suggestion[]): string[] => ss.map((s) => s.label);
 const allKeys = FILTER_KEYS.map((k) => `${k}:`);
 
 describe("suggestFilters filter-key completion", () => {
-  it("offers every key for empty, whitespace, or space-after-token inputs", () => {
-    const ssEmpty = suggestFilters("", 0, SRC);
-    expect(inserts(ssEmpty)).toEqual(allKeys);
-    expect(inserts(suggestFilters("   ", 2, SRC))).toEqual(allKeys);
-
-    const ssSpace = suggestFilters("rust ", 5, SRC);
-    expect(inserts(ssSpace)).toEqual(allKeys);
-    for (const s of ssSpace) {
-      expect(s.replaceFrom).toBe(5);
-      expect(s.replaceTo).toBe(5);
-    }
+  it("returns no suggestions for empty, whitespace, or space-after-token inputs", () => {
+    expect(suggestFilters("", 0, SRC)).toEqual([]);
+    expect(suggestFilters("   ", 2, SRC)).toEqual([]);
+    expect(suggestFilters("rust ", 5, SRC)).toEqual([]);
   });
 
-  it("completes partial keys correctly", () => {
+  it("completes partial keys by prefix only", () => {
     const partialKeys: Array<[string, string[]]> = [
-      ["f", ["folder:", "after:", "before:"]],
-      ["t", ["tag:", "after:", "category:"]],
+      ["f", ["folder:"]],
+      ["t", ["tag:"]],
       ["ta", ["tag:"]],
       ["tag", ["tag:"]],
       ["folder", ["folder:"]],
-      ["fo", ["folder:", "before:"]],
-      ["d", ["domain:", "folder:"]],
-      ["i", ["is:", "domain:"]],
+      ["fo", ["folder:"]],
+      ["d", ["domain:"]],
+      ["i", ["is:"]],
       ["b", ["before:"]],
-      ["a", ["after:", "tag:", "category:", "domain:"]],
-      ["T", ["tag:", "after:", "category:"]],
+      ["a", ["after:"]],
+      ["c", ["category:"]],
+      ["T", ["tag:"]],
       ["TAG", ["tag:"]],
       ["FOLDER", ["folder:"]],
+      ["rust", []],
       ["xyz", []],
       ["q", []],
     ];
@@ -71,11 +66,11 @@ describe("suggestFilters filter-key completion", () => {
   it("handles negation prefixes, dashes, and mid-token cursors", () => {
     const text = "-f";
     const ss = suggestFilters(text, text.length, SRC);
-    expect(inserts(ss)).toEqual(["folder:", "after:", "before:"]);
+    expect(inserts(ss)).toEqual(["folder:"]);
     expect(apply(text, ss[0]!)).toBe("-folder:");
 
     const neg = suggestFilters("-t", 2, SRC);
-    expect(inserts(neg)).toEqual(["tag:", "after:", "category:"]);
+    expect(inserts(neg)).toEqual(["tag:"]);
     expect(apply("-t", neg[0]!)).toBe("-tag:");
 
     const dash = suggestFilters("-", 1, SRC);
@@ -98,10 +93,7 @@ describe("suggestFilters filter-key completion", () => {
     expect(inserts(multi)).toEqual(["folder:"]);
     expect(apply("rust fol", multi[0]!)).toBe("rust folder:");
 
-    const oldQuery = suggestFilters("old query", 4, SRC);
-    expect(oldQuery[0]!.replaceFrom).toBe(4);
-    expect(oldQuery[0]!.replaceTo).toBe(9);
-    expect(apply("old query", oldQuery[0]!)).toBe("old tag:");
+    expect(suggestFilters("old query", 4, SRC)).toEqual([]);
 
     for (const nonKey of ["hello", "fo-o", "123", "--"]) {
       expect(suggestFilters(nonKey, nonKey.length, SRC)).toEqual([]);
@@ -125,7 +117,8 @@ describe("suggestFilters value completion", () => {
     }
     expect(labels(suggestFilters("folder:", 7, SRC))).toEqual(FOLDERS);
     expect(labels(suggestFilters("category:", 9, SRC))).toEqual([...Category.options]);
-    expect(labels(suggestFilters("is:", 3, SRC))).toEqual([...IS_VALUES]);
+    expect(labels(suggestFilters("is:", 3, SRC))).toEqual(["duplicate", "untagged"]);
+    expect(IS_VALUES).toContain("dead");
   });
 
   it("completes prefix-matching values for different keys", () => {
@@ -138,9 +131,9 @@ describe("suggestFilters value completion", () => {
       ["category:vid", ["video"]],
       ["category:r", ["repo", "reference", "article", "course", "paper", "other"]],
       ["is:u", ["untagged", "duplicate"]],
-      ["is:d", ["dead", "duplicate", "untagged"]],
+      ["is:d", ["duplicate", "untagged"]],
       ["is:du", ["duplicate"]],
-      ["is:dead", ["dead"]],
+      ["is:dead", []],
       ["tag:AS", ["Async"]],
       ["tag:RUST", ["rust"]],
       ["category:VIDEO", ["video"]],
@@ -148,7 +141,6 @@ describe("suggestFilters value completion", () => {
       ["tag:zz", []],
       ["is:x", []],
     ];
-
     for (const [input, expected] of values) {
       expect(labels(suggestFilters(input, input.length, SRC))).toEqual(expected);
     }
@@ -252,17 +244,17 @@ describe("suggestFilters spans splice correctly", () => {
     const splices: Array<[string, number, number, string]> = [
       ["f", 1, 0, "folder:"],
       ["-f", 2, 0, "-folder:"],
-      ["tag", 0, 0, "tag:"],
       ["tag", 2, 0, "tag:"],
-      ["rust ", 5, 0, "rust tag:"],
+      ["-", 1, 0, "-tag:"],
       ["tag:ru", 6, 0, "tag:rust"],
       ["-tag:ru", 7, 0, "-tag:rust"],
       ["tag:mac", 7, 0, 'tag:"machine learning"'],
       ['tag:"mac', 8, 0, 'tag:"machine learning"'],
-      ["is:d", 4, 0, "is:dead"],
+      ["is:d", 4, 0, "is:duplicate"],
       ["folder:dev", 10, 1, "folder:Dev/Rust"],
       ["ta:foo", 1, 0, "tag:foo"],
     ];
+    expect(suggestFilters("tag", 0, SRC)).toEqual([]);
     for (const [input, cursor, pick, expected] of splices) {
       const ss = suggestFilters(input, cursor, SRC);
       expect(ss.length).toBeGreaterThan(pick);
@@ -274,8 +266,9 @@ describe("suggestFilters spans splice correctly", () => {
 describe("suggestFilters edge cases and totality", () => {
   it("clamps out-of-range cursors", () => {
     expect(inserts(suggestFilters("tag:ru", 999, SRC))).toEqual(["rust"]);
-    expect(inserts(suggestFilters("", -3, SRC))).toEqual(allKeys);
-    expect(inserts(suggestFilters("tag", Number.NaN, SRC))).toEqual(allKeys);
+    expect(inserts(suggestFilters("", -3, SRC))).toEqual([]);
+    expect(inserts(suggestFilters("tag", Number.NaN, SRC))).toEqual([]);
+    expect(inserts(suggestFilters("-t", 999, SRC))).toEqual(["tag:"]);
   });
 
   it("never throws on arbitrary or nasty input", () => {

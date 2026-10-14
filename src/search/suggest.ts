@@ -29,16 +29,15 @@ import type { FilterKey } from "./query";
  * Context rules (documented choices):
  *  - The cursor's token is the one whose raw span `[start, end]` contains
  *    it (endpoints included). A cursor on whitespace, at offset 0 of an
- *    empty query, or otherwise outside every token is a FRESH context: all
- *    filter keys with a zero-width span at the cursor.
+ *    empty query, or otherwise outside every token returns no suggestions.
  *  - A lone `-` is treated as the negation prefix even though the parser
- *    reads it as a term, so `-|` also offers every key.
+ *    reads it as a term, so `-|` offers every filter key.
  *  - When the cursor sits in a `key:` token's KEY region (before/on the
- *    colon) the span covers `key:` so picking `folder:` on `ta|g:rust`
+ *    colon) the span covers `key:` so picking `folder:` on `fo|lder:rust`
  *    yields `folder:rust`.
- *  - Matching is case-insensitive: prefix matches rank before substring
- *    matches, then shorter candidates, then earlier match offset, then
- *    source order. An empty prefix preserves source order.
+ *  - Key matching is case-insensitive prefix-only; value matching ranks
+ *    prefix matches before substring matches, then shorter candidates, then
+ *    earlier match offset, then source order.
  *  - The function is TOTAL: any `text`/`cursor` input returns a list
  *    (possibly empty) and never throws.
  */
@@ -86,6 +85,7 @@ const KEY_PREFIX = /^[A-Za-z]*$/;
 const DOUBLE_QUOTE = /"/g;
 
 const EMPTY_SOURCES: SuggestionSources = { tags: [], folders: [] };
+const SUGGESTED_IS_VALUES = IS_VALUES.filter((v) => v !== "dead");
 
 interface TokenSpan {
   /** Offset of the token's first character (the `-` if negated). */
@@ -206,8 +206,23 @@ function quoteIfNeeded(value: string): string {
   return WHITESPACE.test(value) ? `"${value}"` : value;
 }
 
-function keySuggestions(prefix: string, from: number, to: number): Suggestion[] {
-  return rankCandidates(prefix, FILTER_KEYS).map((key) => ({
+function keySuggestions(
+  prefix: string,
+  from: number,
+  to: number,
+  allowEmptyPrefix = false,
+): Suggestion[] {
+  const needle = prefix.toLowerCase();
+  let keys: readonly FilterKey[];
+  if (needle === "") {
+    if (!allowEmptyPrefix) return [];
+    keys = FILTER_KEYS;
+  } else {
+    keys = FILTER_KEYS.filter((key) => key.startsWith(needle)).sort(
+      (a, b) => a.length - b.length || FILTER_KEYS.indexOf(a) - FILTER_KEYS.indexOf(b),
+    );
+  }
+  return keys.map((key) => ({
     kind: "key",
     key,
     label: `${key}:`,
@@ -234,7 +249,7 @@ function valueCandidates(
     case "category":
       return Category.options;
     case "is":
-      return IS_VALUES;
+      return SUGGESTED_IS_VALUES;
     default:
       return undefined;
   }
@@ -257,8 +272,8 @@ export function suggestFilters(
 
   const token = activeToken(scanTokens(text), c);
   if (token === undefined) {
-    // Fresh context — cursor on whitespace or in an empty query.
-    return keySuggestions("", c, c);
+    // Cursor on whitespace or in an empty query — do not auto-open key suggestions.
+    return [];
   }
 
   // A `key:` prefix exists iff the token body opens with ASCII letters
@@ -302,5 +317,6 @@ export function suggestFilters(
   let quotes = 0;
   for (const ch of before) if (ch === '"') quotes++;
   if (quotes % 2 === 1 || !KEY_PREFIX.test(before)) return [];
-  return keySuggestions(before, token.bodyStart, token.end);
+  const isLoneNegation = token.bodyStart > token.start && before === "";
+  return keySuggestions(before, token.bodyStart, token.end, isLoneNegation);
 }
