@@ -1,10 +1,11 @@
 import "fake-indexeddb/auto";
 import { beforeAll, beforeEach, afterEach, afterAll, describe, expect, it, vi } from "vitest";
-import { productionHandlers, resumeJobs, runPersistedJob } from "../../src/entrypoints/background";
+import backgroundEntrypoint, { productionHandlers, resumeJobs, runPersistedJob } from "../../src/entrypoints/background";
 import { grantConsent, grantConsentAtOrigin } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 import { assertJobAuthority, cancelJob, claimJobOwner, enqueueJob, getJob, pauseJob, restructurePlanFor, setJobStatus } from "../../src/jobs/queue";
-import { readSessionJobIds } from "../../src/jobs/keepalive";
+import { markSessionJob, readSessionJobIds } from "../../src/jobs/keepalive";
+import { RELEASE_DB_MESSAGE } from "../../src/security/delete-all";
 import { handleDecisionsMessage } from "../../src/messages/decisions";
 import { DECISIONS_CONSENT_SCOPE } from "../../src/schemas/provider";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -853,5 +854,83 @@ describe("runPersistedJob guards", () => {
       (await db.decisions.toArray()).filter((d) => d.status === "auto_applied"),
     ).toHaveLength(2);
     expect(row.progress.processedCount).toBe(3);
+  });
+
+  it("pauses a running/pending job and clears its keepalive marker when activeProvider() is null (B-07b)", async () => {
+    const sessionStore = new Map<string, unknown>();
+    vi.stubGlobal("chrome", {
+      ...chrome,
+      storage: {
+        session: {
+          get: async (key: string) => ({ [key]: sessionStore.get(key) }),
+          set: async (items: Record<string, unknown>) => {
+            for (const [key, value] of Object.entries(items)) sessionStore.set(key, value);
+          },
+        },
+      },
+    });
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["b1"],
+    });
+    await setJobStatus(job.id, "running");
+    await markSessionJob(job.id);
+    expect(await readSessionJobIds()).toEqual([job.id]);
+
+    // No active provider (consent not granted): driving the job must pause it
+    // and remove the session keepalive marker rather than leaving it running.
+    await runPersistedJob(job.id);
+
+    expect((await getJob(job.id))?.status).toBe("paused");
+    expect(await readSessionJobIds()).toEqual([]);
+  });
+
+  it("loads the bookmark tree once across resolveWorkSet and buildRunner for a multi-batch job (P-01b)", async () => {
+    const job = await seedWork("analyze_selection", 1);
+    installWire(async (request) => providerResponse(request));
+    const getTreeSpy = vi.spyOn(
+      chrome.bookmarks as { getTree: () => Promise<unknown> },
+      "getTree",
+    );
+
+    await runPersistedJob(job.id);
+
+    expect((await getJob(job.id))?.status).toBe("completed");
+    expect(getTreeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles RELEASE_DB_MESSAGE from a trusted sender by closing db with disableAutoOpen: true (B-04a)", async () => {
+    const listeners: Array<
+      (
+        message: unknown,
+        sender: { url?: string },
+        sendResponse: (response?: unknown) => void,
+      ) => boolean
+    > = [];
+    vi.stubGlobal("chrome", {
+      ...chrome,
+      runtime: {
+        getURL: (path: string) => `chrome-extension://${EXTENSION_ID}/${path}`,
+        onMessage: {
+          addListener: (cb: (typeof listeners)[number]) => {
+            listeners.push(cb);
+          },
+        },
+      },
+    });
+    backgroundEntrypoint.main();
+    const closeSpy = vi.spyOn(db, "close").mockImplementation(() => {});
+    const sendResponse = vi.fn();
+
+    const listener = listeners[listeners.length - 1]!;
+    const handledAsync = listener(
+      RELEASE_DB_MESSAGE,
+      { url: SIDEPANEL_URL },
+      sendResponse,
+    );
+
+    expect(handledAsync).toBe(false);
+    expect(closeSpy).toHaveBeenCalledWith({ disableAutoOpen: true });
+    expect(sendResponse).toHaveBeenCalledWith(undefined);
   });
 });

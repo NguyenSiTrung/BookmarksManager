@@ -110,24 +110,18 @@ export async function armKeepaliveAlarm(): Promise<void> {
   }
 }
 
-/**
- * Record `id` as driven in this session and arm the alarm. Called by
- * `drivePersistedJob` after it wins the owner claim — every same-session
- * drive point (start, resume, watchdog re-drive) funnels through there.
- */
-export async function markSessionJob(id: string): Promise<void> {
-  const ids = await readSessionJobIds();
-  if (ids.includes(id)) return;
-  await writeSessionJobIds([...ids, id]);
-  await armKeepaliveAlarm();
+let sessionQueue: Promise<unknown> = Promise.resolve();
+
+function serializeSession<T>(op: () => Promise<T>): Promise<T> {
+  const run = sessionQueue.then(op, op);
+  sessionQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
-/**
- * Drop `id`'s marker; when no markers remain the alarm is cleared so an idle
- * worker is not held alive for nothing. Concurrent read-modify-write can at
- * worst lose a marker — the job then degrades to P06, never unsafe.
- */
-export async function unmarkSessionJob(id: string): Promise<void> {
+async function unmarkSessionJobLocked(id: string): Promise<void> {
   const ids = await readSessionJobIds();
   if (!ids.includes(id)) return;
   const next = ids.filter((existing) => existing !== id);
@@ -141,6 +135,28 @@ export async function unmarkSessionJob(id: string): Promise<void> {
       // A stray alarm just no-ops the next drain.
     }
   }
+}
+
+/**
+ * Record `id` as driven in this session and arm the alarm. Called by
+ * `drivePersistedJob` after it wins the owner claim — every same-session
+ * drive point (start, resume, watchdog re-drive) funnels through there.
+ */
+export function markSessionJob(id: string): Promise<void> {
+  return serializeSession(async () => {
+    const ids = await readSessionJobIds();
+    if (ids.includes(id)) return;
+    await writeSessionJobIds([...ids, id]);
+    await armKeepaliveAlarm();
+  });
+}
+
+/**
+ * Drop `id`'s marker; when no markers remain the alarm is cleared so an idle
+ * worker is not held alive for nothing.
+ */
+export function unmarkSessionJob(id: string): Promise<void> {
+  return serializeSession(async () => unmarkSessionJobLocked(id));
 }
 
 /**
@@ -158,29 +174,31 @@ export async function unmarkSessionJob(id: string): Promise<void> {
  * coordinator dedupes a job this worker already drives, and a row this
  * worker no longer owns loses the claim race instead of double-running.
  */
-export async function drainSessionJobs(
+export function drainSessionJobs(
   relaunch: (jobId: string) => Promise<void>,
 ): Promise<void> {
-  const ids = await readSessionJobIds();
-  for (const id of ids) {
-    let live = false;
-    try {
-      const job = await getJob(id);
-      live = job?.status === "pending" || job?.status === "running";
-    } catch {
-      live = false;
+  return serializeSession(async () => {
+    const ids = await readSessionJobIds();
+    for (const id of ids) {
+      let live = false;
+      try {
+        const job = await getJob(id);
+        live = job?.status === "pending" || job?.status === "running";
+      } catch {
+        live = false;
+      }
+      if (!live) {
+        await unmarkSessionJobLocked(id);
+        continue;
+      }
+      try {
+        // Kick the drive, don't await it — the row's own finally unmarks on
+        // settle, and a failed drive degrades to `failed` (J02) before its
+        // rethrown error reaches this catch.
+        void relaunch(id).catch(() => {});
+      } catch {
+        // A synchronous launch failure never stalls the rest of the sweep.
+      }
     }
-    if (!live) {
-      await unmarkSessionJob(id);
-      continue;
-    }
-    try {
-      // Kick the drive, don't await it — the row's own finally unmarks on
-      // settle, and a failed drive degrades to `failed` (J02) before its
-      // rethrown error reaches this catch.
-      void relaunch(id).catch(() => {});
-    } catch {
-      // A synchronous launch failure never stalls the rest of the sweep.
-    }
-  }
+  });
 }

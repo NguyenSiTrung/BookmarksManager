@@ -38,4 +38,34 @@ describe("coordinateJob", () => {
       await expect(coordinateJob(`failure-${mode}`, async () => {}), mode).resolves.toBeUndefined();
     }
   });
+
+  it("preempts a wedged owner when options.preempt is true (B-15)", async () => {
+    let releaseWedged!: () => void;
+    const wedged = new Promise<void>((resolve) => {
+      releaseWedged = resolve;
+    });
+    const firstDrive = vi.fn(() => wedged);
+    const first = coordinateJob("job-preempt", firstDrive);
+
+    let releasePreempt!: () => void;
+    const secondHeld = new Promise<void>((resolve) => {
+      releasePreempt = resolve;
+    });
+    const secondDrive = vi.fn(() => secondHeld);
+    const second = coordinateJob("job-preempt", secondDrive, { preempt: true });
+
+    expect(second).not.toBe(first);
+    await Promise.resolve();
+    expect(firstDrive).toHaveBeenCalledTimes(1);
+    expect(secondDrive).toHaveBeenCalledTimes(1);
+
+    // Subsequent non-preempt calls join the preempting owner, and settling
+    // the wedged owner does not evict the active preempting owner.
+    expect(coordinateJob("job-preempt", vi.fn())).toBe(second);
+    releaseWedged();
+    await first;
+    expect(coordinateJob("job-preempt", vi.fn())).toBe(second);
+    releasePreempt();
+    await second;
+  });
 });

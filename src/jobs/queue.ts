@@ -810,7 +810,7 @@ export async function reDriveStaleJobs(
       continue;
     }
     try {
-      await relaunch(row.id);
+      void relaunch(row.id).catch(() => {});
     } catch {
       // The drive already marked this row `failed` before re-throwing —
       // keep sweeping the rest; one bad row never stalls the watchdog.

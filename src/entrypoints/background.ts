@@ -17,6 +17,7 @@ import {
 } from "../decisions/blocklist";
 import {
   analyzeBookmark,
+  buildPrecomputedAnalysisIndex,
   DecisionPipelineError,
 } from "../decisions/pipeline";
 import type {
@@ -76,12 +77,12 @@ import type { JobCostEstimate as JobCostEstimateType } from "../schemas/job";
 import { loadSessionIndex, registerOmnibox } from "../search/omnibox";
 import { runQuery } from "../search/run";
 import { get, getTree } from "../sync/chrome-bookmarks";
-import { flattenTree } from "../sync/tree";
+import { flattenTree, type FlattenedTree } from "../sync/tree";
 import { registerContextMenus } from "../sync/context-menu";
 import { registerBookmarkListeners } from "../sync/listeners";
 import { reconcileMetadata } from "../sync/reconcile";
 import { seedStarterTags } from "../db/starter-tags";
-
+import { handleDbReleaseMessage } from "../security/delete-all";
 /**
  * At startup the worker subscribes the five bookmark events (which
  * cascade-delete extension metadata for removed subtrees and invalidate
@@ -101,6 +102,7 @@ import { seedStarterTags } from "../db/starter-tags";
  */
 declare const chrome: {
   runtime: {
+    getURL?(path: string): string;
     onMessage: {
       addListener(
         callback: (
@@ -244,14 +246,17 @@ async function patchBlocklist(delta: {
 }
 
 /** Build the `AnalysisContext` from the live tree + extension metadata. */
-async function loadAnalysisContext(): Promise<AnalysisContext> {
-  const [rawTree, tagDefs, metas, settings] = await Promise.all([
-    getTree(),
+async function loadAnalysisContext(
+  existingTree?: FlattenedTree,
+): Promise<AnalysisContext> {
+  const [tree, tagDefs, metas, settings] = await Promise.all([
+    existingTree !== undefined
+      ? Promise.resolve(existingTree)
+      : getTree().then((rawTree) => flattenTree(rawTree)),
     listTags(),
     listMeta(),
     readDecisionSettings(),
   ]);
-  const tree = flattenTree(rawTree);
   const corpus = {
     bookmarks: [...tree.bookmarks.values()].map((node) => ({
       id: node.id,
@@ -259,7 +264,13 @@ async function loadAnalysisContext(): Promise<AnalysisContext> {
     })),
     metas,
   };
-  return { tagDefs, corpus, tree, settings };
+  return {
+    tagDefs,
+    corpus,
+    tree,
+    settings,
+    precomputed: buildPrecomputedAnalysisIndex({ tagDefs, corpus, tree }),
+  };
 }
 
 /** Resolve one live bookmark node to the pipeline's `AnalysisBookmark`. */
@@ -286,8 +297,9 @@ async function resolveBookmark(id: string): Promise<AnalysisBookmark> {
  */
 async function resolveWorkSet(
   bookmarkIds: readonly string[],
+  existingTree?: FlattenedTree,
 ): Promise<AnalysisBookmark[]> {
-  const tree = flattenTree(await getTree());
+  const tree = existingTree ?? flattenTree(await getTree());
   const bookmarks: AnalysisBookmark[] = [];
   for (const id of bookmarkIds) {
     const node = tree.bookmarks.get(id);
@@ -311,14 +323,12 @@ async function resolveWorkSet(
 async function buildRunner(
   provider: ActiveProvider,
   kind: Job["kind"],
+  existingTree?: FlattenedTree,
 ): Promise<JobRunner> {
-  const [context, userBlocklist] = await Promise.all([
-    loadAnalysisContext(),
-    readBlocklist(),
-  ]);
   // Restructure jobs assign proposed folders via Jev (FR8); everything else
   // keeps the analyze/scan pipeline.
   if (kind === "restructure") {
+    const userBlocklist = await readBlocklist();
     return new JobRunner({
       analyze: createRestructureAssigner({
         providerId: provider.providerId,
@@ -327,6 +337,10 @@ async function buildRunner(
       }),
     });
   }
+  const [context, userBlocklist] = await Promise.all([
+    loadAnalysisContext(existingTree),
+    readBlocklist(),
+  ]);
   return new JobRunner({
     analyze: createPipelineAnalyzer({
       context,
@@ -357,8 +371,11 @@ async function buildRunner(
 
 /** How often the J02 watchdog sweeps for ownerless `running` rows. */
 const JOB_WATCHDOG_INTERVAL_MS = 60_000;
-export function runPersistedJob(jobId: string): Promise<void> {
-  return coordinateJob(jobId, () => drivePersistedJob(jobId));
+export function runPersistedJob(
+  jobId: string,
+  options?: { readonly preempt?: boolean },
+): Promise<void> {
+  return coordinateJob(jobId, () => drivePersistedJob(jobId), options);
 }
 
 async function drivePersistedJob(jobId: string): Promise<void> {
@@ -366,7 +383,22 @@ async function drivePersistedJob(jobId: string): Promise<void> {
   if (job === undefined) return;
   if (job.status !== "running" && job.status !== "pending") return;
   const provider = await activeProvider();
-  if (provider === null) return; // no consented provider — leave the job be
+  if (provider === null) {
+    // B-07b: no consented provider — transition a running/pending job to
+    // paused and clear its session keepalive marker so it cannot stay stuck
+    // in "Running" or fire the keepalive alarm indefinitely.
+    try {
+      await pauseJob(jobId);
+    } catch {
+      // Concurrent cancel/terminal transition wins.
+    }
+    try {
+      await unmarkSessionJob(jobId);
+    } catch {
+      // Best-effort session cleanup.
+    }
+    return;
+  }
   const owner = await claimJobOwner(jobId);
   if (owner === undefined) return; // pause/cancel during provider setup wins
   // J03: this worker now owns the drive — the session marker survives an
@@ -378,8 +410,9 @@ async function drivePersistedJob(jobId: string): Promise<void> {
     // code (J02) rather than leak an untyped rejection that leaves an
     // immortal `running` row. An empty resolved set is NOT an early exit —
     // the runner decides the terminal state (deleted work set → completed).
-    const bookmarks = await resolveWorkSet(job.bookmarkIds ?? []);
-    const runner = await buildRunner(provider, job.kind);
+    const tree = flattenTree(await getTree());
+    const bookmarks = await resolveWorkSet(job.bookmarkIds ?? [], tree);
+    const runner = await buildRunner(provider, job.kind, tree);
     await runner.run(jobId, { bookmarks, ownerGeneration: owner.ownerGeneration });
   } catch (error) {
     try {
@@ -682,8 +715,26 @@ export default defineBackground(() => {
   // (the owner-generation fence makes a false positive cheap: a live owner
   // exits at its next durable boundary). Local only, fire-and-forget like
   // the sweeps above.
-  setInterval(() => {
-    void reDriveStaleJobs(runPersistedJob).catch(() => {
+  let dbReleasing = false;
+  const isTrustedSender = (sender: { url?: string }): boolean => {
+    try {
+      const base = chrome.runtime.getURL?.("");
+      return (
+        typeof base === "string" &&
+        base !== "" &&
+        typeof sender.url === "string" &&
+        sender.url.startsWith(base)
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const watchdogTimer = setInterval(() => {
+    if (dbReleasing) return;
+    void reDriveStaleJobs((jobId) =>
+      runPersistedJob(jobId, { preempt: true }),
+    ).catch(() => {
       // Best-effort; the next interval retries.
     });
   }, JOB_WATCHDOG_INTERVAL_MS);
@@ -693,6 +744,7 @@ export default defineBackground(() => {
   // jobs this session marked (drain also prunes settled/deleted markers).
   // Missing `chrome.alarms` (Firefox, tests) degrades to the P06 behavior.
   chrome.alarms?.onAlarm.addListener((alarm) => {
+    if (dbReleasing) return;
     if (alarm.name === KEEPALIVE_ALARM_NAME) {
       void drainSessionJobs(runPersistedJob).catch(() => {
         // Best-effort; the next tick retries.
@@ -709,6 +761,16 @@ export default defineBackground(() => {
   // provider handler answers, unchanged. Both handlers are total (they never
   // throw), so sendResponse runs exactly once.
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (
+      isTrustedSender(sender) &&
+      handleDbReleaseMessage(message, () => {
+        dbReleasing = true;
+        clearInterval(watchdogTimer);
+      })
+    ) {
+      sendResponse(undefined);
+      return false;
+    }
     void startupRecovery.then(() =>
       handleDecisionsMessage(message, sender, decisionsHandlers)).then(
       (response) => {

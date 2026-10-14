@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/database";
+import * as pipelineModule from "../../src/decisions/pipeline";
 import { DecisionPipelineError } from "../../src/decisions/pipeline";
 import { LlmGateError } from "../../src/net/llm-send";
 import type { AnalysisBookmark } from "../../src/decisions/pipeline";
@@ -1076,6 +1077,43 @@ describe("job adapter user-blocklist threading", () => {
 
     expect(result).toEqual({ sent: false, reason: "blocklisted" });
   });
+
+  it("createPipelineAnalyzer precomputes the candidate index once across bookmarks (P-01b)", async () => {
+    const job = await enqueueJob({
+      kind: "analyze_selection",
+      bookmarkIds: ["bm-1", "bm-2"],
+      now,
+    });
+    const buildSpy = vi.spyOn(pipelineModule, "buildPrecomputedAnalysisIndex");
+    const analyzeSpy = vi
+      .spyOn(pipelineModule, "analyzeBookmark")
+      .mockResolvedValue({ sent: false, reason: "blocklisted" });
+    try {
+      const analyze = createPipelineAnalyzer({
+        context: emptyContext(),
+        providerId: "typesafe",
+        model: "jev-latest",
+      });
+      await analyze({
+        bookmark: { id: "bm-1", title: "One", url: "https://one.example/" },
+        job,
+        checks: ["categorize"],
+      });
+      await analyze({
+        bookmark: { id: "bm-2", title: "Two", url: "https://two.example/" },
+        job,
+        checks: ["categorize"],
+      });
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+      const firstCtx = analyzeSpy.mock.calls[0]?.[0].context;
+      const secondCtx = analyzeSpy.mock.calls[1]?.[0].context;
+      expect(firstCtx?.precomputed).toBeDefined();
+      expect(secondCtx?.precomputed).toBe(firstCtx?.precomputed);
+    } finally {
+      analyzeSpy.mockRestore();
+      buildSpy.mockRestore();
+    }
+  });
 });
 
 
@@ -1371,5 +1409,87 @@ describe("J01/J02/J09 job resilience", () => {
     expect(Math.max(...waits)).toBeLessThanOrEqual(15_000); // MV3-safe chunks
     expect(row.breaker).toBeUndefined(); // lapsed breaker is cleared on commit
     expect(analyzer.calls).toEqual(ids); // items after the burst still ran
+  });
+
+  it("slices bookmarkIds positionally per batch so an uncommitted deletion never re-sends later bookmarks on resume (B-02)", async () => {
+    const ids = ["bm-0", "bm-1", "bm-2", "bm-3"];
+    const job = await runningJob(ids, 2);
+    // bm-0 was deleted before Batch 0 commits; the live work set is [bm-1, bm-2, bm-3].
+    const live = bookmarks(4).filter((b) => b.id !== "bm-0");
+
+    // Pause once bm-1 (the last live item in positional Batch 0 [bm-0, bm-1]) runs.
+    // Positional slicing keeps Batch 0 as [bm-1] and commits it; filtering before
+    // slicing would pull bm-2 into Batch 0 and then re-send bm-2 on resume.
+    const first = makeAnalyzer({
+      onCall: async (bookmark) => {
+        if (bookmark.id === "bm-1") await pauseJob(job.id, now);
+      },
+    });
+    const paused = await new JobRunner({ analyze: first.analyze, now }).run(
+      job.id,
+      { bookmarks: live, batchSize: 2 },
+    );
+    expect(paused.status).toBe("paused");
+    expect(paused.progress.committedBatches).toBe(1);
+    expect(first.calls).toEqual(["bm-1"]);
+
+    // Resume from committedBatches = 1: only Batch 1 [bm-2, bm-3] runs.
+    const second = makeAnalyzer();
+    await resumeJob(job.id, now);
+    const finished = await new JobRunner({ analyze: second.analyze, now }).run(
+      job.id,
+      { bookmarks: live, batchSize: 2 },
+    );
+    expect(finished.status).toBe("completed");
+    expect(second.calls).toEqual(["bm-2", "bm-3"]);
+    expect([...first.calls, ...second.calls]).toEqual(["bm-1", "bm-2", "bm-3"]);
+    expect(finished.progress).toEqual({
+      totalBatches: 2,
+      committedBatches: 2,
+      processedCount: 3,
+    });
+  });
+
+  it("records isolated per-pair failures from scanDuplicates onto job.itemFailures (B-11)", async () => {
+    const bms = pairBookmarks();
+    const job = await enqueueJob({
+      kind: "library_scan",
+      bookmarkIds: bms.map((b) => b.id),
+      batchSize: 4,
+      now,
+    });
+    const { analyze } = makeAnalyzer();
+    const scanDuplicates: JobScanDuplicatesFn = async () => ({
+      sent: true,
+      pairs: 2,
+      skipped: 0,
+      results: [
+        {
+          ids: ["bm-2", "bm-3"],
+          level: 4,
+          confidence: 1,
+          outcome: "review",
+        },
+      ],
+      pairFailures: [
+        {
+          ids: ["bm-0", "bm-1"],
+          code: "answer_mismatch",
+          message: "invalid same_content score",
+        },
+      ],
+      usage: [],
+    });
+
+    const finished = await new JobRunner({ analyze, scanDuplicates, now }).run(
+      job.id,
+      { bookmarks: bms, batchSize: 4 },
+    );
+
+    expect(finished.status).toBe("completed");
+    const stored = (await getJob(job.id))!;
+    expect(stored.itemFailures).toEqual([
+      { item: "pair:bm-0:bm-1", code: "answer_mismatch", at: NOW },
+    ]);
   });
 });

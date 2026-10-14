@@ -6,12 +6,24 @@
  */
 const owners = new Map<string, Promise<void>>();
 
+export interface CoordinateJobOptions {
+  /**
+   * When true, replace an existing in-memory owner promise instead of joining
+   * it (B-15: the stale-running watchdog preempts a wedged owner so a fresh
+   * generation can claim and drive the job).
+   */
+  readonly preempt?: boolean;
+}
+
 export function coordinateJob(
   jobId: string,
   drive: () => Promise<void>,
+  options?: CoordinateJobOptions,
 ): Promise<void> {
-  const existing = owners.get(jobId);
-  if (existing !== undefined) return existing;
+  if (!options?.preempt) {
+    const existing = owners.get(jobId);
+    if (existing !== undefined) return existing;
+  }
   const owner = Promise.resolve().then(drive).finally(() => {
     if (owners.get(jobId) === owner) owners.delete(jobId);
   });

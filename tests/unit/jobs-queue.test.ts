@@ -654,4 +654,27 @@ describe("J02 stale-running watchdog", () => {
     expect(reDriven).toEqual([stale.id]);
     expect(driven).toEqual([stale.id]);
   });
+
+  it("fires relaunch non-blockingly so a long-running first stale job never stalls later stale jobs (B-15)", async () => {
+    const first = await enqueueJob({ kind: "analyze_selection", bookmarkIds: ["bm-1"], now });
+    const second = await enqueueJob({ kind: "library_scan", bookmarkIds: ["bm-2"], now });
+    const staleAt = new Date(Date.parse(NOW) - STALE_RUNNING_JOB_MS - 1).toISOString();
+    await db.jobs.put({ ...first, status: "running", ownerGeneration: 1, updatedAt: staleAt });
+    await db.jobs.put({ ...second, status: "running", ownerGeneration: 1, updatedAt: staleAt });
+
+    const launched: string[] = [];
+    let releaseFirst!: () => void;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const reDriven = await reDriveStaleJobs((id) => {
+      launched.push(id);
+      if (id === first.id) return firstHeld;
+      return Promise.reject(new Error("boom"));
+    }, now);
+    releaseFirst();
+
+    expect(reDriven.sort()).toEqual([first.id, second.id].sort());
+    expect(launched.sort()).toEqual([first.id, second.id].sort());
+  });
 });

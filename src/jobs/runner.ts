@@ -2,7 +2,10 @@ import type { NearDuplicatePair, NearDuplicateSide } from "../decisions/candidat
 import { planNearDuplicates } from "../decisions/near-duplicate-plan";
 import { scanNearDuplicatePairs } from "../decisions/duplicates";
 import type { DuplicateScanResult } from "../decisions/duplicates";
-import { analyzeBookmark } from "../decisions/pipeline";
+import {
+  analyzeBookmark,
+  buildPrecomputedAnalysisIndex,
+} from "../decisions/pipeline";
 import type {
   AnalysisBookmark,
   AnalysisCheck,
@@ -406,38 +409,20 @@ export class JobRunner {
     // the persisted set still fails typed.
     const supplied = options.bookmarks;
     const liveById = new Map(supplied.map((bookmark) => [bookmark.id, bookmark]));
-    let committedBookmarkBatches = 0;
-    let bookmarks: readonly AnalysisBookmark[];
-    if (job.bookmarkIds !== undefined) {
-      const allowed = new Set(job.bookmarkIds);
+    const persistedBookmarkIds = job.bookmarkIds;
+    if (persistedBookmarkIds !== undefined) {
+      const allowed = new Set(persistedBookmarkIds);
       if (supplied.some((bookmark) => !allowed.has(bookmark.id))) {
         throw new JobRunnerError(
           "invalid_input",
           "The supplied bookmarks do not match the job's persisted bookmarkIds.",
         );
       }
-      const persistedBookmarkBatches = computeTotalBatches(
-        job.bookmarkIds.length,
-        batchSize,
+    } else if (supplied.length === 0) {
+      throw new JobRunnerError(
+        "no_work_set",
+        "The job has no bookmarks to process.",
       );
-      committedBookmarkBatches = Math.min(
-        job.progress.committedBatches,
-        persistedBookmarkBatches,
-      );
-      bookmarks = job.bookmarkIds
-        .slice(committedBookmarkBatches * batchSize)
-        .flatMap((id) => {
-          const bookmark = liveById.get(id);
-          return bookmark === undefined ? [] : [bookmark];
-        });
-    } else {
-      if (supplied.length === 0) {
-        throw new JobRunnerError(
-          "no_work_set",
-          "The job has no bookmarks to process.",
-        );
-      }
-      bookmarks = supplied;
     }
     // A `library_scan` runs the near-duplicate pair phase (FR7); with no
     // injected scanner it could only compute zero pair batches and complete as
@@ -461,10 +446,14 @@ export class JobRunner {
     const liveIds = new Set(supplied.map((bookmark) => bookmark.id));
 
     const runsPairs = jobRunsNearDuplicate(job.kind);
-    // `bookmarkBatchCount` is the number of REMAINING bookmark batches
-    // (over the filtered uncommitted window); pair batches follow it.
-    const bookmarkBatchCount = computeTotalBatches(bookmarks.length, batchSize);
-    const bookmarkPhaseEnd = committedBookmarkBatches + bookmarkBatchCount;
+    // Positional bookmark batch count over the persisted id list (or supplied
+    // cursor slice); pair batches follow it (B-02).
+    const bookmarkPhaseEnd = computeTotalBatches(
+      persistedBookmarkIds === undefined
+        ? supplied.length
+        : persistedBookmarkIds.length,
+      batchSize,
+    );
     const storedPlan = job.nearDuplicatePlan;
     // The pair plan stays positional in the ORIGINAL persisted list (J02):
     // a committed pair window covers fixed plan positions, and deletions
@@ -519,9 +508,16 @@ export class JobRunner {
     // that an owner is claimed. The write is atomic and never overwrites an
     // existing plan, so a racing owner cannot change the work set under us.
     if (runsPairs && storedPlan === undefined) {
+      const planBookmarks =
+        persistedBookmarkIds === undefined
+          ? supplied
+          : persistedBookmarkIds.flatMap((id) => {
+              const bookmark = liveById.get(id);
+              return bookmark === undefined ? [] : [bookmark];
+            });
       const acquired = await attachNearDuplicatePlan(
         jobId,
-        planNearDuplicates(bookmarks),
+        planNearDuplicates(planBookmarks),
         this.#now,
         ownerGeneration,
       );
@@ -549,12 +545,7 @@ export class JobRunner {
     );
     const startBatch = job.progress.committedBatches;
     const checks = bookmarkChecks(jobChecks(job.kind));
-    // Items the committed positional windows covered in the ORIGINAL id
-    // list — all real ids, so exact unless the last window was partial.
-    const committedBookmarkCount = Math.min(
-      committedBookmarkBatches * batchSize,
-      job.bookmarkIds?.length ?? 0,
-    );
+    let processedCount = job.progress.processedCount;
 
     if (startBatch >= totalBatches) {
       // J02: everything left was deleted (or already committed) — the work
@@ -567,10 +558,7 @@ export class JobRunner {
           progress: {
             totalBatches: Math.max(totalBatches, job.progress.committedBatches),
             committedBatches: Math.max(totalBatches, job.progress.committedBatches),
-            processedCount: Math.max(
-              committedBookmarkCount + bookmarks.length,
-              job.progress.processedCount,
-            ),
+            processedCount,
           },
           usage: await jobUsageRollup(jobId),
         },
@@ -590,10 +578,18 @@ export class JobRunner {
 
       try {
         if (index < bookmarkPhaseEnd) {
-          const batch = bookmarks.slice(
-            (index - committedBookmarkBatches) * batchSize,
-            (index - committedBookmarkBatches + 1) * batchSize,
-          );
+          // B-02: slice persisted bookmarkIds positionally per batch, then
+          // filter that window against liveById so mid-job deletions never
+          // shift later batches' bookmarks into an earlier batch slot.
+          const batch =
+            persistedBookmarkIds === undefined
+              ? supplied.slice(index * batchSize, (index + 1) * batchSize)
+              : persistedBookmarkIds
+                  .slice(index * batchSize, (index + 1) * batchSize)
+                  .flatMap((id) => {
+                    const bookmark = liveById.get(id);
+                    return bookmark === undefined ? [] : [bookmark];
+                  });
           for (const bookmark of batch) {
             // The control fence AND the circuit breaker are observed before
             // EVERY paid request (J02/J09): pause, cancel, and owner
@@ -621,6 +617,7 @@ export class JobRunner {
             await attachUsageToJob(result.sent ? result.usage : null, jobId);
             consecutiveThrottles = 0;
           }
+          processedCount += batch.length;
         } else if (scanDuplicates !== undefined) {
           const pairIndex = index - bookmarkPhaseEnd;
           // Deleted-endpoint pairs are filtered WITHIN this positional
@@ -650,6 +647,17 @@ export class JobRunner {
             }
             if (result !== undefined) {
               await attachScanUsageToJob(result, jobId);
+              if (result.sent && result.pairFailures !== undefined) {
+                for (const failure of result.pairFailures) {
+                  consecutiveThrottles = await this.#recordItemOutcome(
+                    jobId,
+                    `pair:${failure.ids[0]}:${failure.ids[1]}`,
+                    { code: failure.code },
+                    consecutiveThrottles,
+                    ownerGeneration,
+                  );
+                }
+              }
               consecutiveThrottles = 0;
             }
           }
@@ -678,16 +686,10 @@ export class JobRunner {
       // at the count of items actually processed once the pair phase
       // begins.
       const committedBatches = index + 1;
-      const coveredBookmarkBatches = Math.min(
-        Math.max(committedBatches - committedBookmarkBatches, 0),
-        bookmarkBatchCount,
-      );
       const progress = {
         totalBatches,
         committedBatches,
-        processedCount:
-          committedBookmarkCount +
-          Math.min(coveredBookmarkBatches * batchSize, bookmarks.length),
+        processedCount,
       };
       const usage = await jobUsageRollup(jobId);
       job = await commitJobProgress(jobId, progress, usage, this.#now, ownerGeneration);
@@ -704,7 +706,7 @@ export class JobRunner {
         progress: {
           totalBatches,
           committedBatches: totalBatches,
-          processedCount: committedBookmarkCount + bookmarks.length,
+          processedCount,
         },
         usage: await jobUsageRollup(jobId),
       },
@@ -755,10 +757,17 @@ export interface PipelineAnalyzerOptions {
 export function createPipelineAnalyzer(
   options: PipelineAnalyzerOptions,
 ): JobAnalyzeFn {
+  const context: AnalysisContext =
+    options.context.precomputed === undefined
+      ? {
+          ...options.context,
+          precomputed: buildPrecomputedAnalysisIndex(options.context),
+        }
+      : options.context;
   return ({ bookmark, checks, job }) =>
     analyzeBookmark({
       bookmark,
-      context: options.context,
+      context,
       providerId: options.providerId,
       model: options.model,
       checks,

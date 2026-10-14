@@ -99,6 +99,22 @@ describe("session job markers", () => {
     sessionStore.set("jobs:sessionKeepalive", ["job-1", 42, "job-2"]);
     expect(await readSessionJobIds()).toEqual(["job-1", "job-2"]);
   });
+
+  it("serializes concurrent markSessionJob and unmarkSessionJob RMW calls so no marker is lost (B-15)", async () => {
+    installChromeFakes();
+    await Promise.all([
+      markSessionJob("job-1"),
+      markSessionJob("job-2"),
+      markSessionJob("job-3"),
+    ]);
+    expect(await readSessionJobIds()).toEqual(["job-1", "job-2", "job-3"]);
+
+    await Promise.all([
+      unmarkSessionJob("job-2"),
+      markSessionJob("job-4"),
+    ]);
+    expect(await readSessionJobIds()).toEqual(["job-1", "job-3", "job-4"]);
+  });
 });
 
 describe("drainSessionJobs", () => {
