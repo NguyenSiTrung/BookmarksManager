@@ -49,3 +49,9 @@ This file tracks major development tracks.
 ---
 
 <!-- Archived: 2026-10-14 — Correctness, Performance & UI/UX Hardening completed: all 39 findings (B-01–B-16, P-01–P-13, U-01–U-10) from the 2026-10-14 audit resolved across 5 phases — RELEASE_DB_MESSAGE with disableAutoOpen:true across all contexts, indexed tombstone pruning + batched corrupt-meta retention, MutationVerifyCache coherence + startup reconcile fast-path + D12 URL maintenance + single-transaction bulk tag ops, field-scoped UndoMetaDelta + recursive UNDO_NODE_BUDGET + user-origin default undo + batched restore, transactional import claims + linear-scan HTML/CSV parsers, near-duplicate mergeGroup({allowDistinctUrls:true}) + *bookmarkIds indexed decision store + PrecomputedAnalysisIndex + single-pass URL parsing + isolated pair failures, positional JobRunner batch slicing + serialized keepalive RMW + non-blocking stale-job watchdog + O(B) restructureAssignments upserts + guarded applyRestructurePlan, propagated LLM record.tier + shared permissionPattern revoke guard + jev_summary_verify v3 + runtime origin permission request, precomputed treeOrderRank + filter-before-hit search + incremental live-cache duplicate buckets + QueryInput ergonomics, virtualized DuplicatesView + memoized selection + DnD drop indicators/grid DragHandle + roving tabIndex + per-feature Options consent management — full gate green (167 unit/component files / 3037 tests, 49 e2e) (see conductor/archive/perf_ux_hardening_20261014/) -->
+
+---
+
+## [ ] Track: UI/UX Refactor & Ergonomics Redesign
+*Link: [./conductor/tracks/ui_ux_redesign_20261014/](./conductor/tracks/ui_ux_redesign_20261014/)*
+
