@@ -106,6 +106,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: `tests/components/popup-search.test.tsx` (`P-10`) pins that `db.tags.toArray` is not called on initial popup mount; loading `listTags()` when `searchOpen || suggestionRequested` (`TagField` focus) satisfies both `P-10` and `TagField` combobox autocomplete.
 ---
 
+## [2026-10-14 08:52] - Phase 4 Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added live `db.consents` read for `DECISIONS_CONSENT_SCOPE` at `resolvedOrigin` inside `ProviderSetup.tsx`, displaying a `Bookmark analysis consent` status row (`data-testid="provider-analysis-consent"`) with `"Consent granted"` or `"Not yet granted"` + `"Review analysis consent in Permissions"` action button wired to `setActive("permissions")` in `OptionsApp.tsx`.
+- **Files changed:** `src/entrypoints/options/ProviderSetup.tsx`, `src/entrypoints/options/OptionsApp.tsx`, `tests/components/provider-setup.test.tsx`, `tests/components/options-app.test.tsx`
+- **Learnings:**
+  - Patterns: Keying the `useLiveQuery` consent check on `resolvedOrigin = status?.origin ?? disclosure.origin` in `ProviderSetup` automatically tracks both preset origins and custom Jev provider origins.
+---
+
+
 
 
 

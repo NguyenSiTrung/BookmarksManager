@@ -26,8 +26,11 @@ import type {
 } from "../../src/messages/provider";
 import {
   DEFAULT_PROVIDER_MODEL,
+  DECISIONS_CONSENT_SCOPE,
   PRESET_MODELS,
 } from "../../src/schemas/provider";
+import { CONSENT_VERSION } from "../../src/consent/records";
+import { db } from "../../src/db/database";
 
 /**
  * jsdom + RTL under Vitest globals-off: the act environment flag and manual
@@ -795,6 +798,42 @@ describe("disclosure read gate", () => {
     openDisclosure();
     await waitFor(() =>
       expect(agreeCheckbox().getAttribute("aria-disabled")).toBeNull(),
+    );
+  });
+
+  it("displays inline Bookmark analysis consent status on an enabled provider and invokes onNavigateToPermissions when ungranted (UX-13)", async () => {
+    await db.open();
+    await db.consents.clear();
+    statusByPreset.typesafe = {
+      enabled: true,
+      consentGranted: true,
+      model: DEFAULT_PROVIDER_MODEL.typesafe,
+      keySuffix: "1234",
+    };
+    const onNavigate = vi.fn();
+    render(<ProviderSetup onNavigateToPermissions={onNavigate} />);
+
+    const banner = await screen.findByTestId("provider-analysis-consent");
+    expect(banner.textContent).toContain("Bookmark analysis consent");
+    const reviewBtn = within(banner).getByRole("button", {
+      name: "Review analysis consent in Permissions",
+    });
+    fireEvent.click(reviewBtn);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await db.consents.put({
+        scope: DECISIONS_CONSENT_SCOPE,
+        origin: "https://api.typesafe.ai",
+        consentVersion: CONSENT_VERSION,
+        acceptedAt: "2026-10-01T00:00:00.000Z",
+      });
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("provider-analysis-consent").textContent,
+      ).toContain("Consent granted"),
     );
   });
 });

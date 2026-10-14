@@ -292,7 +292,9 @@ export function OptionsApp() {
                       },
                     ]}
                   />
-                  <ProviderSetup />
+                  <ProviderSetup
+                    onNavigateToPermissions={() => setActive("permissions")}
+                  />
                   <LlmProviderSetup />
                   <PrivacyDraft />
                 </>

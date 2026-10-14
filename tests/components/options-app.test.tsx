@@ -3,7 +3,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The panels have their own suites; the shell test only needs stand-ins.
 vi.mock("../../src/entrypoints/options/ProviderSetup", () => ({
-  ProviderSetup: () => <section aria-label="stub provider" />,
+  ProviderSetup: (props: { onNavigateToPermissions?: () => void }) => (
+    <section aria-label="stub provider">
+      <button
+        type="button"
+        onClick={() => props.onNavigateToPermissions?.()}
+      >
+        Review analysis consent in Permissions
+      </button>
+    </section>
+  ),
 }));
 vi.mock("../../src/entrypoints/options/LlmProviderSetup", () => ({
   LlmProviderSetup: () => <section aria-label="stub llm" />,
@@ -118,5 +127,18 @@ describe("OptionsApp shell", () => {
       screen.getByRole("region", { name: "stub delete all" }),
     ).toBeTruthy();
     expect(screen.queryByRole("region", { name: "stub provider" })).toBeNull();
+  });
+
+  it("switches to the Permissions panel when ProviderSetup triggers onNavigateToPermissions (UX-13)", () => {
+    render(<OptionsApp />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Review analysis consent in Permissions",
+      }),
+    );
+    expect(
+      screen.getByRole("region", { name: "stub decisions" }),
+    ).toBeTruthy();
+    expect(location.hash).toBe("#permissions");
   });
 });

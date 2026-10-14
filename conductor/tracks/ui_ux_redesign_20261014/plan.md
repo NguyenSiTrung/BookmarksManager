@@ -105,12 +105,12 @@
   - [x] Write failing component tests verifying: (1) opening popup search (`searchOpen === true`) displays quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`, `data-testid="popup-search-hint"`) in `PopupSearch` when `query === ""` that insert the filter token on click; and (2) focusing `TagField` in `popup/App.tsx` lazily loads `tagDefs` (preserving `P-10` on mount) and passes them as `availableTags` to `TagField` for combobox autocomplete while preserving zero egress on popup open.
   - [x] Update `src/entrypoints/popup/App.tsx` and `src/entrypoints/popup/Search.tsx`.
 
-- [~] Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
+- [x] Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
   <!-- files: src/entrypoints/options/ProviderSetup.tsx, src/entrypoints/options/OptionsApp.tsx, tests/components/provider-setup.test.tsx, tests/components/options-app.test.tsx -->
-  - [ ] Write failing component tests verifying: (1) when a Jev provider is enabled in `ProviderSetup`, it displays whether `Bookmark analysis consent` (`jev_decisions`) is granted at that provider's origin; and (2) when not yet granted, it renders a `"Review analysis consent in Permissions"` action button that switches `OptionsApp` to the `Permissions` panel.
-  - [ ] Update `src/entrypoints/options/ProviderSetup.tsx` and `src/entrypoints/options/OptionsApp.tsx`.
+  - [x] Write failing component tests verifying: (1) when a Jev provider is enabled in `ProviderSetup`, it displays whether `Bookmark analysis consent` (`jev_decisions`) is granted at that provider's origin; and (2) when not yet granted, it renders a `"Review analysis consent in Permissions"` action button that switches `OptionsApp` to the `Permissions` panel.
+  - [x] Update `src/entrypoints/options/ProviderSetup.tsx` and `src/entrypoints/options/OptionsApp.tsx`.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: AI Workflows, Dialogs, Popup & Options Cohesion' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 4: AI Workflows, Dialogs, Popup & Options Cohesion' (Protocol in workflow.md)
   <!-- depends: task1, task2, task3, task4 -->
 
 ---
@@ -118,7 +118,7 @@
 ## Phase 5: Visual Inspection, End-to-End Verification & Documentation Sync
 <!-- execution: sequential -->
 
-- [ ] Task 1: Headless Chromium visual verification, E2E regressions, full CI gate & docs sync
+- [~] Task 1: Headless Chromium visual verification, E2E regressions, full CI gate & docs sync
   <!-- files: tests/e2e/dialog-visuals.spec.ts, conductor/product.md, conductor/tech-stack.md, conductor/patterns.md -->
   - [ ] Run Playwright visual captures (`tests/e2e/dialog-visuals.spec.ts` and targeted narrow/wide sidepanel, popup, and options screenshots), inspect every rendered state with `view_media`, and fix any visual or layout defects.
   - [ ] Run the full local gate (`npm run lint` → `npm run typecheck` → `npx vitest run` → `npm run build` → `npm run check:manifest` → `npm run check:bundle` → `npm run check:store` → `npm run check:site` → `xvfb-run -a npm run test:e2e`), close `BookmarksManager-tax`, and synchronize `conductor/{product,tech-stack,patterns}.md`.

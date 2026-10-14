@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { CONSENT_VERSION } from "../../consent/records";
+import { db } from "../../db/database";
 import {
   AUTHORIZATION_HEADER,
   CONSENT_PURPOSE,
@@ -26,6 +29,7 @@ import {
 import { LlmBaseUrl } from "../../schemas/llm";
 import {
   CUSTOM_PROVIDER_ID,
+  DECISIONS_CONSENT_SCOPE,
   DEFAULT_PROVIDER_MODEL,
   JEV_PROVIDER_IDS,
   type JevProviderId,
@@ -98,7 +102,11 @@ type TestOutcome =
   | { ok: true; model: string; latencyMs: number; cost?: number }
   | { ok: false; code: string; message: string };
 
-export function ProviderSetup() {
+export interface ProviderSetupProps {
+  onNavigateToPermissions?: () => void;
+}
+
+export function ProviderSetup(props?: ProviderSetupProps) {
   const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
   const [model, setModel] = useState<string>(DEFAULT_PROVIDER_MODEL.typesafe);
   const [baseUrl, setBaseUrl] = useState("");
@@ -145,6 +153,23 @@ export function ProviderSetup() {
   const disclosure = isCustom
     ? customJevDisclosure(customOrigin)
     : PROVIDER_DISCLOSURES[presetId];
+  const resolvedOrigin = status?.origin ?? disclosure.origin;
+  const decisionsConsented =
+    useLiveQuery(
+      () =>
+        db.consents
+          .toArray()
+          .then((rows) =>
+            rows.some(
+              (row) =>
+                row.scope === DECISIONS_CONSENT_SCOPE &&
+                row.origin === resolvedOrigin &&
+                row.consentVersion === CONSENT_VERSION,
+            ),
+          )
+          .catch(() => false),
+      [resolvedOrigin],
+    ) ?? false;
   // The host-permission pattern the enable click requests: the preset's
   // fixed pattern, or the custom endpoint's computed origin pattern (null
   // while the typed URL is not yet a valid canonical base URL).
@@ -604,6 +629,37 @@ export function ProviderSetup() {
             <Chip>{status.model}</Chip>
             <Chip>…{status.keySuffix}</Chip>
             <Chip>{status.origin ?? disclosure.origin}</Chip>
+          </div>
+
+          <div
+            data-testid="provider-analysis-consent"
+            className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/80 bg-card px-3 py-2 text-xs"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-foreground">
+                Bookmark analysis consent
+              </span>
+              <span
+                className={
+                  decisionsConsented
+                    ? "rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary"
+                    : "rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground"
+                }
+              >
+                {decisionsConsented ? "Consent granted" : "Not yet granted"}
+              </span>
+            </div>
+            {!decisionsConsented && (
+              <button
+                type="button"
+                onClick={() => {
+                  props?.onNavigateToPermissions?.();
+                }}
+                className="font-medium text-primary underline underline-offset-4 outline-hidden hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Review analysis consent in Permissions
+              </button>
+            )}
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
