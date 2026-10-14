@@ -268,4 +268,27 @@ describe("proposeLayout", () => {
       proposeLayout("preset:missing", SYNOPSIS),
     ).rejects.toMatchObject({ code: "invalid_provider" });
   });
+
+  it("uses the persisted provider tier instead of always starting at json_schema (B-14)", async () => {
+    await saveLlmProvider({
+      providerId: PROVIDER_ID,
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      tier: "prompt_only",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await saveCredential(PROVIDER_ID, "sk-test-1234");
+    await grantConsentAtOrigin("llm_restructure", LLM_ORIGIN);
+
+    const result = await proposeLayout(PROVIDER_ID, SYNOPSIS, {
+      unknownCostConfirmed: true,
+    });
+    expect(result.proposal.folders.map((f) => f.path)).toEqual([
+      "dev/tools",
+      "news",
+    ]);
+    expect(server.requests).toHaveLength(1);
+    const body = server.requests[0]!.body as { response_format?: unknown };
+    expect(body.response_format).toBeUndefined();
+  });
 });

@@ -114,12 +114,18 @@ export function buildLibrarySynopsis(
       // still walk them so unrelated empty folders/roots are not lost.
       const structuralRoot = node.parentId === undefined || node.parentId === ROOT_NODE_ID;
       if (blockedOnly && !structuralRoot) continue;
-      const folderPath =
-        path === "" ? (node.title ?? "") : `${path}/${node.title}`;
-      if (node.parentId !== undefined && !blockedOnly) {
-        // Skip the synthetic root "0" — it has no parentId.
-        folderPaths.push(folderPath);
-        titlesByFolder.set(folderPath, { titles: [] });
+      const trimmedTitle = (node.title ?? "").trim();
+      const rawFolderPath =
+        path === "" ? trimmedTitle : `${path}/${trimmedTitle}`;
+      const folderPath = truncate(rawFolderPath, RESTRUCTURE_LIMITS.path);
+      if (node.parentId !== undefined && !blockedOnly && folderPath !== "") {
+        // Skip the synthetic root "0" — it has no parentId — and unnamed
+        // top-level folders whose path would be empty. Merge duplicate
+        // sibling folder buckets rather than pushing duplicate paths.
+        if (!titlesByFolder.has(folderPath)) {
+          folderPaths.push(folderPath);
+          titlesByFolder.set(folderPath, { titles: [] });
+        }
       }
       for (const child of [...(node.children ?? [])].reverse()) {
         stack.push({ node: child, path: folderPath });

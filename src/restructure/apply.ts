@@ -1,8 +1,10 @@
 import { db } from "../db/database";
+import { getMetaByIds } from "../db/meta";
 import {
   get,
   getTree,
   getChildren,
+  isFixedRoot,
   isFolder,
   BOOKMARKS_BAR_ID,
 } from "../sync/chrome-bookmarks";
@@ -12,12 +14,16 @@ import {
   moveNode,
   removeNode,
   MutationError,
+  newMutationVerifyCache,
 } from "../sync/mutations";
+import type { MutationVerifyCache } from "../sync/mutations";
 import { getJob, restructurePlanFor } from "../jobs/queue";
-import { captureNodes, pushSnapshot } from "../undo/snapshot";
+import { pushSnapshot } from "../undo/snapshot";
+import type { UndoNode } from "../schemas/undo";
 import { buildRestructureDiff } from "./diff";
 import type { RestructureProposal } from "../schemas/restructure";
-import { undoExpected } from "../undo/restore";
+import { discardById, restoreById } from "../undo/restore";
+import type { UndoResult } from "../undo/restore";
 import { withUndoLock } from "../undo/lock";
 
 /**
@@ -130,9 +136,9 @@ async function ensureFolders(
   proposal: RestructureProposal,
   rootId: string,
   created: string[],
+  cache: MutationVerifyCache,
 ): Promise<Map<string, string>> {
-  const rootNode = (await get(rootId))[0];
-  // All paths, longest-prefix sorted so parents precede children.
+  const rootNode = cache.nodes.get(rootId) ?? (await get(rootId))[0];
   const paths = proposal.folders
     .map((f) => f.path)
     .sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
@@ -163,7 +169,7 @@ async function ensureFolders(
         parentId = existing.id;
         continue;
       }
-      const createdNode = await createFolder({ parentId, title: segment });
+      const createdNode = await createFolder({ parentId, title: segment }, cache);
       pathToId.set(walked, createdNode.id);
       created.push(createdNode.id);
       parentId = createdNode.id;
@@ -182,209 +188,294 @@ async function ensureFolders(
  * moves already made back to their captured positions and removes the folders
  * it created, then throws `mutation_failed`.
  */
+function seedVerifyCache(
+  tree: readonly BookmarksTreeNode[],
+): MutationVerifyCache {
+  const cache = newMutationVerifyCache();
+  const stack: BookmarksTreeNode[] = [...tree];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    cache.nodes.set(node.id, node);
+    if (node.url === undefined && node.children !== undefined) {
+      cache.childCounts.set(node.id, node.children.length);
+      for (const child of node.children) {
+        stack.push(child);
+      }
+    }
+  }
+  return cache;
+}
+
 export async function applyRestructurePlan(
   jobId: string,
   acceptedBookmarkIds?: readonly string[],
 ): Promise<ApplyResult> {
-  const job = await getJob(jobId);
-  if (job === undefined || job.kind !== "restructure" || job.restructure === undefined) {
-    throw new ApplyError("invalid_job", "Not a restructure job.");
-  }
-  if (job.status !== "completed") {
-    throw new ApplyError(
-      "not_ready",
-      `A restructure plan applies only after the job completes (now ${job.status}).`,
-    );
-  }
-  // J13: the effective plan merges committed `restructureAssignments` rows
-  // with any legacy inline assignments — `restructure` itself was checked
-  // above, so the merged plan is present.
-  const plan = (await restructurePlanFor(job))!;
-  // Live-tree revalidation over the FULL library (bar + Other + Mobile), the
-  // same scope the preview/status replies build their diff from, so moves act
-  // on current positions and no reviewed assignment is dropped for living
-  // outside the bar. A read failure (or an empty read, which `getTree()`
-  // never legitimately returns) is a typed refusal: treating it as "no
-  // bookmarks" would silently shrink the reviewed scope to nothing.
-  let tree: BookmarksTreeNode[];
-  try {
-    tree = await getTree();
-  } catch (cause) {
-    throw new ApplyError(
-      "read_failed",
-      "The bookmark tree could not be read; nothing was changed.",
-      { cause },
-    );
-  }
-  if (tree.length === 0) {
-    throw new ApplyError(
-      "read_failed",
-      "The bookmark tree read came back empty; nothing was changed.",
-    );
-  }
-  const diff = buildRestructureDiff(tree, plan);
-  const acceptedSet =
-    acceptedBookmarkIds !== undefined ? new Set(acceptedBookmarkIds) : null;
-  const resolved = diff.rows.filter(
-    (r) =>
-      r.status === "resolved" &&
-      (acceptedSet === null || acceptedSet.has(r.bookmarkId)),
-  );
-  if (resolved.length === 0) {
-    throw new ApplyError("stale", "No resolved assignments remain to apply.");
-  }
-
   // Same-context serialization first (in-worker promise chain), then the
   // extension-wide undo lock (cross-context + undo-replay exclusion): a
   // second CONFIRM — same context or another surface — queues behind an
   // in-flight apply and then replays the persisted terminal record.
   return serializeApply(jobId, () =>
-    withUndoLock(async () => {
-      const fresh = await getJob(jobId);
-    const freshPlan = fresh?.restructure;
-    if (freshPlan?.applied !== undefined) {
-      const applied = freshPlan.applied;
-      // The terminal record replays only while its snapshot still exists:
-      // an UNDO (or discard) that popped it reverted the apply, so a fresh
-      // CONFIRM is a real re-apply, not a replay. `moved === 0` records
-      // carry no snapshot — nothing can undo them — and always replay.
-      const stillApplied =
-        applied.snapshotId === undefined ||
-        (await db.undo.get(applied.snapshotId)) !== undefined;
-      if (stillApplied) {
-        return {
-          moved: applied.moved,
-          reusedPaths: applied.reusedPaths,
-          snapshotId: applied.snapshotId,
-        };
+    withUndoLock(async (hold) => {
+      const job = await getJob(jobId);
+      if (
+        job === undefined ||
+        job.kind !== "restructure" ||
+        job.restructure === undefined
+      ) {
+        throw new ApplyError("invalid_job", "Not a restructure job.");
       }
-    }
+      if (job.status !== "completed") {
+        throw new ApplyError(
+          "not_ready",
+          `A restructure plan applies only after the job completes (now ${job.status}).`,
+        );
+      }
+      const freshPlan = job.restructure;
+      if (freshPlan.applied !== undefined) {
+        const applied = freshPlan.applied;
+        // The terminal record replays only while its snapshot still exists:
+        // an UNDO (or discard) that popped it reverted the apply, so a fresh
+        // CONFIRM is a real re-apply, not a replay. `moved === 0` records
+        // carry no snapshot — nothing can undo them — and always replay.
+        const stillApplied =
+          applied.snapshotId === undefined ||
+          (await db.undo.get(applied.snapshotId)) !== undefined;
+        if (stillApplied) {
+          return {
+            moved: applied.moved,
+            reusedPaths: applied.reusedPaths,
+            snapshotId: applied.snapshotId,
+          };
+        }
+      }
 
-    const createdFolderIds: string[] = [];
-    const moved: Array<{ id: string; parentId: string; index: number }> = [];
-    try {
-      const pathToId = await ensureFolders(plan.proposal, BOOKMARKS_BAR_ID, createdFolderIds);
-      const reusedPaths = plan.proposal.folders
-        .map((f) => f.path)
-        .filter((p) => !createdFolderIds.includes(pathToId.get(p) ?? ""));
+      // J13: the effective plan merges committed `restructureAssignments` rows
+      // with any legacy inline assignments — `restructure` itself was checked
+      // above, so the merged plan is present.
+      const plan = (await restructurePlanFor(job))!;
+      // Live-tree revalidation over the FULL library (bar + Other + Mobile),
+      // the same scope the preview/status replies build their diff from, so
+      // moves act on current positions and no reviewed assignment is dropped
+      // for living outside the bar.
+      let tree: BookmarksTreeNode[];
+      try {
+        tree = await getTree();
+      } catch (cause) {
+        throw new ApplyError(
+          "read_failed",
+          "The bookmark tree could not be read; nothing was changed.",
+          { cause },
+        );
+      }
+      if (tree.length === 0) {
+        throw new ApplyError(
+          "read_failed",
+          "The bookmark tree read came back empty; nothing was changed.",
+        );
+      }
+      const diff = buildRestructureDiff(tree, plan);
+      const acceptedSet =
+        acceptedBookmarkIds !== undefined ? new Set(acceptedBookmarkIds) : null;
+      const resolved = diff.rows.filter(
+        (r) =>
+          r.status === "resolved" &&
+          (acceptedSet === null || acceptedSet.has(r.bookmarkId)),
+      );
+      if (resolved.length === 0) {
+        throw new ApplyError("stale", "No resolved assignments remain to apply.");
+      }
 
-      // Resolve every row's live target BEFORE pushing a snapshot: a batch
-      // whose bookmarks already sit at their proposed folders moves nothing
-      // and must not leave an empty-effect undo entry behind.
-      const pending: Array<{
-        id: string;
-        targetParentId: string;
-        from: { parentId: string; index: number };
-      }> = [];
-      for (const row of resolved) {
-        const targetParentId = pathToId.get(row.toPath!);
-        if (targetParentId === undefined) {
+      const cache = seedVerifyCache(tree);
+      const createdFolderIds: string[] = [];
+      const moved: Array<{ id: string; parentId: string; index: number }> = [];
+      let snapshotId: number | undefined;
+      try {
+        const pathToId = await ensureFolders(
+          plan.proposal,
+          BOOKMARKS_BAR_ID,
+          createdFolderIds,
+          cache,
+        );
+        const reusedPaths = plan.proposal.folders
+          .map((f) => f.path)
+          .filter((p) => !createdFolderIds.includes(pathToId.get(p) ?? ""));
+
+        // Resolve every row's live target BEFORE pushing a snapshot: a batch
+        // whose bookmarks already sit at their proposed folders moves nothing
+        // and must not leave an empty-effect undo entry behind.
+        const pending: Array<{
+          id: string;
+          targetParentId: string;
+          from: { parentId: string; index: number };
+          node: UndoNode;
+        }> = [];
+        let alreadyAtTarget = 0;
+        for (const row of resolved) {
+          const targetParentId = pathToId.get(row.toPath!);
+          if (targetParentId === undefined) {
+            throw new ApplyError(
+              "stale",
+              `Proposed path ${JSON.stringify(row.toPath)} did not resolve to a folder.`,
+            );
+          }
+          let before: BookmarksTreeNode | undefined;
+          try {
+            before = (await get(row.bookmarkId))[0];
+          } catch {
+            before = undefined;
+          }
+          if (
+            before === undefined ||
+            before.parentId === undefined ||
+            isFixedRoot(before.id)
+          ) {
+            cache.nodes.delete(row.bookmarkId);
+            continue;
+          }
+          cache.nodes.set(before.id, before);
+          if (before.parentId === targetParentId) {
+            alreadyAtTarget += 1;
+            continue;
+          }
+          const index = before.index ?? 0;
+          const undoNode: UndoNode = {
+            id: before.id,
+            parentId: before.parentId,
+            index,
+            title: before.title,
+            movedToParentId: targetParentId,
+          };
+          if (before.url !== undefined) undoNode.url = before.url;
+          pending.push({
+            id: row.bookmarkId,
+            targetParentId,
+            from: { parentId: before.parentId, index },
+            node: undoNode,
+          });
+        }
+
+        if (pending.length === 0 && alreadyAtTarget === 0) {
+          for (const id of [...createdFolderIds].reverse()) {
+            try {
+              const children = await getChildren(id);
+              if (children.length !== 0) continue;
+              await removeNode(id, cache);
+            } catch {
+              // Occupied, managed, missing, or unreadable: leave it.
+            }
+          }
           throw new ApplyError(
             "stale",
-            `Proposed path ${JSON.stringify(row.toPath)} did not resolve to a folder.`,
+            "No resolved assignments remain to apply.",
           );
         }
-        const before = (await get(row.bookmarkId))[0];
-        if (before === undefined) {
-          throw new ApplyError("stale", `Bookmark ${JSON.stringify(row.bookmarkId)} is gone.`);
-        }
-        if (before.parentId === targetParentId) {
-          continue;
-        }
-        pending.push({
-          id: row.bookmarkId,
-          targetParentId,
-          from: { parentId: before.parentId!, index: before.index ?? 0 },
-        });
-      }
 
-      let snapshotId: number | undefined;
-      if (pending.length === 0) {
-        // Nothing to move — the folders created above are empty by
-        // construction, so remove them best-effort (a raced child or an
-        // unreadable node leaves it; it never held a moved bookmark).
+        if (pending.length === 0) {
+          // Nothing to move — the folders created above are empty by
+          // construction, so remove them best-effort (a raced child or an
+          // unreadable node leaves it; it never held a moved bookmark).
+          for (const id of [...createdFolderIds].reverse()) {
+            try {
+              const children = await getChildren(id);
+              if (children.length !== 0) continue;
+              await removeNode(id, cache);
+            } catch {
+              // Occupied, managed, missing, or unreadable: leave it.
+            }
+          }
+        } else {
+          // Pre-move capture of the bookmarks about to move — built from the
+          // live nodes already verified above + a single bulk meta read.
+          const meta = await getMetaByIds(pending.map((p) => p.id));
+          snapshotId = await pushSnapshot({
+            kind: "restructure",
+            nodes: pending.map((p) => p.node),
+            meta,
+            createdFolderIds,
+            origin: "decision",
+          });
+
+          for (const p of pending) {
+            const destIndex = (await getChildren(p.targetParentId)).length;
+            await moveNode(
+              p.id,
+              { parentId: p.targetParentId, index: destIndex },
+              cache,
+            );
+            moved.push({
+              id: p.id,
+              parentId: p.from.parentId,
+              index: p.from.index,
+            });
+          }
+        }
+
+        const applied = {
+          at: new Date().toISOString(),
+          moved: moved.length,
+          ...(snapshotId === undefined ? {} : { snapshotId }),
+          reusedPaths,
+        };
+        await db.jobs.update(jobId, {
+          restructure: { ...freshPlan, applied },
+        });
+        return { moved: moved.length, reusedPaths, snapshotId };
+      } catch (cause) {
+        // Compensating rollback: replay moved bookmarks back to their captured
+        // positions, then remove confirmed-empty created folders bottom-up.
+        // Failed reads never authorize deletion; non-recursive removal also
+        // protects children inserted between the emptiness check and removal.
+        // If every inverse move and folder cleanup succeeds, discard the
+        // snapshot so no orphan entry stays on the stack; otherwise keep it.
+        let rollbackClean = true;
+        for (const m of [...moved].reverse()) {
+          try {
+            await moveNode(
+              m.id,
+              { parentId: m.parentId, index: m.index },
+              cache,
+            );
+          } catch {
+            rollbackClean = false;
+          }
+        }
         for (const id of [...createdFolderIds].reverse()) {
           try {
             const children = await getChildren(id);
-            if (children.length !== 0) continue;
-            await removeNode(id);
+            if (children.length !== 0) {
+              rollbackClean = false;
+              continue;
+            }
+            await removeNode(id, cache);
           } catch {
-            // Occupied, managed, missing, or unreadable: leave it.
+            rollbackClean = false;
           }
         }
-      } else {
-        // Pre-move capture of exactly the bookmarks about to move — the undo
-        // snapshot's `nodes`, pushed before any mutation.
-        const capture = await captureNodes(pending.map((p) => p.id));
-        // Per-node targets (D09): undo skips a node moved again afterwards.
-        const targetById = new Map(
-          pending.map((p) => [p.id, p.targetParentId] as const),
+        if (rollbackClean && snapshotId !== undefined) {
+          await discardById(snapshotId, hold).catch(() => {});
+        }
+        if (cause instanceof ApplyError) throw cause;
+        if (cause instanceof MutationError) {
+          throw new ApplyError("mutation_failed", cause.message, { cause });
+        }
+        throw new ApplyError(
+          "mutation_failed",
+          "The apply failed midway.",
+          { cause },
         );
-        snapshotId = await pushSnapshot({
-          kind: "restructure",
-          nodes: capture.nodes.map((node) => ({
-            ...node,
-            movedToParentId: targetById.get(node.id),
-          })),
-          meta: capture.meta,
-          createdFolderIds,
-          origin: "decision",
-        });
-
-        for (const p of pending) {
-          const destIndex = (await getChildren(p.targetParentId)).length;
-          await moveNode(p.id, { parentId: p.targetParentId, index: destIndex });
-          moved.push({ id: p.id, parentId: p.from.parentId, index: p.from.index });
-        }
       }
-
-      const applied = {
-        at: new Date().toISOString(),
-        moved: moved.length,
-        ...(snapshotId === undefined ? {} : { snapshotId }),
-        reusedPaths,
-      };
-      await db.jobs.update(jobId, {
-        restructure: { ...freshPlan!, applied },
-      });
-      return { moved: moved.length, reusedPaths, snapshotId };
-    } catch (cause) {
-    // Compensating rollback: replay moved bookmarks back to their captured
-    // positions, then remove confirmed-empty created folders bottom-up.
-    // Failed reads never authorize deletion; non-recursive removal also
-    // protects children inserted between the emptiness check and removal.
-    // Keep the snapshot, especially when an inverse move or cleanup fails.
-      for (const m of [...moved].reverse()) {
-        await moveNode(m.id, { parentId: m.parentId, index: m.index }).catch(() => {});
-      }
-      for (const id of [...createdFolderIds].reverse()) {
-        try {
-          const children = await getChildren(id);
-          if (children.length !== 0) continue;
-          await removeNode(id);
-        } catch {
-          // Occupied, managed, missing, or unreadable: leave it for undo.
-        }
-      }
-      if (cause instanceof ApplyError) throw cause;
-      if (cause instanceof MutationError) {
-        throw new ApplyError("mutation_failed", cause.message, { cause });
-      }
-      throw new ApplyError("mutation_failed", "The apply failed midway.", { cause });
-    }
     }),
   );
 }
 
 /**
  * Undo a specific restructure apply — the `snapshotId` a `RESTRUCTURE_CONFIRM`
- * reply returned. Thin wrapper over the undo stack's `undoExpected`: the
- * snapshot replays only when it is verifiably the stack head, so a stale id
- * (another apply or undo landed on top) is refused with `conflict` instead
- * of replaying someone else's undoable action.
+ * reply returned. Delegates to `restoreById` so the restructure snapshot can
+ * be undone even if a user action pushed a snapshot on top of the stack
+ * afterwards (B-13); a missing or already-undone id returns `empty`.
  */
-export function undoRestructurePlan(snapshotId: number): ReturnType<typeof undoExpected> {
-  return undoExpected(snapshotId);
+export function undoRestructurePlan(snapshotId: number): Promise<UndoResult> {
+  return restoreById(snapshotId);
 }
 
 export { db as _dbForTests };

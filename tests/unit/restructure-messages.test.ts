@@ -11,6 +11,7 @@ import { LlmGateError } from "../../src/net/llm-send";
 import { saveLlmProvider } from "../../src/llm/settings";
 import { enqueueJob } from "../../src/jobs/queue";
 import type { RestructureProposal } from "../../src/schemas/restructure";
+import { MAX_JOB_BOOKMARK_IDS } from "../../src/schemas/job";
 
 vi.mock("../../src/restructure/propose", () => ({
   proposeLayout: vi.fn(),
@@ -100,6 +101,11 @@ beforeEach(async () => {
   runJobCalls = [];
   await db.delete();
   await db.open();
+  await db.metadata.put({
+    key: "typesafe",
+    value: { preset: "typesafe", model: "jev-latest", keySuffix: "1234" },
+  });
+  await grantConsentAtOrigin("jev_decisions", "https://api.typesafe.ai");
 });
 
 afterEach(() => {
@@ -225,6 +231,96 @@ describe("RESTRUCTURE_START", () => {
     });
   });
 
+
+  it("does not prematurely mark the enqueued job running before deps.runJob drives it (B-07a)", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+    let statusSeenInRunJob: string | undefined;
+    const customDeps: RestructureDeps = {
+      runJob: async (jobId) => {
+        const row = await db.jobs.get(jobId);
+        statusSeenInRunJob = row?.status;
+      },
+    };
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      customDeps,
+    );
+    expect(reply).toMatchObject({
+      ok: true,
+      code: "job_ok",
+      job: { status: "pending" },
+    });
+    expect(statusSeenInRunJob).toBe("pending");
+  });
+
+  it("refuses before proposeLayout when no Jev provider is active for jev_decisions (B-07a)", async () => {
+    await revokeConsentAtOrigin("jev_decisions", "https://api.typesafe.ai");
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "no_provider" });
+    expect(proposeLayout).not.toHaveBeenCalled();
+    expect(await db.jobs.count()).toBe(0);
+  });
+
+  it("refuses before proposeLayout when the library exceeds MAX_JOB_BOOKMARK_IDS (B-07a)", async () => {
+    await saveLlmProvider({
+      providerId: "preset:openai",
+      provider: { kind: "preset", preset: "openai", model: "gpt-4o-mini" },
+      keySuffix: "1234",
+      configuredAt: "2026-09-15T00:00:00.000Z",
+    });
+    await grantConsentAtOrigin("llm_restructure", "https://api.openai.com");
+    vi.mocked(proposeLayout).mockResolvedValue({
+      proposal: PROPOSAL,
+      model: "gpt-4o-mini",
+    });
+    const bigChildren = Array.from(
+      { length: MAX_JOB_BOOKMARK_IDS + 1 },
+      (_, idx) => ({
+        id: `bm-${idx}`,
+        title: `BM ${idx}`,
+        url: "https://a.io/",
+      }),
+    );
+    vi.spyOn(api, "getSubTree").mockResolvedValueOnce([
+      { id: "0", title: "", children: bigChildren },
+    ]);
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_START", providerId: "active" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({ ok: false, code: "request_not_allowed" });
+    expect(proposeLayout).not.toHaveBeenCalled();
+    expect(await db.jobs.count()).toBe(0);
+  });
   // A07: a second START while the first restructure job is non-terminal is a
   // typed rejection — the enqueue guard is an atomic row check.
   it("rejects a second start while a restructure job is non-terminal", async () => {
@@ -407,6 +503,34 @@ describe("RESTRUCTURE_STATUS", () => {
     expect((reply as { result: { job: { id: string } } }).result.job.id).toBe(job.id);
   });
 
+
+  it("validates latestRestructureJob with Job.safeParse and skips corrupt rows (B-16a)", async () => {
+    const validJob = await enqueueJob({
+      kind: "restructure",
+      bookmarkIds: ["11"],
+      restructureProposal: PROPOSAL,
+      now: () => "2026-09-28T00:00:00.000Z",
+    });
+    // Insert a newer corrupt restructure row directly into db.jobs
+    await db.jobs.put({
+      id: "not-a-uuid",
+      kind: "restructure",
+      status: "running",
+      createdAt: "2026-09-28T02:00:00.000Z",
+      updatedAt: "2026-09-28T02:00:00.000Z",
+    } as never);
+
+    const reply = await handleRestructureMessage(
+      { type: "RESTRUCTURE_STATUS" },
+      SENDER,
+      deps,
+    );
+    expect(reply).toMatchObject({
+      ok: true,
+      code: "job_state",
+      result: { job: { id: validJob.id } },
+    });
+  });
   it("attaches the live diff once the job completes", async () => {
     const job = await enqueueJob({
       kind: "restructure",
@@ -629,14 +753,12 @@ describe("RESTRUCTURE_UNDO", () => {
     expect(reply).toMatchObject({ ok: false, code: "malformed_message" });
   });
 
-  it("refuses a snapshotId that is not the undo-stack head", async () => {
-    // An id on an empty stack (or a stale id after a later push) resolves
-    // to `conflict` in undoExpected — surfaced as `stale` to the page.
+  it("refuses a missing snapshotId with empty and succeeds even when a user snapshot sits above it (B-13)", async () => {
     const reply = await handleRestructureMessage(
       { type: "RESTRUCTURE_UNDO", snapshotId: 1 },
       SENDER,
       deps,
     );
-    expect(reply).toMatchObject({ ok: false, code: "stale" });
+    expect(reply).toMatchObject({ ok: false, code: "empty" });
   });
 });

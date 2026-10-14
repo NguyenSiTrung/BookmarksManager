@@ -16,7 +16,7 @@ import {
 } from "../../src/restructure/apply";
 import { buildRestructureDiff } from "../../src/restructure/diff";
 import type { RestructureProposal } from "../../src/schemas/restructure";
-import { listSnapshots } from "../../src/undo/snapshot";
+import { listSnapshots, pushSnapshot } from "../../src/undo/snapshot";
 
 /**
  * `buildRestructureDiff` + `applyRestructurePlan` + `undoRestructurePlan`
@@ -475,6 +475,46 @@ describe("applyRestructurePlan", () => {
     // The first moved bookmark was moved back under "Old".
     const old = bar[0]!.children!.find((c) => c.title === "Old")!;
     expect(old.children!.map((c) => c.id)).toContain("11");
+    // Clean rollback discards the snapshot so no no-op entry stays on the stack (B-13).
+    expect(await listSnapshots()).toEqual([]);
+  });
+
+  it("skips a bookmark that vanished before move resolution and still applies remaining rows (B-13)", async () => {
+    const job = await completedJob(
+      ["11", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    const originalGet = api.get.bind(api);
+    vi.spyOn(api, "get").mockImplementation(async (idOrList) => {
+      if (idOrList === "11") throw new Error("Can't find bookmark for id.");
+      return originalGet(idOrList);
+    });
+
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(1);
+    const bar = await api.getSubTree("1");
+    const dev = bar[0]!.children!.find((c) => c.title === "dev")!;
+    expect((await originalGet("21"))[0]?.parentId).toBe(dev.id);
+  });
+
+  it("uses MutationVerifyCache and tree capture to avoid redundant get/getChildren IPCs (P-08a)", async () => {
+    const job = await completedJob(
+      ["11", "12", "21"],
+      [
+        { bookmarkId: "11", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "12", proposedPath: "dev/tools", confidence: 0.9 },
+        { bookmarkId: "21", proposedPath: "dev", confidence: 0.9 },
+      ],
+    );
+    const getSpy = vi.spyOn(api, "get");
+    const result = await applyRestructurePlan(job.id);
+    expect(result.moved).toBe(3);
+    // With cache + pre-captured nodes, get(id) is called at most once per bookmark + root,
+    // never re-called during captureNodes or writableNode/writableParent ancestor walks.
+    expect(getSpy.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
   it("keeps occupied created folders and a retryable snapshot when the inverse move fails", async () => {
@@ -728,30 +768,36 @@ describe("assignment storage (J13)", () => {
 });
 
 describe("undoRestructurePlan", () => {
-  it("refuses a stale snapshotId without replaying anything (J11)", async () => {
+  it("restores by snapshotId even when a newer snapshot was pushed on top, and returns empty for a missing id (B-13)", async () => {
     const job = await completedJob();
     const result = await applyRestructurePlan(job.id);
     expect(result.snapshotId).toBeGreaterThan(0);
 
-    const stale = await undoRestructurePlan(result.snapshotId! + 999);
-    expect(stale).toMatchObject({ ok: false, code: "conflict" });
-    // Nothing was replayed: the moved bookmarks stayed put, snapshot kept.
-    const dev = (await api.getSubTree("1"))[0]!.children!.find(
-      (c) => c.title === "dev",
-    )!;
-    expect((await api.get("11"))[0]?.parentId).toBe(
-      dev.children!.find((c) => c.title === "tools")!.id,
-    );
+    // A missing snapshotId returns `empty` without replaying anything.
+    const missing = await undoRestructurePlan(result.snapshotId! + 999);
+    expect(missing).toMatchObject({ ok: false, code: "empty" });
     expect(await listSnapshots()).toHaveLength(1);
 
-    // The real undo still works on the recorded id — and a SECOND undo of
-    // the same id is refused (it is no longer the head).
+    // Push another snapshot on top of the stack (e.g. a user action).
+    const laterId = await pushSnapshot({
+      kind: "bulk_move",
+      nodes: [{ id: "30", parentId: "1", index: 2, title: "Loose", url: "https://loose.io/" }],
+      meta: [],
+      origin: "user",
+    });
+    expect(await listSnapshots()).toHaveLength(2);
+
+    // undoRestructurePlan uses restoreById so it succeeds even below the stack head!
     await expect(
       undoRestructurePlan(result.snapshotId!),
     ).resolves.toMatchObject({ ok: true });
+    expect((await api.get("11"))[0]?.parentId).toBe("10");
+    expect((await listSnapshots()).map((s) => s.id)).toEqual([laterId]);
+
+    // A second undo of the same id returns `empty` (already consumed).
     await expect(
       undoRestructurePlan(result.snapshotId!),
-    ).resolves.toMatchObject({ ok: false, code: "conflict" });
+    ).resolves.toMatchObject({ ok: false, code: "empty" });
   });
 });
 

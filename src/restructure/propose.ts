@@ -74,7 +74,7 @@ export async function proposeLayout(
     ...(options?.beforeSend !== undefined ? { beforeSend: options.beforeSend } : {}),
   });
   const run = await runStructured({
-    tier: "json_schema",
+    tier: record.tier ?? "json_schema",
     model: resolveLlmDestination(record.provider).model,
     schema: RestructureProposal,
     schemaName: "restructure_proposal",

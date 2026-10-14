@@ -82,6 +82,17 @@ async function seed(feature: Feature, costRetry = false): Promise<FeatureConsent
   });
   await saveCredential(PROVIDER, "sk-synthetic-1234");
   await grantConsentAtOrigin(feature, ORIGIN);
+  if (feature === "llm_restructure") {
+    await db.metadata.put({
+      key: "typesafe",
+      value: {
+        preset: "typesafe",
+        model: "jev-1.13.0",
+        keySuffix: "1234",
+      },
+    });
+    await grantConsentAtOrigin("jev_decisions", "https://api.typesafe.ai");
+  }
   server = makeOpenAiServer({ completion: completion(feature) });
   vi.stubGlobal("fetch", server.fetch);
   return { providerId: PROVIDER, origin: ORIGIN, model,

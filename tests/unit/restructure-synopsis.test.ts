@@ -206,6 +206,39 @@ describe("buildLibrarySynopsis", () => {
     const syn = buildLibrarySynopsis(SIMPLE_TREE, metas);
     expect(syn.categories).toEqual({ article: 1 });
   });
+
+  it("omits unnamed top-level folders, truncates paths >400 chars, and merges duplicate sibling folder buckets (B-16a)", () => {
+    const longSeg = "a".repeat(150);
+    const tree: BookmarksTreeNode[] = [
+      folder("unnamed", "   ", [
+        bm("b0", "In unnamed", "https://unnamed-site.com/"),
+      ]),
+      folder("dup1", "Shared", [
+        bm("b1", "First sibling title", "https://shared1.com/"),
+      ]),
+      folder("dup2", "Shared", [
+        bm("b2", "Second sibling title", "https://shared2.com/"),
+      ]),
+      folder("l1", longSeg, [
+        folder("l2", longSeg, [
+          folder("l3", longSeg, [
+            bm("b3", "Deep title", "https://deep-site.com/"),
+          ]),
+        ]),
+      ]),
+    ];
+    const syn = buildLibrarySynopsis(tree, []);
+    expect(LibrarySynopsis.safeParse(syn).success).toBe(true);
+    expect(syn.folderPaths).not.toContain("");
+    expect(syn.folderPaths.filter((p) => p === "Shared")).toHaveLength(1);
+    expect(syn.representativeTitles["Shared"]).toEqual([
+      "First sibling title",
+      "Second sibling title",
+    ]);
+    for (const p of syn.folderPaths) {
+      expect(p.length).toBeLessThanOrEqual(RESTRUCTURE_LIMITS.path);
+    }
+  });
 });
 
 describe("RestructureProposal", () => {

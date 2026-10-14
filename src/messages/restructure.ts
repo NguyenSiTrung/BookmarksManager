@@ -12,9 +12,8 @@ import {
   pauseJob,
   resumeJob,
   restructurePlanFor,
-  setJobStatus,
 } from "../jobs/queue";
-import { MAX_JOB_BOOKMARK_IDS } from "../schemas/job";
+import { Job as JobSchema, MAX_JOB_BOOKMARK_IDS } from "../schemas/job";
 import type { Job, JobCostEstimate } from "../schemas/job";
 import { estimateJobCost } from "../jobs/estimate";
 import { LlmHttpError } from "../llm/client";
@@ -25,6 +24,8 @@ import {
   featureConsentDisclosure,
   matchesFeatureConsentApproval,
 } from "../schemas/feature-consent";
+import { readActiveJevProvider } from "../jev/settings";
+import { DECISIONS_CONSENT_SCOPE } from "../schemas/provider";
 import { readActiveLlmProvider, readLlmProvider } from "../llm/settings";
 import { LlmCapabilityError } from "../llm/structured";
 import { LlmGateError } from "../net/llm-send";
@@ -320,6 +321,13 @@ async function startRestructure(
       consent,
     };
   }
+  const jev = await readActiveJevProvider(DECISIONS_CONSENT_SCOPE);
+  if (jev === null) {
+    return failure(
+      "no_provider",
+      "No Jev provider is enabled for restructure folder assignment.",
+    );
+  }
   // A07 preflight: refuse a second start before spending the proposal send —
   // the atomic guard inside `enqueueJob` still owns the invariant; this only
   // skips the wasted egress when a live restructure job already exists.
@@ -357,6 +365,12 @@ async function startRestructure(
   }
   if (leafIds.length === 0) {
     return failure("not_found", "The library has no bookmarks to restructure.");
+  }
+  if (leafIds.length > MAX_JOB_BOOKMARK_IDS) {
+    return failure(
+      "request_not_allowed",
+      `The library has ${leafIds.length} bookmarks, exceeding the ${MAX_JOB_BOOKMARK_IDS}-bookmark restructure limit.`,
+    );
   }
   const synopsis = buildLibrarySynopsis(tree, metas, { userBlocklist });
   const beforeSend = () => db.transaction("r", db.metadata, db.consents, async () => {
@@ -409,11 +423,15 @@ async function startRestructure(
       bookmarkIds: leafIds,
       restructureProposal: proposal,
     });
-    await setJobStatus(job.id, "running");
     void deps.runJob(job.id).catch(() => {
       // Best-effort; resumeJobs on the next worker start retries.
     });
-    return { ok: true, code: "job_ok", job: { ...job, status: "running" }, estimate };
+    return {
+      ok: true,
+      code: "job_ok",
+      job: (await getJob(job.id)) ?? job,
+      estimate,
+    };
   } catch (cause) {
     const reply = mapError(cause);
     if (!reply.ok && reply.code === "confirmation_required") {
@@ -449,11 +467,18 @@ async function statusReply(jobId?: string): Promise<RestructureMessageResult> {
 
 async function latestRestructureJob(): Promise<Job | undefined> {
   // Latest restructure job by creation time — the view's resume target.
-  // `[kind+createdAt]` (J13) answers this with a single index read.
-  return db.jobs
+  // `[kind+createdAt]` (J13) answers this with an index read; validate each
+  // row with `Job.safeParse` so a corrupt row never crashes `statusReply`.
+  const rows = await db.jobs
     .where("[kind+createdAt]")
     .between(["restructure", Dexie.minKey], ["restructure", Dexie.maxKey])
-    .last();
+    .reverse()
+    .toArray();
+  for (const raw of rows) {
+    const parsed = JobSchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+  }
+  return undefined;
 }
 
 export async function handleRestructureMessage(
