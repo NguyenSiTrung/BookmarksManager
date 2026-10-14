@@ -1,3 +1,4 @@
+<!-- Last Revised: 2026-10-14 (Revision 1 — aligned Phase 4 Task 3 with P-10 lazy tag loading, DECISIONS_TRIGGERS, and popup search form invariants) -->
 # UI/UX Refactor & Ergonomics Redesign Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `conductor` (`/conductor-implement`) to execute this plan task-by-task. Steps use checkbox (`- [ ]`) syntax. Read `spec.md`, `learnings.md`, and the task's mapped Beads issue before claiming work.
@@ -101,7 +102,7 @@
 
 - [~] Task 3: Quick-Save Popup search-open transition, `TagField` autocomplete & consent-aware suggest (`UX-02`, `UX-12`)
   <!-- files: src/entrypoints/popup/App.tsx, src/entrypoints/popup/Search.tsx, tests/components/popup-save.test.tsx, tests/components/popup-search.test.tsx, tests/components/popup-suggestions.test.tsx -->
-  - [ ] Write failing component tests verifying: (1) opening popup search (`searchOpen === true`) immediately hides the save `<form>` even while `searchQuery === ""` and displays a filter-syntax hint in `PopupSearch`; (2) `popup/App.tsx` passes loaded `tagDefs` as `availableTags` to `TagField`; and (3) when `jev_decisions` consent is already granted on mount, `SAVE_SUGGEST` triggers automatically once `ready` settles without requiring a `Tags` focus or `Suggest` click (while remaining quiet and zero-egress when unconsented).
+  - [ ] Write failing component tests verifying: (1) opening popup search (`searchOpen === true`) displays quick filter-prefix pills (`tag:`, `folder:`, `in:`, `has:`, `data-testid="popup-search-hint"`) in `PopupSearch` when `query === ""` that insert the filter token on click; and (2) focusing `TagField` in `popup/App.tsx` lazily loads `tagDefs` (preserving `P-10` on mount) and passes them as `availableTags` to `TagField` for combobox autocomplete while preserving zero egress on popup open.
   - [ ] Update `src/entrypoints/popup/App.tsx` and `src/entrypoints/popup/Search.tsx`.
 
 - [ ] Task 4: Options `ProviderSetup` inline analysis-consent status & jump to `Permissions` (`UX-13`)
