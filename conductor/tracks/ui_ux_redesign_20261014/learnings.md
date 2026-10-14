@@ -114,6 +114,15 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Patterns: Keying the `useLiveQuery` consent check on `resolvedOrigin = status?.origin ?? disclosure.origin` in `ProviderSetup` automatically tracks both preset origins and custom Jev provider origins.
 ---
 
+## [2026-10-14 08:56] - Phase 5 Task 1: Headless Chromium visual verification, E2E regressions, full CI gate & docs sync
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Extended `tests/e2e/dialog-visuals.spec.ts` to capture rendered screenshots across wide and narrow Side Panel views, `MoveToDialog`, `EditDialog` tag autocomplete, `ReviewView` applied history, and Quick-Save Popup tag autocomplete & search filter hints; inspected all screenshots via `view_media`; verified the full local gate (`lint`, `typecheck`, 169 files / 3064 unit & component tests, `build`, `check:manifest`, `check:bundle`, `check:store`, `check:site`, and 49 passed / 1 skipped E2E specs); and synchronized `conductor/{product,tech-stack,patterns}.md`.
+- **Files changed:** `tests/e2e/dialog-visuals.spec.ts`, `conductor/product.md`, `conductor/tech-stack.md`, `conductor/patterns.md`, `conductor/tracks.md`, `conductor/tracks/ui_ux_redesign_20261014/metadata.json`, `conductor/tracks/ui_ux_redesign_20261014/plan.md`, `conductor/tracks/ui_ux_redesign_20261014/learnings.md`
+- **Learnings:**
+  - Patterns: Driving visual artifact captures inside `tests/e2e/dialog-visuals.spec.ts` against the real built MV3 extension exercises real IndexedDB seeding, Tailwind CSS 4 styles, and Radix portals across both wide and narrow viewports.
+---
+
+
 
 
 

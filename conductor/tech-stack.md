@@ -1,4 +1,4 @@
-<!-- Last refreshed: 2026-10-14 (refresh — perf_ux_hardening_20261014 architecture, search/decisions/undo optimizations, consent v3, and 3037/49 suite counts recorded; no dependency drift) -->
+<!-- Last refreshed: 2026-10-14 (refresh — ui_ux_redesign_20261014 shared TagField primitive, applied-history store query, and 3064/49 suite counts recorded; no dependency drift) -->
 
 # Technology Stack
 
@@ -222,8 +222,8 @@ Phase 0–6 deliveries remain the baseline. Items still planned in
   samples (`tests/unit/search-perf.test.ts`, including 10k benchmarks for
   filter-before-hit `runQuery` and incremental `createLiveSearchCache.update`).
   Coverage is not mandated — tests justify themselves by the behavior they guard
-  (2026-10-13 trim: 3148 → 2917 cases; 2026-10-14 hardening: 3037 cases across
-  167 files; see `docs/test-suite-analysis.md`).
+  (2026-10-13 trim: 3148 → 2917 cases; 2026-10-14 hardening & UI/UX redesign: 3064 cases across
+  169 files; see `docs/test-suite-analysis.md`).
 - **Playwright 1.63** persistent-context e2e (`tests/e2e`) — must use
   `channel: "chromium"`; branded Chrome silently ignores `--load-extension`.
   The suite runs headed by default; `E2E_HEADLESS=1` opts into headless, and

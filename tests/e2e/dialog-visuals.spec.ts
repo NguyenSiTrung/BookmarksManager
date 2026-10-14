@@ -35,6 +35,10 @@ const OUT_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../test-results/dialog-shots",
 );
+const ARTIFACTS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../.amp/in/artifacts",
+);
 
 const SCHEMES = ["light", "dark"] as const;
 
@@ -147,6 +151,169 @@ for (const scheme of SCHEMES) {
         confirmDialog.getByText(/tag/i).first(),
       ).toBeVisible();
       await shot("approve-all-confirm");
+      await page.keyboard.press("Escape");
+      await expect(confirmDialog).toHaveCount(0);
+
+      if (scheme === "light") {
+        mkdirSync(ARTIFACTS_DIR, { recursive: true });
+        const artifactShot = (target: typeof page, name: string) =>
+          target.screenshot({
+            path: path.join(ARTIFACTS_DIR, `${name}.png`),
+          });
+
+        // Seed colored tags, notes/summary metadata, and an applied decision row
+        await page.evaluate(
+          async ({ dbName, bookmarkId }) => {
+            const database = await new Promise<IDBDatabase>(
+              (resolve, reject) => {
+                const request = indexedDB.open(dbName);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+              },
+            );
+            try {
+              const now = new Date().toISOString();
+              await new Promise<void>((resolve, reject) => {
+                const tx = database.transaction(
+                  ["tags", "bookmarkMeta", "decisions"],
+                  "readwrite",
+                );
+                tx.objectStore("tags").put({
+                  name: "Reading List",
+                  nameKey: "reading list",
+                  color: "#10b981",
+                  createdAt: now,
+                  updatedAt: now,
+                });
+                tx.objectStore("tags").put({
+                  name: "Frontend",
+                  nameKey: "frontend",
+                  color: "#3b82f6",
+                  createdAt: now,
+                  updatedAt: now,
+                });
+                tx.objectStore("bookmarkMeta").put({
+                  id: bookmarkId,
+                  tags: ["reading list"],
+                  category: "docs",
+                  notes: "Key architecture reference",
+                  summary: "Verified summary of the pinned article.",
+                  updatedAt: now,
+                });
+                tx.objectStore("decisions").put({
+                  id: "22222222-3333-4444-8555-666666666666",
+                  kind: "set_category",
+                  bookmarkIds: [bookmarkId],
+                  category: "docs",
+                  confidence: 0.94,
+                  status: "applied",
+                  source: {
+                    engine: "jev",
+                    providerId: "typesafe",
+                    model: "jev-1.0.0",
+                    questionSetVersion: "qs-1",
+                  },
+                  createdAt: now,
+                });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error);
+              });
+            } finally {
+              database.close();
+            }
+          },
+          { dbName: DB_NAME, bookmarkId: bookmark.id },
+        );
+        await page.reload();
+        await waitForSidePanelReady(page);
+
+        // 1. Wide Side Panel with ScopePane tag counts/colors, Review chip, rich row metadata & BulkBar
+        await page.getByRole("option", { name: /Pinned article/ }).click();
+        await expect(
+          page.getByRole("toolbar", { name: "Selection actions" }),
+        ).toBeVisible();
+        await artifactShot(page, "sidepanel-wide");
+
+        // 2. MoveToDialog with folder filter and inline "+ New folder"
+        await page
+          .getByRole("toolbar", { name: "Selection actions" })
+          .getByRole("button", { name: "Move to…" })
+          .click();
+        const moveDialog = page.getByRole("dialog");
+        await expect(moveDialog).toBeVisible();
+        await moveDialog.getByRole("button", { name: "+ New folder" }).click();
+        await expect(
+          moveDialog.getByLabel("New folder name"),
+        ).toBeVisible();
+        await artifactShot(page, "move-to-dialog");
+        await page.keyboard.press("Escape");
+        await expect(moveDialog).toHaveCount(0);
+
+        // 3. EditDialog with shared TagField combobox autocomplete
+        await page
+          .getByRole("button", { name: "Actions for Pinned article" })
+          .click();
+        await page.getByRole("menuitem", { name: "Edit…" }).click();
+        const editDialog = page.getByRole("dialog");
+        await expect(editDialog).toBeVisible();
+        const editTagInput = editDialog.getByLabel("New tag name");
+        await editTagInput.focus();
+        await editTagInput.fill("fr");
+        await expect(
+          editDialog.getByTestId("tag-field-suggestions"),
+        ).toBeVisible();
+        await artifactShot(page, "edit-dialog-autocomplete");
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Escape");
+        await expect(editDialog).toHaveCount(0);
+
+        // 4. ReviewView with primary Approve button & Applied history section
+        await page
+          .getByRole("navigation", { name: "Views" })
+          .getByRole("button", { name: /^Review suggestions/ })
+          .click();
+        await expect(
+          page.getByRole("region", { name: "Auto-applied suggestions" }),
+        ).toBeVisible();
+        await artifactShot(page, "review-view-history");
+
+        // 5. Narrow Side Panel (<640px) with ScopeHeading pill trigger & search filter pills
+        await page
+          .getByRole("navigation", { name: "Views" })
+          .getByRole("button", { name: "All" })
+          .click();
+        await page.setViewportSize({ width: 380, height: 700 });
+        await expect(
+          page.getByTestId("scope-drawer-trigger"),
+        ).toBeVisible();
+        await page.getByRole("combobox", { name: "Search bookmarks" }).focus();
+        await expect(
+          page.getByTestId("search-filter-hints"),
+        ).toBeVisible();
+        await artifactShot(page, "sidepanel-narrow");
+
+        // 6. Quick-Save Popup with TagField autocomplete and PopupSearch filter hints
+        const popupPage = await openSurface(context, id, "popup");
+        await popupPage.setViewportSize({ width: 400, height: 600 });
+        await expect(popupPage.getByLabel("Title")).toBeVisible();
+        const popupTagInput = popupPage.getByLabel("New tag name");
+        await popupTagInput.focus();
+        await popupTagInput.fill("fr");
+        await expect(
+          popupPage.getByTestId("tag-field-suggestions"),
+        ).toBeVisible();
+        await artifactShot(popupPage, "popup-tag-autocomplete");
+
+        await popupPage
+          .getByRole("button", { name: "Search bookmarks" })
+          .click();
+        await expect(
+          popupPage.getByTestId("popup-search-hint"),
+        ).toBeVisible();
+        await artifactShot(popupPage, "popup-search-hints");
+        await popupPage.close();
+      }
     } finally {
       await context.close();
     }

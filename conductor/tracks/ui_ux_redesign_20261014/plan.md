@@ -118,10 +118,10 @@
 ## Phase 5: Visual Inspection, End-to-End Verification & Documentation Sync
 <!-- execution: sequential -->
 
-- [~] Task 1: Headless Chromium visual verification, E2E regressions, full CI gate & docs sync
+- [x] Task 1: Headless Chromium visual verification, E2E regressions, full CI gate & docs sync
   <!-- files: tests/e2e/dialog-visuals.spec.ts, conductor/product.md, conductor/tech-stack.md, conductor/patterns.md -->
-  - [ ] Run Playwright visual captures (`tests/e2e/dialog-visuals.spec.ts` and targeted narrow/wide sidepanel, popup, and options screenshots), inspect every rendered state with `view_media`, and fix any visual or layout defects.
-  - [ ] Run the full local gate (`npm run lint` → `npm run typecheck` → `npx vitest run` → `npm run build` → `npm run check:manifest` → `npm run check:bundle` → `npm run check:store` → `npm run check:site` → `xvfb-run -a npm run test:e2e`), close `BookmarksManager-tax`, and synchronize `conductor/{product,tech-stack,patterns}.md`.
+  - [x] Run Playwright visual captures (`tests/e2e/dialog-visuals.spec.ts` and targeted narrow/wide sidepanel, popup, and options screenshots), inspect every rendered state with `view_media`, and fix any visual or layout defects.
+  - [x] Run the full local gate (`npm run lint` → `npm run typecheck` → `npx vitest run` → `npm run build` → `npm run check:manifest` → `npm run check:bundle` → `npm run check:store` → `npm run check:site` → `xvfb-run -a npm run test:e2e`), close `BookmarksManager-tax`, and synchronize `conductor/{product,tech-stack,patterns}.md`.
 
-- [ ] Task: Conductor - User Manual Verification 'Phase 5: Visual Inspection, End-to-End Verification & Documentation Sync' (Protocol in workflow.md)
+- [x] Task: Conductor - User Manual Verification 'Phase 5: Visual Inspection, End-to-End Verification & Documentation Sync' (Protocol in workflow.md)
   <!-- depends: task1 -->
