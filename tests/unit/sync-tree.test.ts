@@ -212,6 +212,8 @@ describe("flattenTree node fields", () => {
       "Work",
     ]);
     expect(model.bookmarks.get("20")?.path).toEqual(["Mobile bookmarks"]);
+    // Sibling children under the same folder share one path array reference (P-06).
+    expect(model.bookmarks.get("11")?.path).toBe(model.bookmarks.get("12")?.path);
   });
 });
 

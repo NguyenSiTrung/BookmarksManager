@@ -11,6 +11,7 @@ import {
 } from "vitest";
 import { db } from "../../src/db/database";
 import { getMeta, listMeta, putMeta } from "../../src/db/meta";
+import { registerBookmarkListeners } from "../../src/sync/listeners";
 import { reconcileMetadata } from "../../src/sync/reconcile";
 import { Decision } from "../../src/schemas/decision";
 import { installBookmarksFake } from "../fakes/chrome-bookmarks";
@@ -275,5 +276,36 @@ describe("reconcileMetadata", () => {
 
     expect(await reconcileMetadata()).toBe(1);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips per-bookmark tombstone lookups when metaTombstones is empty (P-05)", async () => {
+    installBookmarksFake({
+      bookmarksBar: [
+        { id: "bm-1", title: "1", url: "https://1.example/" },
+        { id: "bm-2", title: "2", url: "https://2.example/" },
+        { id: "bm-3", title: "3", url: "https://3.example/" },
+      ],
+    });
+    await putMeta("bm-1", { tags: ["keep"], url: "https://1.example/" });
+    const tombstoneGetSpy = vi.spyOn(db.metaTombstones, "get");
+
+    expect(await reconcileMetadata()).toBe(0);
+    expect(tombstoneGetSpy).not.toHaveBeenCalled();
+  });
+
+  it("updates bookmarkMeta.url on chrome.bookmarks.onChanged so reconcile tombstones under the new URL (B-10)", async () => {
+    const fake = installBookmarksFake({
+      bookmarksBar: [{ id: "bm-1", title: "1", url: "https://old.example/" }],
+    });
+    const off = registerBookmarkListeners();
+    try {
+      await putMeta("bm-1", { tags: ["tracked"], url: "https://old.example/" });
+      await fake.update("bm-1", { url: "https://new.example/" });
+      await vi.waitFor(async () => {
+        expect((await getMeta("bm-1"))?.url).toBe("https://new.example/");
+      });
+    } finally {
+      off();
+    }
   });
 });

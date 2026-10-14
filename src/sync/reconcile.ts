@@ -98,7 +98,10 @@ export async function reconcileMetadata(): Promise<number> {
   // cannot be gated on meta orphans; tombstones can re-attach onto nodes
   // created while the worker slept.
   const hasDecisions = (await db.decisions.count()) > 0;
-  const hasTombstones = (await db.metaTombstones.count()) > 0;
+  const tombstoneUrls = new Set(
+    await db.metaTombstones.toCollection().primaryKeys(),
+  );
+  const hasTombstones = tombstoneUrls.size > 0;
   if (storedIds.size === 0 && !hasDecisions && !hasTombstones) {
     await refreshMetaIntegrity();
     return 0;
@@ -136,8 +139,13 @@ export async function reconcileMetadata(): Promise<number> {
   // writes only onto meta-less ids and consumes the tombstone either way
   // (a live row for the same URL is fresher data; it wins and the
   // tombstone's job is done).
-  for (const [url, id] of urlToId) {
-    await reattachTombstone(id, url);
+  if (hasTombstones) {
+    for (const url of tombstoneUrls) {
+      const id = urlToId.get(url);
+      if (id !== undefined) {
+        await reattachTombstone(id, url);
+      }
+    }
   }
 
   const orphanedIds = [...storedIds].filter((id) => !confirmedIds.has(id));

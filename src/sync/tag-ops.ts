@@ -2,20 +2,20 @@ import { db } from "../db/database";
 import {
   createTag,
   deleteTag,
-  getMeta,
+  emitMetaChanged,
   getMetaByTag,
   getTag,
   MetaRepoError,
-  patchMeta,
   recolorTag as repoRecolorTag,
   renameTag as repoRenameTag,
+  retainCorruptMetaBatch,
 } from "../db/meta";
 import type { MetaRepoErrorCode } from "../db/meta";
 import type { Category } from "../schemas/bookmark";
-import { tagNameKey } from "../schemas/meta";
-import type { TagDef } from "../schemas/meta";
+import { BookmarkMeta, tagNameKey } from "../schemas/meta";
+import type { TagDef, TagNameKey } from "../schemas/meta";
 import { pushSnapshot } from "../undo/snapshot";
-
+import { get as getBookmarks } from "./chrome-bookmarks";
 /**
  * Bulk tag and category operations over a bookmark selection, plus the
  * single-tag lifecycle ops the tag manager surfaces — thin orchestration
@@ -157,6 +157,55 @@ function toFailure(cause: unknown): TagOpsFailure {
   const message = cause instanceof Error ? cause.message : String(cause);
   return { ok: false, code: "api", message };
 }
+function isEmptyRow(fields: {
+  tags: readonly TagNameKey[];
+  category?: Category;
+  notes?: string;
+  summary?: string;
+}): boolean {
+  return (
+    fields.tags.length === 0 &&
+    fields.category === undefined &&
+    (fields.notes === undefined || fields.notes === "") &&
+    (fields.summary === undefined || fields.summary === "")
+  );
+}
+/**
+ * Best-effort lookup of bookmark URLs for `ids` outside the IDB transaction so
+ * newly created or url-less `bookmarkMeta` rows receive `url` (B-10) without
+ * holding an IndexedDB lock across Chrome IPC.
+ */
+async function resolveBookmarkUrls(
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  const urls = new Map<string, string>();
+  if (ids.length === 0) return urls;
+  try {
+    const nodes = await getBookmarks(ids.length === 1 ? ids[0]! : [...ids]);
+    for (const node of nodes) {
+      if (node.url !== undefined && node.url !== "") {
+        urls.set(node.id, node.url);
+      }
+    }
+    return urls;
+  } catch {
+    // If any id in the batch is missing from the tree, fall back per-id.
+  }
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const nodes = await getBookmarks(id);
+        const url = nodes[0]?.url;
+        if (url !== undefined && url !== "") {
+          urls.set(id, url);
+        }
+      } catch {
+        // Missing or unavailable bookmark surface — leave url unset.
+      }
+    }),
+  );
+  return urls;
+}
 
 /**
  * Add a tag to every selected bookmark. `tagName` is a DISPLAY name: its
@@ -187,18 +236,63 @@ export async function bulkAddTag(
         if (tag === undefined) throw cause;
       }
     }
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) {
+      return { ok: true, tag, created, affected: 0 };
+    }
+    const urlsById = await resolveBookmarkUrls(uniqueIds);
     let affected = 0;
-    // Read-modify-write inside one transaction: each getMeta reads the
-    // row's CURRENT committed+in-transaction state, so a concurrent op
-    // can't slip a stale whole-array rewrite between our read and write.
     await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
-      for (const id of new Set(ids)) {
-        const current = await getMeta(id);
+      const rawRows = await db.bookmarkMeta.bulkGet(uniqueIds);
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      const puts: BookmarkMeta[] = [];
+      const updatedAt = new Date().toISOString();
+      for (let i = 0; i < uniqueIds.length; i += 1) {
+        const id = uniqueIds[i];
+        if (id === undefined) continue;
+        const raw = rawRows[i];
+        let current: BookmarkMeta | undefined;
+        if (raw !== undefined) {
+          const parsedExisting = BookmarkMeta.safeParse(raw);
+          if (parsedExisting.success) {
+            current = parsedExisting.data;
+          } else {
+            corruptRows.push({ id, raw });
+          }
+        }
         if (current !== undefined && current.tags.includes(key)) continue;
-        await patchMeta(id, { tags: [...(current?.tags ?? []), key] });
+        const url = current?.url ?? urlsById.get(id);
+        const next = BookmarkMeta.safeParse({
+          id,
+          tags: [...(current?.tags ?? []), key],
+          ...(current?.category === undefined
+            ? {}
+            : { category: current.category }),
+          ...(current?.notes === undefined ? {} : { notes: current.notes }),
+          ...(current?.summary === undefined
+            ? {}
+            : { summary: current.summary }),
+          ...(url === undefined ? {} : { url }),
+          schemaVersion: 1,
+          updatedAt,
+        });
+        if (!next.success) {
+          throw new MetaRepoError(
+            "invalid_meta",
+            next.error.issues[0]?.message ?? "schema validation failed",
+          );
+        }
+        puts.push({ ...next.data, tags: [...next.data.tags] });
         affected += 1;
       }
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, "overwrite");
+      }
+      if (puts.length > 0) {
+        await db.bookmarkMeta.bulkPut(puts);
+      }
     });
+    if (affected > 0) emitMetaChanged();
     return { ok: true, tag, created, affected };
   } catch (cause) {
     return toFailure(cause);
@@ -219,20 +313,47 @@ export async function bulkRemoveTag(
   const key = tagNameKey(tag);
   if (key === "") return invalidTagName();
   try {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return { ok: true, affected: 0 };
     let affected = 0;
-    // Same transactional RMW as bulkAddTag — the read and the rewrite are
-    // atomic per selection, so concurrent ops on shared ids can't lose
-    // each other's changes.
     await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
-      for (const id of new Set(ids)) {
-        const current = await getMeta(id);
-        if (current === undefined || !current.tags.includes(key)) continue;
-        await patchMeta(id, {
-          tags: current.tags.filter((t) => t !== key),
-        });
+      const rawRows = await db.bookmarkMeta.bulkGet(uniqueIds);
+      const puts: BookmarkMeta[] = [];
+      const deletes: string[] = [];
+      const updatedAt = new Date().toISOString();
+      for (let i = 0; i < uniqueIds.length; i += 1) {
+        const id = uniqueIds[i];
+        if (id === undefined) continue;
+        const raw = rawRows[i];
+        if (raw === undefined) continue;
+        const parsedExisting = BookmarkMeta.safeParse(raw);
+        if (!parsedExisting.success) continue;
+        const current = parsedExisting.data;
+        if (!current.tags.includes(key)) continue;
+        const nextTags = current.tags.filter((t) => t !== key);
+        if (
+          isEmptyRow({
+            tags: nextTags,
+            category: current.category,
+            notes: current.notes,
+            summary: current.summary,
+          })
+        ) {
+          deletes.push(id);
+        } else {
+          puts.push({
+            ...current,
+            tags: nextTags,
+            schemaVersion: 1,
+            updatedAt,
+          });
+        }
         affected += 1;
       }
+      if (puts.length > 0) await db.bookmarkMeta.bulkPut(puts);
+      if (deletes.length > 0) await db.bookmarkMeta.bulkDelete(deletes);
     });
+    if (affected > 0) emitMetaChanged();
     return { ok: true, affected };
   } catch (cause) {
     return toFailure(cause);
@@ -251,22 +372,87 @@ export async function bulkSetCategory(
   category: Category | null,
 ): Promise<BulkSetCategoryResult> {
   try {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return { ok: true, affected: 0 };
+    const urlsById =
+      category === null ? new Map<string, string>() : await resolveBookmarkUrls(uniqueIds);
     let affected = 0;
-    // Transactional RMW as in bulkAddTag — each row is read and patched
-    // atomically, so an overlapping category/tag write can't be clobbered
-    // by a rewrite based on a stale read.
     await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
-      for (const id of new Set(ids)) {
-        const current = await getMeta(id);
-        if (category === null) {
-          if (current?.category === undefined) continue; // nothing to clear
-        } else if (current?.category === category) {
-          continue; // already in the target state
+      const rawRows = await db.bookmarkMeta.bulkGet(uniqueIds);
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      const puts: BookmarkMeta[] = [];
+      const deletes: string[] = [];
+      const updatedAt = new Date().toISOString();
+      for (let i = 0; i < uniqueIds.length; i += 1) {
+        const id = uniqueIds[i];
+        if (id === undefined) continue;
+        const raw = rawRows[i];
+        let current: BookmarkMeta | undefined;
+        if (raw !== undefined) {
+          const parsedExisting = BookmarkMeta.safeParse(raw);
+          if (parsedExisting.success) {
+            current = parsedExisting.data;
+          } else if (category !== null) {
+            corruptRows.push({ id, raw });
+          }
         }
-        await patchMeta(id, { category });
+        if (category === null) {
+          if (current?.category === undefined) continue;
+          if (
+            isEmptyRow({
+              tags: current.tags,
+              notes: current.notes,
+              summary: current.summary,
+            })
+          ) {
+            deletes.push(id);
+          } else {
+            const next: BookmarkMeta = {
+              id,
+              tags: [...current.tags],
+              ...(current.notes === undefined ? {} : { notes: current.notes }),
+              ...(current.summary === undefined
+                ? {}
+                : { summary: current.summary }),
+              ...(current.url === undefined ? {} : { url: current.url }),
+              schemaVersion: 1,
+              updatedAt,
+            };
+            puts.push(next);
+          }
+          affected += 1;
+          continue;
+        }
+        if (current?.category === category) continue;
+        const url = current?.url ?? urlsById.get(id);
+        const next = BookmarkMeta.safeParse({
+          id,
+          tags: [...(current?.tags ?? [])],
+          category,
+          ...(current?.notes === undefined ? {} : { notes: current.notes }),
+          ...(current?.summary === undefined
+            ? {}
+            : { summary: current.summary }),
+          ...(url === undefined ? {} : { url }),
+          schemaVersion: 1,
+          updatedAt,
+        });
+        if (!next.success) {
+          throw new MetaRepoError(
+            "invalid_meta",
+            next.error.issues[0]?.message ?? "schema validation failed",
+          );
+        }
+        puts.push({ ...next.data, tags: [...next.data.tags] });
         affected += 1;
       }
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, "overwrite");
+      }
+      if (puts.length > 0) await db.bookmarkMeta.bulkPut(puts);
+      if (deletes.length > 0) await db.bookmarkMeta.bulkDelete(deletes);
     });
+    if (affected > 0) emitMetaChanged();
     return { ok: true, affected };
   } catch (cause) {
     return toFailure(cause);

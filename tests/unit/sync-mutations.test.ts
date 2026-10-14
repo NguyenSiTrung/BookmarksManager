@@ -24,6 +24,7 @@ import {
   createFolder,
   moveNode,
   MutationError,
+  newMutationVerifyCache,
   removeNode,
   removeTree,
   renameFolder,
@@ -479,6 +480,36 @@ describe("moveNode", () => {
     await expectMutationError(moveNode("bm-b", { index: 1.5 }), "invalid");
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it("keeps MutationVerifyCache.nodes and parents coherent across folder/bookmark moves and removals (B-09)", async () => {
+    const cache = newMutationVerifyCache();
+
+    // Warm cache.parents for sub-a (chain: sub-a -> folder-a -> 1 -> 0)
+    await createBookmark(
+      { parentId: "sub-a", title: "Warm", url: "https://warm.example/", index: 0 },
+      cache,
+    );
+    expect(cache.parents.has("sub-a")).toBe(true);
+
+    // Move sub-a out of folder-a to BOOKMARKS_BAR_ID, then move folder-a under sub-a.
+    await moveNode("sub-a", { parentId: BOOKMARKS_BAR_ID }, cache);
+    await moveNode("folder-a", { parentId: "sub-a" }, cache);
+
+    // Now sub-a is an ancestor of folder-a. Moving sub-a into folder-a must
+    // reject as a cycle ("invalid") rather than trusting the stale cached chain.
+    await expectMutationError(
+      moveNode("sub-a", { parentId: "folder-a" }, cache),
+      "invalid",
+    );
+
+    // Moving a bookmark twice with the same cache updates cached parentId.
+    await moveNode("bm-b", { parentId: OTHER_BOOKMARKS_ID, index: 0 }, cache);
+    expect(cache.nodes.get("bm-b")?.parentId).toBe(OTHER_BOOKMARKS_ID);
+
+    // Removing a node with cache evicts it from cache.nodes.
+    await removeNode("bm-b", cache);
+    expect(cache.nodes.has("bm-b")).toBe(false);
+  });
 });
 
 describe("removeNode / removeTree", () => {
@@ -542,6 +573,7 @@ describe("metadata sidecar", () => {
       category: "docs",
       notes: "n",
     });
+    expect(meta?.url).toBe("https://tagged.example/");
   });
 
   it("writes meta for createFolder and none when meta is not given", async () => {
@@ -568,6 +600,9 @@ describe("metadata sidecar", () => {
       notes: "stay",
       category: "docs",
     });
+    expect((await getMeta("bm-a1"))?.url).toBe("https://a1.example/");
+    await updateBookmark("bm-a1", { url: "https://a1.example/updated" });
+    expect((await getMeta("bm-a1"))?.url).toBe("https://a1.example/updated");
     await renameFolder("folder-a", "F", { notes: "folder note" });
     expect((await getMeta("folder-a"))?.notes).toBe("folder note");
   });

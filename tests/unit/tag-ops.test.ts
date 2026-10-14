@@ -15,6 +15,7 @@ import {
   getMeta,
   getTag,
   listTags,
+  META_CHANGED_CHANNEL,
   putMeta,
 } from "../../src/db/meta";
 import type { Category } from "../../src/schemas/bookmark";
@@ -163,6 +164,30 @@ describe("bulkAddTag", () => {
     const tags = (await getMeta("bm-a"))?.tags ?? [];
     expect([...tags].sort()).toEqual(["first", "second"]);
   });
+
+  it("batches bulkAddTag into one bulkGet + bulkPut with one META_CHANGED_CHANNEL emit and populates url (P-06, B-10)", async () => {
+    const messages: unknown[] = [];
+    const channel = new BroadcastChannel(META_CHANGED_CHANNEL);
+    channel.onmessage = (ev) => messages.push(ev.data);
+
+    const getSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const bulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const bulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+    try {
+      const res = expectOk(await bulkAddTag(["bm-a", "bm-b", "bm-c"], "Batched"));
+      expect(res.affected).toBe(3);
+      expect(getSpy).not.toHaveBeenCalled();
+      expect(bulkGetSpy).toHaveBeenCalledTimes(1);
+      expect(bulkPutSpy).toHaveBeenCalledTimes(1);
+      expect((await getMeta("bm-a"))?.url).toBe("https://a.example/");
+      expect((await getMeta("bm-b"))?.url).toBe("https://b.example/");
+      await vi.waitFor(() => {
+        expect(messages).toHaveLength(1);
+      });
+    } finally {
+      channel.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -229,6 +254,24 @@ describe("bulkRemoveTag", () => {
     // "fresh": the remove saw and stripped "doomed", the add appended.
     expect((await getMeta("bm-a"))?.tags).toEqual(["fresh"]);
   });
+
+  it("batches bulkRemoveTag into one bulkGet + bulkPut/bulkDelete (P-06)", async () => {
+    await putMeta("bm-a", { tags: ["rm", "keep"], url: "https://a.example/" });
+    await putMeta("bm-b", { tags: ["rm"], url: "https://b.example/" });
+    const getSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const bulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const bulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+    const bulkDeleteSpy = vi.spyOn(db.bookmarkMeta, "bulkDelete");
+
+    const res = expectOk(await bulkRemoveTag(["bm-a", "bm-b"], "rm"));
+    expect(res.affected).toBe(2);
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(bulkGetSpy).toHaveBeenCalledTimes(1);
+    expect(bulkPutSpy).toHaveBeenCalledTimes(1);
+    expect(bulkDeleteSpy).toHaveBeenCalledTimes(1);
+    expect((await getMeta("bm-a"))?.url).toBe("https://a.example/");
+    expect(await getMeta("bm-b")).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -280,6 +323,20 @@ describe("bulkSetCategory", () => {
     ).toMatchObject({ ok: false, code: "invalid_meta" });
     expect(await getMeta("bm-a")).toMatchObject({ notes: "keep" });
     expect((await getMeta("bm-a"))?.category).toBeUndefined();
+  });
+
+  it("batches bulkSetCategory into one bulkGet + bulkPut and populates url (P-06, B-10)", async () => {
+    const getSpy = vi.spyOn(db.bookmarkMeta, "get");
+    const bulkGetSpy = vi.spyOn(db.bookmarkMeta, "bulkGet");
+    const bulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+
+    const res = expectOk(await bulkSetCategory(["bm-a", "bm-b"], "docs"));
+    expect(res.affected).toBe(2);
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(bulkGetSpy).toHaveBeenCalledTimes(1);
+    expect(bulkPutSpy).toHaveBeenCalledTimes(1);
+    expect((await getMeta("bm-a"))?.url).toBe("https://a.example/");
+    expect((await getMeta("bm-b"))?.url).toBe("https://b.example/");
   });
 });
 

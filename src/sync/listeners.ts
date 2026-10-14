@@ -1,4 +1,5 @@
 import { db } from "../db/database";
+import { getMeta, patchMeta } from "../db/meta";
 import {
   reattachTombstone,
   tombstoneMetaByIds,
@@ -146,7 +147,20 @@ const handleCreated: OnCreatedListener = (id, node) => {
   invalidateSearchIndex();
 };
 
-const handleChanged: OnChangedListener = () => {
+const handleChanged: OnChangedListener = (id, changeInfo) => {
+  if (changeInfo.url !== undefined) {
+    const nextUrl = changeInfo.url;
+    void getMeta(id)
+      .then((existing) => {
+        if (existing !== undefined && existing.url !== nextUrl) {
+          return patchMeta(id, { url: nextUrl });
+        }
+        return undefined;
+      })
+      .catch(() => {
+        // Best-effort; startup reconcile converges on failure.
+      });
+  }
   invalidateSearchIndex();
 };
 

@@ -1,4 +1,4 @@
-import { MetaRepoError, patchMeta, putMeta } from "../db/meta";
+import { getMeta, MetaRepoError, patchMeta, putMeta } from "../db/meta";
 import type { MetaPatch } from "../db/meta";
 import {
   create as apiCreate,
@@ -403,10 +403,18 @@ export async function createBookmark(
   };
   if (options.index !== undefined) details.index = options.index;
   const created = await apiCall(() => apiCreate(details), "create");
+  cache?.nodes.set(created.id, created);
   const count = cache?.childCounts.get(parentId);
   if (count !== undefined) cache?.childCounts.set(parentId, count + 1);
   if (options.meta !== undefined) {
-    await writeMeta(created.id, options.meta, "put");
+    await writeMeta(
+      created.id,
+      {
+        ...options.meta,
+        ...(options.meta.url === undefined ? { url: options.url } : {}),
+      },
+      "put",
+    );
   }
   return created;
 }
@@ -430,6 +438,8 @@ export async function createFolder(
   };
   if (options.index !== undefined) details.index = options.index;
   const created = await apiCall(() => apiCreate(details), "create");
+  cache?.nodes.set(created.id, created);
+  cache?.childCounts.set(created.id, 0);
   const count = cache?.childCounts.get(parentId);
   if (count !== undefined) cache?.childCounts.set(parentId, count + 1);
   if (options.meta !== undefined) {
@@ -462,8 +472,23 @@ export async function updateBookmark(
     );
   }
   const updated = await apiCall(() => apiUpdate(id, changes), "update");
+  const effectiveUrl = changes.url ?? updated.url ?? node.url;
   if (meta !== undefined) {
-    await writeMeta(id, meta, "patch");
+    await writeMeta(
+      id,
+      {
+        ...meta,
+        ...(meta.url === undefined && effectiveUrl !== undefined
+          ? { url: effectiveUrl }
+          : {}),
+      },
+      "patch",
+    );
+  } else if (changes.url !== undefined) {
+    const existing = await getMeta(id);
+    if (existing !== undefined && existing.url !== changes.url) {
+      await writeMeta(id, { url: changes.url }, "patch");
+    }
   }
   return updated;
 }
@@ -536,13 +561,19 @@ export async function moveNode(
     await assertIndexInRange(destination.index, destParentId, removed, cache);
   }
   const moved = await apiCall(() => apiMove(id, destination), "move");
-  if (cache !== undefined && destParentId !== node.parentId) {
-    const from = cache.childCounts.get(node.parentId ?? "");
-    if (from !== undefined) {
-      cache.childCounts.set(node.parentId ?? "", from - 1);
+  if (cache !== undefined) {
+    cache.nodes.set(id, moved);
+    if (destParentId !== node.parentId) {
+      const from = cache.childCounts.get(node.parentId ?? "");
+      if (from !== undefined) {
+        cache.childCounts.set(node.parentId ?? "", Math.max(0, from - 1));
+      }
+      const to = cache.childCounts.get(destParentId ?? "");
+      if (to !== undefined) cache.childCounts.set(destParentId ?? "", to + 1);
+      if (isFolder(node)) {
+        cache.parents.clear();
+      }
     }
-    const to = cache.childCounts.get(destParentId ?? "");
-    if (to !== undefined) cache.childCounts.set(destParentId ?? "", to + 1);
   }
   return moved;
 }
@@ -558,8 +589,11 @@ export async function moveNode(
  * managed nodes/descendants `managed`, unknown ids `not_found`. Meta row
  * cleanup is the onRemoved cascade's job (`src/sync/listeners.ts`).
  */
-export async function removeNode(id: string): Promise<void> {
-  const node = await writableNode(id, "remove");
+export async function removeNode(
+  id: string,
+  cache?: MutationVerifyCache,
+): Promise<void> {
+  const node = await writableNode(id, "remove", cache);
   if (isFolder(node)) {
     const children = await apiCall(() => apiGetChildren(id), "getChildren");
     if (children.length > 0) {
@@ -571,6 +605,17 @@ export async function removeNode(id: string): Promise<void> {
     }
   }
   await apiCall(() => apiRemove(id), "remove");
+  if (cache !== undefined) {
+    cache.nodes.delete(id);
+    const from = cache.childCounts.get(node.parentId ?? "");
+    if (from !== undefined) {
+      cache.childCounts.set(node.parentId ?? "", Math.max(0, from - 1));
+    }
+    if (isFolder(node)) {
+      cache.parents.delete(id);
+      cache.childCounts.delete(id);
+    }
+  }
 }
 
 /**
@@ -578,7 +623,38 @@ export async function removeNode(id: string): Promise<void> {
  * semantics (also works on leaf bookmarks). Same root/managed/not_found
  * guards as {@link removeNode}.
  */
-export async function removeTree(id: string): Promise<void> {
-  await writableNode(id, "remove");
+export async function removeTree(
+  id: string,
+  cache?: MutationVerifyCache,
+): Promise<void> {
+  const node = await writableNode(id, "remove", cache);
   await apiCall(() => apiRemoveTree(id), "removeTree");
+  if (cache !== undefined) {
+    const from = cache.childCounts.get(node.parentId ?? "");
+    if (from !== undefined) {
+      cache.childCounts.set(node.parentId ?? "", Math.max(0, from - 1));
+    }
+    const removedIds = new Set<string>([id]);
+    if (isFolder(node)) {
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const [cachedId, cachedNode] of cache.nodes) {
+          if (
+            !removedIds.has(cachedId) &&
+            cachedNode.parentId !== undefined &&
+            removedIds.has(cachedNode.parentId)
+          ) {
+            removedIds.add(cachedId);
+            grew = true;
+          }
+        }
+      }
+      cache.parents.clear();
+    }
+    for (const deadId of removedIds) {
+      cache.nodes.delete(deadId);
+      cache.childCounts.delete(deadId);
+    }
+  }
 }

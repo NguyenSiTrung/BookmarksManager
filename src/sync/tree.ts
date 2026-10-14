@@ -83,9 +83,17 @@ export interface FlattenedTree {
  * order is trusted as-is.
  */
 function orderedChildren(node: BookmarksTreeNode): BookmarksTreeNode[] {
-  const children = node.children ?? [];
-  if (children.every((child) => child.index !== undefined)) {
-    return [...children].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  const children = node.children;
+  if (children === undefined || children.length <= 1) return children ?? [];
+  for (let i = 1; i < children.length; i += 1) {
+    const prev = children[i - 1]?.index;
+    const curr = children[i]?.index;
+    if (prev === undefined || curr === undefined) return children;
+    if (prev > curr) {
+      return children.every((child) => child.index !== undefined)
+        ? [...children].sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+        : children;
+    }
   }
   return children;
 }
@@ -114,21 +122,23 @@ export function flattenTree(tree: BookmarksTreeNode[]): FlattenedTree {
       ...(node.dateAdded === undefined ? {} : { dateAdded: node.dateAdded }),
     };
 
+    if (node.url !== undefined) {
+      bookmarks.set(node.id, { ...base, kind: "bookmark", url: node.url });
+      return;
+    }
+
     const children = orderedChildren(node);
+    folders.set(node.id, {
+      ...base,
+      kind: "folder",
+      childIds: children.map((child) => child.id),
+    });
+    if (children.length === 0) return;
+
     // The synthetic root never contributes its (empty) title to descendants'
     // paths; every other node's title extends the path of its children.
     const childPath =
       node.id === ROOT_NODE_ID ? path : [...path, node.title];
-
-    if (node.url === undefined) {
-      folders.set(node.id, {
-        ...base,
-        kind: "folder",
-        childIds: children.map((child) => child.id),
-      });
-    } else {
-      bookmarks.set(node.id, { ...base, kind: "bookmark", url: node.url });
-    }
 
     for (const child of children) {
       visit(child, childPath, depth + 1, isManaged);
