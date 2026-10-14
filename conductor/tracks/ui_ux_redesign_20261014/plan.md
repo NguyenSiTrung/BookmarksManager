@@ -23,12 +23,12 @@
 ## Phase 1: Shared Primitives — `TagField` Autocomplete & `MoveToDialog` Upgrade
 <!-- execution: parallel -->
 
-- [ ] Task 1: Shared `TagField` with `TagDef` combobox autocomplete & colored chips (`UX-01`)
+- [x] Task 1: Shared `TagField` with `TagDef` combobox autocomplete & colored chips (`UX-01`)
   <!-- files: src/ui/components/tag-field.tsx, src/entrypoints/popup/TagField.tsx, tests/components/tag-field.test.tsx -->
-  - [ ] Write failing component tests in `tests/components/tag-field.test.tsx` verifying: (1) typing in `TagField` with `availableTags` renders matching unselected tags (`data-testid="tag-field-suggestions"`) with color dots; (2) `ArrowDown`/`ArrowUp` and `Enter` or `MouseDown` accept a highlighted suggestion and clear input; (3) `Enter` or `,` with no highlighted suggestion commits the typed text; (4) `Escape` closes suggestions without losing input focus; and (5) staged chips render their `color` from `availableTags`.
-  - [ ] Implement `src/ui/components/tag-field.tsx` and re-export it from `src/entrypoints/popup/TagField.tsx`.
+  - [x] Write failing component tests in `tests/components/tag-field.test.tsx` verifying: (1) typing in `TagField` with `availableTags` renders matching unselected tags (`data-testid="tag-field-suggestions"`) with color dots; (2) `ArrowDown`/`ArrowUp` and `Enter` or `MouseDown` accept a highlighted suggestion and clear input; (3) `Enter` or `,` with no highlighted suggestion commits the typed text; (4) `Escape` closes suggestions without losing input focus; and (5) staged chips render their `color` from `availableTags`.
+  - [x] Implement `src/ui/components/tag-field.tsx` and re-export it from `src/entrypoints/popup/TagField.tsx`.
 
-- [ ] Task 2: `MoveToDialog` folder filter input & inline `+ New folder` creation (`UX-03`)
+- [~] Task 2: `MoveToDialog` folder filter input & inline `+ New folder` creation (`UX-03`)
   <!-- files: src/entrypoints/sidepanel/MoveToDialog.tsx, tests/components/move-to-dialog.test.tsx -->
   - [ ] Write failing component tests in `tests/components/move-to-dialog.test.tsx` verifying: (1) typing in `"Filter folders"` narrows destination folder buttons case-insensitively by label; (2) clicking `"+ New folder"` opens an inline folder name input, creates the folder under the selected parent (or `"Bookmarks bar"` default) via `createFolder`, selects the newly created folder as the destination, and enables immediate move.
   - [ ] Implement folder filtering and inline subfolder creation in `src/entrypoints/sidepanel/MoveToDialog.tsx`.

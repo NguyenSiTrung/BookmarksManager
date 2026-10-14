@@ -13,3 +13,13 @@ Patterns, gotchas, and context discovered during implementation.
 ---
 
 <!-- Learnings from implementation will be appended below -->
+
+## [2026-10-14 08:06] - Phase 1 Task 1: Shared `TagField` with `TagDef` combobox autocomplete & colored chips (`UX-01`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Extracted `TagField` into `src/ui/components/tag-field.tsx` (with compatibility re-export from `src/entrypoints/popup/TagField.tsx`), adding optional `availableTags?: readonly TagDef[]` combobox autocomplete (`data-testid="tag-field-suggestions"`), keyboard navigation (`ArrowDown`/`ArrowUp`/`Enter`/`Escape`), `MouseDown` acceptance, and chip color resolution from `availableTags`.
+- **Files changed:** `src/ui/components/tag-field.tsx`, `src/entrypoints/popup/TagField.tsx`, `tests/components/tag-field.test.tsx`
+- **Learnings:**
+  - Patterns: Gating suggestion popup visibility on `(input.trim() !== "" || arrowOpened)` prevents a bare focus on an empty `TagField` from emitting `role="option"` elements that could collide with outer listboxes or popup suggestion tests, while still opening on typing or `ArrowDown`.
+  - Gotchas: Wrapping `onCommit()` in an arrow callback on the inline Add button prevents React's `MouseEvent` from being passed as the optional `label?: string` parameter.
+---
+
