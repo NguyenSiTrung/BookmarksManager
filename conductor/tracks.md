@@ -52,6 +52,5 @@ This file tracks major development tracks.
 
 ---
 
-## [x] Track: UI/UX Refactor & Ergonomics Redesign
-*Link: [./conductor/tracks/ui_ux_redesign_20261014/](./conductor/tracks/ui_ux_redesign_20261014/)*
+<!-- Archived: 2026-10-14 — UI/UX Refactor & Ergonomics Redesign completed: all 13 UX requirements (UX-01–UX-13) delivered across 5 phases — shared TagField with TagDef combobox autocomplete & colored chips across Popup/EditDialog/BulkBar, MoveToDialog folder filter & inline + New folder creation, BookmarkList one-click Open button & rich metadata cues (colored tag dots, note/summary badges, parent folder context), ScopePane tag counts & colors, narrow-mode ScopeHeading pill trigger & ViewChips Review promotion, QueryInput/SearchBar/TopBar polish (leading SearchIcon, Clear search button, filter-prefix pills, ⌘K Command palette shortcut), compact BulkBar selection pill, SummaryDialog ConsentFacts cards & Copy summary, ReviewView primary Approve styling & collapsible Applied history with Undo (BookmarksManager-tax), Popup search/tag smoothing, and Options ProviderSetup inline analysis-consent status — full gate green (169 unit/component files / 3064 tests, 49 e2e) (see conductor/archive/ui_ux_redesign_20261014/) -->
 
