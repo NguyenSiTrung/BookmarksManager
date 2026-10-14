@@ -33,6 +33,7 @@ import {
   listInterruptedImports,
   resumeImport,
   writeImport,
+  type WriteImportResult,
 } from "../../src/io/import-write";
 import { parseNetscape } from "../../src/io/netscape";
 import type { TagDef } from "../../src/schemas/meta";
@@ -1305,7 +1306,9 @@ describe("writeImport — I01 resumable import", () => {
       now: IMPORT_NOW,
       onProgress: async ({ done }) => {
         if (done === 2) {
-          importId = (await listInterruptedImports())[0]!.id;
+          // An active import carries a live claim, so listInterruptedImports()
+          // filters it out — read the running row's id from db.importStates.
+          importId = (await db.importStates.toArray())[0]!.id;
           await cancelImport(importId);
         }
       },
@@ -1397,5 +1400,185 @@ describe("writeImport — I01 resumable import", () => {
     expect(result.summary?.importRootId).not.toBe("");
     const removed = await removeTree(result.summary!.importRootId);
     expect(removed).toBeUndefined(); // removeTree resolves; no throw
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-03, B-16b, P-07 — claim/cancel transactional safety, queue validation,
+// MutationVerifyCache + batched checkpoints & meta writes
+// ---------------------------------------------------------------------------
+
+describe("writeImport — B-03, B-16b, P-07 hardening", () => {
+  const forest = (): ImportItem[] => [
+    {
+      kind: "folder",
+      title: "outer",
+      children: [
+        bm("b1", "https://b1.example/"),
+        bm("b2", "https://b2.example/"),
+      ],
+    },
+    bm("b3", "https://b3.example/"),
+    bm("b4", "https://b4.example/"),
+  ];
+
+  it("B-03: writeImport stamps claimedBy on the initial state so listInterruptedImports hides active imports and resumeImport reports already_running", async () => {
+    let midRunInterruptedCount = -1;
+    let midRunResumeResult: WriteImportResult | undefined;
+    const res = await writeImport(forest(), {
+      now: IMPORT_NOW,
+      onProgress: async ({ done }) => {
+        if (done === 1) {
+          // An active writeImport must have a live claimedBy, so
+          // listInterruptedImports() excludes it while it is running.
+          const listed = await listInterruptedImports();
+          midRunInterruptedCount = listed.length;
+          const rawRows = await db.importStates.toArray();
+          expect(rawRows).toHaveLength(1);
+          expect(rawRows[0]?.claimedBy).toBeDefined();
+          midRunResumeResult = await resumeImport(rawRows[0]!.id, {
+            now: IMPORT_NOW,
+          });
+        }
+      },
+    });
+    expect(res.ok).toBe(true);
+    expect(midRunInterruptedCount).toBe(0);
+    expect(midRunResumeResult).toMatchObject({
+      ok: false,
+      code: "already_running",
+    });
+  });
+
+  it("B-03: cancelImport during an in-flight item write is never overwritten by persistState", async () => {
+    const originalCreate = fake.create.bind(fake);
+    let cancelledDuringCreate = false;
+    vi.spyOn(fake, "create").mockImplementation(async (details) => {
+      const created = await originalCreate(details);
+      if (details.title === "b1" && !cancelledDuringCreate) {
+        cancelledDuringCreate = true;
+        const rows = await db.importStates.toArray();
+        expect(rows).toHaveLength(1);
+        await cancelImport(rows[0]!.id);
+      }
+      return created;
+    });
+
+    const res = await writeImport(forest(), { now: IMPORT_NOW });
+    expect(cancelledDuringCreate).toBe(true);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.code).toBe("cancelled");
+    expect(await db.importStates.count()).toBe(0);
+    expect(await db.importQueues.count()).toBe(0);
+  });
+
+  it("B-16b: writeImport validates the flattened queue BEFORE creating the Chrome root folder and returns a failure result instead of throwing", async () => {
+    const createSpy = vi.spyOn(fake, "create");
+    const invalidPlan = {
+      folders: 0,
+      bookmarks: 1,
+      duplicatesSkipped: 1,
+      invalid: 0,
+      items: [bm("a", "https://a.example/")],
+      skipped: [
+        {
+          url: "https://dup.example/",
+          title: "dup",
+          existingId: "", // violates ImportStateSkipped.existingId.min(1)
+        },
+      ],
+    };
+
+    const res = await writeImport(invalidPlan, { now: IMPORT_NOW });
+    expect(res.ok).toBe(false);
+    // Must not have created an orphan "Imported ..." folder in Chrome!
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  it("B-16b: resumeImport validates the stored importQueues row with ImportQueueRow.safeParse and returns state_lost when corrupt", async () => {
+    const nowIso = new Date().toISOString();
+    const oldIso = new Date(Date.now() - 120_000).toISOString();
+    await db.importStates.put({
+      id: "corrupt-q",
+      status: "running",
+      importRootId: "2",
+      title: IMPORT_TITLE,
+      cursor: 0,
+      total: 1,
+      folderIds: {},
+      foldersCreated: 0,
+      bookmarksCreated: 0,
+      tagsCreated: 0,
+      failureCount: 0,
+      failures: [],
+      tagDefsDone: false,
+      skippedDone: false,
+      duplicatesSkipped: 0,
+      invalidSkipped: 0,
+      createdAt: nowIso,
+      updatedAt: oldIso,
+    });
+    // Put a schema-invalid queue row directly into IDB.
+    await db.importQueues.put({
+      id: "corrupt-q",
+      items: "not-an-array",
+    } as unknown as never);
+
+    const res = await resumeImport("corrupt-q", { now: IMPORT_NOW });
+    expect(res).toMatchObject({
+      ok: false,
+      code: "state_lost",
+    });
+  });
+
+  it("P-07: driveImport uses MutationVerifyCache, batches persistState checkpoints, and batches metadata writes + mergeSkippedDuplicates", async () => {
+    const items: ImportItem[] = [];
+    for (let i = 0; i < 60; i += 1) {
+      items.push(
+        bm(`bm-${i}`, `https://bm-${i}.example/`, {
+          tags: ["batch-tag"],
+          notes: `note-${i}`,
+        }),
+      );
+    }
+    const getSpy = vi.spyOn(fake, "get");
+    const statePutSpy = vi.spyOn(db.importStates, "put");
+    const metaBulkPutSpy = vi.spyOn(db.bookmarkMeta, "bulkPut");
+    const metaPutSpy = vi.spyOn(db.bookmarkMeta, "put");
+
+    const res = await writeImport(items, { now: IMPORT_NOW });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.summary.bookmarksCreated).toBe(60);
+
+    // With MutationVerifyCache, fake.get is called only to verify the parent
+    // chain once (not 60+ times for every single bookmark).
+    expect(getSpy.mock.calls.length).toBeLessThanOrEqual(5);
+
+    // With IMPORT_CHECKPOINT_BATCH = 25, persistState is called at initial +
+    // tagDefs + every 25 items (25, 50, 60) + skippedDone — far fewer than 60.
+    expect(statePutSpy.mock.calls.length).toBeLessThanOrEqual(10);
+
+    // Metadata writes use bulkPut in batches rather than 60 individual put calls.
+    expect(metaBulkPutSpy).toHaveBeenCalled();
+    expect(metaPutSpy).not.toHaveBeenCalled();
+
+    // Spot-check that metadata and URL were stored properly.
+    const root = await subtree(res.summary.importRootId);
+    const first = findByTitle(root, "bm-0");
+    const last = findByTitle(root, "bm-59");
+    expect(first).toBeDefined();
+    expect(last).toBeDefined();
+    expect(await getMeta(first!.id)).toMatchObject({
+      tags: ["batch-tag"],
+      notes: "note-0",
+      url: "https://bm-0.example/",
+    });
+    expect(await getMeta(last!.id)).toMatchObject({
+      tags: ["batch-tag"],
+      notes: "note-59",
+      url: "https://bm-59.example/",
+    });
   });
 });

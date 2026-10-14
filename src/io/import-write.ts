@@ -1,23 +1,31 @@
-import { createTag, getMeta, getTag, patchMeta, putMeta } from "../db/meta";
+import {
+  createTag,
+  emitMetaChanged,
+  getTag,
+  retainCorruptMetaBatch,
+} from "../db/meta";
 import { db } from "../db/database";
 import {
+  ImportQueueRow,
   ImportState,
   ImportStateItem,
   MAX_PERSISTED_IMPORT_FAILURES,
-  type ImportQueueRow,
   type ImportStateMeta,
   type ImportStateSkipped,
 } from "../schemas/import-state";
-import { tagNameKey, type TagDef } from "../schemas/meta";
+import { BookmarkMeta, tagNameKey, type TagDef } from "../schemas/meta";
 import {
   OTHER_BOOKMARKS_ID,
   get as getBookmarkNodes,
   type BookmarksTreeNode,
 } from "../sync/chrome-bookmarks";
-import { createBookmark, createFolder } from "../sync/mutations";
+import {
+  createBookmark,
+  createFolder,
+  newMutationVerifyCache,
+} from "../sync/mutations";
 import type { ImportItem, ImportMeta, ImportPlan } from "./import-plan";
 import { isBlockedScheme } from "./netscape";
-
 /**
  * Import writer — the write half of the local-file import flow. Consumes the
  * preview {@link ImportPlan} from `planImport` (or a raw {@link ImportItem}
@@ -209,35 +217,108 @@ function sanitizeImportTags(
   return out;
 }
 
+/** Number of items written between cursor/metadata checkpoints in `driveImport`. */
+const IMPORT_CHECKPOINT_BATCH = 25;
+
+interface PendingMetaWrite {
+  id: string;
+  item: {
+    kind: "folder" | "bookmark";
+    title: string;
+    url?: string;
+    meta?: ImportMeta | ImportStateMeta;
+  };
+}
+
+
 /**
- * Meta sidecar for one created node. Errors are recorded as `meta` failures —
- * the node itself already exists and still counts as created (no rollback,
- * matching the mutations service's own sidecar policy).
+ * Flush buffered metadata sidecars in a single IndexedDB transaction with one
+ * `emitMetaChanged()` broadcast. Errors are recorded per item as `meta`
+ * failures — created Chrome nodes stay in place (matching `putMeta` policy).
  */
-async function writeMeta(
-  item: { kind: "folder" | "bookmark"; title: string; url?: string; meta?: ImportMeta | ImportStateMeta },
-  id: string,
+async function flushPendingMeta(
+  pending: PendingMetaWrite[],
   record: (failure: ImportFailure) => void,
 ): Promise<void> {
-  const meta = item.meta;
-  if (meta === undefined || !hasMeta(meta)) return;
-  const tags = sanitizeImportTags(meta.tags).map((t) => t.key);
-  try {
-    await putMeta(id, {
-      ...(meta.tags === undefined ? {} : { tags }),
+  if (pending.length === 0) return;
+  const batch = pending.splice(0, pending.length);
+  const candidates: {
+    title: string;
+    row: BookmarkMeta;
+  }[] = [];
+  const updatedAt = new Date().toISOString();
+  for (const { id, item } of batch) {
+    const meta = item.meta;
+    if (meta === undefined || !hasMeta(meta)) continue;
+    const tags = sanitizeImportTags(meta.tags).map((t) => t.key);
+    const notes = meta.notes === "" ? undefined : meta.notes;
+    const summary = meta.summary === "" ? undefined : meta.summary;
+    const url =
+      item.kind === "bookmark" && item.url !== "" ? item.url : undefined;
+    const parsed = BookmarkMeta.safeParse({
+      id,
+      tags,
       ...(meta.category === undefined ? {} : { category: meta.category }),
-      ...(meta.notes === undefined ? {} : { notes: meta.notes }),
-      ...(meta.summary === undefined ? {} : { summary: meta.summary }),
-      // D12: record the node's URL so a later remove→recreate re-attaches
-      // and undo's id+url check can tell a re-used id apart.
-      ...(item.kind === "bookmark" ? { url: item.url } : {}),
+      ...(notes === undefined ? {} : { notes }),
+      ...(summary === undefined ? {} : { summary }),
+      ...(url === undefined ? {} : { url }),
+      schemaVersion: 1,
+      updatedAt,
     });
-  } catch (cause) {
-    record({
-      kind: "meta",
+    if (!parsed.success) {
+      record({
+        kind: "meta",
+        title: item.title,
+        message:
+          parsed.error.issues[0]?.message ?? "schema validation failed",
+      });
+      continue;
+    }
+    if (
+      parsed.data.tags.length === 0 &&
+      parsed.data.category === undefined &&
+      (parsed.data.notes === undefined || parsed.data.notes === "") &&
+      (parsed.data.summary === undefined || parsed.data.summary === "")
+    ) {
+      continue;
+    }
+    candidates.push({
       title: item.title,
-      message: detail(cause),
+      row: { ...parsed.data, tags: [...parsed.data.tags] },
     });
+  }
+  if (candidates.length === 0) return;
+  try {
+    const ids = candidates.map((c) => c.row.id);
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+      const existingRaw = await db.bookmarkMeta.bulkGet(ids);
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      for (let i = 0; i < ids.length; i += 1) {
+        const id = ids[i];
+        const raw = existingRaw[i];
+        if (
+          id !== undefined &&
+          raw !== undefined &&
+          !BookmarkMeta.safeParse(raw).success
+        ) {
+          corruptRows.push({ id, raw });
+        }
+      }
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, "overwrite");
+      }
+      await db.bookmarkMeta.bulkPut(candidates.map((c) => c.row));
+    });
+    emitMetaChanged();
+  } catch (cause) {
+    const msg = detail(cause);
+    for (const c of candidates) {
+      record({
+        kind: "meta",
+        title: c.title,
+        message: msg,
+      });
+    }
   }
 }
 
@@ -308,10 +389,29 @@ function summaryFromState(state: ImportState): ImportSummary {
   };
 }
 
-/** Zod-parse + put — a corrupt row must never be written silently. */
-async function persistState(state: ImportState): Promise<void> {
-  state.updatedAt = new Date().toISOString();
-  await db.importStates.put(ImportState.parse(state));
+/**
+ * Transactional conditional state update (B-03): never resurrects a deleted or
+ * cancelled row and never overwrites a row claimed by a different driver.
+ */
+async function persistState(
+  state: ImportState,
+): Promise<"ok" | "cancelled" | "superseded"> {
+  return db.transaction("rw", db.importStates, async () => {
+    const current = await db.importStates.get(state.id);
+    if (current === undefined || current.status === "cancelled") {
+      return "cancelled";
+    }
+    if (
+      current.claimedBy !== undefined &&
+      state.claimedBy !== undefined &&
+      current.claimedBy !== state.claimedBy
+    ) {
+      return "superseded";
+    }
+    state.updatedAt = new Date().toISOString();
+    await db.importStates.put(ImportState.parse(state));
+    return "ok";
+  });
 }
 
 /**
@@ -387,44 +487,133 @@ async function mergeSkippedDuplicates(
   skippedList: readonly ImportStateSkipped[],
   state: ImportState,
 ): Promise<void> {
+  const candidates: ImportStateSkipped[] = [];
   for (const skipped of skippedList) {
     if (skipped.existingId === undefined || skipped.meta === undefined) {
       continue;
     }
     try {
       // Liveness: a node deleted between plan and write must not gain a
-      // dangling meta row (patchMeta lazily creates rows for missing ids).
+      // dangling meta row.
       if ((await getBookmarkNodes(skipped.existingId)).length === 0) {
         continue;
       }
-      const existing = await getMeta(skipped.existingId);
-      const tags = sanitizeImportTags(skipped.meta.tags).map((t) => t.key);
-      const mergedTags = [
-        ...(existing?.tags ?? []),
-        ...tags.filter((k) => !(existing?.tags ?? []).includes(k)),
-      ];
-      await patchMeta(skipped.existingId, {
-        ...(mergedTags.length === 0 ? {} : { tags: mergedTags }),
-        ...(existing?.category === undefined &&
-        skipped.meta.category !== undefined
-          ? { category: skipped.meta.category }
-          : {}),
-        ...((existing?.notes === undefined || existing.notes === "") &&
-        skipped.meta.notes !== undefined
-          ? { notes: skipped.meta.notes }
-          : {}),
-        // `summary` deliberately does NOT merge here: the spec's merge list
-        // is tags/category/notes only, and a file's summary is often
-        // machine-generated — attaching it to an existing library bookmark
-        // would overwrite user-curated context with stale AI text. The
-        // plan-time sibling merge keeps it because both sides are the
-        // file's own data.
-      });
+      candidates.push(skipped);
     } catch (cause) {
       recordFailure(state, {
         kind: "meta",
         title: skipped.title,
         message: `merge into duplicate ${JSON.stringify(skipped.url)}: ${detail(cause)}`,
+      });
+    }
+  }
+  if (candidates.length === 0) return;
+
+  const uniqueIds = [
+    ...new Set(
+      candidates
+        .map((s) => s.existingId)
+        .filter((id): id is string => id !== undefined),
+    ),
+  ];
+  try {
+    let wroteAny = false;
+    await db.transaction("rw", db.bookmarkMeta, db.corruptMeta, async () => {
+      const rawRows = await db.bookmarkMeta.bulkGet(uniqueIds);
+      const byId = new Map<string, BookmarkMeta | undefined>();
+      const corruptRows: { id: string; raw: unknown }[] = [];
+      for (let i = 0; i < uniqueIds.length; i += 1) {
+        const id = uniqueIds[i];
+        if (id === undefined) continue;
+        const raw = rawRows[i];
+        if (raw === undefined) {
+          byId.set(id, undefined);
+          continue;
+        }
+        const parsed = BookmarkMeta.safeParse(raw);
+        if (parsed.success) {
+          byId.set(id, parsed.data);
+        } else {
+          corruptRows.push({ id, raw });
+          byId.set(id, undefined);
+        }
+      }
+      const updatedAt = new Date().toISOString();
+      const toPut = new Map<string, BookmarkMeta>();
+      for (const skipped of candidates) {
+        const id = skipped.existingId;
+        const meta = skipped.meta;
+        if (id === undefined || meta === undefined) continue;
+        const existing = byId.get(id);
+        const tags = sanitizeImportTags(meta.tags).map((t) => t.key);
+        const mergedTags = [
+          ...(existing?.tags ?? []),
+          ...tags.filter((k) => !(existing?.tags ?? []).includes(k)),
+        ];
+        const category =
+          existing?.category === undefined && meta.category !== undefined
+            ? meta.category
+            : existing?.category;
+        const rawNotes =
+          (existing?.notes === undefined || existing.notes === "") &&
+          meta.notes !== undefined
+            ? meta.notes
+            : existing?.notes;
+        const notes = rawNotes === "" ? undefined : rawNotes;
+        const summary =
+          existing?.summary === "" ? undefined : existing?.summary;
+        const url = existing?.url === "" ? undefined : existing?.url;
+        const next = BookmarkMeta.safeParse({
+          id,
+          tags: mergedTags,
+          ...(category === undefined ? {} : { category }),
+          ...(notes === undefined ? {} : { notes }),
+          ...(summary === undefined ? {} : { summary }),
+          ...(url === undefined ? {} : { url }),
+          schemaVersion: 1,
+          updatedAt,
+        });
+        if (!next.success) {
+          recordFailure(state, {
+            kind: "meta",
+            title: skipped.title,
+            message: `merge into duplicate ${JSON.stringify(skipped.url)}: ${
+              next.error.issues[0]?.message ?? "schema validation failed"
+            }`,
+          });
+          continue;
+        }
+        if (
+          next.data.tags.length === 0 &&
+          next.data.category === undefined &&
+          (next.data.notes === undefined || next.data.notes === "") &&
+          (next.data.summary === undefined || next.data.summary === "")
+        ) {
+          continue;
+        }
+        const fresh: BookmarkMeta = {
+          ...next.data,
+          tags: [...next.data.tags],
+        };
+        byId.set(id, fresh);
+        toPut.set(id, fresh);
+      }
+      if (corruptRows.length > 0) {
+        await retainCorruptMetaBatch(corruptRows, "overwrite");
+      }
+      if (toPut.size > 0) {
+        await db.bookmarkMeta.bulkPut([...toPut.values()]);
+        wroteAny = true;
+      }
+    });
+    if (wroteAny) emitMetaChanged();
+  } catch (cause) {
+    const msg = detail(cause);
+    for (const skipped of candidates) {
+      recordFailure(state, {
+        kind: "meta",
+        title: skipped.title,
+        message: `merge into duplicate ${JSON.stringify(skipped.url)}: ${msg}`,
       });
     }
   }
@@ -465,7 +654,10 @@ async function driveImport(
 ): Promise<WriteImportResult> {
   const record = (failure: ImportFailure): void =>
     recordFailure(state, failure);
+  const pendingMeta: PendingMetaWrite[] = [];
+  const verifyCache = newMutationVerifyCache();
   const cancelled = async (): Promise<WriteImportResult> => {
+    await flushPendingMeta(pendingMeta, record);
     await db.importQueues.delete(state.id);
     await db.importStates.delete(state.id);
     return {
@@ -474,6 +666,30 @@ async function driveImport(
       message: "Import cancelled; the items written so far were kept.",
       summary: summaryFromState(state),
     };
+  };
+  const superseded = async (): Promise<WriteImportResult> => {
+    await flushPendingMeta(pendingMeta, record);
+    return {
+      ok: false,
+      code: "interrupted",
+      message: "Another import driver took over this import.",
+      summary: summaryFromState(state),
+    };
+  };
+  const checkPersistedStatus = async (): Promise<
+    "ok" | "cancelled" | "superseded"
+  > => {
+    const fresh = await db.importStates.get(state.id);
+    if (fresh === undefined || fresh.status === "cancelled") {
+      return "cancelled";
+    }
+    if (
+      fresh.claimedBy !== undefined &&
+      fresh.claimedBy !== state.claimedBy
+    ) {
+      return "superseded";
+    }
+    return "ok";
   };
   /** queue indexes of folders whose create failed → the failing title. */
   const failedParents = new Map<number, string>();
@@ -490,7 +706,9 @@ async function driveImport(
     await restoreTagDefs(queue.tagDefs, state);
     await ensureImportTagDefs(queue.items, queue.skipped, state);
     state.tagDefsDone = true;
-    await persistState(state);
+    const tagPersist = await persistState(state);
+    if (tagPersist === "cancelled") return cancelled();
+    if (tagPersist === "superseded") return superseded();
   }
 
   options.onProgress?.({
@@ -498,30 +716,20 @@ async function driveImport(
     total: state.total,
     cursor: state.cursor,
   });
-  while (state.cursor < queue.items.length) {
-    if (options.signal?.aborted) return cancelled();
-    const fresh = await db.importStates.get(state.id);
-    if (fresh === undefined || fresh.status === "cancelled") {
-      return cancelled();
-    }
-    if (
-      fresh.claimedBy !== undefined &&
-      fresh.claimedBy !== state.claimedBy
-    ) {
-      // Another driver claimed the row — stand down WITHOUT deleting; the
-      // owner finishes the import.
-      return {
-        ok: false,
-        code: "interrupted",
-        message: "Another import driver took over this import.",
-        summary: summaryFromState(state),
-      };
-    }
-    const index = state.cursor;
-    const item = queue.items[index];
-    if (item === undefined) break;
-    const failedParentTitle =
-      item.parentIndex >= 0 ? failedParents.get(item.parentIndex) : undefined;
+  let itemsSinceCheckpoint = 0;
+  try {
+    while (state.cursor < queue.items.length) {
+      if (options.signal?.aborted) return await cancelled();
+      if (itemsSinceCheckpoint === 0) {
+        const status = await checkPersistedStatus();
+        if (status === "cancelled") return await cancelled();
+        if (status === "superseded") return await superseded();
+      }
+      const index = state.cursor;
+      const item = queue.items[index];
+      if (item === undefined) break;
+      const failedParentTitle =
+        item.parentIndex >= 0 ? failedParents.get(item.parentIndex) : undefined;
     if (failedParentTitle !== undefined) {
       // Same "skipped: parent folder" cascade the recursive writer used —
       // the recorded title is the topmost failed ancestor's.
@@ -547,13 +755,18 @@ async function driveImport(
         failedParents.set(index, item.title);
       } else {
         try {
-          const folder = await createFolder({
-            parentId,
-            title: item.title,
-          });
+          const folder = await createFolder(
+            {
+              parentId,
+              title: item.title,
+            },
+            verifyCache,
+          );
           state.foldersCreated += 1;
           state.folderIds[String(index)] = folder.id;
-          await writeMeta(item, folder.id, record);
+          if (item.meta !== undefined && hasMeta(item.meta)) {
+            pendingMeta.push({ id: folder.id, item });
+          }
         } catch (cause) {
           recordFailure(state, {
             kind: "folder",
@@ -589,9 +802,14 @@ async function driveImport(
         });
       } else {
         try {
-          const created = await createBookmark({ parentId, title: item.title, url });
+          const created = await createBookmark(
+            { parentId, title: item.title, url },
+            verifyCache,
+          );
           state.bookmarksCreated += 1;
-          await writeMeta(item, created.id, record);
+          if (item.meta !== undefined && hasMeta(item.meta)) {
+            pendingMeta.push({ id: created.id, item });
+          }
         } catch (cause) {
           recordFailure(state, {
             kind: "bookmark",
@@ -601,19 +819,39 @@ async function driveImport(
         }
       }
     }
-    state.cursor += 1;
-    await persistState(state);
-    options.onProgress?.({
-      done: state.cursor,
-      total: state.total,
-      cursor: state.cursor,
-    });
+      state.cursor += 1;
+      itemsSinceCheckpoint += 1;
+      if (
+        itemsSinceCheckpoint >= IMPORT_CHECKPOINT_BATCH ||
+        state.cursor >= queue.items.length
+      ) {
+        const status = await checkPersistedStatus();
+        if (status === "cancelled") return await cancelled();
+        if (status === "superseded") return await superseded();
+        await flushPendingMeta(pendingMeta, record);
+        const persisted = await persistState(state);
+        if (persisted === "cancelled") return await cancelled();
+        if (persisted === "superseded") return await superseded();
+        itemsSinceCheckpoint = 0;
+      }
+      options.onProgress?.({
+        done: state.cursor,
+        total: state.total,
+        cursor: state.cursor,
+      });
+    }
+  } catch (cause) {
+    await flushPendingMeta(pendingMeta, record);
+    await persistState(state).catch(() => undefined);
+    throw cause;
   }
 
   if (!state.skippedDone) {
     await mergeSkippedDuplicates(queue.skipped, state);
     state.skippedDone = true;
-    await persistState(state);
+    const skippedPersist = await persistState(state);
+    if (skippedPersist === "cancelled") return cancelled();
+    if (skippedPersist === "superseded") return superseded();
   }
 
   const final = summaryFromState(state);
@@ -643,22 +881,8 @@ export async function writeImport(
     : source;
   const plan = isImportPlan(source) ? source : undefined;
 
-  let root: BookmarksTreeNode;
-  try {
-    root = await createFolder({
-      parentId: OTHER_BOOKMARKS_ID,
-      title: importRootTitle(options.now ?? new Date()),
-    });
-  } catch (cause) {
-    return {
-      ok: false,
-      code: "import_root_failed",
-      message: `Could not create the import folder under Other bookmarks: ${detail(cause)}`,
-    };
-  }
-
   const id = crypto.randomUUID();
-  const queue: ImportQueueRow = {
+  const rawQueue: ImportQueueRow = {
     id,
     items: flattenForQueue(items),
     skipped: (plan?.skipped ?? []).map((dup) => ({
@@ -686,7 +910,41 @@ export async function writeImport(
     })),
     tagDefs: [...(options.tagDefs ?? [])],
   };
-  await db.importQueues.put(queue);
+  // Validate the flattened queue BEFORE creating the Chrome root folder so a
+  // schema violation on items/skipped cannot leave an empty "Imported ..."
+  // folder behind (B-16b).
+  const parsedQueue = ImportQueueRow.safeParse({
+    ...rawQueue,
+    tagDefs: [],
+  });
+  if (!parsedQueue.success) {
+    return {
+      ok: false,
+      code: "import_root_failed",
+      message: `Invalid import queue: ${
+        parsedQueue.error.issues[0]?.message ?? "schema validation failed"
+      }`,
+    };
+  }
+  const queue: ImportQueueRow = {
+    ...parsedQueue.data,
+    tagDefs: rawQueue.tagDefs,
+  };
+
+  let root: BookmarksTreeNode;
+  try {
+    root = await createFolder({
+      parentId: OTHER_BOOKMARKS_ID,
+      title: importRootTitle(options.now ?? new Date()),
+    });
+  } catch (cause) {
+    return {
+      ok: false,
+      code: "import_root_failed",
+      message: `Could not create the import folder under Other bookmarks: ${detail(cause)}`,
+    };
+  }
+
   const nowIso = new Date().toISOString();
   const state: ImportState = {
     id,
@@ -701,6 +959,7 @@ export async function writeImport(
     tagsCreated: 0,
     failureCount: 0,
     failures: [],
+    claimedBy: crypto.randomUUID(),
     tagDefsDone: false,
     skippedDone: false,
     duplicatesSkipped: plan?.duplicatesSkipped ?? 0,
@@ -708,13 +967,32 @@ export async function writeImport(
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  await db.importStates.put(ImportState.parse(state));
   try {
+    await db.importQueues.put(queue);
+    await db.importStates.put(ImportState.parse(state));
     return await driveImport(state, queue, options);
   } catch (cause) {
-    // Unexpected driver failure (a chrome error that escaped a per-item
-    // catch, a throwing onProgress callback): the rows stay persisted and
-    // `resumeImport` can finish the run — report it as interrupted.
+    // Release the initial driver's claim on an unexpected crash so
+    // listInterruptedImports() surfaces the row immediately and
+    // resumeImport() can take over without waiting for CLAIM_TTL_MS.
+    try {
+      const current = await db.importStates.get(id);
+      if (
+        current !== undefined &&
+        current.status === "running" &&
+        current.claimedBy === state.claimedBy
+      ) {
+        delete state.claimedBy;
+        await db.importStates.put(
+          ImportState.parse({
+            ...state,
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+      }
+    } catch {
+      // Best-effort unclaim; TTL fallback still recovers after CLAIM_TTL_MS.
+    }
     return {
       ok: false,
       code: "interrupted",
@@ -725,14 +1003,29 @@ export async function writeImport(
 }
 
 /**
- * Every persisted import row is by definition resumable (rows are deleted on
- * completion/cancel): list them for the "Resume import?" prompt.
+ * Every persisted import row without an active claim or cancellation is
+ * resumable (rows are deleted on completion/cancel): list them for the
+ * "Resume import?" prompt.
  */
 export async function listInterruptedImports(): Promise<ImportState[]> {
   const rows = await db.importStates.toArray();
-  return rows.filter((row) => ImportState.safeParse(row).success);
+  const now = Date.now();
+  const out: ImportState[] = [];
+  for (const raw of rows) {
+    const parsed = ImportState.safeParse(raw);
+    if (!parsed.success) continue;
+    const row = parsed.data;
+    if (row.status === "cancelled") continue;
+    if (
+      row.claimedBy !== undefined &&
+      now - Date.parse(row.updatedAt) < CLAIM_TTL_MS
+    ) {
+      continue;
+    }
+    out.push(row);
+  }
+  return out;
 }
-
 /**
  * Finish an interrupted import from its persisted cursor. The queue row is
  * what makes resume possible — a state row without it reports `state_lost`
@@ -785,8 +1078,8 @@ export async function resumeImport(
     };
   }
   const state = claimed.state;
-  const parsedQueue = await db.importQueues.get(importId);
-  if (parsedQueue === undefined) {
+  const rawQueue = await db.importQueues.get(importId);
+  if (rawQueue === undefined) {
     return {
       ok: false,
       code: "state_lost",
@@ -794,14 +1087,42 @@ export async function resumeImport(
         "The import's work queue is gone — delete the state row and re-import.",
     };
   }
+  const parsedQueue = ImportQueueRow.safeParse(rawQueue);
+  if (!parsedQueue.success) {
+    return {
+      ok: false,
+      code: "state_lost",
+      message:
+        "The import's work queue is corrupt — delete the state row and re-import.",
+    };
+  }
+  const queue = parsedQueue.data;
   if (state.status === "cancelled") {
     await db.importQueues.delete(importId);
     await db.importStates.delete(importId);
     return { ok: false, code: "cancelled", message: "Import was cancelled." };
   }
   try {
-    return await driveImport(state, parsedQueue, options);
+    return await driveImport(state, queue, options);
   } catch (cause) {
+    try {
+      const current = await db.importStates.get(importId);
+      if (
+        current !== undefined &&
+        current.status === "running" &&
+        current.claimedBy === state.claimedBy
+      ) {
+        delete state.claimedBy;
+        await db.importStates.put(
+          ImportState.parse({
+            ...state,
+            updatedAt: new Date().toISOString(),
+          }),
+        );
+      }
+    } catch {
+      // Best-effort unclaim.
+    }
     return {
       ok: false,
       code: "interrupted",

@@ -394,14 +394,17 @@ function processDt(
     stats.folders += 1;
     out.push(folder);
 
-    // The folder's content <DL> may sit anywhere inside the DT — as a direct
-    // child (no </DT> written), inside the H3 (unclosed <H3>), or deeper.
-    // `closest("dt")` scopes the check: a DL belonging to a *nested* folder DT
-    // does not count, and neither does the sibling-DL form, which the caller
-    // consumes only when no internal DL exists.
-    const hasOwnDl = Array.from(dt.querySelectorAll("dl")).some(
-      (dl) => dl.closest("dt") === dt,
-    );
+    // The folder's content <DL> may sit as a direct child of the DT (no </DT>
+    // written), inside the H3 (unclosed <H3>), or inside a direct transparent
+    // child (<DD>). Checking direct children avoids an O(N^2) descendant
+    // querySelectorAll("dl") across all nested subtrees (P-07).
+    const hasOwnDl =
+      kids.some(
+        (k) =>
+          k.tagName === "DL" ||
+          (TRANSPARENT_PATTERN.test(k.tagName) &&
+            Array.from(k.children).some((c) => c.tagName === "DL")),
+      );
     // Walk the DT itself as a container: H3/DD are transparent passthroughs
     // there, so swallowed children are reached wherever they landed.
     walkContainer(dt, folder.children, stats, walkedDl);
@@ -473,13 +476,17 @@ function walkContainer(
  * counts of zero tell that story.
  */
 export function parseNetscape(html: string): NetscapeParseResult {
-  const bytes = new TextEncoder().encode(html).byteLength;
-  if (bytes > MAX_FILE_BYTES) {
-    return {
-      ok: false,
-      code: "too_large",
-      message: `File is ${bytes} bytes; Netscape imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
-    };
+  // Any UTF-16 code unit encodes to at most 3 UTF-8 bytes — skip the full
+  // TextEncoder allocation when the upper bound already fits MAX_FILE_BYTES.
+  if (html.length * 3 > MAX_FILE_BYTES) {
+    const bytes = new TextEncoder().encode(html).byteLength;
+    if (bytes > MAX_FILE_BYTES) {
+      return {
+        ok: false,
+        code: "too_large",
+        message: `File is ${bytes} bytes; Netscape imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
+      };
+    }
   }
 
   const doc = new DOMParser().parseFromString(html, "text/html");

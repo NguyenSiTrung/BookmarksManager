@@ -453,3 +453,26 @@ describe("parseNetscape safety surface", () => {
     expect(src).toContain("DOMParser");
   });
 });
+
+describe("parseNetscape performance fast-paths (P-07)", () => {
+  it("avoids descendant querySelectorAll('dl') scans per <DT> and skips TextEncoder for small inputs", () => {
+    const src = readFileSync(
+      path.resolve(process.cwd(), "src/io/netscape.ts"),
+      "utf8",
+    );
+    expect(src).not.toContain('dt.querySelectorAll("dl")');
+
+    // Deeply nested folders parse cleanly without descendant querySelectorAll.
+    let html = "<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><p>";
+    for (let i = 0; i < 20; i += 1) {
+      html += `<DT><H3>Folder ${i}</H3><DL><p><DT><A HREF="https://f${i}.example/">Link ${i}</A>`;
+    }
+    for (let i = 0; i < 20; i += 1) {
+      html += "</DL><p>";
+    }
+    html += "</DL><p>";
+    const parsed = ok(parseNetscape(html));
+    expect(parsed.stats.folders).toBe(20);
+    expect(parsed.stats.bookmarks).toBe(20);
+  });
+});

@@ -284,13 +284,15 @@ export function serializeExport(envelope: ExportEnvelope): SerializeExportResult
 export function parseExport(json: string | unknown): ParseExportResult {
   let value: unknown = json;
   if (typeof json === "string") {
-    const bytes = new TextEncoder().encode(json).byteLength;
-    if (bytes > MAX_FILE_BYTES) {
-      return {
-        ok: false,
-        code: "too_large",
-        message: `File is ${bytes} bytes; JSON imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
-      };
+    if (json.length * 3 > MAX_FILE_BYTES) {
+      const bytes = new TextEncoder().encode(json).byteLength;
+      if (bytes > MAX_FILE_BYTES) {
+        return {
+          ok: false,
+          code: "too_large",
+          message: `File is ${bytes} bytes; JSON imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
+        };
+      }
     }
     try {
       value = JSON.parse(json);

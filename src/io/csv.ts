@@ -405,13 +405,15 @@ const CreatedStamp = z.union([
  * 1-based record number and a reason.
  */
 export function parseCsv(text: string): CsvParseResult {
-  const bytes = new TextEncoder().encode(text).byteLength;
-  if (bytes > MAX_FILE_BYTES) {
-    return {
-      ok: false,
-      code: "too_large",
-      message: `File is ${bytes} bytes; CSV imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
-    };
+  if (text.length * 3 > MAX_FILE_BYTES) {
+    const bytes = new TextEncoder().encode(text).byteLength;
+    if (bytes > MAX_FILE_BYTES) {
+      return {
+        ok: false,
+        code: "too_large",
+        message: `File is ${bytes} bytes; CSV imports are capped at ${MAX_FILE_BYTES} bytes (20 MiB).`,
+      };
+    }
   }
   const records = parseRecords(text);
   const headerIdx = records.findIndex((r) => !isBlankRecord(r));
