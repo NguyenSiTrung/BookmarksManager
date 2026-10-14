@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { CONSENT_VERSION } from "../../consent/records";
+import {
+  CONSENT_VERSION,
+  grantConsentAtOrigin,
+  revokeConsentAtOrigin,
+} from "../../consent/records";
 import { db } from "../../db/database";
 import {
   AUTHORIZATION_HEADER,
@@ -8,6 +12,12 @@ import {
   CONSENT_TRIGGER,
   CUSTOM_JEV_PROVIDER_NAME,
   customJevDisclosure,
+  DECISIONS_NEVER_SENT_FIELDS,
+  DECISIONS_PURPOSES,
+  DECISIONS_SENT_FIELDS,
+  DECISIONS_TRIGGER_NOTE,
+  DECISIONS_TRIGGERS,
+  EXTENSION_PRIVACY_POLICY_REFERENCE,
   NO_DEVELOPER_SERVER_NOTE,
   PROVIDER_DISCLOSURES,
   SYNTHETIC_DESCRIPTION,
@@ -102,11 +112,7 @@ type TestOutcome =
   | { ok: true; model: string; latencyMs: number; cost?: number }
   | { ok: false; code: string; message: string };
 
-export interface ProviderSetupProps {
-  onNavigateToPermissions?: () => void;
-}
-
-export function ProviderSetup(props?: ProviderSetupProps) {
+export function ProviderSetup() {
   const [presetId, setPresetId] = useState<JevProviderId>("typesafe");
   const [model, setModel] = useState<string>(DEFAULT_PROVIDER_MODEL.typesafe);
   const [baseUrl, setBaseUrl] = useState("");
@@ -371,6 +377,15 @@ export function ProviderSetup(props?: ProviderSetupProps) {
               : {}),
           }),
         );
+        const result = ProviderMessageResult.safeParse(raw);
+        if (result.success && result.data.ok && "status" in result.data) {
+          const enabledOrigin = result.data.status.origin ?? resolvedOrigin;
+          try {
+            await grantConsentAtOrigin(DECISIONS_CONSENT_SCOPE, enabledOrigin);
+          } catch {
+            // Best-effort local decisions grant; can also be toggled inline.
+          }
+        }
         // The same drop after the worker's reply — a switch during the
         // request must not render this preset's status on the new panel.
         // The grant stays: ENABLE_PROVIDER already persisted the provider,
@@ -378,7 +393,6 @@ export function ProviderSetup(props?: ProviderSetupProps) {
         if (presetId !== currentPreset.current) {
           return;
         }
-        const result = ProviderMessageResult.safeParse(raw);
         if (!result.success) {
           setError("The extension worker returned an unexpected response.");
           void loadStatus(presetId);
@@ -456,6 +470,38 @@ export function ProviderSetup(props?: ProviderSetupProps) {
         if (presetId === currentPreset.current) {
           setError("Something went wrong while revoking the provider.");
         }
+      })
+      .finally(() => {
+        inFlight.current = false;
+        setBusy(false);
+      });
+  };
+
+  const onToggleDecisionsConsent = (grant: boolean) => {
+    if (busy || inFlight.current) {
+      return;
+    }
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const write = grant
+      ? grantConsentAtOrigin(DECISIONS_CONSENT_SCOPE, resolvedOrigin)
+      : revokeConsentAtOrigin(DECISIONS_CONSENT_SCOPE, resolvedOrigin);
+    void write
+      .then(() => {
+        setNotice(
+          grant
+            ? `Bookmark analysis consent recorded for ${disclosure.name}.`
+            : `Bookmark analysis consent revoked for ${disclosure.name}. The provider connection is unchanged.`,
+        );
+      })
+      .catch(() => {
+        setError(
+          grant
+            ? "Something went wrong while recording consent."
+            : "Something went wrong while revoking consent.",
+        );
       })
       .finally(() => {
         inFlight.current = false;
@@ -577,10 +623,11 @@ export function ProviderSetup(props?: ProviderSetupProps) {
             recipientName={disclosure.name}
             origin={disclosure.origin}
             recipientNote={NO_DEVELOPER_SERVER_NOTE}
-            sent={[...SYNTHETIC_FIELDS]}
+            sent={[...SYNTHETIC_FIELDS, ...DECISIONS_SENT_FIELDS]}
             sentNote={SYNTHETIC_DESCRIPTION}
-            why={CONSENT_PURPOSE}
-            when={CONSENT_TRIGGER}
+            neverSent={[...DECISIONS_NEVER_SENT_FIELDS]}
+            why={`${CONSENT_PURPOSE}; ${DECISIONS_PURPOSES.join(", ")}`}
+            when={`${CONSENT_TRIGGER}; ${DECISIONS_TRIGGERS.join(", ")} — ${DECISIONS_TRIGGER_NOTE}`}
           >
             <p>
               Your API key travels only in the{" "}
@@ -601,13 +648,15 @@ export function ProviderSetup(props?: ProviderSetupProps) {
                   className="text-foreground underline underline-offset-4 hover:text-muted-foreground"
                 >
                   {disclosure.name} privacy policy
-                </a>
-                ; this extension&apos;s own draft policy is bundled below.
+                </a>{" "}
+                and {EXTENSION_PRIVACY_POLICY_REFERENCE}; this extension&apos;s
+                own draft policy is bundled below.
               </p>
             ) : (
               <p>
                 A custom endpoint has no bundled policy link — review that
-                provider&apos;s own privacy policy; this extension&apos;s
+                provider&apos;s own privacy policy, and{" "}
+                {EXTENSION_PRIVACY_POLICY_REFERENCE}; this extension&apos;s
                 draft policy is bundled below.
               </p>
             )}
@@ -649,15 +698,23 @@ export function ProviderSetup(props?: ProviderSetupProps) {
                 {decisionsConsented ? "Consent granted" : "Not yet granted"}
               </span>
             </div>
-            {!decisionsConsented && (
+            {decisionsConsented ? (
               <button
                 type="button"
-                onClick={() => {
-                  props?.onNavigateToPermissions?.();
-                }}
-                className="font-medium text-primary underline underline-offset-4 outline-hidden hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring"
+                disabled={busy}
+                onClick={() => onToggleDecisionsConsent(false)}
+                className="font-medium text-destructive underline underline-offset-4 outline-hidden hover:text-destructive/80 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               >
-                Review analysis consent in Permissions
+                Pause {disclosure.name} bookmark analysis
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onToggleDecisionsConsent(true)}
+                className="font-medium text-primary underline underline-offset-4 outline-hidden hover:text-primary/80 focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                Allow {disclosure.name} bookmark analysis
               </button>
             )}
           </div>

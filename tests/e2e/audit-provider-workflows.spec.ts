@@ -458,26 +458,29 @@ test("rapid Undo on an applied decision dispatches exactly one revert and disabl
   }
 });
 
-test("Options reflects a newly enabled LLM provider in the Permissions panel without a reload", async () => {
+test("Options reflects a newly enabled LLM provider in Automatic second opinions without a reload", async () => {
   test.setTimeout(120_000);
   const ext = await launchAuditExtension();
   const { context, id } = ext;
   try {
     const options = await openSurface(context, id, "options");
-    // Enable in the Connections panel. The Permissions panel is mounted from
-    // page load with no provider; a live read must surface the change.
     await enableAuditLlm(options);
     await openPermissionsPanelNoReload(options);
 
+    await options
+      .locator("summary", { hasText: "Automatic second opinions" })
+      .click();
     await expect(
-      options.getByLabel(
-        new RegExp(`I allow second opinions to be sent to ${AUDIT_LLM_ORIGIN}`),
-      ),
-    ).toBeVisible({ timeout: 15_000 });
-    // The live escalation snapshot also lands: a capped, priced provider.
+      options.getByRole("region", { name: "Second opinion disclosure" }),
+    ).toContainText(AUDIT_LLM_ORIGIN, { timeout: 15_000 });
     await expect(options.getByText(/Monthly cap: \$5\.00/)).toBeVisible({
       timeout: 15_000,
     });
+    await expect(
+      options.getByLabel(
+        "Ask the provider for a second opinion on unsure suggestions",
+      ),
+    ).toBeEnabled({ timeout: 15_000 });
   } finally {
     await context.close();
     ext.dispose();

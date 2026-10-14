@@ -30,7 +30,8 @@ export async function openOptionsPanel(
   page: Page,
   panel: OptionsPanel,
 ): Promise<void> {
-  const link = page.getByRole("link", { name: panel, exact: true });
+  const target = panel === "Permissions" ? "Connections" : panel;
+  const link = page.getByRole("link", { name: target, exact: true });
   await expect(link).toBeVisible({ timeout: 15_000 });
   await link.click();
   await expect(link).toHaveAttribute("aria-current", "page");

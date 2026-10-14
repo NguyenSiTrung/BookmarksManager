@@ -3,22 +3,19 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // The panels have their own suites; the shell test only needs stand-ins.
 vi.mock("../../src/entrypoints/options/ProviderSetup", () => ({
-  ProviderSetup: (props: { onNavigateToPermissions?: () => void }) => (
-    <section aria-label="stub provider">
-      <button
-        type="button"
-        onClick={() => props.onNavigateToPermissions?.()}
-      >
-        Review analysis consent in Permissions
-      </button>
-    </section>
-  ),
+  ProviderSetup: () => <section aria-label="stub provider" />,
 }));
 vi.mock("../../src/entrypoints/options/LlmProviderSetup", () => ({
   LlmProviderSetup: () => <section aria-label="stub llm" />,
 }));
 vi.mock("../../src/entrypoints/options/DecisionSettings", () => ({
-  DecisionSettings: () => <section aria-label="stub decisions" />,
+  DecisionSettings: (props: { section?: string }) => (
+    <section
+      aria-label={
+        props.section === "data" ? "stub decisions data" : "stub decisions"
+      }
+    />
+  ),
 }));
 vi.mock("../../src/entrypoints/options/SentLog", () => ({
   SentLog: () => <section aria-label="stub sent log" />,
@@ -56,6 +53,7 @@ describe("OptionsApp shell", () => {
       "stub llm",
       "stub decisions",
       "stub sent log",
+      "stub decisions data",
       "stub delete all",
     ]) {
       expect(
@@ -71,7 +69,6 @@ describe("OptionsApp shell", () => {
 
     expect(links.map((link) => link.textContent)).toEqual([
       "Connections",
-      "Permissions",
       "Activity",
       "Data",
     ]);
@@ -129,16 +126,15 @@ describe("OptionsApp shell", () => {
     expect(screen.queryByRole("region", { name: "stub provider" })).toBeNull();
   });
 
-  it("switches to the Permissions panel when ProviderSetup triggers onNavigateToPermissions (UX-13)", () => {
+  it("maps legacy #permissions hash deep links to the Connections panel", () => {
+    location.hash = "#permissions";
     render(<OptionsApp />);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Review analysis consent in Permissions",
-      }),
-    );
+    expect(
+      screen.getByRole("region", { name: "stub provider" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("region", { name: "stub decisions" }),
     ).toBeTruthy();
-    expect(location.hash).toBe("#permissions");
+    expect(location.hash).toBe("#connections");
   });
 });

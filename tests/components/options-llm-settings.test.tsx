@@ -193,35 +193,10 @@ async function section(): Promise<HTMLElement> {
   return screen.getByRole("heading", { name: /automatic second opinions/i })
     .parentElement as HTMLElement;
 }
-
-/**
- * The escalation disclosure read gate (Task 3): the second-opinion agree
- * checkbox is inert (`aria-disabled`) until the disclosure has been opened
- * once. jsdom does not toggle `<details>` on summary clicks, so flip the DOM
- * attribute and fire `toggle` directly. `findByRole` because the disclosure
- * mounts only after the provider-status effect lands `llmOrigin` — under a
- * loaded worker that can trail the section heading by a beat.
- */
-async function openEscalationDisclosure(): Promise<void> {
-  const region = await screen.findByRole("region", {
-    name: "Second opinion disclosure",
-  });
-  const details = region.closest("details") as HTMLDetailsElement;
-  details.open = true;
-  fireEvent(details, new Event("toggle"));
-}
-
 async function escalateToggle(): Promise<HTMLElement> {
   return await screen.findByRole("switch", {
     name: /second opinion on unsure suggestions/i,
   });
-}
-
-/** The `type` of every runtime.sendMessage call so far. */
-function sentTypes(): string[] {
-  return sendMessageSpy.mock.calls.map(
-    ([message]) => (message as { type: string }).type,
-  );
 }
 
 describe("escalation section", () => {
@@ -229,10 +204,10 @@ describe("escalation section", () => {
     render(<DecisionSettings />);
     await section();
     const toggle = await escalateToggle();
-    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("false"));
-    // Un-consented: soft-blocked (focusable, reason named), not dead.
-    expect(toggle.getAttribute("aria-disabled")).toBe("true");
-    await screen.findByText(/grant second-opinion consent above/i);
+    await waitFor(() =>
+      expect(toggle.getAttribute("aria-checked")).toBe("false"),
+    );
+    expect(toggle.getAttribute("aria-disabled")).toBeNull();
     expect(
       screen.getByText(/give a second opinion on a low-confidence/i),
     ).toBeTruthy();
@@ -244,130 +219,31 @@ describe("escalation section", () => {
     expect(screen.getByText(/Monthly cap: \$5\.00/)).toBeTruthy();
   });
 
-  it("blocks the toggle until consent and reveals the consent step on click", async () => {
+  it("enabling the switch grants llm_escalate consent and sends LLM_ESCALATION_SET in one step", async () => {
     render(<DecisionSettings />);
     await section();
     const toggle = await escalateToggle();
     await waitFor(() =>
-      expect(toggle.getAttribute("aria-disabled")).toBe("true"),
-    );
-    // The blocker is named, and the disclosure is still folded.
-    await screen.findByText(/grant second-opinion consent above/i);
-    const disclosure = screen
-      .getByRole("region", { name: "Second opinion disclosure" })
-      .closest("details") as HTMLDetailsElement;
-    expect(disclosure.open).toBe(false);
-
-    // A click on the blocked switch reveals the step instead of dead-ending.
-    fireEvent.click(toggle);
-    await waitFor(() => expect(disclosure.open).toBe(true));
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(sentTypes()).not.toContain("LLM_ESCALATION_SET");
-
-    // Grant the llm_escalate scope at the provider's origin.
-    const box = (await screen.findByRole("checkbox", {
-      name: /allow second opinions to be sent to/i,
-    })) as HTMLInputElement;
-    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
-    fireEvent.click(box);
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Allow second opinions$/ }),
-    );
-    await waitFor(() =>
-      expect(
-        hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
-      ).resolves.toBe(true),
-    );
-    await waitFor(() =>
       expect(toggle.getAttribute("aria-disabled")).toBeNull(),
     );
-  });
-
-  it("gates the second-opinion checkbox on the disclosure and re-arms on revoke", async () => {
-    render(<DecisionSettings />);
-    await section();
-    const box = (await screen.findByRole("checkbox", {
-      name: /allow second opinions to be sent to/i,
-    })) as HTMLInputElement;
-    expect(box.getAttribute("aria-disabled")).toBe("true");
-    // Scoped to the escalation gate's reason <p> (basis-full): the
-    // bookmark-analysis gate on the same page renders the same sentence.
-    expect(
-      screen.getByText("Open the disclosure above first.", {
-        selector: "p.basis-full",
-      }),
-    ).toBeTruthy();
-    // An early click opens the disclosure instead of recording agreement.
-    fireEvent.click(box);
-    await waitFor(() =>
-      expect(box.getAttribute("aria-disabled")).toBeNull(),
-    );
-    expect(box.checked).toBe(false);
-    await openEscalationDisclosure();
-    await waitFor(() =>
-      expect(
-        (
-          screen.getByRole("checkbox", {
-            name: /allow second opinions to be sent to/i,
-          }) as HTMLInputElement
-        ).getAttribute("aria-disabled"),
-      ).toBeNull(),
-    );
-    fireEvent.click(
-      screen.getByRole("checkbox", {
-        name: /allow second opinions to be sent to/i,
-      }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Allow second opinions$/ }),
-    );
+    fireEvent.click(toggle);
     await waitFor(() =>
       expect(
         hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
       ).resolves.toBe(true),
     );
-    // Revoking returns the consent row with the gate re-armed.
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "Revoke second-opinion consent",
-      }),
-    );
-    const back = (await screen.findByRole("checkbox", {
-      name: /allow second opinions to be sent to/i,
-    })) as HTMLInputElement;
-    await waitFor(() =>
-      expect(back.getAttribute("aria-disabled")).toBe("true"),
-    );
-    expect(
-      screen.getByText("Open the disclosure above first.", {
-        selector: "p.basis-full",
-      }),
-    ).toBeTruthy();
-  });
-
-  it("enabling sends LLM_ESCALATION_SET and reflects the reply", async () => {
-    render(<DecisionSettings />);
-    await section();
-    // Consent first (the direct Dexie write the page performs).
-    await db.consents.put({
-      scope: LLM_ESCALATE_SCOPE,
-      origin: LLM_ORIGIN,
-      consentVersion: CONSENT_VERSION,
-      acceptedAt: new Date().toISOString(),
-    });
-    await waitFor(async () =>
-      expect((await escalateToggle()).getAttribute("aria-disabled")).toBeNull(),
-    );
-    fireEvent.click(await escalateToggle());
     await waitFor(() =>
       expect(sendMessageSpy).toHaveBeenCalledWith({
         type: "LLM_ESCALATION_SET",
         enabled: true,
       }),
     );
-    await waitFor(async () => expect((await escalateToggle()).getAttribute("aria-checked")).toBe("true"));
+    await waitFor(async () =>
+      expect((await escalateToggle()).getAttribute("aria-checked")).toBe(
+        "true",
+      ),
+    );
   });
-
   it("shows 'no provider' guidance when nothing is configured", async () => {
     workerState.providerStatus = {
       configured: false,
@@ -523,7 +399,7 @@ describe("escalation section", () => {
   it("names every unmet prerequisite at once", async () => {
     workerState.escalation = {
       enabled: false,
-      providerConfigured: true,
+      providerConfigured: false,
       monthlyBudgetUsd: null,
       budget: "unset",
       pricingKnown: false,
@@ -531,9 +407,9 @@ describe("escalation section", () => {
     };
     render(<DecisionSettings />);
     await section();
-    await screen.findByText(/grant second-opinion consent above/i);
+    await screen.findByText(/no spending ceiling is chosen/i);
     expect(
-      screen.getByText(/no spending ceiling is chosen/i),
+      screen.getByText(/configure an llm provider again in connections/i),
     ).toBeTruthy();
     expect(
       screen.getByText(/no per-token price is known for this model/i),
@@ -545,23 +421,20 @@ describe("escalation section", () => {
     workerState.escalation = {
       enabled: true,
       providerConfigured: true,
-      monthlyBudgetUsd: 5,
-      budget: "capped",
+      monthlyBudgetUsd: null,
+      budget: "unset",
       pricingKnown: true,
       providerId: "preset:openai",
     };
     render(<DecisionSettings />);
     await section();
     const toggle = await escalateToggle();
-    await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
-    // The grant is missing, so the feature cannot run — but OFF stays honest.
+    await waitFor(() =>
+      expect(toggle.getAttribute("aria-checked")).toBe("true"),
+    );
     expect(toggle.getAttribute("aria-disabled")).toBeNull();
-    // The prerequisite line renders from the same status read as the switch, so
-    // it must be awaited rather than read synchronously: under parallel worker
-    // load the status reply can land between the two, and a bare getByText
-    // fails on a component that is merely still settling.
     expect(
-      await screen.findByText(/grant second-opinion consent above/i),
+      await screen.findByText(/no spending ceiling is chosen/i),
     ).toBeTruthy();
     fireEvent.click(toggle);
     await waitFor(() =>
@@ -570,10 +443,10 @@ describe("escalation section", () => {
         enabled: false,
       }),
     );
-    // The status re-read remounts the switch after the write lands, so
-    // re-query rather than trusting the element captured before the click.
     await waitFor(async () =>
-      expect((await escalateToggle()).getAttribute("aria-checked")).toBe("false"),
+      expect((await escalateToggle()).getAttribute("aria-checked")).toBe(
+        "false",
+      ),
     );
   });
 });

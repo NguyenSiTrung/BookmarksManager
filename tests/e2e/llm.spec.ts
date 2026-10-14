@@ -613,34 +613,16 @@ test("unsure analyze escalates automatically under the cap", async () => {
     outputPrice: "15",
   });
 
-  // DecisionSettings reads provider+escalation status once on mount —
-  // reload so the just-enabled provider is what the effect sees, then
-  // re-select the Permissions panel the consent controls live in.
-  await page.reload();
-  await openOptionsPanel(page, "Permissions");
-  // Task 3 read gate: open the escalation disclosure before the checkbox.
-  await page
-    .locator("summary", { hasText: "Automatic second opinions" })
-    .click();
-  await page
-    .getByLabel(/I allow second opinions to be sent to https:\/\/llm-custom\.test/)
-    .check();
-  await page
-    .getByRole("button", { name: "Allow second opinions" })
-    .click();
-  await expect(
-    page.getByText(/Second-opinion consent recorded/),
-  ).toBeVisible({ timeout: 15_000 });
-  // Controlled checkbox: the SET reply roundtrip re-renders `checked`
-  // asynchronously — click, then poll the checked state.
-  const toggle = page.getByLabel(
-    "Ask the provider for a second opinion on unsure suggestions",
-  );
-  await toggle.click();
-  await expect(toggle).toBeChecked({ timeout: 15_000 });
+  await openOptionsPanel(page, "Connections");
   await expect(page.getByText(/Monthly cap: \$5\.00/)).toBeVisible({
     timeout: 15_000,
   });
+  const toggle = page.getByLabel(
+    "Ask the provider for a second opinion on unsure suggestions",
+  );
+  await expect(toggle).toBeEnabled({ timeout: 15_000 });
+  await toggle.click();
+  await expect(toggle).toBeChecked({ timeout: 15_000 });
 
   const panel = await openSurface(ext.context, ext.id, "sidepanel");
   const bm = await createBookmark(panel, {
@@ -718,20 +700,8 @@ test("an explicit unlimited ceiling unlocks preset escalation, and the ceiling s
     page.getByRole("group", { name: "LLM enabled provider" }),
   ).toBeVisible({ timeout: 15_000 });
 
-  // DecisionSettings reads the provider + escalation status on mount.
-  await page.reload();
-  await openOptionsPanel(page, "Permissions");
-  // Task 3 read gate: open the escalation disclosure before the checkbox.
-  await page
-    .locator("summary", { hasText: "Automatic second opinions" })
-    .click();
-  await page
-    .getByLabel(/I allow second opinions to be sent to https:\/\/api\.openai\.com/)
-    .check();
-  await page
-    .getByRole("button", { name: "Allow second opinions" })
-    .click();
-  await expect(page.getByText(/Second-opinion consent recorded/)).toBeVisible({
+  await openOptionsPanel(page, "Connections");
+  await expect(page.getByText(/this can spend without a limit/i)).toBeVisible({
     timeout: 15_000,
   });
   const toggle = page.getByLabel(
@@ -741,9 +711,6 @@ test("an explicit unlimited ceiling unlocks preset escalation, and the ceiling s
   await expect(toggle).toBeEnabled({ timeout: 15_000 });
   await toggle.click();
   await expect(toggle).toBeChecked({ timeout: 15_000 });
-  await expect(page.getByText(/this can spend without a limit/i)).toBeVisible({
-    timeout: 15_000,
-  });
 
   // The unattended send really happens: analyze a low-confidence bookmark.
   const panel = await openSurface(ext.context, ext.id, "sidepanel");

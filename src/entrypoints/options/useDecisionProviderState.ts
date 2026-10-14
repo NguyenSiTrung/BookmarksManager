@@ -279,8 +279,13 @@ async function readLlmProviderState(): Promise<
  * is dropped, and a failed read leaves the previous value tagged with its old
  * revision (never reused as current) while the error surfaces for a retry.
  */
-export function useDecisionProviderState(): DecisionProviderState {
-  const revision = useLiveQuery(readProviderRevision, []);
+export function useDecisionProviderState(
+  enabled = true,
+): DecisionProviderState {
+  const revision = useLiveQuery(
+    () => (enabled ? readProviderRevision() : Promise.resolve(undefined)),
+    [enabled],
+  );
   const [jev, setJev] = useState<TaggedRead<JevProviderRead> | null>(null);
   const [llm, setLlm] = useState<TaggedRead<LlmProviderRead> | null>(null);
   // Failures are tagged the same way their values are: a failure recorded for
@@ -298,7 +303,7 @@ export function useDecisionProviderState(): DecisionProviderState {
   }, []);
 
   useEffect(() => {
-    if (revision === undefined) return;
+    if (!enabled || revision === undefined) return;
     const mine = ++generation.current;
     let cancelled = false;
     void (async () => {
@@ -326,7 +331,7 @@ export function useDecisionProviderState(): DecisionProviderState {
     return () => {
       cancelled = true;
     };
-  }, [revision, attempt]);
+  }, [enabled, revision, attempt]);
 
   return {
     revision: revision ?? null,

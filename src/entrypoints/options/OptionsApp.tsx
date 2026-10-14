@@ -12,12 +12,8 @@ import {
   DatabaseIcon,
   PlugIcon,
   PulseIcon,
-  ShieldIcon,
 } from "../../ui/components/icons";
-import {
-  SetupChecklist,
-  type ChecklistState,
-} from "./components";
+import { SetupChecklist } from "./components";
 import { DecisionSettings } from "./DecisionSettings";
 import { DeleteAllData } from "./DeleteAllData";
 import { LlmProviderSetup } from "./LlmProviderSetup";
@@ -55,14 +51,8 @@ const PANELS = [
     label: "Connections",
     icon: PlugIcon,
     description:
-      "Optional. Connect a provider to power suggestions, summaries and " +
-      "search re-ranking.",
-  },
-  {
-    id: "permissions",
-    label: "Permissions",
-    icon: ShieldIcon,
-    description: "Decide what may leave this device, and for what.",
+      "Optional. Connect a provider, choose automations, and control what " +
+      "may leave this device.",
   },
   {
     id: "activity",
@@ -74,20 +64,21 @@ const PANELS = [
     id: "data",
     label: "Data",
     icon: DatabaseIcon,
-    description: "Remove everything this extension has stored.",
+    description:
+      "Block sensitive sites, manage feature permissions, or remove " +
+      "everything this extension has stored.",
   },
 ] as const;
 
 type PanelId = (typeof PANELS)[number]["id"];
 
-function isPanelId(value: string): value is PanelId {
-  return PANELS.some((panel) => panel.id === value);
-}
-
-/** The panel a `#hash` deep link names, or the default. */
+/** The panel a `#hash` deep link names, or the default. Legacy `#permissions` maps to `connections`. */
 function panelFromHash(hash: string): PanelId {
   const id = hash.replace(/^#/, "");
-  return isPanelId(id) ? id : PANELS[0].id;
+  if (id === "permissions") return "connections";
+  return PANELS.some((panel) => panel.id === id)
+    ? (id as PanelId)
+    : PANELS[0].id;
 }
 
 export function OptionsApp() {
@@ -129,17 +120,19 @@ export function OptionsApp() {
   // Connected = a current `jev_test` grant at ANY origin — presets and the
   // custom provider alike — or a configured LLM provider. Origin-agnostic
   // because the checklist only asks "is some provider usable".
-  const connected =
+  const jevConnected =
     consents.some(
       (row) =>
         row.scope === CONSENT_SCOPE &&
         row.consentVersion === CONSENT_VERSION,
-    ) || consents.some((row) => row.scope === LLM_TEST_SCOPE);
-  const analysisConsented = consents.some(
-    (row) =>
-      row.scope === DECISIONS_CONSENT_SCOPE &&
-      row.consentVersion === CONSENT_VERSION,
-  );
+    ) &&
+    consents.some(
+      (row) =>
+        row.scope === DECISIONS_CONSENT_SCOPE &&
+        row.consentVersion === CONSENT_VERSION,
+    );
+  const llmConnected = consents.some((row) => row.scope === LLM_TEST_SCOPE);
+  const connected = jevConnected || llmConnected;
   const automationOn = metadataRows.some((row) => {
     const value = row.value as
       | { enabled?: boolean; autoApply?: Record<string, boolean> }
@@ -149,10 +142,6 @@ export function OptionsApp() {
       Object.values(value?.autoApply ?? {}).some(Boolean)
     );
   });
-
-  const step = (done: boolean, isCurrent: boolean): ChecklistState =>
-    done ? "done" : isCurrent ? "current" : "pending";
-
   /**
    * Cross-panel jump used by the Permissions panel's blocked controls (the
    * second-opinion switch names prerequisites that live in Connections).
@@ -270,42 +259,37 @@ export function OptionsApp() {
                         title: "Connect a provider",
                         description:
                           "Pick a Jev endpoint or an OpenAI-compatible LLM.",
-                        state: step(connected, true),
-                      },
-                      {
-                        id: "consent",
-                        title: "Allow bookmark analysis",
-                        description: "Consent per provider, in Permissions.",
-                        state: step(analysisConsented, connected),
-                        onGo: () => setActive("permissions"),
+                        state: connected ? "done" : "current",
                       },
                       {
                         id: "automate",
                         title: "Choose automations",
                         description:
                           "Auto-apply and second opinions stay off until you opt in.",
-                        state: step(
-                          automationOn,
-                          connected && analysisConsented,
-                        ),
-                        onGo: () => setActive("permissions"),
+                        state: automationOn
+                          ? "done"
+                          : connected
+                            ? "current"
+                            : "pending",
                       },
                     ]}
                   />
-                  <ProviderSetup
-                    onNavigateToPermissions={() => setActive("permissions")}
-                  />
+                  <ProviderSetup />
                   <LlmProviderSetup />
+                  <DecisionSettings
+                    section="connections"
+                    onNavigateToConnections={navigateToConnections}
+                  />
                   <PrivacyDraft />
                 </>
               )}
-              {panel.id === "permissions" && (
-                <DecisionSettings
-                  onNavigateToConnections={navigateToConnections}
-                />
-              )}
               {panel.id === "activity" && <SentLog />}
-              {panel.id === "data" && <DeleteAllData />}
+              {panel.id === "data" && (
+                <>
+                  <DecisionSettings section="data" />
+                  <DeleteAllData />
+                </>
+              )}
             </div>
           ))}
         </main>

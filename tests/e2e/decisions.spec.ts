@@ -21,7 +21,6 @@ import { createBookmark, createFolder, getChildren } from "./helpers/seed";
 import {
   chooseTool,
   openMoreView,
-  openOptionsPanel,
   waitForPopupReady,
   waitForSidePanelReady,
 } from "./helpers/surfaces";
@@ -100,6 +99,20 @@ test("zero egress until the jev_decisions grant exists", async () => {
 
   const options = await openSurface(ext.context, ext.id, "options");
   await enableTypesafe(options, { key: "e2e-decisions-key" });
+  // Pause bookmark analysis inline in Connections so jev_test is granted
+  // while jev_decisions is ungranted.
+  await options
+    .getByRole("button", { name: "Pause TypeSafe bookmark analysis" })
+    .click();
+  await expect(options.getByTestId("provider-analysis-consent")).toContainText(
+    "Not yet granted",
+  );
+  await expect(
+    options.getByRole("button", {
+      name: "Allow TypeSafe bookmark analysis",
+    }),
+  ).toBeVisible();
+
   const sidepanel = await openSurface(ext.context, ext.id, "sidepanel");
   await waitForSidePanelReady(sidepanel);
   const bookmark = await createBookmark(sidepanel, {
@@ -117,19 +130,6 @@ test("zero egress until the jev_decisions grant exists", async () => {
   await expect(sidepanel.getByRole("alert").first()).toContainText(
     /No provider is enabled/i,
   );
-
-  // The consent UI itself starts unchecked with Allow disabled. It lives in
-  // the Permissions panel, which the shell mounts hidden until selected.
-  await openOptionsPanel(options, "Permissions");
-  await expect(
-    options.getByLabel(/agree to send bookmark metadata to/),
-  ).not.toBeChecked();
-  await expect(
-    options.getByRole("button", {
-      name: "Allow TypeSafe bookmark analysis",
-    }),
-  ).toBeDisabled();
-
   expect(abortLog.requests).toEqual([]);
   expect(await sentLogRows(options)).toEqual([]);
   expect(outbound.urls).toEqual([]);

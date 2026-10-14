@@ -20,23 +20,12 @@ import {
 } from "vitest";
 import {
   CUSTOM_JEV_PROVIDER_NAME,
-  DECISIONS_NEVER_SENT_FIELDS,
-  DECISIONS_PURPOSES,
-  DECISIONS_SENT_FIELDS,
-  DECISIONS_TRIGGER_NOTE,
-  DECISIONS_TRIGGERS,
-  PROVIDER_DISCLOSURES,
   LLM_SCOPE_DISCLOSURES,
 } from "../../src/consent/disclosure";
 import {
-  CONSENT_VERSION,
   consentVersionForScope,
-  grantConsent,
   grantConsentAtOrigin,
-  grantTestConsent,
-  hasConsent,
   hasConsentAtOrigin,
-  hasTestConsent,
   revokeConsentsAtOrigin,
 } from "../../src/consent/records";
 import { db } from "../../src/db/database";
@@ -75,7 +64,6 @@ import {
   LLM_TEST_SCOPE,
   ProviderSettings,
   type JevProviderId,
-  type PresetId,
 } from "../../src/schemas/provider";
 
 /**
@@ -194,226 +182,6 @@ function sentDecisionTypes(): string[] {
   return sentTypes().filter((type) => DECISION_TYPES.includes(type));
 }
 
-function agreeBox(): HTMLInputElement {
-  return screen.getByRole("checkbox", {
-    name: /agree/i,
-  }) as HTMLInputElement;
-}
-
-/**
- * The disclosure read gate (Task 3): the agree box is inert (`aria-disabled`)
- * until the disclosure has been opened once. jsdom does not toggle `<details>`
- * on summary clicks, so flip the DOM attribute and fire `toggle` directly —
- * the same pattern options-primitives uses for Disclosure.
- */
-function openDisclosure(): void {
-  const details = screen
-    .getByRole("region", { name: /bookmark data disclosure/i })
-    .closest("details") as HTMLDetailsElement;
-  details.open = true;
-  fireEvent(details, new Event("toggle"));
-}
-
-function allowButton(): HTMLButtonElement {
-  return screen.getByRole("button", {
-    name: /allow .* bookmark analysis/i,
-  }) as HTMLButtonElement;
-}
-
-async function grantDecisionsConsent(preset: PresetId = "typesafe") {
-  openDisclosure();
-  fireEvent.click(agreeBox());
-  await waitFor(() => expect(allowButton().disabled).toBe(false));
-  fireEvent.click(allowButton());
-  await waitFor(async () => {
-    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, preset)).toBe(true);
-  });
-}
-
-describe("decisions consent disclosure", () => {
-  it("renders every sent field, never-sent field, purpose, trigger, and the privacy-policy link verbatim", async () => {
-    render(<DecisionSettings />);
-    const disclosure = await screen.findByRole("region", {
-      name: /bookmark data disclosure/i,
-    });
-    const view = within(disclosure);
-    // Recipient and literal origin.
-    expect(disclosure.textContent).toContain(PROVIDER_DISCLOSURES.typesafe.name);
-    expect(disclosure.textContent).toContain(PRESETS.typesafe.origin);
-    // Every sent field, verbatim from the typed constants.
-    for (const field of DECISIONS_SENT_FIELDS) {
-      expect(disclosure.textContent).toContain(field);
-    }
-    // The negative list is stated plainly.
-    for (const field of DECISIONS_NEVER_SENT_FIELDS) {
-      expect(disclosure.textContent).toContain(field);
-    }
-    // Every purpose and trigger, plus the user-started-only note.
-    for (const purpose of DECISIONS_PURPOSES) {
-      expect(disclosure.textContent).toContain(purpose);
-    }
-    for (const trigger of DECISIONS_TRIGGERS) {
-      expect(disclosure.textContent).toContain(trigger);
-    }
-    expect(disclosure.textContent).toContain(DECISIONS_TRIGGER_NOTE);
-    // Provider data note and privacy-policy link.
-    expect(disclosure.textContent).toContain(
-      PROVIDER_DISCLOSURES.typesafe.dataNote,
-    );
-    const link = view.getByRole("link", {
-      name: /privacy policy/i,
-    }) as HTMLAnchorElement;
-    expect(link.href).toBe(PROVIDER_DISCLOSURES.typesafe.privacyPolicyUrl);
-    expect(link.target).toBe("_blank");
-    expect(link.rel).toContain("noopener");
-  });
-
-  it("starts the agree checkbox unchecked and the consent action disabled", async () => {
-    render(<DecisionSettings />);
-    const agree = await screen.findByRole("checkbox", { name: /agree/i });
-    expect((agree as HTMLInputElement).checked).toBe(false);
-    const allow = allowButton();
-    expect(allow.disabled).toBe(true);
-    // Clicking the disabled button grants nothing and sends nothing.
-    fireEvent.click(allow);
-    expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
-    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
-  });
-
-  it("switches the disclosure with the provider radio", async () => {
-    render(<DecisionSettings />);
-    await screen.findByRole("checkbox", { name: /agree/i });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    const disclosure = await screen.findByRole("region", {
-      name: /openrouter bookmark data disclosure/i,
-    });
-    expect(disclosure.textContent).toContain(PRESETS.openrouter.origin);
-    expect(disclosure.textContent).toContain(
-      PROVIDER_DISCLOSURES.openrouter.dataNote,
-    );
-    const link = within(disclosure).getByRole("link", {
-      name: /privacy policy/i,
-    }) as HTMLAnchorElement;
-    expect(link.href).toBe(PROVIDER_DISCLOSURES.openrouter.privacyPolicyUrl);
-    // Switching resets the agreement box — never pre-checked. The consent
-    // panel reads pending until the live query emits for the new preset.
-    const agree = (await screen.findByRole("checkbox", {
-      name: /agree/i,
-    })) as HTMLInputElement;
-    expect(agree.checked).toBe(false);
-    expect(allowButton().disabled).toBe(true);
-  });
-
-  it("reopens the configured custom provider instead of the first preset", async () => {
-    sendMessageSpy.mockImplementation((message: unknown) => {
-      const msg = message as { type: string; preset?: string };
-      if (msg.type === "PROVIDER_STATUS") {
-        const configured = msg.preset === "custom";
-        return Promise.resolve({
-          ok: true,
-          status: {
-            enabled: configured,
-            consentGranted: configured,
-            ...(configured
-              ? { origin: "https://jev.example.com", model: "jev-latest" }
-              : {}),
-          },
-        } as unknown as DecisionMessageResult);
-      }
-      return workerReply(message);
-    });
-    render(<DecisionSettings />);
-    // Before the probe the picker sat on TypeSafe regardless of what the
-    // worker holds — the consent would have been written to the wrong origin.
-    const radio = (await screen.findByRole("radio", {
-      name: /custom jev provider/i,
-    })) as HTMLInputElement;
-    await waitFor(() => expect(radio.checked).toBe(true));
-    const disclosure = await screen.findByRole("region", {
-      name: /custom jev provider bookmark data disclosure/i,
-    });
-    expect(disclosure.textContent).toContain("https://jev.example.com");
-  });
-});
-
-describe("decisions consent grant and revoke", () => {
-  it("writes a jev_decisions consent row directly (no consent message exists)", async () => {
-    render(<DecisionSettings />);
-    await screen.findByRole("checkbox", { name: /agree/i });
-    await grantDecisionsConsent();
-    // The granted panel replaces the form once the live query re-reads.
-    await screen.findByRole("button", { name: /revoke .* analysis consent/i });
-    // Consent is a direct Dexie write — the only message ever sent is the
-    // settings read; no consent message leaves the page.
-    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
-  });
-
-  it("shows the un-consented screen (re-disclosure) for a stale consentVersion row", async () => {
-    await db.consents.put({
-      scope: DECISIONS_CONSENT_SCOPE,
-      origin: PRESETS.typesafe.origin,
-      consentVersion: CONSENT_VERSION - 1,
-      acceptedAt: "2025-01-01T00:00:00.000Z",
-    });
-    render(<DecisionSettings />);
-    // hasConsent rejects the stale version — the grant flow is shown again.
-    const agree = await screen.findByRole("checkbox", { name: /agree/i });
-    expect((agree as HTMLInputElement).checked).toBe(false);
-    expect(allowButton().disabled).toBe(true);
-    expect(
-      screen.queryByRole("button", { name: /revoke .* analysis consent/i }),
-    ).toBeNull();
-  });
-
-  it("revokes only the jev_decisions grant and leaves jev_test intact", async () => {
-    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
-    await grantTestConsent("typesafe");
-    render(<DecisionSettings />);
-    const revoke = await screen.findByRole("button", {
-      name: /revoke .* analysis consent/i,
-    });
-    fireEvent.click(revoke);
-    await waitFor(async () => {
-      expect(await hasConsent(DECISIONS_CONSENT_SCOPE, "typesafe")).toBe(false);
-    });
-    // The provider connection consent is untouched.
-    expect(await hasTestConsent("typesafe")).toBe(true);
-    // The un-consented screen returns.
-    await screen.findByRole("checkbox", { name: /agree/i });
-    expect(sentDecisionTypes()).toEqual(["GET_SETTINGS"]);
-  });
-
-  it("keeps consent state per provider", async () => {
-    await grantConsent(DECISIONS_CONSENT_SCOPE, "openrouter");
-    render(<DecisionSettings />);
-    // TypeSafe un-consented; OpenRouter granted.
-    await screen.findByRole("checkbox", { name: /agree/i });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    await screen.findByRole("button", { name: /revoke .* analysis consent/i });
-    expect(screen.queryByRole("checkbox", { name: /agree/i })).toBeNull();
-  });
-
-  it("renders pending — not the previous provider's panel — across a preset switch", async () => {
-    await grantConsent(DECISIONS_CONSENT_SCOPE, "typesafe");
-    render(<DecisionSettings />);
-    await screen.findByRole("button", {
-      name: /revoke typesafe analysis consent/i,
-    });
-    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    // Synchronously after the switch the stale TypeSafe verdict is still the
-    // live query's last emission — it must read pending, never a "Revoke
-    // OpenRouter…" panel under the new disclosure.
-    expect(screen.getByText(/checking consent/i)).toBeTruthy();
-    expect(
-      screen.queryByRole("button", { name: /revoke openrouter/i }),
-    ).toBeNull();
-    expect(screen.queryByRole("checkbox", { name: /agree/i })).toBeNull();
-    // Once the query emits for OpenRouter, its real un-consented form shows.
-    const agree = await screen.findByRole("checkbox", { name: /agree/i });
-    expect((agree as HTMLInputElement).checked).toBe(false);
-    expect(allowButton().textContent).toContain("OpenRouter");
-  });
-});
 
 describe("auto-apply toggles", () => {
   it("renders both toggles off by default and explains the confidence bar", async () => {
@@ -670,8 +438,6 @@ describe("cost totals", () => {
 describe("protocol discipline", () => {
   it("sends only decisions-protocol messages — consent is a local write", async () => {
     render(<DecisionSettings />);
-    await screen.findByRole("checkbox", { name: /agree/i });
-    await grantDecisionsConsent();
     fireEvent.click(
       await screen.findByRole("switch", { name: /tag additions/i }),
     );
@@ -749,54 +515,7 @@ describe("settings load failure", () => {
   });
 });
 
-describe("disclosure read gate", () => {
-  it("opens and reveals the disclosure instead of agreeing on an early click", async () => {
-    render(<DecisionSettings />);
-    const box = (await screen.findByRole("checkbox", {
-      name: /agree/i,
-    })) as HTMLInputElement;
-    expect(box.getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-    fireEvent.click(box);
-    // The click opened the disclosure and did not record agreement.
-    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
-    expect(box.checked).toBe(false);
-    expect(
-      screen.queryByText("Open the disclosure above first."),
-    ).toBeNull();
-    // The disclosure is read now, so the next click is an affirmation.
-    fireEvent.click(agreeBox());
-    await waitFor(() => expect(agreeBox().checked).toBe(true));
-  });
 
-  it("re-arms the gate on preset changes and after consent is revoked", async () => {
-    render(<DecisionSettings />);
-    await screen.findByRole("checkbox", { name: /agree/i });
-    openDisclosure();
-    await waitFor(() =>
-      expect(agreeBox().getAttribute("aria-disabled")).toBeNull(),
-    );
-    fireEvent.click(screen.getByRole("radio", { name: "OpenRouter" }));
-    await waitFor(() =>
-      expect(agreeBox().getAttribute("aria-disabled")).toBe("true"),
-    );
-    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-    cleanup();
-    render(<DecisionSettings />);
-    await screen.findByRole("checkbox", { name: /agree/i });
-    await grantDecisionsConsent();
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /revoke .* analysis consent/i,
-      }),
-    );
-    const box = (await screen.findByRole("checkbox", {
-      name: /agree/i,
-    })) as HTMLInputElement;
-    await waitFor(() => expect(box.getAttribute("aria-disabled")).toBe("true"));
-    expect(screen.getByText("Open the disclosure above first.")).toBeTruthy();
-  });
-});
 
 /* ------------------------------------------------------------------ */
 /* Mounted shell — live provider state (bug B14)                       */
@@ -812,12 +531,10 @@ describe("disclosure read gate", () => {
 
 const JEV_SECTION = /ai provider connection/i;
 const LLM_SECTION = /optional llm provider/i;
-const CONSENT_SECTION = /bookmark analysis consent/i;
 const ESCALATION_SECTION = /automatic second opinions/i;
 const BLOCKLIST_SECTION = /never send these sites/i;
 
 const CUSTOM_ORIGIN = "https://jev.example.com";
-const SECOND_ORIGIN = "https://jev2.example.com";
 const LLM_ORIGIN = "https://api.openai.com";
 
 const LLM_RECORD_PREFIX = "llmProvider:";
@@ -832,18 +549,6 @@ let holdAllJevProbes: boolean;
 let heldProbes: Array<() => void>;
 let failStatusReads: boolean;
 
-/**
- * A valid stored custom-Jev settings row — the shape ENABLE_PROVIDER
- * persists. `keySuffix` is the masked display hint, never key material.
- */
-function customJevSettings(baseUrl: string): ProviderSettings {
-  return ProviderSettings.parse({
-    preset: CUSTOM_PROVIDER_ID,
-    baseUrl,
-    model: "jev-latest",
-    keySuffix: "****",
-  });
-}
 
 /** The stored Jev status for one id, as the worker's `readStatus` composes it. */
 async function readStoredJevStatus(id: JevProviderId): Promise<ProviderStatus> {
@@ -1268,33 +973,6 @@ async function enableLlmProvider(options: { cap?: string } = {}): Promise<void> 
   await waitFor(async () => expect(await readActiveLlmRecord()).not.toBeNull());
 }
 
-/** Grant the bookmark-analysis consent at the currently selected origin. */
-async function grantDecisionsConsentInShell(origin: string): Promise<void> {
-  const section = screen.getByRole("region", { name: CONSENT_SECTION });
-  openDetails(
-    await within(section).findByRole("region", {
-      name: /bookmark data disclosure/i,
-    }),
-  );
-  const box = (await within(section).findByRole("checkbox", {
-    name: /agree/i,
-  })) as HTMLInputElement;
-  await waitFor(() => expect(box.getAttribute("aria-disabled")).toBeNull());
-  fireEvent.click(box);
-  const allow = within(section).getByRole("button", {
-    name: /allow .* bookmark analysis/i,
-  }) as HTMLButtonElement;
-  await waitFor(() => expect(allow.disabled).toBe(false));
-  fireEvent.click(allow);
-  await waitFor(async () =>
-    expect(await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, origin)).toBe(true),
-  );
-}
-
-/** The radio input inside a provider card, by accessible name. */
-function cardFor(section: HTMLElement, name: RegExp): HTMLInputElement {
-  return within(section).getByRole("radio", { name }) as HTMLInputElement;
-}
 
 beforeEach(() => {
   escalationReadCount = 0;
@@ -1306,13 +984,10 @@ beforeEach(() => {
 });
 
 describe("mounted shell — live provider state", () => {
-  it("reflects a custom Jev provider enabled in Connections without remounting", async () => {
+  it("enables a custom Jev provider in Connections, grants jev_decisions consent, and preserves Data panel state across navigation", async () => {
     await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    // Nothing is configured yet: only the two registry presets are offered.
-    expect(within(consent).queryByRole("radio", { name: /custom/i })).toBeNull();
-    // An uncommitted edit in this panel is the no-remount witness.
+    showPanel("Data");
+    // An uncommitted edit in the Data panel is the no-remount witness.
     const blocklist = screen.getByRole("region", { name: BLOCKLIST_SECTION });
     fireEvent.change(within(blocklist).getByLabelText(/block a host/i), {
       target: { value: "example.org" },
@@ -1324,56 +999,37 @@ describe("mounted shell — live provider state", () => {
       key: "custom-key-1",
     });
 
-    // While the Permissions panel is still hidden, it already has the card.
-    await waitFor(() =>
+    // Enabling the custom Jev provider automatically grants jev_decisions at its origin.
+    await waitFor(async () =>
       expect(
-        within(
-          document.getElementById("permissions") as HTMLElement,
-        ).queryByRole("radio", {
-          name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-          hidden: true,
-        }),
-      ).not.toBeNull(),
+        await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, CUSTOM_ORIGIN),
+      ).toBe(true),
     );
+    const banner = await screen.findByTestId("provider-analysis-consent");
+    expect(banner.textContent).toContain("Consent granted");
 
-    showPanel("Permissions");
-    const radio = await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-    // Nothing was remounted: the uncommitted edit made before the provider
-    // was enabled survived the enable and the panel switch.
+    // Nothing was remounted: the uncommitted edit made in Data before the
+    // provider was enabled survived the enable and the panel switch.
+    showPanel("Data");
     expect(
       (within(blocklist).getByLabelText(/block a host/i) as HTMLInputElement)
         .value,
     ).toBe("example.org");
-    fireEvent.click(radio);
-    await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
-    const card = radio.closest("label") as HTMLElement;
-    expect(card.textContent).toContain(CUSTOM_ORIGIN);
-    // The freshly read origin is the one consent is granted against.
-    await grantDecisionsConsentInShell(CUSTOM_ORIGIN);
-    await within(consent).findByRole("button", {
-      name: /revoke custom jev provider analysis consent/i,
-    });
   });
 
-  it("drops a revoked custom provider and never reuses consent from a replaced origin", async () => {
+  it("drops a revoked custom provider and removes its jev_decisions consent at that origin", async () => {
     await mountOptionsShell();
     await enableCustomJevProvider({
       baseUrl: CUSTOM_ORIGIN,
       model: "jev-latest",
       key: "custom-key-1",
     });
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    fireEvent.click(
-      await within(consent).findByRole("radio", {
-        name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-      }),
+    await waitFor(async () =>
+      expect(
+        await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, CUSTOM_ORIGIN),
+      ).toBe(true),
     );
-    await grantDecisionsConsentInShell(CUSTOM_ORIGIN);
 
-    // Revoke it from Connections while Permissions is hidden.
     showPanel("Connections");
     fireEvent.click(
       within(screen.getByRole("region", { name: JEV_SECTION })).getByRole(
@@ -1384,87 +1040,14 @@ describe("mounted shell — live provider state", () => {
     await waitFor(async () =>
       expect(await db.metadata.get(CUSTOM_PROVIDER_ID)).toBeUndefined(),
     );
-
-    showPanel("Permissions");
-    await waitFor(() =>
-      expect(
-        within(consent).queryByRole("radio", { name: /custom/i }),
-      ).toBeNull(),
-    );
-    // The selection falls back to a provider that still exists.
-    await waitFor(() => expect(cardFor(consent, /^TypeSafe$/).checked).toBe(true));
-    // Revoking the provider removed the grant it carried at its origin.
-    expect(await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, CUSTOM_ORIGIN)).toBe(
-      false,
-    );
-
-    // Re-enabling at a different origin starts un-consented there: the grant
-    // recorded for the replaced origin is never reused.
-    await enableCustomJevProvider({
-      baseUrl: SECOND_ORIGIN,
-      model: "jev-latest",
-      key: "custom-key-2",
-    });
-    showPanel("Permissions");
-    const radio = await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-    fireEvent.click(radio);
-    await waitFor(() => expect((radio as HTMLInputElement).checked).toBe(true));
-    const card = radio.closest("label") as HTMLElement;
-    expect(card.textContent).toContain(SECOND_ORIGIN);
-    expect(card.textContent).not.toContain(CUSTOM_ORIGIN);
-    await within(consent).findByRole("checkbox", { name: /agree/i });
     expect(
-      within(consent).queryByRole("button", {
-        name: /revoke .* analysis consent/i,
-      }),
-    ).toBeNull();
+      await hasConsentAtOrigin(DECISIONS_CONSENT_SCOPE, CUSTOM_ORIGIN),
+    ).toBe(false);
   });
 
-  it("drops a superseded custom-origin reply instead of reusing it", async () => {
+  it("reflects the LLM origin and a changed spending ceiling in Automatic second opinions", async () => {
     await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-
-    // Hold every custom-provider reply, then move the provider twice.
-    holdCustomProbes = true;
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(CUSTOM_ORIGIN),
-      });
-    });
-    await waitFor(() => expect(heldProbes).toHaveLength(1));
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(SECOND_ORIGIN),
-      });
-    });
-    await waitFor(() => expect(heldProbes).toHaveLength(2));
-
-    // The newer read answers first.
-    await act(async () => {
-      heldProbes[1]!();
-    });
-    const card = () =>
-      cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).closest(
-        "label",
-      ) as HTMLElement;
-    await waitFor(() => expect(card().textContent).toContain(SECOND_ORIGIN));
-
-    // The superseded reply now settles — it must not overwrite the newer one.
-    await act(async () => {
-      heldProbes[0]!();
-    });
-    expect(card().textContent).not.toContain(CUSTOM_ORIGIN);
-    expect(card().textContent).toContain(SECOND_ORIGIN);
-  });
-
-  it("reflects the LLM origin and a changed spending ceiling in the hidden panel", async () => {
-    await mountOptionsShell();
-    showPanel("Permissions");
+    showPanel("Connections");
     const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
     await within(escalation).findByText(
       /configure and enable an llm provider in connections/i,
@@ -1472,19 +1055,6 @@ describe("mounted shell — live provider state", () => {
 
     await enableLlmProvider({ cap: "5" });
 
-    // Already live in the hidden Permissions panel…
-    await waitFor(() =>
-      expect(
-        within(
-          document.getElementById("permissions") as HTMLElement,
-        ).getByRole("region", {
-          name: "Second opinion disclosure",
-          hidden: true,
-        }),
-      ).toBeTruthy(),
-    );
-
-    showPanel("Permissions");
     await within(escalation).findByRole("region", {
       name: "Second opinion disclosure",
     });
@@ -1492,7 +1062,6 @@ describe("mounted shell — live provider state", () => {
     await within(escalation).findByText(/Monthly cap: \$5\.00/);
 
     // A ceiling change in the Connections budget panel flows through too.
-    showPanel("Connections");
     const llmSection = screen.getByRole("region", { name: LLM_SECTION });
     fireEvent.change(
       within(llmSection).getByLabelText(/monthly cap \(usd\)/i),
@@ -1508,25 +1077,18 @@ describe("mounted shell — live provider state", () => {
     expect(escalation.textContent).not.toContain("Monthly cap: $5.00");
   });
 
-  it("keeps the second-opinion controls in step with consent, the toggle, and a revoke", async () => {
+  it("enables second opinions in one switch click and resets when the LLM provider is revoked", async () => {
     await mountOptionsShell();
     await enableLlmProvider({ cap: "5" });
-    showPanel("Permissions");
+    showPanel("Connections");
     const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
     const toggle = () =>
       within(escalation).getByRole("switch", {
         name: /second opinion on unsure suggestions/i,
       }) as HTMLElement;
-    // No `llm_escalate` grant yet: the toggle is soft-blocked, not dead —
-    // the reason names the consent step.
     await waitFor(() =>
-      expect(toggle().getAttribute("aria-disabled")).toBe("true"),
+      expect(toggle().getAttribute("aria-disabled")).toBeNull(),
     );
-    expect(
-      await within(escalation).findByText(
-        /grant second-opinion consent above/i,
-      ),
-    ).toBeTruthy();
 
     const disclosure = within(escalation).getByRole("region", {
       name: "Second opinion disclosure",
@@ -1535,24 +1097,13 @@ describe("mounted shell — live provider state", () => {
     expect(disclosure.textContent).toContain("focusing Tags or clicking Suggest in the popup");
     expect(disclosure.textContent).toContain("clicking Resume");
     expect(disclosure.textContent).not.toMatch(/\bSave\b/);
-    fireEvent.click(
-      await within(escalation).findByRole("checkbox", {
-        name: /allow second opinions to be sent to/i,
-      }),
-    );
-    const allow = await within(escalation).findByRole("button", {
-      name: /^allow second opinions$/i,
-    }) as HTMLButtonElement;
-    await waitFor(() => expect(allow.disabled).toBe(false));
-    fireEvent.click(allow);
-    await waitFor(() =>
-      expect(toggle().getAttribute("aria-disabled")).toBeNull(),
-    );
-    expect(
-      await hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
-    ).toBe(true);
 
     fireEvent.click(toggle());
+    await waitFor(async () =>
+      expect(
+        await hasConsentAtOrigin(LLM_ESCALATE_SCOPE, LLM_ORIGIN),
+      ).toBe(true),
+    );
     await waitFor(() =>
       expect(toggle().getAttribute("aria-checked")).toBe("true"),
     );
@@ -1563,14 +1114,12 @@ describe("mounted shell — live provider state", () => {
     );
 
     // Revoking the provider takes the section back to the no-provider state.
-    showPanel("Connections");
     fireEvent.click(
       within(screen.getByRole("region", { name: LLM_SECTION })).getByRole(
         "button",
         { name: /revoke llm provider access/i },
       ),
     );
-    showPanel("Permissions");
     await within(escalation).findByText(
       /configure and enable an llm provider in connections/i,
     );
@@ -1581,22 +1130,12 @@ describe("mounted shell — live provider state", () => {
 
   it("jumps a blocked second-opinion toggle to its Connections prerequisite", async () => {
     await mountOptionsShell();
-    // A priced provider with no ceiling: with consent granted, the cap is
-    // the one unmet prerequisite for the switch.
+    // A priced provider with no ceiling: the cap is the unmet prerequisite.
     await enableLlmProvider();
-    await act(async () => {
-      await db.consents.put({
-        scope: LLM_ESCALATE_SCOPE,
-        origin: LLM_ORIGIN,
-        consentVersion: CONSENT_VERSION,
-        acceptedAt: new Date().toISOString(),
-      });
-    });
-    showPanel("Permissions");
+    showPanel("Connections");
     const escalation = screen.getByRole("region", { name: ESCALATION_SECTION });
     await within(escalation).findByText(/no spending ceiling is chosen/i);
 
-    // Clicking the blocked switch jumps to the panel that unblocks it.
     const toggle = within(escalation).getByRole("switch", {
       name: /second opinion on unsure suggestions/i,
     });
@@ -1608,8 +1147,6 @@ describe("mounted shell — live provider state", () => {
       expect(document.getElementById("connections")?.hidden).toBe(false),
     );
 
-    // The named action in the reason list jumps the same way.
-    showPanel("Permissions");
     fireEvent.click(
       within(escalation).getByRole("button", { name: /open monthly budget/i }),
     );
@@ -1622,219 +1159,22 @@ describe("mounted shell — live provider state", () => {
   it("surfaces a settled status failure and recovers when the read is retried", async () => {
     failStatusReads = true;
     await mountOptionsShell();
-    showPanel("Permissions");
-    await screen.findByText(/could not read the provider status/i);
+    showPanel("Connections");
     await screen.findByText(/could not read the second-opinion status/i);
 
     failStatusReads = false;
     fireEvent.click(
-      screen.getByRole("button", { name: /retry provider status/i }),
+      screen.getByRole("button", { name: /retry second-opinion status/i }),
     );
     await waitFor(() =>
-      expect(screen.queryByText(/could not read the provider status/i)).toBeNull(),
+      expect(
+        screen.queryByText(/could not read the second-opinion status/i),
+      ).toBeNull(),
     );
-
-    // The live path is re-armed after a retry: a new provider still lands.
-    await enableCustomJevProvider({
-      baseUrl: CUSTOM_ORIGIN,
-      model: "jev-latest",
-      key: "custom-key-3",
-    });
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-  });
-
-  it("does not render a superseded origin while the newer read is in flight", async () => {
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(CUSTOM_ORIGIN),
-      });
-    });
-    await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-    // The first read has settled: the card names the stored origin and the
-    // restore has landed the selection on it.
-    await waitFor(() => expect(consent.textContent).toContain(CUSTOM_ORIGIN));
-    await waitFor(() =>
-      expect(cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).checked).toBe(
-        true,
-      ),
-    );
-
-    // Hold the next custom-origin read, then move the provider: the settled
-    // value now belongs to a revision the current one has superseded.
-    holdCustomProbes = true;
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(SECOND_ORIGIN),
-      });
-    });
-    await waitFor(() => expect(heldProbes).toHaveLength(1));
-
-    // Pre-settle window: the superseded origin is tagged with the OLD
-    // revision, so it must not be rendered as the current provider — the
-    // panel reads as pending instead.
-    expect(consent.textContent).not.toContain(CUSTOM_ORIGIN);
-    expect(
-      within(consent).queryByRole("radio", { name: /custom/i }),
-    ).toBeNull();
-    expect(within(consent).getByText(/checking consent/i)).toBeTruthy();
-
-    // Releasing the held read lands the new origin.
-    await act(async () => {
-      heldProbes[0]!();
-    });
-    await waitFor(() => expect(consent.textContent).toContain(SECOND_ORIGIN));
-    expect(consent.textContent).not.toContain(CUSTOM_ORIGIN);
-  });
-
-  it("re-reads the worker when only a connectivity consent changes", async () => {
-    await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    await within(consent).findByRole("radio", { name: /^TypeSafe$/ });
-
-    // No settings row moves here: the only input is a connectivity consent
-    // grant. This panel renders no control for the synthetic `jev_test` /
-    // `llm_test` scopes, so the contract under test is that the worker is
-    // re-asked at all — a status read that never re-runs is the bug.
-    const probesBefore = providerStatusCount;
-    const escalationBefore = escalationReadCount;
-    await act(async () => {
-      await grantConsentAtOrigin(CONSENT_SCOPE, CUSTOM_ORIGIN);
-    });
-    await waitFor(() =>
-      expect(providerStatusCount).toBeGreaterThanOrEqual(probesBefore + 3),
-    );
-    expect(escalationReadCount).toBeGreaterThanOrEqual(escalationBefore + 1);
-
-    // The LLM connectivity scope is a revision input too.
-    const afterJev = providerStatusCount;
-    await act(async () => {
-      await grantConsentAtOrigin(LLM_TEST_SCOPE, LLM_ORIGIN);
-    });
-    await waitFor(() =>
-      expect(providerStatusCount).toBeGreaterThanOrEqual(afterJev + 3),
-    );
-  });
-
-  it("preserves a provider selected before the first settled read", async () => {
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(CUSTOM_ORIGIN),
-      });
-    });
-    // Every Jev status probe is held, so the first settled read — and the
-    // restore-once it drives — lands only when this test releases it.
-    holdAllJevProbes = true;
-    await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    const openrouter = cardFor(consent, /^OpenRouter$/);
-    fireEvent.click(openrouter);
-    await waitFor(() => expect(openrouter.checked).toBe(true));
-    // Nothing has settled: the configured custom provider is not even known.
-    expect(
-      within(consent).queryByRole("radio", { name: /custom/i }),
-    ).toBeNull();
-
-    // The restore would pick the stored custom provider; it must not move a
-    // selection the user already made.
-    await act(async () => {
-      for (const release of [...heldProbes]) release();
-      heldProbes.length = 0;
-    });
-    await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-    expect(cardFor(consent, /^OpenRouter$/).checked).toBe(true);
-    expect(
-      cardFor(consent, new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i")).checked,
-    ).toBe(false);
-  });
-
-  it("withholds the grant control until a custom origin resolves, and recovers on retry", async () => {
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(CUSTOM_ORIGIN),
-      });
-    });
-    await mountOptionsShell();
-    showPanel("Permissions");
-    const consent = screen.getByRole("region", { name: CONSENT_SECTION });
-    // The origin is known, so the grant form is live.
-    await within(consent).findByRole("radio", {
-      name: new RegExp(CUSTOM_JEV_PROVIDER_NAME, "i"),
-    });
-    await within(consent).findByRole("checkbox", { name: /agree/i });
-
-    // The status read starts failing and the provider moves: the origin is
-    // unknown, so the grant form must not render as if its Allow button
-    // could act — `onGrant` no-ops against a null origin.
-    failStatusReads = true;
-    await act(async () => {
-      await db.metadata.put({
-        key: CUSTOM_PROVIDER_ID,
-        value: customJevSettings(SECOND_ORIGIN),
-      });
-    });
-    await screen.findByText(/could not read the provider status/i);
-    expect(
-      within(consent).queryByRole("checkbox", { name: /agree/i }),
-    ).toBeNull();
-    expect(
-      within(consent).queryByRole("button", {
-        name: /allow .* bookmark analysis/i,
-      }),
-    ).toBeNull();
-    expect(
-      within(consent).getByText(/cannot be read or changed/i),
-    ).toBeTruthy();
-    // The new state adds no alert: the page's alert surface stays reserved
-    // for the worker's own {ok:false} reports.
-    expect(screen.queryAllByRole("alert")).toHaveLength(0);
-    expect(
-      within(consent)
-        .getByText(/cannot be read or changed/i)
-        .getAttribute("role"),
-    ).toBeNull();
-
-    // Retrying resolves the moved origin and the control comes back.
-    failStatusReads = false;
-    fireEvent.click(
-      screen.getByRole("button", { name: /retry provider status/i }),
-    );
-    await within(consent).findByRole("checkbox", { name: /agree/i });
-    await waitFor(() => expect(consent.textContent).toContain(SECOND_ORIGIN));
   });
 });
 
-describe("Phase 4 Task 5: per-feature consent, preset card status, disclosure control, Enter add, and inline feedback", () => {
-  it("displays consent status across all rendered Jev preset cards, including unselected presets", async () => {
-    await grantConsent(DECISIONS_CONSENT_SCOPE, "openrouter");
-    render(<DecisionSettings />);
-
-    const typesafeRadio = await screen.findByRole("radio", { name: "TypeSafe" });
-    const openrouterRadio = screen.getByRole("radio", { name: "OpenRouter" });
-    const typesafeCard = typesafeRadio.closest("label") as HTMLElement;
-    const openrouterCard = openrouterRadio.closest("label") as HTMLElement;
-
-    await waitFor(() => {
-      expect(typesafeCard.textContent).toContain("Not consented");
-      expect(openrouterCard.textContent).toContain("Consent granted");
-    });
-  });
+describe("Phase 4 Task 5: per-feature consent, disclosure control, Enter add, and inline feedback", () => {
 
   it("inspects active per-feature consent grants (llm_explain, llm_restructure, llm_summary, jev_summary_verify) and revokes them individually", async () => {
     await grantConsentAtOrigin(LLM_EXPLAIN_SCOPE, LLM_ORIGIN);
@@ -1926,9 +1266,6 @@ describe("Phase 4 Task 5: per-feature consent, preset card status, disclosure co
   it("uses 'in Connections' copy instead of stale 'above' references", async () => {
     sendMessageSpy.mockImplementation(shellWorkerReply);
     render(<DecisionSettings />);
-    const consentSection = screen.getByRole("region", { name: CONSENT_SECTION });
-    await within(consentSection).findByText(/is connected in Connections/i);
-
     const escalationSection = screen.getByRole("region", {
       name: ESCALATION_SECTION,
     });

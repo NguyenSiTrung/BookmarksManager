@@ -71,8 +71,14 @@ test("Options consent flow enables TypeSafe and Test connection sends exactly on
     await expect(panel).toContainText("…90ab");
     await expect(panel).toContainText(PRESETS.typesafe.origin);
 
-    // Consent was persisted at the current version for this origin only.
+    // Consent was persisted at the current version for this origin (both
+    // connection test and bookmark analysis).
     expect(await consentRows(options)).toEqual([
+      expect.objectContaining({
+        scope: "jev_decisions",
+        origin: PRESETS.typesafe.origin,
+        consentVersion: 4,
+      }),
       expect.objectContaining({
         scope: "jev_test",
         origin: PRESETS.typesafe.origin,

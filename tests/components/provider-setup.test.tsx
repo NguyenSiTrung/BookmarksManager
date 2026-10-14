@@ -26,10 +26,8 @@ import type {
 } from "../../src/messages/provider";
 import {
   DEFAULT_PROVIDER_MODEL,
-  DECISIONS_CONSENT_SCOPE,
   PRESET_MODELS,
 } from "../../src/schemas/provider";
-import { CONSENT_VERSION } from "../../src/consent/records";
 import { db } from "../../src/db/database";
 
 /**
@@ -801,35 +799,35 @@ describe("disclosure read gate", () => {
     );
   });
 
-  it("displays inline Bookmark analysis consent status on an enabled provider and invokes onNavigateToPermissions when ungranted (UX-13)", async () => {
+  it("grants Bookmark analysis consent on Enable and toggles inline Allow/Pause on an enabled provider", async () => {
     await db.open();
     await db.consents.clear();
-    statusByPreset.typesafe = {
-      enabled: true,
-      consentGranted: true,
-      model: DEFAULT_PROVIDER_MODEL.typesafe,
-      keySuffix: "1234",
-    };
-    const onNavigate = vi.fn();
-    render(<ProviderSetup onNavigateToPermissions={onNavigate} />);
+    render(<ProviderSetup />);
+    await fillAndAgree();
+    fireEvent.click(enableButton());
 
     const banner = await screen.findByTestId("provider-analysis-consent");
     expect(banner.textContent).toContain("Bookmark analysis consent");
-    const reviewBtn = within(banner).getByRole("button", {
-      name: "Review analysis consent in Permissions",
-    });
-    fireEvent.click(reviewBtn);
-    expect(onNavigate).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(banner.textContent).toContain("Consent granted"),
+    );
 
-    await act(async () => {
-      await db.consents.put({
-        scope: DECISIONS_CONSENT_SCOPE,
-        origin: "https://api.typesafe.ai",
-        consentVersion: CONSENT_VERSION,
-        acceptedAt: "2026-10-01T00:00:00.000Z",
-      });
+    const pauseBtn = within(banner).getByRole("button", {
+      name: "Pause TypeSafe bookmark analysis",
     });
+    fireEvent.click(pauseBtn);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("provider-analysis-consent").textContent,
+      ).toContain("Not yet granted"),
+    );
 
+    const allowBtn = within(
+      screen.getByTestId("provider-analysis-consent"),
+    ).getByRole("button", {
+      name: "Allow TypeSafe bookmark analysis",
+    });
+    fireEvent.click(allowBtn);
     await waitFor(() =>
       expect(
         screen.getByTestId("provider-analysis-consent").textContent,

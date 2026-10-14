@@ -192,33 +192,21 @@ export async function routeFakeDecisions(
 }
 
 /**
- * Grant the `jev_decisions` consent through the real Options UI: switch to
- * the Permissions panel, check the affirmative-disclosure checkbox, click
- * Allow, and wait for the granted panel. The grant is a direct Dexie write
- * from the Options page — the egress gate re-verifies it on every send, so
- * this is the real production path.
+ * Ensure `jev_decisions` consent is granted through the real Options UI in
+ * Connections: enabling TypeSafe grants it automatically, or if paused, click
+ * "Allow TypeSafe bookmark analysis" inline on the enabled provider card.
  */
 export async function grantDecisionsConsent(page: Page): Promise<void> {
-  await openOptionsPanel(page, "Permissions");
-  // Task 3 read gate: open the disclosure before the agree box.
-  await page
-    .locator("summary", { hasText: "What bookmark analysis sends to TypeSafe" })
-    .click();
-  // "agree to send bookmark metadata" uniquely names the Jev consent — the
-  // LLM provider section has its own near-identical disclosure checkbox.
-  const checkbox = page.getByLabel(
-    /I have read the disclosure above and agree to send bookmark metadata/,
-  );
-  await expect(checkbox).toBeVisible({ timeout: 15_000 });
-  await checkbox.check();
-  const allow = page.getByRole("button", {
+  await openOptionsPanel(page, "Connections");
+  const banner = page.getByTestId("provider-analysis-consent");
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  const allow = banner.getByRole("button", {
     name: "Allow TypeSafe bookmark analysis",
   });
-  await expect(allow).toBeEnabled();
-  await allow.click();
-  await expect(
-    page.getByRole("group", { name: "TypeSafe analysis consent" }),
-  ).toBeVisible({ timeout: 15_000 });
+  if ((await allow.count()) > 0) {
+    await allow.click();
+  }
+  await expect(banner).toContainText("Consent granted", { timeout: 15_000 });
 }
 
 /**
