@@ -15,6 +15,7 @@ import {
   type SummaryConsentPreflight,
 } from "../../messages/summaries";
 import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
+import { getMeta, patchMeta } from "../../db/meta";
 
 /** Read-only preflight on open; only the disclosed affirmative send may
  * authorize extraction/egress. Unknown-cost confirmation is separate and
@@ -31,6 +32,10 @@ import { LLM_SCOPE_DISCLOSURES } from "../../consent/disclosure";
 declare const chrome: {
   runtime?: {
     sendMessage?(message: unknown): Promise<unknown>;
+  } | null;
+  permissions?: {
+    contains?(permissions: { origins?: string[] }): Promise<boolean>;
+    request?(permissions: { origins?: string[] }): Promise<boolean>;
   } | null;
 };
 
@@ -84,6 +89,7 @@ export interface SummaryDialogProps {
 
 type Phase =
   | { kind: "loading" }
+  | { kind: "saved"; summary: string }
   | { kind: "disclosure"; consent: SummaryConsentPreflight }
   | { kind: "running" }
   | { kind: "confirm"; destinationOrigin: string; approval: SummaryConsentApproval }
@@ -102,8 +108,22 @@ const PRIMARY_BUTTON_CLASS =
   "focus-visible:ring-2 focus-visible:ring-ring " +
   "focus-visible:outline-hidden";
 
+function originPermissionPattern(origin: string): string {
+  if (origin.startsWith("http://localhost:") || origin === "http://localhost") {
+    return "http://localhost/*";
+  }
+  if (origin.startsWith("http://127.0.0.1:") || origin === "http://127.0.0.1") {
+    return "http://127.0.0.1/*";
+  }
+  if (origin.startsWith("http://[::1]:") || origin === "http://[::1]") {
+    return "http://[::1]/*";
+  }
+  return `${origin}/*`;
+}
+
 export function SummaryDialog(props: SummaryDialogProps) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
+  const [forcePreflight, setForcePreflight] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const generation = useRef(0);
@@ -112,6 +132,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
   const [previousInput, setPreviousInput] = useState(inputKey);
   if (inputKey !== previousInput) {
     setPreviousInput(inputKey);
+    setForcePreflight(false);
     setPhase({ kind: "loading" });
   }
 
@@ -119,8 +140,17 @@ export function SummaryDialog(props: SummaryDialogProps) {
     const gen = ++generation.current;
     busy.current = false;
     if (props.open) {
-      void sendSummarizeMessage({ type: "LLM_SUMMARY_PREFLIGHT" }).then((reply) => {
+      const preflightPromise = sendSummarizeMessage({ type: "LLM_SUMMARY_PREFLIGHT" });
+      const metaPromise =
+        props.bookmarkId !== "" && !forcePreflight
+          ? getMeta(props.bookmarkId).catch(() => undefined)
+          : Promise.resolve(undefined);
+      void Promise.all([metaPromise, preflightPromise]).then(([meta, reply]) => {
         if (generation.current !== gen) return;
+        if (meta?.summary !== undefined && meta.summary !== "") {
+          setPhase({ kind: "saved", summary: meta.summary });
+          return;
+        }
         if (reply.ok && reply.code === "summary_consent") {
           setPhase({ kind: "disclosure", consent: reply.consent });
         } else {
@@ -129,7 +159,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
       });
     }
     return () => { generation.current += 1; };
-  }, [props.open, inputKey]);
+  }, [props.open, inputKey, props.bookmarkId, forcePreflight]);
 
   function close() {
     generation.current += 1;
@@ -137,28 +167,88 @@ export function SummaryDialog(props: SummaryDialogProps) {
     props.onClose();
   }
 
-  function sendApproved(approval: SummaryConsentApproval, unknownCostConfirmed = false) {
+  async function clearSavedSummary() {
+    if (busy.current) return;
+    busy.current = true;
+    try {
+      if (props.bookmarkId !== "") {
+        await patchMeta(props.bookmarkId, { summary: null });
+      }
+    } catch {
+      // Best-effort clear before closing.
+    }
+    close();
+  }
+
+  function sendApproved(
+    approval: SummaryConsentApproval,
+    unknownCostConfirmed = false,
+    pageOrigin?: string,
+  ) {
     if (busy.current) return;
     busy.current = true;
     const gen = generation.current;
     setPhase({ kind: "running" });
-    void sendSummarizeMessage({
-      type: "LLM_SUMMARIZE",
-      tabId: props.tabId,
-      bookmarkId: props.bookmarkId,
-      consentApproval: approval,
-      ...(unknownCostConfirmed ? { unknownCostConfirmed: true } : {}),
-    }).then((reply) => {
+    void (async () => {
+      const contains = chrome.permissions?.contains;
+      const request = chrome.permissions?.request;
+      if (typeof contains === "function" && typeof request === "function") {
+        const candidates = [approval.llm.origin, approval.jev.origin];
+        if (pageOrigin !== undefined && pageOrigin !== "") {
+          candidates.push(pageOrigin);
+        }
+        const origins: string[] = [];
+        for (const candidate of candidates) {
+          if (!origins.includes(candidate)) origins.push(candidate);
+        }
+        for (const origin of origins) {
+          const pattern = originPermissionPattern(origin);
+          let hasPerm = false;
+          try {
+            hasPerm = await contains.call(chrome.permissions, { origins: [pattern] });
+          } catch {
+            hasPerm = false;
+          }
+          if (!hasPerm) {
+            let granted = false;
+            try {
+              granted = await request.call(chrome.permissions, { origins: [pattern] });
+            } catch {
+              granted = false;
+            }
+            if (generation.current !== gen) return;
+            if (!granted) {
+              busy.current = false;
+              setPhase({
+                kind: "error",
+                message: "Host permission was not granted — nothing was sent.",
+              });
+              return;
+            }
+          }
+        }
+      }
+      const reply = await sendSummarizeMessage({
+        type: "LLM_SUMMARIZE",
+        tabId: props.tabId,
+        bookmarkId: props.bookmarkId,
+        consentApproval: approval,
+        ...(unknownCostConfirmed ? { unknownCostConfirmed: true } : {}),
+      });
       if (generation.current !== gen) return;
       busy.current = false;
       if (reply.ok && reply.code === "summary_ok") {
         setPhase({ kind: "done", summary: reply.summary, model: reply.model });
-      } else if (!reply.ok && reply.code === "confirmation_required" && reply.destinationOrigin === approval.llm.origin) {
+      } else if (
+        !reply.ok &&
+        reply.code === "confirmation_required" &&
+        reply.destinationOrigin === approval.llm.origin
+      ) {
         setPhase({ kind: "confirm", destinationOrigin: reply.destinationOrigin, approval });
       } else {
         setPhase({ kind: "error", message: reply.ok ? UNEXPECTED_REPLY_MESSAGE : reply.message });
       }
-    });
+    })();
   }
 
   const running = phase.kind === "running";
@@ -209,6 +299,7 @@ export function SummaryDialog(props: SummaryDialogProps) {
           className="sr-only"
         >
           {phase.kind === "loading" && "Loading summary disclosure…"}
+          {phase.kind === "saved" && "Saved summary loaded."}
           {phase.kind === "disclosure" && "Review both recipients before sending."}
           {phase.kind === "running" && "Summarizing the page…"}
           {phase.kind === "done" && "Summary saved to the bookmark."}
@@ -222,6 +313,11 @@ export function SummaryDialog(props: SummaryDialogProps) {
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain break-words"
         >
           {phase.kind === "loading" && <p>Loading summary disclosure…</p>}
+          {phase.kind === "saved" && (
+            <p className="text-sm text-foreground" data-testid="summary-text">
+              {phase.summary}
+            </p>
+          )}
           {phase.kind === "disclosure" && (
             <div className="space-y-3 text-sm">
               <p>Consent version {phase.consent.approval.consentVersion}. Review both recipients before agreeing.</p>
@@ -266,8 +362,35 @@ export function SummaryDialog(props: SummaryDialogProps) {
           >
             {running ? "Continue in background" : "Close"}
           </button>
+          {phase.kind === "saved" && (
+            <>
+              <button
+                type="button"
+                className={CLOSE_BUTTON_CLASS}
+                onClick={() => void clearSavedSummary()}
+              >
+                Clear summary
+              </button>
+              <button
+                type="button"
+                className={PRIMARY_BUTTON_CLASS}
+                onClick={() => {
+                  setPhase({ kind: "loading" });
+                  setForcePreflight(true);
+                }}
+              >
+                Re-summarize
+              </button>
+            </>
+          )}
           {phase.kind === "disclosure" && (
-            <button type="button" className={PRIMARY_BUTTON_CLASS} onClick={() => sendApproved(phase.consent.approval)}>
+            <button
+              type="button"
+              className={PRIMARY_BUTTON_CLASS}
+              onClick={() =>
+                sendApproved(phase.consent.approval, false, phase.consent.pageOrigin)
+              }
+            >
               Agree and summarize
             </button>
           )}

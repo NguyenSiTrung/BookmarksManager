@@ -82,10 +82,16 @@ export interface FolderActionsProps {
   node: FolderNode;
   onAction: (kind: FolderActionKind, node: FolderNode) => void;
   className?: string;
+  tabIndex?: number;
 }
 
 /** Kebab dropdown rendered on a tree row. */
-export function FolderActions({ node, onAction, className }: FolderActionsProps) {
+export function FolderActions({
+  node,
+  onAction,
+  className,
+  tabIndex,
+}: FolderActionsProps) {
   const reason = blockedReason(node);
   return (
     <DropdownMenu>
@@ -94,6 +100,7 @@ export function FolderActions({ node, onAction, className }: FolderActionsProps)
           type="button"
           disabled={reason !== undefined}
           title={reason}
+          tabIndex={tabIndex}
           aria-label={`Folder actions for ${folderLabel(node)}`}
           className={cn(KEBAB_CLASS, className)}
           onClick={(event) => event.stopPropagation()}
@@ -171,7 +178,7 @@ export function FolderActionDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
         {request !== null && (
           <FolderActionForm
             key={`${request.kind}:${request.node.id}`}
@@ -248,7 +255,7 @@ function FolderActionForm({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+            className="rounded-md border border-input px-4 py-2 text-sm font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
           >
             Cancel
           </button>
@@ -258,7 +265,7 @@ function FolderActionForm({
             onClick={() => void handleDelete()}
             className={
               "rounded-md bg-destructive px-4 py-2 text-sm font-medium " +
-              "text-destructive-foreground disabled:opacity-50"
+              "text-destructive-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
             }
           >
             Delete folder
@@ -311,7 +318,7 @@ function FolderActionForm({
             void submit();
           }
         }}
-        className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+        className="rounded-md border border-input bg-background px-3 py-2 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       />
       {error !== null && (
         <p role="alert" className="text-sm text-destructive">
@@ -322,7 +329,7 @@ function FolderActionForm({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md border border-input px-4 py-2 text-sm font-medium hover:bg-accent"
+          className="rounded-md border border-input px-4 py-2 text-sm font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
         >
           Cancel
         </button>
@@ -332,7 +339,7 @@ function FolderActionForm({
           onClick={() => void submit()}
           className={
             "rounded-md bg-primary px-4 py-2 text-sm font-medium " +
-            "text-primary-foreground disabled:opacity-50"
+            "text-primary-foreground outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           }
         >
           {submitLabel}

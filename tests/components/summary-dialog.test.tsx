@@ -1,6 +1,13 @@
+import "fake-indexeddb/auto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup, act, within } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, act, within, waitFor } from "@testing-library/react";
+import { db } from "../../src/db/database";
+import { getMeta, getTag, patchMeta, setBookmarkSummary } from "../../src/db/meta";
+import { flattenTree } from "../../src/sync/tree";
 import { SummaryDialog } from "../../src/entrypoints/sidepanel/SummaryDialog";
+import { EditDialog } from "../../src/entrypoints/sidepanel/EditDialog";
+import { FolderActions } from "../../src/entrypoints/sidepanel/FolderActions";
+import { createFakeBookmarks } from "../fakes/chrome-bookmarks";
 
 const sendMessage = vi.fn();
 const APPROVAL = {
@@ -12,8 +19,11 @@ const PREFLIGHT = { ok: true, code: "summary_consent", consent: { approval: APPR
 const SUCCESS = { ok: true, code: "summary_ok", summary: "A page about caching.", model: "gpt-4o-mini" };
 const PROPS = { open: true, tabId: 42, bookmarkId: "bm-001", bookmarkTitle: "An article", onClose: vi.fn() };
 
-beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+beforeEach(async () => {
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  await db.open();
+  await db.bookmarkMeta.clear();
+  await db.tags.clear();
   sendMessage.mockReset();
   sendMessage.mockImplementation(async (message: { type: string }) => message.type === "LLM_SUMMARY_PREFLIGHT" ? PREFLIGHT : SUCCESS);
   vi.stubGlobal("chrome", { runtime: { sendMessage, getURL: (p: string) => `chrome-extension://test-id/${p}` } });
@@ -200,5 +210,157 @@ describe("SummaryDialog disclosed consent", () => {
     });
     expect(close).toBeDefined();
     sentinel.remove();
+  });
+});
+
+describe("SummaryDialog saved summary and runtime origin permissions (B-06b, U-02)", () => {
+  it("displays an existing saved summary first with Re-summarize and Clear summary actions", async () => {
+    await setBookmarkSummary("bm-001", "Previously saved summary.");
+    const onClose = vi.fn();
+    render(<SummaryDialog {...PROPS} onClose={onClose} />);
+
+    const summaryEl = await screen.findByTestId("summary-text");
+    expect(summaryEl.textContent).toBe("Previously saved summary.");
+    expect(screen.getByRole("button", { name: "Re-summarize" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Clear summary" })).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Agree and summarize" })).toBeNull();
+
+    // Clicking Re-summarize transitions into the normal preflight / disclosure flow.
+    fireEvent.click(screen.getByRole("button", { name: "Re-summarize" }));
+    await screen.findByRole("button", { name: "Agree and summarize" });
+    expect(sendMessage).toHaveBeenCalledWith({ type: "LLM_SUMMARY_PREFLIGHT" });
+  });
+
+  it("Clear summary removes the saved summary from bookmarkMeta and closes", async () => {
+    await setBookmarkSummary("bm-001", "Summary to clear.");
+    const onClose = vi.fn();
+    render(<SummaryDialog {...PROPS} onClose={onClose} />);
+
+    await screen.findByTestId("summary-text");
+    fireEvent.click(screen.getByRole("button", { name: "Clear summary" }));
+
+    await waitFor(async () => {
+      expect((await getMeta("bm-001"))?.summary).toBeUndefined();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("requests missing runtime origin permissions on Agree and summarize click (B-06b)", async () => {
+    const contains = vi.fn(async ({ origins }: { origins?: string[] }) =>
+      origins?.[0] === "https://api.typesafe.ai/*",
+    );
+    const request = vi.fn(async () => true);
+    vi.stubGlobal("chrome", {
+      runtime: { sendMessage, getURL: (p: string) => `chrome-extension://test-id/${p}` },
+      permissions: { contains, request },
+    });
+
+    renderDialog();
+    await approve();
+    await screen.findByTestId("summary-text");
+
+    expect(contains).toHaveBeenCalledWith({ origins: ["https://api.openai.com/*"] });
+    expect(request).toHaveBeenCalledWith({ origins: ["https://api.openai.com/*"] });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, {
+      type: "LLM_SUMMARIZE",
+      tabId: 42,
+      bookmarkId: "bm-001",
+      consentApproval: APPROVAL,
+    });
+  });
+
+  it("aborts without sending when runtime origin permission is denied (B-06b)", async () => {
+    const contains = vi.fn(async () => false);
+    const request = vi.fn(async () => false);
+    vi.stubGlobal("chrome", {
+      runtime: { sendMessage, getURL: (p: string) => `chrome-extension://test-id/${p}` },
+      permissions: { contains, request },
+    });
+
+    renderDialog();
+    await approve();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Host permission was not granted — nothing was sent.");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EditDialog & FolderActions hardening (U-02a, U-04b, U-08d)", () => {
+  it("displays saved summary with Clear summary, commits uncommitted tagInput on Save, and stamps metaPatch.url", async () => {
+    const fake = createFakeBookmarks({
+      bookmarksBar: [{ id: "b1", title: "Alpha", url: "https://a.example/1" }],
+    });
+    vi.stubGlobal("chrome", {
+      bookmarks: fake,
+      runtime: { getURL: (p: string) => `chrome-extension://test-id/${p}` },
+    });
+    await patchMeta("b1", { summary: "Saved page summary.", notes: "initial note" });
+    const tree = flattenTree(await fake.getTree());
+    const target = tree.bookmarks.get("b1")!;
+    const meta = await getMeta("b1");
+    const onOpenChange = vi.fn();
+
+    render(
+      <EditDialog
+        target={target}
+        open
+        onOpenChange={onOpenChange}
+        tree={tree}
+        {...(meta !== undefined ? { meta } : {})}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toContain("max-h-[85vh]");
+    expect(dialog.className).toContain("overflow-y-auto");
+
+    const savedSummary = within(dialog).getByTestId("edit-saved-summary");
+    expect(savedSummary.textContent).toBe("Saved page summary.");
+
+    // Clear the saved summary
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear summary" }));
+    expect(within(dialog).queryByTestId("edit-saved-summary")).toBeNull();
+
+    // Type a new tag without pressing Enter or Add tag
+    fireEvent.change(within(dialog).getByLabelText("New tag name"), {
+      target: { value: "UncommittedTag" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+
+    const updatedMeta = await getMeta("b1");
+    expect(updatedMeta?.summary).toBeUndefined();
+    expect(updatedMeta?.tags).toEqual(["uncommittedtag"]);
+    expect(updatedMeta?.url).toBe("https://a.example/1");
+    expect(await getTag("uncommittedtag")).toBeDefined();
+  });
+
+  it("hides Tags, Category, and Notes when editing a folder and forwards tabIndex on FolderActions", async () => {
+    const fake = createFakeBookmarks({
+      bookmarksBar: [{ id: "f1", title: "Docs Folder", children: [] }],
+    });
+    vi.stubGlobal("chrome", {
+      bookmarks: fake,
+      runtime: { getURL: (p: string) => `chrome-extension://test-id/${p}` },
+    });
+    const tree = flattenTree(await fake.getTree());
+    const folder = tree.folders.get("f1")!;
+
+    const { unmount } = render(
+      <FolderActions node={folder} onAction={() => {}} tabIndex={-1} />,
+    );
+    const kebab = screen.getByRole("button", { name: "Folder actions for Docs Folder" });
+    expect(kebab.tabIndex).toBe(-1);
+    unmount();
+
+    render(<EditDialog target={folder} open onOpenChange={() => {}} tree={tree} />);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText("URL")).toBeNull();
+    expect(within(dialog).queryByLabelText("New tag name")).toBeNull();
+    expect(within(dialog).queryByLabelText("Category")).toBeNull();
+    expect(within(dialog).queryByLabelText("Notes")).toBeNull();
   });
 });
