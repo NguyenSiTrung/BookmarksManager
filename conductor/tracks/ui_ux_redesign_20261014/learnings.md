@@ -23,3 +23,13 @@ Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
   - Gotchas: Wrapping `onCommit()` in an arrow callback on the inline Add button prevents React's `MouseEvent` from being passed as the optional `label?: string` parameter.
 ---
 
+## [2026-10-14 08:10] - Phase 1 Task 2: `MoveToDialog` folder filter input & inline `+ New folder` creation (`UX-03`)
+Thread: T-01a1396b-6a35-77a4-90ea-865a78dc5383
+- **Implemented:** Added case-insensitive destination filtering (`aria-label="Filter folders"`) and inline subfolder creation (`"+ New folder"` → `createFolder` under the selected destination or `"Bookmarks bar"` default) to `MoveToDialog.tsx`, immediately selecting the newly created folder for one-flow moves.
+- **Files changed:** `src/entrypoints/sidepanel/MoveToDialog.tsx`, `tests/components/move-to-dialog.test.tsx`
+- **Learnings:**
+  - Patterns: Recording optimistically created folders in local `createdFolders` state deduplicated against `folderDestinations(tree)` lets `MoveToDialog` immediately render and select the new destination even before the parent's coalesced `tree` prop refreshes (or in standalone component tests with a static `tree`).
+  - Gotchas: Avoid naming any inline close button `"Cancel"` inside a dialog that already has a footer `"Cancel"` button so `within(dialog).getByRole("button", { name: "Cancel" })` stays unambiguous.
+---
+
+

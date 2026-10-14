@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../ui/components/dialog";
 import { ROOT_NODE_ID } from "../../sync/chrome-bookmarks";
-import { moveNode } from "../../sync/mutations";
+import { createFolder, moveNode } from "../../sync/mutations";
 import type { FlattenedTree } from "../../sync/tree";
 import { captureNodes, pushSnapshot } from "../../undo/snapshot";
 import { discardById } from "../../undo/restore";
@@ -212,12 +212,82 @@ function MoveToForm({
 }) {
   const toast = useToast();
   const [destId, setDestId] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [createdFolders, setCreatedFolders] = useState<
+    (FolderDestination & { title: string })[]
+  >([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const denied = useMemo(() => moveDeniedIds(tree, ids), [tree, ids]);
-  const destinations = useMemo(() => folderDestinations(tree), [tree]);
+  const baseDestinations = useMemo(() => folderDestinations(tree), [tree]);
+  const destinations = useMemo(() => {
+    const knownIds = new Set(baseDestinations.map((d) => d.id));
+    const extras = createdFolders.filter((d) => !knownIds.has(d.id));
+    return [...baseDestinations, ...extras];
+  }, [baseDestinations, createdFolders]);
+
+  const filteredDestinations = useMemo(() => {
+    const query = filter.trim().toLowerCase();
+    if (query === "") return destinations;
+    return destinations.filter((dest) =>
+      dest.label.toLowerCase().includes(query),
+    );
+  }, [destinations, filter]);
+
   const count = ids.length;
+
+  const resolveParentForCreate = (): FolderDestination | undefined => {
+    if (destId !== null && !denied.has(destId)) {
+      const selected = destinations.find((d) => d.id === destId);
+      if (selected !== undefined && !selected.isManaged) {
+        return selected;
+      }
+    }
+    return (
+      destinations.find((d) => d.id === "1" && !d.isManaged) ??
+      destinations.find((d) => d.id === "2" && !d.isManaged) ??
+      destinations.find((d) => !d.isManaged && !denied.has(d.id))
+    );
+  };
+
+  const handleCreateFolder = async (): Promise<void> => {
+    const trimmed = newFolderName.trim();
+    if (trimmed === "") return;
+    const parentDest = resolveParentForCreate();
+    const parentId = parentDest?.id ?? "1";
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createFolder({ parentId, title: trimmed });
+      const label =
+        parentDest !== undefined
+          ? `${parentDest.label} / ${trimmed}`
+          : trimmed;
+      const depth = parentDest !== undefined ? parentDest.depth + 1 : 0;
+      setCreatedFolders((prev) => [
+        ...prev,
+        {
+          id: created.id,
+          title: trimmed,
+          label,
+          depth,
+          isManaged: false,
+          isRoot: false,
+        },
+      ]);
+      setDestId(created.id);
+      setFilter("");
+      setNewFolderName("");
+      setCreatingFolder(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleMove = async (): Promise<void> => {
     if (destId === null) return;
@@ -229,7 +299,9 @@ function MoveToForm({
       setError(result.error ?? "Move failed.");
       return;
     }
-    const destTitle = tree.folders.get(destId)?.title ?? "folder";
+    const createdMatch = createdFolders.find((d) => d.id === destId);
+    const destTitle =
+      tree.folders.get(destId)?.title ?? createdMatch?.title ?? "folder";
     const noun = result.moved === 1 ? "item" : "items";
     const partial =
       result.failed > 0
@@ -244,6 +316,8 @@ function MoveToForm({
     onClose();
   };
 
+  const parentForCreate = resolveParentForCreate();
+
   return (
     <>
       <DialogHeader>
@@ -253,48 +327,106 @@ function MoveToForm({
           folder.
         </DialogDescription>
       </DialogHeader>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="search"
+            aria-label="Filter folders"
+            placeholder="Filter folders…"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <button
+            type="button"
+            disabled={busy}
+            aria-expanded={creatingFolder}
+            onClick={() => setCreatingFolder((open) => !open)}
+            className="shrink-0 rounded-md border border-input px-2.5 py-1.5 text-xs font-medium outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            + New folder
+          </button>
+        </div>
+        {creatingFolder && (
+          <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 p-2">
+            <input
+              aria-label="New folder name"
+              placeholder={
+                parentForCreate !== undefined
+                  ? `Subfolder inside ${parentForCreate.label}…`
+                  : "New folder name…"
+              }
+              value={newFolderName}
+              maxLength={500}
+              disabled={busy}
+              onChange={(event) => setNewFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void handleCreateFolder();
+                }
+              }}
+              className="min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 py-1 text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <button
+              type="button"
+              disabled={busy || newFolderName.trim() === ""}
+              onClick={() => void handleCreateFolder()}
+              className="shrink-0 rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            >
+              Create folder
+            </button>
+          </div>
+        )}
+      </div>
       <ul
         aria-label="Destination folders"
         className="max-h-64 space-y-0.5 overflow-y-auto rounded-md border border-border p-1"
       >
-        {destinations.map((dest) => {
-          const blockedBySubtree = denied.has(dest.id);
-          const disabled = blockedBySubtree || dest.isManaged;
-          const reason = blockedBySubtree
-            ? "Can't move a folder into itself or its own subtree."
-            : dest.isManaged
-              ? "Managed folders can't receive items."
-              : undefined;
-          return (
-            <li key={dest.id}>
-              <button
-                type="button"
-                aria-pressed={destId === dest.id}
-                disabled={disabled}
-                title={reason}
-                onClick={() => setDestId(dest.id)}
-                style={{ paddingInlineStart: `${dest.depth * 12 + 8}px` }}
-                className={
-                  "w-full rounded-sm py-1 pr-2 text-left text-sm " +
-                  "outline-hidden hover:bg-accent hover:text-accent-foreground " +
-                  "focus-visible:ring-2 focus-visible:ring-ring " +
-                  "aria-pressed:bg-accent aria-pressed:text-accent-foreground " +
-                  "disabled:cursor-not-allowed disabled:opacity-50"
-                }
-              >
-                {dest.label}
-                {dest.isManaged && (
-                  <span
-                    aria-hidden="true"
-                    className="ml-2 text-xs text-muted-foreground"
-                  >
-                    (managed)
-                  </span>
-                )}
-              </button>
-            </li>
-          );
-        })}
+        {filteredDestinations.length === 0 ? (
+          <li className="px-2 py-3 text-center text-xs text-muted-foreground">
+            No matching folders
+          </li>
+        ) : (
+          filteredDestinations.map((dest) => {
+            const blockedBySubtree = denied.has(dest.id);
+            const disabled = blockedBySubtree || dest.isManaged;
+            const reason = blockedBySubtree
+              ? "Can't move a folder into itself or its own subtree."
+              : dest.isManaged
+                ? "Managed folders can't receive items."
+                : undefined;
+            return (
+              <li key={dest.id}>
+                <button
+                  type="button"
+                  aria-pressed={destId === dest.id}
+                  disabled={disabled}
+                  title={reason}
+                  onClick={() => setDestId(dest.id)}
+                  style={{ paddingInlineStart: `${dest.depth * 12 + 8}px` }}
+                  className={
+                    "w-full rounded-sm py-1 pr-2 text-left text-sm " +
+                    "outline-hidden hover:bg-accent hover:text-accent-foreground " +
+                    "focus-visible:ring-2 focus-visible:ring-ring " +
+                    "aria-pressed:bg-accent aria-pressed:text-accent-foreground " +
+                    "disabled:cursor-not-allowed disabled:opacity-50"
+                  }
+                >
+                  {dest.label}
+                  {dest.isManaged && (
+                    <span
+                      aria-hidden="true"
+                      className="ml-2 text-xs text-muted-foreground"
+                    >
+                      (managed)
+                    </span>
+                  )}
+                </button>
+              </li>
+            );
+          })
+        )}
       </ul>
       {error !== null && (
         <p role="alert" className="text-sm text-destructive">
